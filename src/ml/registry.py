@@ -3,7 +3,7 @@ import json
 import os
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ModelRegistry:
             "type": "single",
             "path": path,
             "metrics": metrics,
-            "trained_at": datetime.utcnow().isoformat(),
+            "trained_at": datetime.now(UTC).isoformat(),
             "record_count": record_count
         }
         self._save()
@@ -48,7 +48,7 @@ class ModelRegistry:
         self.data["models"][version] = {
             "type": "ensemble",
             "experts": specialized_models,
-            "trained_at": datetime.utcnow().isoformat(),
+            "trained_at": datetime.now(UTC).isoformat(),
             "record_count": record_count
         }
         self._save()

@@ -1,9 +1,11 @@
 
 import logging
 import datetime
+import math
 from typing import List, Dict, Any, Optional
 from src.core.definitions import MarketState, MarketRegime, VolatilityLevel, TrendStrength
 from src.exchange.connector import BinanceConnector
+from src.data.quality import validate_ohlcv
 from src.config import Config
 
 logger = logging.getLogger(__name__)
@@ -19,12 +21,19 @@ class DataFeeder:
         if not self.connector:
              return self._create_safe_state(symbol, open_positions)
 
-        ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=50)
+        limit = max(50, Config.LTF_LOOKBACK)
+        ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=limit)
         
         if not ohlcv or len(ohlcv) < 50:
              # Fallback to Safe State if data missing
              logger.warning(f"Insufficient data for {symbol}, returning SAFE state.")
              return self._create_safe_state(symbol, open_positions)
+        
+        ok, issues = validate_ohlcv(ohlcv, min_len=50)
+        if not ok:
+            issue = issues[0] if issues else "unknown"
+            logger.warning(f"Invalid OHLCV for {symbol}: {issue}. Returning SAFE state.")
+            return self._create_safe_state(symbol, open_positions)
 
         # Fetch funding rate for anticipatory regime detection
         funding_rate = self.connector.fetch_funding_rate(symbol)
@@ -48,6 +57,23 @@ class DataFeeder:
         macd, macd_sig, macd_hist = self._calculate_macd(closes)
         bb_upper, bb_mid, bb_lower = self._calculate_bollinger_bands(closes)
         atr = self._calculate_atr(ohlcv)
+        
+        # Execution-aware features (last candle)
+        last = ohlcv[-1]
+        last_open = float(last[1])
+        last_high = float(last[2])
+        last_low = float(last[3])
+        last_close = float(last[4])
+        prev_close = float(ohlcv[-2][4]) if len(ohlcv) > 1 else last_close
+        spread_pct = ((last_high - last_low) / last_close) * 100 if last_close > 0 else 0.0
+        body_pct = (abs(last_close - last_open) / last_close) * 100 if last_close > 0 else 0.0
+        gap_pct = ((last_open - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+        volumes = [float(x[5]) for x in ohlcv]
+        vol_mean = sum(volumes) / len(volumes) if volumes else 0.0
+        vol_var = sum((v - vol_mean) ** 2 for v in volumes) / len(volumes) if volumes else 0.0
+        vol_std = math.sqrt(vol_var) if vol_var > 0 else 0.0
+        volume_zscore = ((volumes[-1] - vol_mean) / vol_std) if vol_std > 0 else 0.0
+        liquidity_proxy = (volumes[-1] / atr) if atr > 0 else 0.0
         
         high_50 = max([float(x[2]) for x in ohlcv[-50:]])
         low_50 = min([float(x[3]) for x in ohlcv[-50:]])
@@ -95,6 +121,22 @@ class DataFeeder:
         
         # Regime Stable: False if strong counter-momentum detected
         regime_stable = abs(momentum_shift_score) < 0.5
+        
+        # Higher timeframe features (resampled from LTF)
+        htf_trend_spread = 0.0
+        htf_rsi = 50.0
+        htf_atr = 0.0
+        ltf_minutes = self._timeframe_to_minutes(Config.SCAN_TIMEFRAME)
+        htf_minutes = self._timeframe_to_minutes(Config.HTF_TIMEFRAME)
+        if ltf_minutes and htf_minutes and htf_minutes > ltf_minutes:
+            htf_ohlcv = self._resample_ohlcv(ohlcv, ltf_minutes, htf_minutes)
+            if len(htf_ohlcv) >= Config.HTF_LOOKBACK:
+                htf_closes = [float(x[4]) for x in htf_ohlcv]
+                htf_sma_20 = sum(htf_closes[-20:]) / 20
+                htf_sma_50 = sum(htf_closes[-50:]) / 50
+                htf_trend_spread = ((htf_sma_20 - htf_sma_50) / htf_sma_50) * 100 if htf_sma_50 > 0 else 0.0
+                htf_rsi = self._calculate_rsi(htf_closes)
+                htf_atr = self._calculate_atr(htf_ohlcv)
 
         return MarketState(
             symbol=symbol,
@@ -119,6 +161,11 @@ class DataFeeder:
             bb_lower=bb_lower,
             atr=atr,
             volume_delta=0.0,
+            spread_pct=spread_pct,
+            body_pct=body_pct,
+            gap_pct=gap_pct,
+            volume_zscore=volume_zscore,
+            liquidity_proxy=liquidity_proxy,
             funding_rate=funding_rate,
             funding_extreme=abs(funding_rate) > 0.1,  # Extreme if > 0.1%
             raw_timestamp=dt.isoformat(),
@@ -128,7 +175,10 @@ class DataFeeder:
             # Phase C: Anticipatory Regime Detection
             regime_confidence=regime_confidence,
             regime_stable=regime_stable,
-            momentum_shift_score=momentum_shift_score
+            momentum_shift_score=momentum_shift_score,
+            htf_trend_spread=htf_trend_spread,
+            htf_rsi=htf_rsi,
+            htf_atr=htf_atr
         )
 
     def _calculate_rsi(self, prices: List[float], period: int = 14) -> float:
@@ -150,6 +200,43 @@ class DataFeeder:
         
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
+
+    def _timeframe_to_minutes(self, tf: str) -> int:
+        if not tf:
+            return 0
+        tf = tf.strip().lower()
+        if tf.endswith("m"):
+            return int(tf[:-1])
+        if tf.endswith("h"):
+            return int(tf[:-1]) * 60
+        if tf.endswith("d"):
+            return int(tf[:-1]) * 60 * 24
+        return 0
+
+    def _resample_ohlcv(self, ohlcv: List[Any], ltf_minutes: int, htf_minutes: int) -> List[List[float]]:
+        if not ohlcv or ltf_minutes <= 0 or htf_minutes <= 0:
+            return []
+        htf_ms = htf_minutes * 60 * 1000
+        ratio = htf_minutes // ltf_minutes if ltf_minutes and htf_minutes % ltf_minutes == 0 else None
+
+        buckets = {}
+        for row in ohlcv:
+            ts = int(row[0])
+            bucket = (ts // htf_ms) * htf_ms
+            buckets.setdefault(bucket, []).append(row)
+
+        aggregated = []
+        for bucket_ts in sorted(buckets.keys()):
+            rows = buckets[bucket_ts]
+            if ratio and len(rows) < ratio:
+                continue
+            op = float(rows[0][1])
+            hi = max(float(r[2]) for r in rows)
+            lo = min(float(r[3]) for r in rows)
+            cl = float(rows[-1][4])
+            vol = sum(float(r[5]) for r in rows)
+            aggregated.append([bucket_ts, op, hi, lo, cl, vol])
+        return aggregated
 
     def _calculate_ema(self, prices: List[float], period: int) -> float:
         if len(prices) < period:

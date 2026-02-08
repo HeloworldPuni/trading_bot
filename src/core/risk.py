@@ -31,10 +31,9 @@ class RiskManager:
         
         # 2. Enforcement of "DANGER" state (Downgrade)
         if state.current_risk_state == "DANGER":
-            if action.risk_level != RiskLevel.LOW:
-                base_risk = RiskManager.get_base_risk_percent(RiskLevel.LOW)
-                action.risk_level = RiskLevel.LOW
-                action.reasoning = f"Downgraded risk due to DANGER state. (Original: {action.reasoning})"
+            base_risk = RiskManager.get_base_risk_percent(RiskLevel.LOW)
+            action.risk_level = RiskLevel.LOW
+            action.reasoning = f"Downgraded risk due to DANGER state. (Original: {action.reasoning})"
         
         # 3. Drawdown Proximity (Downgrade)
         if state.current_drawdown_percent <= -4.0:

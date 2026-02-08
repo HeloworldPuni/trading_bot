@@ -25,7 +25,7 @@ class Dashboard:
             Layout(name="right", ratio=1)
         )
 
-    def generate_renderable(self, portfolio_summary: dict, active_positions: list, recent_history: list, latest_signal: dict = None):
+    def generate_renderable(self, portfolio_summary: dict, active_positions: list, recent_history: list, latest_signal: dict = None, alerts: list = None):
         # Calculate used in positions
         used_in_positions = sum(p.get('margin_used', p['size_usd'] / p.get('leverage', 1)) for p in active_positions)
         available_balance = portfolio_summary['balance']
@@ -49,7 +49,9 @@ class Dashboard:
             "  |  ",
             (f"Equity: ${portfolio_summary['equity']:,.2f}", "yellow"),
             "  |  ",
-            (f"Open: {len(active_positions)}", "magenta")
+            (f"Open: {len(active_positions)}", "magenta"),
+            "  |  ",
+            (f"DD: {portfolio_summary.get('drawdown_pct', 0.0):.1f}%", "red")
         )
         
         # 2. Left: Active Positions Table
@@ -97,7 +99,10 @@ class Dashboard:
         realized_roi = (realized_pnl / initial_cap * 100) if initial_cap > 0 else 0
         
         roi_text = f"Realized ROI: {realized_roi:+.2f}%" if recent_history else "No closed trades yet"
-        hist_table = Table(title=f"Trade History (Last 5) | {roi_text}", box=box.SIMPLE, expand=True)
+        alert_text = ""
+        if alerts:
+            alert_text = " | Alerts: " + ", ".join(alerts[:3])
+        hist_table = Table(title=f"Trade History (Last 5) | {roi_text}{alert_text}", box=box.SIMPLE, expand=True)
         hist_table.add_column("Time")
         hist_table.add_column("Symbol")
         hist_table.add_column("Result", justify="right")

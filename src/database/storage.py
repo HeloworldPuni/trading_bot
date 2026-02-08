@@ -3,7 +3,7 @@ import json
 import os
 import uuid
 import contextlib
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, List, Optional
 from src.config import Config
 from src.core.definitions import MarketState, Action
@@ -79,6 +79,15 @@ class ExperienceDB:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             f.close()
 
+    @contextlib.contextmanager
+    def _global_lock(self):
+        """
+        Serialize access to the experience log using a dedicated lock file.
+        This prevents append/replace races between log_decision and finalize/flush.
+        """
+        with self._file_lock(self.lockpath, 'a'):
+            yield
+
 
     def _load_stats(self):
         if not os.path.exists(self.filepath):
@@ -115,7 +124,7 @@ class ExperienceDB:
         decision_id = str(uuid.uuid4())
         record = {
             "id": decision_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "market_state": state.to_dict(),
             "action_taken": action.to_dict(),
             "reward": reward,
@@ -132,9 +141,10 @@ class ExperienceDB:
             }
         }
         
-        # Use file lock for safe concurrent writes
-        with self._file_lock(self.filepath, 'a') as f:
-            f.write(json.dumps(record) + "\n")
+        # Serialize access to avoid races with finalize/flush
+        with self._global_lock():
+            with open(self.filepath, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
             
         # Update Stats
         self.stats["total"] += 1
@@ -158,39 +168,40 @@ class ExperienceDB:
             self.pending_updates[decision_id] = {
                 "outcome": outcome_data,
                 "reward": final_reward,
-                "resolution_time": datetime.utcnow().isoformat()
+                "resolution_time": datetime.now(UTC).isoformat()
             }
             return
 
         if not os.path.exists(self.filepath):
             return
 
-        temp_path = self.filepath + ".tmp"
-        updated = False
-        
-        with open(self.filepath, "r", encoding="utf-8") as infile, \
-             open(temp_path, "w", encoding="utf-8") as outfile:
+        with self._global_lock():
+            temp_path = self.filepath + ".tmp"
+            updated = False
             
-            for line in infile:
-                try:
-                    record = json.loads(line)
-                    if record.get("id") == decision_id:
-                        record["resolved"] = True
-                        record["reward"] = final_reward
-                        record["outcome"] = outcome_data
-                        record["resolution_time"] = datetime.utcnow().isoformat()
-                        updated = True
-                    
-                    outfile.write(json.dumps(record) + "\n")
-                except json.JSONDecodeError:
-                    continue # Skip corrupt lines
-        
-        # Atomic replace
-        if updated:
-            os.replace(temp_path, self.filepath)
-        else:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            with open(self.filepath, "r", encoding="utf-8") as infile, \
+                 open(temp_path, "w", encoding="utf-8") as outfile:
+                
+                for line in infile:
+                    try:
+                        record = json.loads(line)
+                        if record.get("id") == decision_id:
+                            record["resolved"] = True
+                            record["reward"] = final_reward
+                            record["outcome"] = outcome_data
+                            record["resolution_time"] = datetime.now(UTC).isoformat()
+                            updated = True
+                        
+                        outfile.write(json.dumps(record) + "\n")
+                    except json.JSONDecodeError:
+                        continue # Skip corrupt lines
+            
+            # Atomic replace
+            if updated:
+                os.replace(temp_path, self.filepath)
+            else:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     def flush_records(self):
         """
@@ -199,39 +210,40 @@ class ExperienceDB:
         if not self.pending_updates or not os.path.exists(self.filepath):
             return
 
-        temp_path = self.filepath + ".tmp"
-        updated_count = 0
-        
-        with open(self.filepath, "r", encoding="utf-8") as infile, \
-             open(temp_path, "w", encoding="utf-8") as outfile:
+        with self._global_lock():
+            temp_path = self.filepath + ".tmp"
+            updated_count = 0
             
-            for line in infile:
-                try:
-                    record = json.loads(line)
-                    rec_id = record.get("id")
-                    
-                    if rec_id in self.pending_updates:
-                        update = self.pending_updates[rec_id]
-                        record["resolved"] = True
-                        record["reward"] = update["reward"]
-                        record["outcome"] = update["outcome"]
-                        record["resolution_time"] = update["resolution_time"]
-                        updated_count += 1
-                        # Remove from pending to avoid double-processing (though unlikely with unique IDs)
-                        # Actually better to keep for the loop and clear at end
-                    
-                    outfile.write(json.dumps(record) + "\n")
-                except json.JSONDecodeError:
-                    continue
-        
-        if updated_count > 0:
-            os.replace(temp_path, self.filepath)
-            print(f"ExperienceDB: Flushed {updated_count} updates to disk.")
-        else:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            with open(self.filepath, "r", encoding="utf-8") as infile, \
+                 open(temp_path, "w", encoding="utf-8") as outfile:
                 
-        self.pending_updates = {}
+                for line in infile:
+                    try:
+                        record = json.loads(line)
+                        rec_id = record.get("id")
+                        
+                        if rec_id in self.pending_updates:
+                            update = self.pending_updates[rec_id]
+                            record["resolved"] = True
+                            record["reward"] = update["reward"]
+                            record["outcome"] = update["outcome"]
+                            record["resolution_time"] = update["resolution_time"]
+                            updated_count += 1
+                            # Remove from pending to avoid double-processing (though unlikely with unique IDs)
+                            # Actually better to keep for the loop and clear at end
+                        
+                        outfile.write(json.dumps(record) + "\n")
+                    except json.JSONDecodeError:
+                        continue
+            
+            if updated_count > 0:
+                os.replace(temp_path, self.filepath)
+                print(f"ExperienceDB: Flushed {updated_count} updates to disk.")
+            else:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
+            self.pending_updates = {}
 
     def count_records(self) -> int:
         if not os.path.exists(self.filepath):

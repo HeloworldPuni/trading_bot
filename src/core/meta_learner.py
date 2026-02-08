@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Dict, List, Any, Optional
 from collections import deque
-from datetime import datetime
+from datetime import datetime, UTC
 
 from src.config import Config
 
@@ -82,7 +82,7 @@ class MetaLearner:
                 "loss_categories": self.loss_categories,
                 "total_trades": self.total_trades,
                 "winning_trades": self.winning_trades,
-                "last_updated": datetime.utcnow().isoformat()
+                "last_updated": datetime.now(UTC).isoformat()
             }
             with open(self.state_file, "w") as f:
                 json.dump(state, f, indent=2)

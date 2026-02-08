@@ -9,6 +9,8 @@ from src.core.definitions import MarketRegime, VolatilityLevel, TrendStrength, S
 logger = logging.getLogger(__name__)
 
 class DatasetBuilder:
+    FEATURE_MAPS_PATH = os.path.join("models", "feature_maps.json")
+
     def __init__(self):
         # We define consistent mappings for categorical fields
         self.regime_map = {e.value: i for i, e in enumerate(MarketRegime)}
@@ -29,6 +31,7 @@ class DatasetBuilder:
             return
 
         self._build_dynamic_maps(records)
+        self._persist_feature_maps()
 
         transformed_rows = []
         for rec in records:
@@ -106,8 +109,11 @@ class DatasetBuilder:
                 "market_regime", "volatility_level", "trend_strength",
                 "dist_to_high", "dist_to_low", "macd", "macd_signal", "macd_hist",
                 "bb_upper", "bb_lower", "bb_mid", "atr", "volume_delta",
+                "spread_pct", "body_pct", "gap_pct", "volume_zscore", "liquidity_proxy",
+                "htf_trend_spread", "htf_rsi", "htf_atr",
                 "trading_session", "symbol", "repeats", "current_open_positions",
-                "action_taken", "decision_quality"
+                "action_taken", "regime_confidence", "regime_stable",
+                "momentum_shift_score", "decision_quality"
             ]
             writer.writerow(header)
             writer.writerows(rows)
@@ -149,6 +155,22 @@ class DatasetBuilder:
         self.symbol_map = {s: i for i, s in enumerate(sorted(list(symbols)))}
         logger.info(f"Encoded {len(self.session_map)} sessions and {len(self.symbol_map)} symbols.")
 
+    def _persist_feature_maps(self):
+        """Persist session/symbol mappings for inference consistency."""
+        try:
+            os.makedirs(os.path.dirname(self.FEATURE_MAPS_PATH), exist_ok=True)
+            payload = {
+                "version": "auto",
+                "session_map": self.session_map,
+                "symbol_map": self.symbol_map,
+                "notes": "Auto-generated from training data to keep inference consistent."
+            }
+            with open(self.FEATURE_MAPS_PATH, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=4)
+            logger.info(f"Feature maps saved to {self.FEATURE_MAPS_PATH}")
+        except Exception as e:
+            logger.warning(f"Failed to save feature maps: {e}")
+
     def _transform_record(self, rec: Dict[str, Any]) -> Optional[List[Any]]:
         """
         Flattens and encodes a single JSON record into a CSV row.
@@ -175,6 +197,14 @@ class DatasetBuilder:
             bb_m = state.get("bb_mid", 0.0)
             atr = state.get("atr", 0.0)
             v_delta = state.get("volume_delta", 0.0)
+            spread_pct = state.get("spread_pct", 0.0)
+            body_pct = state.get("body_pct", 0.0)
+            gap_pct = state.get("gap_pct", 0.0)
+            volume_zscore = state.get("volume_zscore", 0.0)
+            liquidity_proxy = state.get("liquidity_proxy", 0.0)
+            htf_trend_spread = state.get("htf_trend_spread", 0.0)
+            htf_rsi = state.get("htf_rsi", 50.0)
+            htf_atr = state.get("htf_atr", 0.0)
 
             # Dynamic Encoded
             session = self.session_map.get(state.get("trading_session", "OTHER"), 0)
@@ -190,6 +220,11 @@ class DatasetBuilder:
             
             # Action (Encoded Strategy)
             strat = self.strategy_map.get(action.get("strategy"), 0)
+
+            # Phase C: Regime shift features
+            regime_conf = state.get("regime_confidence", 0.0)
+            regime_stable = 1 if state.get("regime_stable", False) else 0
+            momentum_shift = state.get("momentum_shift_score", 0.0)
             
             # 2. Target Label (Y)
             # decision_quality = 1 if reward > 0 else 0
@@ -201,8 +236,10 @@ class DatasetBuilder:
                 dist_high, dist_low, 
                 macd, macd_sig, macd_hist,
                 bb_u, bb_l, bb_m, atr, v_delta,
+                spread_pct, body_pct, gap_pct, volume_zscore, liquidity_proxy,
+                htf_trend_spread, htf_rsi, htf_atr,
                 session, symbol, repeats, positions,
-                strat, quality
+                strat, regime_conf, regime_stable, momentum_shift, quality
             ]
         except Exception as e:
             logger.warning(f"Transformation failed for record: {e}")

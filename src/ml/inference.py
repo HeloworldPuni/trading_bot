@@ -12,12 +12,28 @@ logger = logging.getLogger(__name__)
 
 class PolicyInference:
     FEATURE_MAPS_PATH = "models/feature_maps.json"
+    FEATURE_COLS_BASE = [
+        "market_regime", "volatility_level", "trend_strength",
+        "dist_to_high", "dist_to_low",
+        "macd", "macd_signal", "macd_hist",
+        "bb_upper", "bb_lower", "bb_mid", "atr", "volume_delta",
+        "spread_pct", "body_pct", "gap_pct", "volume_zscore", "liquidity_proxy",
+        "htf_trend_spread", "htf_rsi", "htf_atr",
+        "trading_session", "symbol", "repeats", "current_open_positions",
+        "action_taken"
+    ]
+    FEATURE_COLS_EXTRA = [
+        "regime_confidence", "regime_stable", "momentum_shift_score"
+    ]
     
     def __init__(self, model_path: Optional[str] = None):
         self.registry = ModelRegistry()
         self.model_path = model_path or self.registry.get_active_model_path() or "models/policy_model_v1.pkl"
         self.model = None
         self.ensemble = {}
+        self.feature_cols = list(self.FEATURE_COLS_BASE)
+        self.calibrator = None
+        self.ensemble_calibrators = {}
         
         # Consistent mappings from enums
         self.regime_map = {e.value: i for i, e in enumerate(MarketRegime)}
@@ -53,6 +69,9 @@ class PolicyInference:
                 data = joblib.load(self.model_path)
                 if isinstance(data, dict) and "model" in data:
                     self.model = data["model"]
+                    if isinstance(data.get("feature_cols"), list):
+                        self.feature_cols = data["feature_cols"]
+                    self.calibrator = data.get("calibrator")
                 else:
                     self.model = data
                 logger.info(f"PolicyInference: Main model loaded from {self.model_path}")
@@ -72,6 +91,9 @@ class PolicyInference:
                             data = joblib.load(path)
                             if isinstance(data, dict) and "model" in data:
                                 self.ensemble[regime] = data["model"]
+                                if isinstance(data.get("feature_cols"), list):
+                                    self.feature_cols = data["feature_cols"]
+                                self.ensemble_calibrators[regime] = data.get("calibrator")
                             else:
                                 self.ensemble[regime] = data
                             logger.info(f"PolicyInference: Expert '{regime}' loaded from Registry ({active_version})")
@@ -88,6 +110,9 @@ class PolicyInference:
                         data = joblib.load(path)
                         if isinstance(data, dict) and "model" in data:
                             self.ensemble[r] = data["model"]
+                            if isinstance(data.get("feature_cols"), list):
+                                self.feature_cols = data["feature_cols"]
+                            self.ensemble_calibrators[r] = data.get("calibrator")
                         else:
                             self.ensemble[r] = data
                         logger.info(f"PolicyInference: Expert '{r}' loaded from local storage.")
@@ -104,14 +129,18 @@ class PolicyInference:
         """
         # Select Model
         model = self.model
+        calibrator = self.calibrator
         regime_val = state.market_regime.value
         
         if regime_val == MarketRegime.BULL_TREND.value:
             model = self.ensemble.get("bull", model)
+            calibrator = self.ensemble_calibrators.get("bull", calibrator)
         elif regime_val == MarketRegime.BEAR_TREND.value:
             model = self.ensemble.get("bear", model)
+            calibrator = self.ensemble_calibrators.get("bear", calibrator)
         elif regime_val == MarketRegime.SIDEWAYS_LOW_VOL.value:
             model = self.ensemble.get("sideways", model)
+            calibrator = self.ensemble_calibrators.get("sideways", calibrator)
 
         if model is None:
             return 0.5 # Default neutral
@@ -134,6 +163,14 @@ class PolicyInference:
                 "bb_mid": state.bb_mid,
                 "atr": state.atr,
                 "volume_delta": state.volume_delta,
+                "spread_pct": state.spread_pct,
+                "body_pct": state.body_pct,
+                "gap_pct": state.gap_pct,
+                "volume_zscore": state.volume_zscore,
+                "liquidity_proxy": state.liquidity_proxy,
+                "htf_trend_spread": state.htf_trend_spread,
+                "htf_rsi": state.htf_rsi,
+                "htf_atr": state.htf_atr,
 
                 "trading_session": self.session_map.get(state.trading_session, 3),
                 "symbol": self.symbol_map.get(state.symbol, 0),
@@ -147,13 +184,33 @@ class PolicyInference:
                 "momentum_shift_score": state.momentum_shift_score
             }
 
-            # 2. DataFrame for Model
-            df = pd.DataFrame([features])
+            # 2. Determine feature columns (align with model expectations)
+            feature_cols = list(self.feature_cols) if self.feature_cols else list(features.keys())
+            if hasattr(model, "feature_names_in_"):
+                feature_cols = list(model.feature_names_in_)
+            elif hasattr(model, "n_features_in_"):
+                expected = int(model.n_features_in_)
+                if expected == len(self.FEATURE_COLS_BASE):
+                    feature_cols = list(self.FEATURE_COLS_BASE)
+                elif expected == len(self.FEATURE_COLS_BASE) + len(self.FEATURE_COLS_EXTRA):
+                    feature_cols = list(self.FEATURE_COLS_BASE + self.FEATURE_COLS_EXTRA)
+                else:
+                    feature_cols = feature_cols[:expected]
+
+            # 3. DataFrame for Model (ensure column order + defaults)
+            row = {k: features.get(k, 0.0) for k in feature_cols}
+            df = pd.DataFrame([row], columns=feature_cols)
             
-            # 3. Predict Proba
+            # 4. Predict Proba
             # Both XGBoost and LightGBM follow sklearn's predict_proba
             probs = model.predict_proba(df)[0]
             confidence = float(probs[1]) # Class 1 = 'Good'
+
+            if calibrator is not None:
+                try:
+                    confidence = float(calibrator.predict_proba([[confidence]])[0][1])
+                except Exception as e:
+                    logger.warning(f"Calibration failed: {e}")
             
             return confidence
         except Exception as e:

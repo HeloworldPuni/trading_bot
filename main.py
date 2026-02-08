@@ -1,5 +1,6 @@
 
 import time
+import os
 import argparse
 import logging
 from typing import List, Dict
@@ -9,9 +10,17 @@ from src.data.feeder import DataFeeder
 from src.engine.system import TradingEngine
 from src.execution.paper import PaperExecutor
 from src.core.definitions import StrategyType, Action, ActionDirection
+from src.core.trade_utils import calculate_tp_sl
 from src.core.reward import RewardCalculator
 from src.core.meta_learner import MetaLearner
+from src.core.risk_controls import PortfolioRiskManager, compute_daily_vol, compute_gross_exposure, cluster_exposure
+from src.core.allocator import StrategyPerformanceTracker, BanditAllocator
+from src.monitoring.drift import DriftMonitor
+from src.monitoring.canary import CanaryMonitor
+from src.monitoring.divergence import DivergenceMonitor
 from scripts.learning_scheduler import LearningScheduler
+from scripts.startup_checks import run_startup_checks
+
 
 # Setup Logging
 logging.basicConfig(
@@ -59,19 +68,6 @@ def calculate_smart_leverage(confidence: float, regime_stable: bool, volatility:
     
     return int(leverage)
 
-
-def get_trade_mode(regime: str, trend_strength: str) -> tuple:
-    """
-    Phase 5: Determine trade mode (SCALP vs SWING) based on market conditions.
-    Returns (mode, tp_pct, sl_pct)
-    """
-    # Strong trends = SWING for bigger targets
-    if trend_strength in ["STRONG", "VERY_STRONG"]:
-        if "BULL" in regime or "BEAR" in regime:
-            return "SWING", Config.SWING_TP_PCT, Config.SWING_SL_PCT
-    
-    # Everything else = SCALP for quick profits
-    return "SCALP", Config.SCALP_TP_PCT, Config.SCALP_SL_PCT
 
 
 def calculate_smart_position_size(balance: float, confidence: float, atr: float, 
@@ -206,6 +202,28 @@ def run_live_mode(symbol: str, run_once: bool = False):
         
         # Auto-Learning Systems
         meta_learner = MetaLearner()
+        risk_manager = PortfolioRiskManager(initial_equity=portfolio.equity)
+        drift_monitor = DriftMonitor(window=Config.DRIFT_WINDOW, alert_z=Config.DRIFT_ALERT_Z)
+        canary_monitor = CanaryMonitor(initial_equity=portfolio.equity)
+        divergence_monitor = DivergenceMonitor()
+        perf_tracker = StrategyPerformanceTracker(window=Config.STRATEGY_FILTER_WINDOW)
+        bandit = BanditAllocator()
+        daily_returns: List[float] = []
+        cluster_map = {}
+        try:
+            import json
+            with open("data/cluster_map.json", "r", encoding="utf-8") as f:
+                cluster_map = json.load(f)
+        except Exception:
+            cluster_map = {}
+
+        # Set divergence baseline from recent backtest metrics if available
+        try:
+            if os.path.exists("reports/backtest_baseline.json"):
+                with open("reports/backtest_baseline.json", "r", encoding="utf-8") as f:
+                    divergence_monitor.set_baseline(json.load(f))
+        except Exception:
+            pass
         learning_scheduler = LearningScheduler(interval_hours=24, min_trades=50)
         learning_scheduler.start_background()  # Start background retraining
         logger.info("🧠 Auto-learning systems initialized")
@@ -219,7 +237,7 @@ def run_live_mode(symbol: str, run_once: bool = False):
         
         # Startup PnL refresh - fetch current prices for all restored positions
         if portfolio.active_positions:
-            logger.info(f"💰 Refreshing PnL for {len(portfolio.active_positions)} restored positions...")
+            logger.info(f"💰 Refreshing PnL for {len(portfolio.get_all_positions())} restored positions...")
             for sym in list(portfolio.active_positions.keys()):
                 try:
                     ticker = connector.exchange.fetch_ticker(sym)
@@ -254,14 +272,40 @@ def run_live_mode(symbol: str, run_once: bool = False):
                 # Iterate over our dynamic squad (top 15 by volume)
                 for sym in active_symbols:
                     # 1. Observe (with Position Awareness - Phase 34)
-                    has_position = 1 if sym in portfolio.active_positions else 0
+                    has_position = portfolio.count_positions_for_symbol(sym)
                     state = feeder.get_current_state(sym, open_positions=has_position)
                     
                     # Fetch Price
                     ticker = connector.exchange.fetch_ticker(sym)
                     current_price = ticker['last']
                     
+                    # Drift monitoring (feature z-scores)
+                    drift_alerts = drift_monitor.update(state.to_dict())
+                    if drift_alerts:
+                        logger.warning(f"DRIFT ALERT [{sym}]: " + "; ".join(drift_alerts[:3]))
+
                     # 2. Decide
+                    if Config.STRATEGY_FILTER_ENABLED or Config.STRATEGY_WEIGHTING_ENABLED:
+                        strategy_weights = {}
+                        blocked = set()
+                        for strat in StrategyType:
+                            if strat == StrategyType.WAIT:
+                                continue
+                            key = f"{strat.name}|{state.market_regime.value}" if Config.STRATEGY_FILTER_REGIME_AWARE else strat.name
+                            if Config.STRATEGY_WEIGHTING_ENABLED:
+                                strategy_weights[strat] = perf_tracker.get_weight(
+                                    key, min_samples=Config.STRATEGY_MIN_SAMPLES
+                                )
+                            if Config.STRATEGY_FILTER_ENABLED and perf_tracker.is_blocked(
+                                key,
+                                min_samples=Config.STRATEGY_FILTER_MIN_TRADES,
+                                min_win_rate=Config.STRATEGY_FILTER_MIN_WIN_RATE,
+                                min_avg_pnl=Config.STRATEGY_FILTER_MIN_AVG_PNL
+                            ):
+                                blocked.add(strat)
+                        engine.set_strategy_overrides(strategy_weights=strategy_weights, blocked_strategies=blocked)
+                    else:
+                        engine.set_strategy_overrides()
                     action, decision_id, repeats = engine.run_analysis(state, data_source="live")
                     confidence = getattr(engine, 'last_confidence', 0.0)
                     
@@ -282,6 +326,30 @@ def run_live_mode(symbol: str, run_once: bool = False):
                     
                     # 3. Act & Track
                     if action.strategy != StrategyType.WAIT:
+                        # Canary halt check
+                        canary_reason = canary_monitor.check(portfolio.equity)
+                        if canary_reason:
+                            logger.warning(f"CANARY HALT: {canary_reason}")
+                            continue
+                        perf_key = action.strategy.name
+                        # Portfolio-level risk checks
+                        halted, reason = risk_manager.check_limits(portfolio.equity, portfolio.initial_capital)
+                        if halted:
+                            logger.warning(f"RISK HALT: {reason}")
+                            continue
+
+                        # Exposure checks
+                        gross_exposure = compute_gross_exposure(portfolio.get_all_positions(), portfolio.equity)
+                        if gross_exposure > Config.EXPOSURE_CAP_PCT:
+                            logger.warning(f"Exposure cap reached: {gross_exposure:.2f} > {Config.EXPOSURE_CAP_PCT:.2f}")
+                            continue
+                        cluster_exposure_pct = cluster_exposure(portfolio.get_all_positions(), portfolio.equity, cluster_map)
+                        if cluster_exposure_pct:
+                            worst_cluster = max(cluster_exposure_pct, key=cluster_exposure_pct.get)
+                            if cluster_exposure_pct[worst_cluster] > Config.CORR_CLUSTER_CAP_PCT:
+                                logger.warning(f"Cluster cap reached for {worst_cluster}: {cluster_exposure_pct[worst_cluster]:.2f} > {Config.CORR_CLUSTER_CAP_PCT:.2f}")
+                                continue
+
                         # Phase 2: Check cooldown and position limits
                         can_open, block_reason = portfolio.can_open_position(sym)
                         
@@ -297,18 +365,13 @@ def run_live_mode(symbol: str, run_once: bool = False):
                             )
                             
                             # Phase 5: Dynamic TP/SL based on trade mode
-                            trade_mode, tp_pct, sl_pct = get_trade_mode(
-                                state.market_regime.value, 
-                                state.trend_strength.value
+                            trade_mode, tp_price, sl_price, tp_pct, sl_pct = calculate_tp_sl(
+                                entry_price=current_price,
+                                direction=action.direction.name,
+                                atr=state.atr,
+                                regime=state.market_regime.value,
+                                trend_strength=state.trend_strength.value
                             )
-                            
-                            # Calculate TP/SL from current price
-                            if action.direction.name == "LONG":
-                                tp_price = current_price * (1 + tp_pct / 100)
-                                sl_price = current_price * (1 - sl_pct / 100)
-                            else:
-                                tp_price = current_price * (1 - tp_pct / 100)
-                                sl_price = current_price * (1 + sl_pct / 100)
                             
                             # Smart Position Sizing: ATR + Confidence based
                             # Get average ATR for this symbol (use current as fallback)
@@ -320,33 +383,66 @@ def run_live_mode(symbol: str, run_once: bool = False):
                                 avg_atr=avg_atr,
                                 leverage=leverage
                             )
+                            # Volatility targeting
+                            if daily_returns:
+                                vol = compute_daily_vol(daily_returns) * 100
+                                size_usd *= risk_manager.volatility_scaler(vol)
+
+                            # Strategy weighting (performance + bandit)
+                            strat_key = f"{perf_key}|{state.market_regime.value}" if Config.STRATEGY_FILTER_REGIME_AWARE else perf_key
+                            strat_weight = perf_tracker.get_weight(strat_key, min_samples=Config.STRATEGY_MIN_SAMPLES)
+                            bandit_weight = bandit.weight(strat_key)
+                            size_usd *= (strat_weight * bandit_weight)
                                     
                             if portfolio.open_position(sym, action.direction.name, current_price, size_usd, tp_price, sl_price, decision_id,
                                                         entry_regime=state.market_regime.value, entry_atr=state.atr, leverage=leverage):
+                                # Store strategy on the position for performance tracking
+                                try:
+                                    positions = portfolio.active_positions.get(sym, [])
+                                    if positions:
+                                        positions[-1]["strategy"] = action.strategy.name
+                                except Exception:
+                                    pass
                                 logger.info(f"🚀 [{trade_mode}] {sym} {action.direction.name} | Entry: {current_price:.2f} | Size: ${size_usd:.2f} ({leverage}x) | TP: {tp_price:.2f} ({tp_pct}%) | SL: {sl_price:.2f} ({sl_pct}%)")
 
                     # 4. Resolve & Learn (Specific to this symbol scan)
                     portfolio.update_metrics(sym, current_price)
                     
                     if sym in portfolio.active_positions:
-                        pos = portfolio.active_positions[sym]
-                        exit_price = None
-                        reason = None
-                        
-                        if pos['direction'] == "LONG":
-                            if current_price >= pos['tp']:
-                                exit_price, reason = pos['tp'], "TP"
-                            elif current_price <= pos['sl']:
-                                exit_price, reason = pos['sl'], "SL"
-                        else:
-                            if current_price <= pos['tp']:
-                                exit_price, reason = pos['tp'], "TP"
-                            elif current_price >= pos['sl']:
-                                exit_price, reason = pos['sl'], "SL"
-                        
-                        if exit_price:
-                            closed_trade = portfolio.close_position(sym, exit_price, reason,
-                                                                     exit_regime=state.market_regime.value, exit_atr=state.atr)
+                        positions = portfolio.active_positions[sym]
+                        if not isinstance(positions, list):
+                            positions = [positions]
+
+                        to_close = []
+                        for pos in positions:
+                            exit_price = None
+                            reason = None
+                            
+                            if pos['direction'] == "LONG":
+                                if current_price >= pos['tp']:
+                                    exit_price, reason = pos['tp'], "TP"
+                                elif current_price <= pos['sl']:
+                                    exit_price, reason = pos['sl'], "SL"
+                            else:
+                                if current_price <= pos['tp']:
+                                    exit_price, reason = pos['tp'], "TP"
+                                elif current_price >= pos['sl']:
+                                    exit_price, reason = pos['sl'], "SL"
+                            
+                            if exit_price:
+                                to_close.append((pos, exit_price, reason))
+
+                        for pos, exit_price, reason in to_close:
+                            closed_trade = portfolio.close_position(
+                                sym,
+                                exit_price,
+                                reason,
+                                exit_regime=state.market_regime.value,
+                                exit_atr=state.atr,
+                                decision_id=pos.get('decision_id')
+                            )
+                            if not closed_trade:
+                                continue
                             logger.info(f"🎯 [POSITION CLOSED] {sym} | Exit: {exit_price:.2f} | Reason: {reason} | PnL: ${closed_trade['realized_pnl_usd']:.2f} ({closed_trade['realized_pnl_pct']:.2f}%)")
                             # Log loss category if present
                             if closed_trade.get('loss_category'):
@@ -354,15 +450,20 @@ def run_live_mode(symbol: str, run_once: bool = False):
                             
                             # MetaLearner: Record trade result for adaptive thresholds
                             pnl_pct = closed_trade.get('realized_pnl_pct', 0.0)
+                            strat_name = closed_trade.get("strategy", perf_key)
+                            entry_regime = closed_trade.get("entry_regime") or state.market_regime.value
+                            perf_tracker.record(strat_name, pnl_pct)
+                            if entry_regime:
+                                perf_tracker.record(f"{strat_name}|{entry_regime}", pnl_pct)
+                            bandit_key = f"{strat_name}|{entry_regime}" if Config.STRATEGY_FILTER_REGIME_AWARE else strat_name
+                            bandit.record(bandit_key, pnl_pct)
+                            daily_returns.append(pnl_pct / 100.0)
+                            canary_monitor.record_trade(pnl_pct)
                             meta_learner.record_trade_result(
                                 won=pnl_pct > 0,
-                                pnl_percent=pnl_pct,
-                                context={
-                                    "symbol": sym,
-                                    "regime": state.market_regime.value,
-                                    "exit_reason": reason,
-                                    "confidence": confidence
-                                }
+                                loss_category=closed_trade.get("loss_category"),
+                                confidence=confidence,
+                                regime=state.market_regime.value
                             )
                             
                             engine.db.finalize_record(
@@ -381,20 +482,24 @@ def run_live_mode(symbol: str, run_once: bool = False):
 
                     # Periodically update dashboard even during the squad scan
                     summary = portfolio.get_summary()
+                    # Optional divergence check
+                    live_metrics = {
+                        "win_rate": (sum(1 for t in portfolio.trade_history if t.get("realized_pnl_usd", 0) > 0) / max(1, len(portfolio.trade_history))) if portfolio.trade_history else 0.0,
+                        "avg_pnl": (sum(t.get("realized_pnl_pct", 0.0) for t in portfolio.trade_history) / max(1, len(portfolio.trade_history))) if portfolio.trade_history else 0.0
+                    }
+                    div_msg = divergence_monitor.check(live_metrics)
+                    if div_msg:
+                        logger.warning(f"DIVERGENCE: {div_msg}")
                     live.update(dashboard.generate_renderable(
                         summary, 
-                        list(portfolio.active_positions.values()), 
+                        portfolio.get_all_positions(), 
                         portfolio.trade_history,
-                        latest_signal
+                        latest_signal,
+                        alerts=drift_alerts
                     ))
                 
                 if run_once: break
                 time.sleep(60) # 1 Minute Cycle for the entire squad
-
-            except Exception as e:
-                logger.error(f"Cycle Error: {e}")
-                if run_once: break
-                time.sleep(10)
 
             except Exception as e:
                 logger.error(f"Cycle Error: {e}")
@@ -559,8 +664,14 @@ if __name__ == "__main__":
     parser.add_argument("--period-id", type=str, default=None, help="Market Period ID for Replay Mode (e.g. BTC_2021_BULL)")
     parser.add_argument("--no-throttle", action="store_true", help="Bypass distribution balancing for high-speed replay")
     parser.add_argument("--log-suffix", type=str, default=None, help="Suffix for log file (e.g. btc, eth)")
+    parser.add_argument("--skip-checks", action="store_true", help="Skip startup validation checks")
     
     args = parser.parse_args()
+    
+    # Run startup checks (config validation, model staleness, audit setup)
+    if not args.skip_checks:
+        run_startup_checks()
+
     
     if args.replay:
         run_replay_mode(

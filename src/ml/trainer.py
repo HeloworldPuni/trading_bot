@@ -7,6 +7,7 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 import joblib
 import os
 import optuna
+from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +42,17 @@ class PolicyTrainer:
                 }
         
         self.model = self._init_model()
+        self.calibrator = None
         
         self.feature_cols = [
             "market_regime", "volatility_level", "trend_strength",
             "dist_to_high", "dist_to_low", 
             "macd", "macd_signal", "macd_hist",
             "bb_upper", "bb_lower", "bb_mid", "atr", "volume_delta",
+            "spread_pct", "body_pct", "gap_pct", "volume_zscore", "liquidity_proxy",
+            "htf_trend_spread", "htf_rsi", "htf_atr",
             "trading_session", "symbol", "repeats", "current_open_positions",
-            "action_taken"
+            "action_taken", "regime_confidence", "regime_stable", "momentum_shift_score"
         ]
         self.target_col = "decision_quality"
 
@@ -91,6 +95,15 @@ class PolicyTrainer:
             "validation_accuracy": val_acc,
             "validation_roc_auc": val_auc
         }
+
+        # Probability calibration (Platt scaling on validation probabilities)
+        try:
+            calib = LogisticRegression(solver="lbfgs")
+            calib.fit(val_probs.reshape(-1, 1), y_val)
+            self.calibrator = calib
+            logger.info("Probability calibration fitted (Platt scaling).")
+        except Exception as e:
+            logger.warning(f"Calibration skipped: {e}")
 
         logger.info(f"Training Results ({self.model_type}): {metrics}")
         return metrics
@@ -152,7 +165,8 @@ class PolicyTrainer:
             "model": self.model,
             "model_type": self.model_type,
             "params": self.params,
-            "feature_cols": self.feature_cols
+            "feature_cols": self.feature_cols,
+            "calibrator": self.calibrator
         }
         joblib.dump(save_data, path)
         logger.info(f"Model ({self.model_type}) saved to {path}")
@@ -166,6 +180,7 @@ class PolicyTrainer:
                 self.model_type = data.get("model_type", "xgboost")
                 self.params = data.get("params", {})
                 self.feature_cols = data.get("feature_cols", self.feature_cols)
+                self.calibrator = data.get("calibrator")
             else:
                 self.model = data
             logger.info(f"Model ({self.model_type}) loaded from {path}")
