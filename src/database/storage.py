@@ -202,8 +202,55 @@ class ExperienceDB:
             return sum(1 for _ in f)
 
     def get_recent_records(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get recent records efficiently without loading entire file.
+        Uses reverse file reading to only process needed lines.
+        """
         if not os.path.exists(self.filepath):
             return []
-        with open(self.filepath, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        return [json.loads(line) for line in lines[-limit:]]
+        
+        records = []
+        chunk_size = 8192  # Read 8KB chunks from end
+        
+        with open(self.filepath, "rb") as f:
+            # Go to end
+            f.seek(0, 2)
+            file_size = f.tell()
+            
+            if file_size == 0:
+                return []
+            
+            # Read backwards to find enough lines
+            lines = []
+            remaining = file_size
+            leftover = b""
+            
+            while remaining > 0 and len(lines) <= limit:
+                read_size = min(chunk_size, remaining)
+                remaining -= read_size
+                f.seek(remaining)
+                chunk = f.read(read_size) + leftover
+                
+                # Split into lines
+                chunk_lines = chunk.split(b"\n")
+                
+                # First part may be partial (save for next iteration)
+                leftover = chunk_lines[0]
+                
+                # Add complete lines (reversed order)
+                lines = chunk_lines[1:] + lines
+            
+            # Handle final leftover
+            if leftover:
+                lines = [leftover] + lines
+            
+            # Take last N non-empty lines
+            recent_lines = [l for l in lines if l.strip()][-limit:]
+            
+            for line in recent_lines:
+                try:
+                    records.append(json.loads(line.decode("utf-8")))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+        
+        return records
