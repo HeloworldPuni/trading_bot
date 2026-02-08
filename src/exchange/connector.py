@@ -2,10 +2,39 @@
 import ccxt
 import logging
 import time
+import functools
 from typing import Dict, Any, List, Optional
 from src.config import Config
 
 logger = logging.getLogger(__name__)
+
+def retry_with_backoff(max_retries: int = 3, base_delay: float = 1.0):
+    """Decorator for exponential backoff retry on API failures."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    result = func(self, *args, **kwargs)
+                    # Reset failure count on success
+                    self._consecutive_failures = 0
+                    return result
+                except Exception as e:
+                    delay = base_delay * (2 ** attempt)
+                    self._consecutive_failures += 1
+                    
+                    # Alert on repeated failures
+                    if self._consecutive_failures >= 5:
+                        logger.error(f"⚠️ EXCHANGE HEALTH: {self._consecutive_failures} consecutive API failures!")
+                    
+                    if attempt < max_retries - 1:
+                        logger.warning(f"API call failed (attempt {attempt+1}/{max_retries}): {e}. Retrying in {delay}s...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"API call failed after {max_retries} attempts: {e}")
+                        raise
+        return wrapper
+    return decorator
 
 class BinanceConnector:
     # Cache TTL in seconds
@@ -18,6 +47,7 @@ class BinanceConnector:
         self._ticker_cache_time: float = 0
         self._ohlcv_cache: Dict[str, List] = {}
         self._ohlcv_cache_time: Dict[str, float] = {}
+        self._consecutive_failures: int = 0  # Track API health
         self._connect()
 
     def _connect(self):

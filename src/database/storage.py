@@ -2,10 +2,19 @@
 import json
 import os
 import uuid
+import contextlib
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from src.config import Config
 from src.core.definitions import MarketState, Action
+
+# File locking - Windows vs Unix
+try:
+    import msvcrt  # Windows
+    WINDOWS = True
+except ImportError:
+    import fcntl  # Unix
+    WINDOWS = False
 
 class ExperienceDB:
     def __init__(self, filename: str = "experience_log.jsonl", log_suffix: Optional[str] = None, data_path: Optional[str] = None):
@@ -24,7 +33,9 @@ class ExperienceDB:
         # Allow data_path override for test isolation
         base_path = data_path if data_path else Config.DATA_PATH
         self.filepath = os.path.join(base_path, filename)
+        self.lockpath = self.filepath + ".lock"
         self._ensure_dir()
+
         self.stats = {
             "total": 0,
             "strategies": {},
@@ -42,6 +53,32 @@ class ExperienceDB:
 
     def _ensure_dir(self):
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+    
+    @contextlib.contextmanager
+    def _file_lock(self, filepath: str, mode: str = 'a'):
+        """
+        Cross-platform file locking context manager.
+        Ensures safe writes even in multi-process scenarios.
+        """
+        f = open(filepath, mode, encoding='utf-8')
+        try:
+            if WINDOWS:
+                # Windows: lock the file
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                # Unix: use flock
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            yield f
+        finally:
+            if WINDOWS:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                except:
+                    pass
+            else:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            f.close()
+
 
     def _load_stats(self):
         if not os.path.exists(self.filepath):

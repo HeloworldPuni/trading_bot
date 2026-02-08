@@ -32,16 +32,17 @@ class Config:
     SCAN_TIMEFRAME = "15m"  # 15-minute candles for faster signals
     
     # Smart Leverage Config (Phase 35)
-    BASE_LEVERAGE = 10          # Use max leverage to keep capital available for more positions
-    MAX_LEVERAGE = 10           # Maximum leverage for high confidence trades
-    MIN_LEVERAGE = 5            # Minimum leverage (still efficient)
-    MAX_POSITION_PCT = 0.10     # 10% of balance per position (was 30%)
-    MAX_CONCURRENT_POSITIONS = 999  # Unlimited - cooldown is the protection
-    LEVERAGE_SCALING = False    # Disable scaling - always use max leverage
+    # Leverage settings now respect TRADING_MODE for safety
+    BASE_LEVERAGE = int(os.getenv("BASE_LEVERAGE", "10" if TRADING_MODE == "paper" else "2"))
+    MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "10" if TRADING_MODE == "paper" else "5"))
+    MIN_LEVERAGE = int(os.getenv("MIN_LEVERAGE", "5" if TRADING_MODE == "paper" else "1"))
+    MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "0.10"))  # 10% of balance per position
+    MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS", "20" if TRADING_MODE == "paper" else "5"))  # Conservative live defaults
+    LEVERAGE_SCALING = os.getenv("LEVERAGE_SCALING", "true" if TRADING_MODE == "live" else "false").lower() == "true"
     
     # Phase 2: Single Position Per Symbol (cooldown protects capital)
     MAX_POSITIONS_PER_SYMBOL = 1   # 1 position per coin (prevents margin overwrite bug)
-    ENTRY_COOLDOWN_MINUTES = 30    # Cooldown between entries on same coin
+    ENTRY_COOLDOWN_MINUTES = int(os.getenv("ENTRY_COOLDOWN_MINUTES", "30"))
     
     # Phase 5: Scalp vs Swing Mode
     SCALP_TP_PCT = 1.5    # Take profit for scalp trades
