@@ -161,22 +161,44 @@ class DataFeeder:
         return ema
 
     def _calculate_macd(self, prices: List[float], slow=26, fast=12, signal=9) -> tuple:
+        """
+        Calculate MACD using single-pass O(n) incremental EMAs.
+        Much more efficient than the previous O(n²) slice-based approach.
+        """
         if len(prices) < slow + signal:
             return 0.0, 0.0, 0.0
         
-        # We need a series of MACD values to calculate the Signal line
-        macd_series = []
-        for i in range(slow, len(prices) + 1):
-            slice = prices[:i]
-            ema_fast = self._calculate_ema(slice, fast)
-            ema_slow = self._calculate_ema(slice, slow)
-            macd_series.append(ema_fast - ema_slow)
-            
-        macd_line = macd_series[-1]
-        macd_signal = self._calculate_ema(macd_series, signal)
-        macd_hist = macd_line - macd_signal
+        # Incremental EMA calculation
+        alpha_fast = 2 / (fast + 1)
+        alpha_slow = 2 / (slow + 1)
+        alpha_signal = 2 / (signal + 1)
         
-        return macd_line, macd_signal, macd_hist
+        # Initialize EMAs with first value
+        ema_fast = prices[0]
+        ema_slow = prices[0]
+        
+        # Single-pass through prices to build MACD series
+        macd_series = []
+        for i, price in enumerate(prices):
+            ema_fast = (price * alpha_fast) + (ema_fast * (1 - alpha_fast))
+            ema_slow = (price * alpha_slow) + (ema_slow * (1 - alpha_slow))
+            
+            # Start recording MACD values after slow period stabilizes
+            if i >= slow - 1:
+                macd_series.append(ema_fast - ema_slow)
+        
+        if not macd_series:
+            return 0.0, 0.0, 0.0
+            
+        # Calculate signal line (EMA of MACD series)
+        ema_signal = macd_series[0]
+        for macd_val in macd_series:
+            ema_signal = (macd_val * alpha_signal) + (ema_signal * (1 - alpha_signal))
+        
+        macd_line = macd_series[-1]
+        macd_hist = macd_line - ema_signal
+        
+        return macd_line, ema_signal, macd_hist
 
     def _calculate_bollinger_bands(self, prices: List[float], period=20, std_dev=2) -> tuple:
         if len(prices) < period:

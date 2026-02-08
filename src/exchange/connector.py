@@ -1,14 +1,23 @@
 
 import ccxt
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from src.config import Config
 
 logger = logging.getLogger(__name__)
 
 class BinanceConnector:
+    # Cache TTL in seconds
+    TICKER_CACHE_TTL = 30  # Refresh tickers every 30 seconds
+    OHLCV_CACHE_TTL = 60   # Refresh OHLCV every 60 seconds
+    
     def __init__(self):
         self.exchange = None
+        self._ticker_cache: Dict[str, Dict] = {}
+        self._ticker_cache_time: float = 0
+        self._ohlcv_cache: Dict[str, List] = {}
+        self._ohlcv_cache_time: Dict[str, float] = {}
         self._connect()
 
     def _connect(self):
@@ -29,12 +38,26 @@ class BinanceConnector:
             raise
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 100) -> List[List]:
-        """Fetches OHLCV data."""
+        """Fetches OHLCV data with caching to reduce API calls."""
+        cache_key = f"{symbol}_{timeframe}_{limit}"
+        now = time.time()
+        
+        # Return cached data if still valid
+        if cache_key in self._ohlcv_cache:
+            cache_time = self._ohlcv_cache_time.get(cache_key, 0)
+            if now - cache_time < self.OHLCV_CACHE_TTL:
+                return self._ohlcv_cache[cache_key]
+        
+        # Fetch fresh data
         try:
-            return self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            data = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            self._ohlcv_cache[cache_key] = data
+            self._ohlcv_cache_time[cache_key] = now
+            return data
         except Exception as e:
             logger.error(f"Error fetching candles for {symbol}: {e}")
-            return []
+            # Return stale cache if available
+            return self._ohlcv_cache.get(cache_key, [])
 
     def fetch_balance(self) -> Dict[str, Any]:
         """Fetches account balance (for live trading)."""
@@ -43,12 +66,40 @@ class BinanceConnector:
         except Exception as e:
             logger.error(f"Error fetching balance: {e}")
             return {}
+    
+    def refresh_all_tickers(self) -> Dict[str, Dict]:
+        """
+        Batch fetch all tickers at once (single API call).
+        Much more efficient than calling fetch_ticker per symbol.
+        """
+        now = time.time()
+        if now - self._ticker_cache_time < self.TICKER_CACHE_TTL and self._ticker_cache:
+            return self._ticker_cache
+        
+        try:
+            self._ticker_cache = self.exchange.fetch_tickers()
+            self._ticker_cache_time = now
+            logger.debug(f"Refreshed {len(self._ticker_cache)} tickers")
+            return self._ticker_cache
+        except Exception as e:
+            logger.error(f"Error batch fetching tickers: {e}")
+            return self._ticker_cache  # Return stale cache on error
             
     def get_market_structure(self, symbol: str):
-        """Fetches ticker/orderbook to help determine volatility/trends."""
+        """
+        Fetches ticker from cache (batch-refreshed).
+        Falls back to direct API call if cache miss.
+        """
+        # Try cache first
+        if symbol in self._ticker_cache:
+            cache_age = time.time() - self._ticker_cache_time
+            if cache_age < self.TICKER_CACHE_TTL:
+                return self._ticker_cache[symbol]
+        
+        # Fallback to direct call
         try:
-             ticker = self.exchange.fetch_ticker(symbol)
-             return ticker
+            ticker = self.exchange.fetch_ticker(symbol)
+            return ticker
         except Exception as e:
             logger.error(f"Error fetching ticker for {symbol}: {e}")
             return None
