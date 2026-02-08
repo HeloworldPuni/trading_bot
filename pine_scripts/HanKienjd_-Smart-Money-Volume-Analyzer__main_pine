@@ -1,0 +1,436 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ask2maniish
+
+//@version=6
+indicator("Ask2Maniish- Enrich-SMV Smart Money Volume Analyzer", shorttitle = 'Enrich-SMV', max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 500, overlay=false)
+import TradingView/ta/9
+
+tip1 = "Multiple(x) of Volume MA Length"
+tip2 = "1. Volume Spike-High volume surge-Orange- 🔥 \n2. Extreme Low Volume-Lowest activity-purple🟣\n3. Higher Volume (Above Avg.)- Strong increase in volume -Lime Green🟢\n4. Higher Volume (Below Avg.)- Weak increase in volume -Green🟩\n5. Lower Volume (Above Avg.)- High but declining volume -Maroon🟥\n6. Lower Volume (Below Avg.)- Weak market participation -Red🔴\n7. Default (Neutral Volume)- No significant change -Gray⚪"
+tip3 = "Direction to understand:->[(A:) BullTrend Condition = Long-term < Mid-term and Mid-term < Short-term & (B:) BearTrend Condition = Long-term > Mid-term and Mid-term > Short-term]1.🟢 Green line for Uptrend, 2. 🔴 Red line for Downtrend, 3. 🟡 Yellow line for Sideways"
+tip4 = "Number of bars to look back for identifying pivot points"
+tip5  = "Divides the main period by this number to get confirmation length"
+tip6  = "Number of recent swing points to keep in memory"
+tip7  = "Length of ATR calculation for tolerance"
+tip8  = "Multiplier for ATR tolerance"
+tip9  = "Select no. of Support/Resistance zone. In this zones there are solid lines or dashed lines. Interpretation:-->> 🟡This logic dynamically adjusts how a line is displayed based on candle size:🟡If the candle is relatively large (> 1.5 of normalized size), a solid line is used.🟡If it's not as large but still big (> 1), a dashed line is used.🟡This can be useful in indicators where candle size plays a role in visualization, such as strength of the zones,trend analysis or volatility detection."
+tip10 = "Direction to understand:->[(A:) BullTrend Condition = Ema200 < Long-term and Long-term < Mid-term and Mid-term < Short-term & (B:) Ema200 > Long-term and Long-term > Mid-term and Mid-term > Short-term]1.🟢 Green line for Uptrend, 2. 🔴 Red line for Downtrend, 3. 🟡 Yellow line for Sideways"
+tip11 = "offset=1 used to distinct Long-term MA & Long-term MA Trend detection"
+
+////////////// "User inputs" //////////////
+
+volLength = input(20, title="Volume MA Length")
+volume_multi= input.float(2, step = 0.1, title="Volume MA Length (x)",tooltip = tip1 )
+showVolMA = input.bool(true, title="►Show Volume MA")
+highVolumeMultiplier = input.float(2.0, step = 0.1, title="High Volume Spike Multiplier")
+lowVolumeMultiplier = input.float(0.5, step = 0.1, title="Low Volume Multiplier")
+adaptiveMultiplier = input.bool(false, title=" ►Use ATR-Based Multiplier")
+highlightOpacity = input.int(100, title="Highlight Opacity (0-100)", tooltip = tip2)
+
+showLiquidityZones = input.bool(false, title="►Show Liquidity Zones")
+showTable = input.bool(true, title="►Show Volume Table")
+tableLocation = input.string("Bottom Left", title="Table Location", 
+     options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left","Middle Right"])
+applyCandleColor = input.bool(true, title="►Enable Candle Color Highlighting🟩")
+confirm_tf = input.timeframe('', title="⏰ Higher Timeframe Confirmation")
+showVWAP = input(false, title=" ►Show VWAP ")
+showBullishFVG = input(true, "Show Bullish FVG",group="Fair Value Gap")
+showBearishFVG = input(true, "Show Bearish FVG",group="Fair Value Gap")
+
+atrLength = 14
+
+////////////// "show/hide VWAP" ////////////
+// Determine if the session is intraday
+isIntraday = timeframe.isintraday
+// Calculate VWAP
+vwap = ta.vwap
+
+//////////////// "User Inputs for FVG Visibility" ////////////// 
+// Define candle values
+candle1_high = high[2]
+candle1_low = low[2]
+candle1_body = math.abs(close[2] - open[2]) // Body of first candle
+
+candle2_high = high[1]
+candle2_low = low[1]
+candle2_body = math.abs(close[1] - open[1]) // Body of middle candle
+
+candle3_high = high
+candle3_low = low
+candle3_body = math.abs(close - open) // Body of last candle
+
+// --- Bullish FVG Conditions ---
+validBullishFVG = candle1_high < candle3_low // First candle’s high < Last candle’s low (Gap exists)
+strongMiddleCandle = candle2_body > candle1_body and candle2_body > candle3_body // Middle candle has biggest body
+bullishFVG = validBullishFVG and strongMiddleCandle
+
+// --- Bearish FVG Conditions ---
+validBearishFVG = candle1_low > candle3_high // First candle’s low > Last candle’s high (Gap exists)
+bearishFVG = validBearishFVG and strongMiddleCandle
+
+// Draw Bullish FVG Box
+if bullishFVG and showBullishFVG
+    box.new( left = bar_index - 2, right = bar_index,  top = candle3_low, bottom = candle1_high,  bgcolor = color.new(color.green, 80),  border_width = 1, border_color = color.green,force_overlay = true )
+
+// Draw Bearish FVG Box
+if bearishFVG and showBearishFVG
+    box.new(left = bar_index - 2, right = bar_index, top = candle1_low, bottom = candle3_high, bgcolor = color.new(color.red, 80),  border_width = 1, border_color = color.red ,force_overlay = true )
+
+// Get volume metrics
+currentVolume = volume
+previousVolume = nz(volume[1])
+volMA = ta.sma(volume, volLength)
+volMA2x = volMA * volume_multi
+
+// ATR-based dynamic multiplier
+atrValue = ta.atr(atrLength)
+dynamicHighVolumeMultiplier = atrValue * highVolumeMultiplier
+atrAdjusted = adaptiveMultiplier ? atrValue * highVolumeMultiplier : 0
+finalHighVolumeMultiplier = adaptiveMultiplier ? dynamicHighVolumeMultiplier : highVolumeMultiplier
+
+// Liquidity Zone Calculation
+liqHigh = ta.highest(high, volLength)
+liqLow = ta.lowest(low, volLength)
+
+// Volume Conditions
+isVolumeSpike = currentVolume > volMA * finalHighVolumeMultiplier
+isExtremeLow = currentVolume < volMA * lowVolumeMultiplier
+isHigher = currentVolume > previousVolume
+isLower = currentVolume < previousVolume
+isAboveAvg = currentVolume > volMA
+
+// Assign Colors with Transparency
+getColor(col) => color.new(col, 100 - highlightOpacity)
+
+// Assign color based on volume behavior
+barColor = isVolumeSpike ? getColor(color.orange) :
+           isExtremeLow  ? getColor(color.purple) :
+           isHigher      ? (isAboveAvg ? getColor(color.lime) : getColor(color.rgb(16, 102, 19))) :
+           isLower       ? (isAboveAvg ? getColor(color.maroon) : getColor(color.red)) :
+                          getColor(color.gray)
+
+// Apply colors based on toggle
+barcolor(applyCandleColor ? barColor : na)
+
+plot(volume, title="Volume", color=barColor, style=plot.style_columns, force_overlay=false)
+plot(showVolMA ? volMA : na, title="Volume MA", color=color.blue, linewidth=2)
+plot(showVolMA ? volMA2x : na, color=#0acde7, title="Volume Multiple MA", linewidth=2, style=plot.style_line, display = display.all)
+
+// Liquidity Zone Shading
+bgcolor(showLiquidityZones ? (close > liqHigh ? color.green : close < liqLow ? color.red : na) : na)
+
+// Plot Liquidity Zones
+plot(showLiquidityZones ? liqHigh : na, title="Liquidity High", color=color.red, linewidth=1, style=plot.style_line, force_overlay=true)
+plot(showLiquidityZones ? liqLow : na, title="Liquidity Low", color=color.green, linewidth=1, style=plot.style_line, force_overlay=true)
+
+// Alerts
+alertcondition(isVolumeSpike, title="Volume Spike Alert", message="Volume spike detected!")
+alertcondition(close > liqHigh, title="Price Above Liquidity Zone", message="Price has entered above the liquidity high zone!")
+alertcondition(close < liqLow, title="Price Below Liquidity Zone", message="Price has entered below the liquidity low zone!")
+
+// Convert user selection to table position
+tablePos = tableLocation == "Top Left" ? position.top_left :
+           tableLocation == "Top Right" ? position.top_right :
+           tableLocation == "Bottom Left" ? position.bottom_left :
+           tableLocation == "Bottom Right" ? position.bottom_right :
+           tableLocation == "Middle Left" ? position.middle_left :
+           position.middle_right
+
+// Create a summary table on the price chart
+//var table volTable = table.new(tablePos, 2, 5, border_width=1)
+
+// Define volume condition as a string
+volCondition = isVolumeSpike ? "🔥 Volume Spike" :
+              isExtremeLow  ? "🟣 Extreme Low Volume" :
+              isHigher      ? (isAboveAvg ? "🟩 Higher Volume (Above ▲ Avg.)" : "🟢 Higher Volume (Below ▼ Avg.)") : 
+              isLower       ? (isAboveAvg ? "🟥 Lower Volume (Above🔺Avg.)" : "🔴 Lower Volume (Below🔻Avg.)") :
+                             "⚪ Neutral Volume"
+
+// Create table only if showTable is enabled
+if showTable //and bar_index % 10 == 0  // Update table every 10 bars // 
+    volTable = table.new(tablePos, 2, 5, border_width=1)
+    
+    table.cell(volTable, 0, 0, "Condition", text_color=color.white, text_size=size.small, bgcolor=color.blue)
+    table.cell(volTable, 1, 0, volCondition, text_color=color.blue, text_size=size.small, bgcolor=color.white)
+
+    table.cell(volTable, 0, 1, "(A) Volume", text_color=color.blue, text_size=size.small, bgcolor=color.white)
+    table.cell(volTable, 1, 1, str.tostring(currentVolume, "#"), text_color=color.blue, text_size=size.small, bgcolor=color.white)
+
+    table.cell(volTable, 0, 2, "(B) Previous Volume", text_color=color.blue, text_size=size.small, bgcolor=color.white)
+    table.cell(volTable, 1, 2, str.tostring(previousVolume, "#"), text_color=color.blue, text_size=size.small, bgcolor=color.white)
+
+    table.cell(volTable, 0, 3, "(C) Volume MA", text_color=color.blue, text_size=size.small, bgcolor=color.white)
+    table.cell(volTable, 1, 3, str.tostring(volMA, "#"), text_color=color.blue, text_size=size.small, bgcolor=color.white)
+
+    table.cell(volTable, 0, 4, "(D) Multiplier(A/C)", text_color=color.blue, text_size=size.small, bgcolor=color.white)
+    table.cell(volTable, 1, 4, str.tostring(currentVolume / volMA, "#.##") + "x", text_color=color.blue, text_size=size.small, bgcolor=color.white)
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////   "Moving Average"  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Function to calculate different types of Moving Averages
+ma(source, length, type) =>
+    type == 'SMA' ? ta.sma(source, length) : type == 'EMA' ? ta.ema(source, length) : type == 'HMA' ? ta.hma(source, length) : type == 'SMMA (RMA)' ? ta.rma(source, length) : type == 'WMA' ? ta.wma(source, length) : type == 'VWMA' ? ta.vwma(source, length) : na
+
+// Short-term Moving Average
+show_ma1 = input(false, 'Short-term MA ', inline='MA #1', group='Short term Moving Average') 
+ma1_type = input.string('EMA', '', inline='MA #1', options=['SMA', 'EMA', 'HMA', 'SMMA (RMA)', 'WMA', 'VWMA'])
+ma1_source = input(close, '', inline='MA #1')
+ma1_length = input.int(10, '', inline='MA #1', minval=1, maxval=50)
+ma1_color = input.color(#4caf50, '', inline='MA #1')
+ma1 = ma(ma1_source, ma1_length, ma1_type)
+
+// Mid-term Moving Average
+show_ma2 = input(false, 'Mid-term MA', inline='MA #2', group='Mid term Moving Average')
+ma2_type = input.string('EMA', '', inline='MA #2', options=['SMA', 'EMA', 'HMA', 'SMMA (RMA)', 'WMA', 'VWMA'])
+ma2_source = input(close, '', inline='MA #2')
+ma2_length = input.int(20, '', inline='MA #2', minval=1, maxval=100)
+ma2_color = input.color(#2962ff, '', inline='MA #2')
+ma2 = ma(ma2_source, ma2_length, ma2_type)
+
+// Long-term Moving Average
+show_ma3 = input(false, 'Long-trme MA ✅', inline='MA #3', group='Long term Moving Average')
+ma3_type = input.string('EMA', '', inline='MA #3', options=['EMA'])
+ma3_source = input(close, '', inline='MA #3')
+ma3_length = input.int(50, '', inline='MA #3', minval=1, maxval=150)
+ma3_color = input.color(#00ffff, '', inline='MA #3',tooltip = tip11)
+ma3 = ma(ma3_source, ma3_length, ma3_type)
+
+// === Toggle for Trend Detection ===
+show_trend = input(false, "Show Trend Detection of Long-term MA ✅", group='Trend Detection using Long-term MA ✅', tooltip = tip3, inline = "show_trend")
+show_trend_EMA200 = input(false, "Show Trend Detection of 200 Days", group='Trend Detection using 200 EMAs', tooltip = tip10, inline = "show_trend_EMA200")
+
+// Trend Detection using EMAs
+Shortterm  = ta.ema(close, ma1_length)
+Midterm  = ta.ema(close, ma2_length)
+Longterm = ta.ema(close, ma3_length)
+Ema200 = ta.ema(close, 200)
+
+bearTrend = Longterm > Midterm and Midterm > Shortterm  // Bearish Trend Condition
+bullTrend = Longterm < Midterm and Midterm < Shortterm  // Bullish Trend Condition
+
+// For 200 days EMA
+bearTrend_200 = Ema200 > Longterm and Longterm > Midterm and Midterm > Shortterm  // Bearish Trend Condition
+bullTrend_200 = Ema200 < Longterm and Longterm < Midterm and Midterm < Shortterm   // Bullish Trend Condition
+
+// Fill zones between EMA20 & EMA50
+//z1 = plot(Shortterm, color=na)
+//z2 = plot(Midterm, color=na)
+//fill(z1, z2, color=bearTrend ? color.new(color.red, 75) : bullTrend ? color.new(color.green, 75) : na, fillgaps=true)
+
+// Plot Moving Averages if enabled
+plot(show_ma1 ? ma1 : na, color=ma1_color, title='Short-term MA', linewidth=2, force_overlay=true)                              
+plot(show_ma2 ? ma2 : na, color=ma2_color, title='Mid-term MA', linewidth=2, force_overlay=true)
+plot(show_ma3 ? ma3 : na, color=ma3_color, title='Long-term MA*', linewidth=2, offset=1 ,force_overlay=true)
+
+// // Plot Longterm EMA with trend color when trend detection is enabled
+plot(show_trend ? Longterm : na, color=show_trend ? (bearTrend ? color.red : bullTrend ? color.green : color.yellow) : na, linewidth=3, offset=0 , title="Long-term MA Trend detection ✅", force_overlay=true)
+
+//Plot EMA 200 with trend color when trend detection is enabled
+plot(show_trend_EMA200 ? Ema200 : na, color=show_trend_EMA200 ? (bearTrend ? color.red : bullTrend ? color.green : color.yellow) : na, linewidth=5, title="200 EMA Trend detection", force_overlay=true)
+
+// Plot VWAP only if enabled and during intraday sessions
+plot(showVWAP and isIntraday ? vwap : na, title="VWAP", color=color.teal, linewidth=2,force_overlay = true)
+
+
+//////////////////////////////////////////////////////////////////////////////////////////   "Resistance & Support using Pivot Method & Fractal Method"  ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// === User Inputs ===
+x = input.int(10, title="Period", minval=1, group="Pivot Settings", tooltip= tip4)
+x__ = input.int(2, title="Confirmation Multiplier", minval=1, maxval=10, group="Pivot Settings", tooltip=tip5)
+Y = input.int(3, title="Swing Points Memory", minval=1, group="Pivot Settings", tooltip=tip6)
+atrLength_swing = input.int(40, title="ATR Length", minval=1, group="Pivot Settings", tooltip=tip7)
+atrMultiplier_swing  = input.float(2.0, title="ATR Multiplier", minval=0.1, group="Pivot Settings",tooltip=tip8)
+
+// === Method Selection ===
+usePivot = input.bool(true, title="Use Pivot Method", group="Method Selection")
+useFractal = input.bool(true, title="Use Fractal Method", group="Method Selection")
+useVolumeFilter = input.bool(false, title="Enable Volume Confirmation", group="Method Selection")
+//confirm_tf = input.timeframe("D", title="⏰ Higher Timeframe Confirmation", group="Method Selection")
+
+// === Resistance & Support Settings ===
+pivotLeft   = input.int(20, title="Pivot Left", minval=1, group="Resistance/Support")
+pivotRight  = input.int(20, title="Pivot Right", minval=1, group="Resistance/Support")
+fractalLeft  = input.int(20, title="Fractal Left", minval=1, group="Resistance/Support")
+fractalRight = input.int(20, title="Fractal Right", minval=1, group="Resistance/Support")
+
+// === Detect Swing Points ===
+ph_pivot = usePivot ? ta.pivothigh(high, pivotLeft, pivotRight) : na
+pl_pivot = usePivot ? ta.pivotlow(low, pivotLeft, pivotRight) : na
+ph_fractal = useFractal ? ta.pivothigh(high, fractalLeft, fractalRight) : na
+pl_fractal = useFractal ? ta.pivotlow(low, fractalLeft, fractalRight) : na
+
+// Multi-Timeframe Confirmation
+ph_mtf = request.security(syminfo.tickerid, confirm_tf, ta.pivothigh(high, pivotLeft, pivotRight))
+pl_mtf = request.security(syminfo.tickerid, confirm_tf, ta.pivotlow(low, pivotLeft, pivotRight))
+
+// Volume Filter
+volThreshold = ta.sma(volume, 10) * 1.2  // 20% above average volume
+volConfirm = not useVolumeFilter or volume > volThreshold
+
+// === Combine Swing Logic ===
+shift_val = pivotRight - fractalRight
+var float level_high = na
+var float level_low = na
+var int level_high_index = na
+var int level_low_index = na
+
+if shift_val >= 0
+    if not na(ph_pivot) and not na(ph_fractal[shift_val]) and volConfirm and not na(ph_mtf)
+        level_high := high
+        level_high_index := bar_index
+    if not na(pl_pivot) and not na(pl_fractal[shift_val]) and volConfirm and not na(pl_mtf)
+        level_low := low
+        level_low_index := bar_index
+else
+    if not na(ph_fractal) and not na(ph_pivot[-shift_val]) and volConfirm and not na(ph_mtf)
+        level_high := high
+        level_high_index := bar_index
+    if not na(pl_fractal) and not na(pl_pivot[-shift_val]) and volConfirm and not na(pl_mtf)
+        level_low := low
+        level_low_index := bar_index
+
+// === Determine Plot Offset ===
+plot_offset = math.round((pivotRight + fractalRight) / 2)
+
+// === Plot Signals with Locked Levels ===
+plotshape(bar_index == level_high_index, title="Combined Resistance", style=shape.triangledown, location=location.abovebar,color=color.red, size=size.small, text="Resistance", textcolor=color.red, offset=-plot_offset, force_overlay=true)
+plotshape(bar_index == level_low_index, title="Combined Support", style=shape.triangleup, location=location.belowbar,color=color.green, size=size.small, text="Support", textcolor=color.green, offset=-plot_offset, force_overlay=true)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////   "IMBALANCE"  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+show_IMB = input.bool(true, "Imbalance", group='IMBALANCE')
+
+imbalancecolor = input.color(color.yellow, title="Imbalance Color", group='IMBALANCE')
+fvgTransparency  = input(title="Transparency", defval=80, group='IMBALANCE')
+fvgboxLength = input.int(title='Length', defval=0, group='IMBALANCE')
+
+//@variable: Filter to determine significant imbalances as a percentage
+float filter       = input.float(0.5, "Filter Gaps by %", minval=0, maxval=100, step=0.1)
+
+// Arrays to store boxes
+var boxes1 = array.new<box>(10, box(na))  // Bullish boxes
+var boxes2 = array.new<box>(10, box(na))  // Bearish boxes
+
+// Boolean variables to identify bullish and bearish gaps
+var bool isBull_gap = false  // Initialize with false instead of na
+var bool isBear_gap = false  // Initialize with false instead of na
+
+// Box variables for the current bullish and bearish levels
+var box1 = box(na)
+var box2 = box(na)
+
+// Imbalance Filters
+float filt_up      = (low-high[2])/low*100  // Filter for bullish Imbalance
+float filt_dn      = (low[2]-high) / low[2] *100   // Filter for bearish Imbalance
+
+max_up = ta.highest(filt_up, 200)
+max_dn = ta.highest(filt_dn, 200)
+
+fvgisUp(index) =>
+    close[index] > open[index]
+
+fvgisDown(index) =>
+    close[index] < open[index]
+
+
+fvgisObUp(index) =>
+    fvgisDown(index + 1) and fvgisUp(index) and close[index] > high[index + 1] and filt_up > filter
+
+
+fvgisObDown(index) =>
+    fvgisUp(index + 1) and fvgisDown(index) and close[index] < low[index + 1] and filt_dn > filter
+
+bullishFvg = low[0] > high[2]
+bearishFvg = high[0] < low[2]
+
+show_IMB_value = input.bool(true, "Show imbalance %", group='IMBALANCE')
+
+//text_percentage_value=show_IMB_value
+text_percentage_value = str.tostring(filt_up, format.percent)
+
+// If `show_IMB_value` is false, set text to an empty string
+box_text = show_IMB_value ? text_percentage_value : ""
+
+if bullishFvg and show_IMB
+    box.new(left=bar_index - 1, top=low[0], right=bar_index + fvgboxLength, bottom=high[2], bgcolor=color.new(imbalancecolor, fvgTransparency),text = box_text, text_color = chart.fg_color,text_size = size.auto, border_color=color.new(imbalancecolor, fvgTransparency),force_overlay = true)
+    
+if bearishFvg and show_IMB
+    box.new(left=bar_index - 1, top=low[2], right=bar_index + fvgboxLength, bottom=high[0], bgcolor=color.new(imbalancecolor, fvgTransparency),text = show_IMB_value ? "" + text_percentage_value : "", text_color = chart.fg_color,text_size = size.auto, border_color=color.new(imbalancecolor, fvgTransparency),force_overlay = true)
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////   "Support & Resistance"  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//―――――――― ＩＮＰＵＴＳ ――――――――
+
+// S/R Input settings
+bool show_sr = input.bool(true, " " ,group = "Support & Resistance", inline = "sr") 
+int len = input.int(10, "Support/Resistance", group = "Support & Resistance", inline = "sr")
+int no_of_rs = input.int(6, "Select no. of Support/Resistance", step=1 ,group = "Support & Resistance", inline = "sr", tooltip = tip9)
+
+color bul_col = input.color(color.rgb(0, 230, 119, 70), "", inline = "sr")
+color ber_col = input.color(color.rgb(255, 82, 82, 70), "", inline = "sr")
+
+color m_col = chart.fg_color
+color noneColor = color.new(color.white, 100)
+
+// Normalized Candle Size Calculation
+norm_candle_size() =>
+    ((high - low) / ta.stdev(high - low, 200))
+
+draw_levels() =>
+    // Detect Pivot Highs and Lows
+    float PH = ta.pivothigh(len, len)
+    float PL = ta.pivotlow(len, len)
+    float Atr = ta.atr(200) * 0.3
+
+    // Normalize candle size
+    float candle_size = norm_candle_size()
+    bool big_candle = candle_size[len] > 1
+    style = candle_size[len] > 1.5 ? line.style_solid : line.style_dashed
+
+    // Arrays for lines and boxes
+    var array<line> lines = array.new<line>()
+    var array<box> boxes = array.new<box>()
+
+    // Draw support/resistance levels
+    if big_candle
+        if not na(PH)
+            array.push(lines, line.new(int(bar_index - len), PH, int(bar_index), PH, extend = extend.right, style = style, color = m_col, force_overlay = true))
+            array.push(boxes, box.new(int(bar_index - len), PH + Atr, int(bar_index + 5), PH - Atr, bgcolor = ber_col, border_color = color.rgb(255, 82, 82, 100) ,force_overlay = true))
+
+        if not na(PL)
+            array.push(lines, line.new(int(bar_index - len), PL, int(bar_index), PL, extend = extend.right, style = style, color = m_col, force_overlay = true))
+            array.push(boxes, box.new(int(bar_index - len), PL + Atr, int(bar_index + 5), PL - Atr, bgcolor = bul_col,border_color = color.rgb(0, 230, 119, 100) , force_overlay = true))
+
+    // Update levels when price interacts
+    if array.size(lines) > 0  // ✅ Check if array has elements before looping
+        for i = 0 to array.size(lines) - 1
+            line line_id = array.get(lines, i)
+            float level = line_id.get_y1()
+            box box_id = array.get(boxes, i)
+
+            box.set_right(box_id, int(bar_index + 10))    
+
+            if high[1] > level and high < level
+                box.set_lefttop(box_id, int(bar_index), level + Atr)
+                box.set_rightbottom(box_id, int(bar_index + 5), level - Atr)
+                box.set_bgcolor(box_id, ber_col)
+
+            if low[1] < level and low > level
+                box.set_lefttop(box_id, int(bar_index), level + Atr)
+                box.set_rightbottom(box_id, int(bar_index + 5), level - Atr)
+                box.set_bgcolor(box_id, bul_col)
+
+    // Cleanup excess levels
+    if array.size(lines) > no_of_rs  //6    
+        line.delete(array.shift(lines))
+        box.delete(array.shift(boxes))
+
+// Call function to draw levels
+if show_sr
+    draw_levels()
+    
+var table logo = table.new(position.bottom_right, 1, 1)
+table.cell(logo, 0, 0, "ask2maniish🎯  ", text_size=size.normal, text_color=color.black)
+
+/////////////////////////////////////////////////////////////////////////////// Momentum Shift /////////////////////////////////////////////////////////////////////////////
+

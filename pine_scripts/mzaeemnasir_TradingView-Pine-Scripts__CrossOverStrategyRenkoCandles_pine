@@ -1,0 +1,173 @@
+//@version=5
+// this line must be added
+// Ema Cross Over Strategy + MACD + Ema/Vwap + Trailing Stop Loss + renko candles
+
+
+strategy(title="Strategy 2 v0.3", initial_capital = 1000,overlay = true)
+
+// Getting Renko Candles
+
+ticker = ticker.renko(symbol = syminfo.ticker,source = "Close", style= "ATR",param = 14,request_wicks = true)
+[renkoOpen,renkoHigh,renkoLow,renkoClose] = request.security(symbol = ticker, timeframe =timeframe.period, expression = [open,high,low,close]) 
+
+renkoHl2 = (renkoHigh + renkoLow) / 2
+renkoHlc3 = (renkoHigh + renkoLow + renkoClose) / 3
+
+// Getting inputs
+fast_length = input(title="Fast Length", defval=26, group = "MACD Settings")
+slow_length = input(title="Slow Length", defval=100,group = "MACD Settings")
+src = input(title="Source", defval=close,group = "MACD Settings")
+
+src := src == open ? renkoOpen : src == high ? renkoHigh : src == low ? renkoLow : src == hl2 ? renkoHl2 : src == hlc3 ? renkoHlc3 : src == close ? renkoClose : src
+
+signal_length = input.int(title="Signal Smoothing",  minval = 1, maxval = 50, defval = 9,group = "MACD Settings")
+sma_source = input.string(title="Oscillator MA Type",  defval="EMA", options=["SMA", "EMA"],group = "MACD Settings")
+sma_signal = input.string(title="Signal Line MA Type", defval="EMA", options=["SMA", "EMA"],group = "MACD Settings")
+
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(src, fast_length) : ta.ema(src, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(src, slow_length) : ta.ema(src, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+
+
+
+// Main Ema/Vwap
+
+choice = input.bool(defval = true,title = "Vwap",group = "Main Indicator EMA/Vwap")
+
+var ema_length = 0
+var ema_source = renkoClose
+var main_ema = 0.0
+
+if(choice == true)
+    ema_length := input.int(defval = 200, title = "Indicator Length", group = "Main Indicator EMA/Vwap")
+
+    ema_source := input.source(defval = close,group = "Main Indicator EMA/Vwap",title = "Indicator Source")
+    ema_source := ema_source == open ? renkoOpen : ema_source == high ? renkoHigh : ema_source == low ? renkoLow : ema_source == hl2 ? renkoHl2 : ema_source == hlc3 ? renkoHlc3 : ema_source == close ? renkoClose : ema_source
+
+    main_ema := ta.vwap(ema_source)
+
+else
+    ema_length := input.int(defval = 200, title = "Indicator Length", group = "Main Indicator EMA/Vwap")
+
+    ema_source := input.source(defval = close,group = "Main Indicator EMA/Vwap",title = "Indicator Source")
+
+    ema_source := ema_source == open ? renkoOpen : ema_source == high ? renkoHigh : ema_source == low ? renkoLow : ema_source == hl2 ? renkoHl2 : ema_source == hlc3 ? renkoHlc3 : ema_source == close ? renkoClose : ema_source
+
+    main_ema := ta.ema(ema_source,ema_length)
+
+shortTrades = input.bool(defval = true,title = "Do Short Trades ? ")
+longTrades = input.bool(defval = true,title = "Do Long Trades ? ")
+
+// Variables
+var ok = 0
+var countBuy = 0
+var countSell = 0
+src2 = input(close, title='OHLC Type')
+src2 := src2 == open ? renkoOpen : src2 == high ? renkoHigh : src2 == low ? renkoLow : src2 == hl2 ? renkoHl2 : src2 == hlc3 ? renkoHlc3 : src2 == close ? renkoClose : src2
+
+
+i_fastEMA = input(12, title='Fast EMA')
+i_slowEMA = input(25, title='Slow EMA')
+i_defEMA = input(25, title='Consolidated EMA')
+
+// Allow the option to show single or double EMA
+i_bothEMAs = input(title='Show Both EMAs', defval=true)
+
+// Define EMAs
+v_fastEMA = ta.ema(src2, i_fastEMA)
+v_slowEMA = ta.ema(src2, i_slowEMA)
+v_biasEMA = ta.ema(src2, i_defEMA)
+
+// Color the EMAs
+emaColor = v_fastEMA > v_slowEMA ? color.green : v_fastEMA < v_slowEMA ? color.red : #FF530D
+
+
+// Colour the bars
+buy = v_fastEMA > v_slowEMA
+sell = v_fastEMA < v_slowEMA
+
+if buy
+    countBuy += 1
+    countBuy
+
+if buy
+    countSell := 0
+    countSell
+
+if sell
+    countSell += 1
+    countSell
+
+if sell
+    countBuy := 0
+    countBuy
+
+buysignal = countBuy < 2 and countBuy > 0 and countSell < 1 and buy and not buy[1]
+sellsignal = countSell > 0 and countSell < 2 and countBuy < 1 and sell and not sell[1]
+
+
+var inLongTrade = 0
+
+var inShortTrade = 0
+
+
+var stopLoss = 0.0
+var takeProfit = 0.0
+var candleIndex = 0
+
+takeProfitFactor = input.float(title = "TakeProfit Factor",defval = 2,minval = 0.1)
+trailPercent = input.float(title = "Trailing Percentage",defval = 1)
+var float trailingStopLoss = 0.00
+var float trailingPoints = 0.00
+var int ticksBetweenValues = 0
+
+if buysignal and renkoClose > main_ema and hist > 0 and longTrades 
+    stopLoss := math.min(renkoLow[0],renkoLow[1],renkoLow[2])
+    var quant = strategy.initial_capital / renkoClose
+    strategy.entry("Long",strategy.long,qty = quant)
+    candleIndex := bar_index
+
+    takeProfit := renkoClose + (takeProfitFactor * math.abs(renkoClose - stopLoss)) //+ ((renkoClose - stopLoss) / 2) + (renkoClose - stopLoss) 
+    trailingStopLoss := math.round(renkoClose - (renkoClose * (trailPercent / 100)),2)
+    // trailingPoints := 
+
+    ticksBetweenValues := math.round(math.abs(trailingStopLoss - renkoClose) / syminfo.mintick)
+
+
+    inLongTrade := 1
+    inShortTrade := 0
+
+if sellsignal and main_ema > renkoClose and hist < 0 and shortTrades
+    stopLoss := math.max(renkoHigh[0],renkoHigh[1],renkoHigh[2])
+    var quant = strategy.initial_capital / renkoClose
+    strategy.entry("Short",strategy.short,qty = quant)
+    // takeProfit := stopLoss - renkoClose 
+    takeProfit := renkoClose - (takeProfitFactor * math.abs(stopLoss - renkoClose)) 
+
+    // Doing Traing Stop Loss
+    trailingStopLoss := math.round(renkoClose + (renkoClose * (trailPercent / 100)),2)
+    ticksBetweenValues := math.round(math.abs(trailingStopLoss - renkoClose) / syminfo.mintick)
+
+
+    candleIndex := bar_index
+    inShortTrade := 1
+    inLongTrade := 0
+
+if strategy.position_size == 0 
+    trailingStopLoss := trailingStopLoss
+
+if inLongTrade and strategy.position_size > 0
+    // if renkoClose > strategy.position_avg_price
+    strategy.exit("LongExit",qty = strategy.position_size,stop = stopLoss, trail_price = takeProfit , trail_offset = ticksBetweenValues)
+
+if inShortTrade and strategy.position_size < 0 
+    strategy.exit("ShortExit",qty = strategy.position_size,stop = stopLoss, trail_price = takeProfit , trail_offset = ticksBetweenValues)
+
+// plot(stopLoss)
+plot(trailingStopLoss)
+plot(takeProfit,color=color.green)
+plot(stopLoss,color=color.red)
+

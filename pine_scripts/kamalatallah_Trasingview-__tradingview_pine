@@ -1,0 +1,154 @@
+//@version=5
+indicator("تحليل هيكل السوق والمناطق المهمة + تأكيدات دخول", overlay=true)
+
+// === إعداد الفريمات ===
+htf = "D"     // فريم يومي
+mtf = "240"   // فريم 4 ساعات
+ltf = "60"    // فريم ساعة
+tf1 = "1"     // فريم دقيقة
+tf5 = "5"     // فريم 5 دقائق
+tf15 = "15"   // فريم 15 دقيقة
+
+// === دالة الكشف عن Swing High و Swing Low ===
+f_findSwing() =>
+    var float lastSwingHigh = na
+    var float lastSwingLow = na
+    var int lastSwingHighBar = na
+    var int lastSwingLowBar = na
+
+    isSwingHigh = high[1] > high and high[1] > high[2]
+    isSwingLow = low[1] < low and low[1] < low[2]
+
+    if isSwingHigh
+        lastSwingHigh := high[1]
+        lastSwingHighBar := bar_index - 1
+    if isSwingLow
+        lastSwingLow := low[1]
+        lastSwingLowBar := bar_index - 1
+
+    [lastSwingHigh, lastSwingLow, lastSwingHighBar, lastSwingLowBar]
+
+// ==================== القسم الأول: تحليل فريم يومي ====================
+// بيانات الفريم اليومي
+[dhHigh, dhLow, dhHighBar, dhLowBar] = request.security(syminfo.tickerid, htf, f_findSwing())
+
+// تحديد الاتجاه اليومي (BOS فقط، بدون فلاتر)
+var string dailyTrend = "غير محدد"
+if (dhHigh > dhHigh[1])
+    dailyTrend := "صاعد"
+else if (dhLow < dhLow[1])
+    dailyTrend := "هابط"
+
+// رسم القمم والقيعان اليومية
+plot(dhHigh, color=color.red, title="Daily Swing High", linewidth=2)
+plot(dhLow, color=color.green, title="Daily Swing Low", linewidth=2)
+
+// عرض الاتجاه اليومي على الشارت
+var label dailyLabel = na
+if (barstate.islast)
+    label.delete(dailyLabel)
+    dailyLabel := label.new(bar_index, high, "اتجاه يومي: " + dailyTrend, style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.normal)
+
+// ==================== القسم الثاني: تحليل فريم 4 ساعات ====================
+// بيانات فريم 4 ساعات
+[h4High, h4Low, h4HighBar, h4LowBar] = request.security(syminfo.tickerid, mtf, f_findSwing())
+
+// تحديد الاتجاه العام على فريم 4 ساعات (هيكل داخلي وخارجي بدون فلاتر)
+var string mtfTrend = "غير محدد"
+if (h4High > h4High[1])
+    mtfTrend := "صاعد"
+else if (h4Low < h4Low[1])
+    mtfTrend := "هابط"
+
+// رسم القمم والقيعان 4 ساعات
+plot(h4High, color=color.orange, title="4H Swing High", linewidth=2)
+plot(h4Low, color=color.teal, title="4H Swing Low", linewidth=2)
+
+// رسم خطوط BOS و MSS مع تسمية فوق الخط
+var line bosLine = na
+var line mssLine = na
+
+// BOS (Break of Structure) 4 ساعات صاعد
+if (h4High > h4High[1])
+    line.new(x1=bar_index-1, y1=h4High[1], x2=bar_index, y2=h4High, color=color.green, width=2, style=line.style_dashed)
+    label.new(bar_index, h4High, "BOS صاعد", color=color.green, style=label.style_label_up, textcolor=color.white, size=size.small)
+
+// BOS هابط
+if (h4Low < h4Low[1])
+    line.new(x1=bar_index-1, y1=h4Low[1], x2=bar_index, y2=h4Low, color=color.red, width=2, style=line.style_dashed)
+    label.new(bar_index, h4Low, "BOS هابط", color=color.red, style=label.style_label_down, textcolor=color.white, size=size.small)
+
+// MSS (Market Structure Shift) تمييز بسيط (كمثال)
+mssBullish = (h4Low > h4Low[1]) and (h4High < h4High[1])
+mssBearish = (h4High < h4High[1]) and (h4Low > h4Low[1])
+
+if (mssBullish)
+    line.new(bar_index-1, h4Low[1], bar_index, h4Low, color=color.lime, width=1, style=line.style_dotted)
+    label.new(bar_index, h4Low, "MSS صاعد", color=color.lime, style=label.style_label_up, textcolor=color.black, size=size.tiny)
+
+if (mssBearish)
+    line.new(bar_index-1, h4High[1], bar_index, h4High, color=color.maroon, width=1, style=line.style_dotted)
+    label.new(bar_index, h4High, "MSS هابط", color=color.maroon, style=label.style_label_down, textcolor=color.white, size=size.tiny)
+
+// عرض الاتجاه 4 ساعات على الشارت
+var label mtfLabel = na
+if (barstate.islast)
+    label.delete(mtfLabel)
+    mtfLabel := label.new(bar_index, high * 0.99, "اتجاه 4 ساعات: " + mtfTrend, style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.normal)
+
+// ==================== القسم الثالث: فريم ساعة - تحديد المناطق المهمة ====================
+// بيانات فريم ساعة الأساسية
+ltfHigh = request.security(syminfo.tickerid, ltf, high)
+ltfLow = request.security(syminfo.
+tickerid, ltf, low)
+ltfClose = request.security(syminfo.tickerid, ltf, close)
+ltfOpen = request.security(syminfo.tickerid, ltf, open)
+
+// ATR على فريم الساعة
+atr1h = request.security(syminfo.tickerid, ltf, ta.atr(14))
+
+// مناطق السيولة بناء على 4 ساعات
+liquidityZoneTop = h4High + atr1h * 0.2
+liquidityZoneBottom = h4Low - atr1h * 0.2
+plot(liquidityZoneTop, color=color.new(color.blue, 80), title="Liquidity Zone Top", linewidth=1)
+plot(liquidityZoneBottom, color=color.new(color.blue, 80), title="Liquidity Zone Bottom", linewidth=1)
+
+// كشف فجوات سعرية (FVG) على فريم الساعة
+fvgBullish = (ltfLow[2] > ltfHigh)
+fvgBearish = (ltfHigh[2] < ltfLow)
+
+// رسم فجوات سعرية
+plotshape(fvgBullish, title="Bullish FVG", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(fvgBearish, title="Bearish FVG", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// كشف Order Blocks على فريم الساعة
+body = math.abs(ltfClose - ltfOpen)
+threshold = atr1h * 0.3
+
+bullishOB = (ltfClose > ltfOpen) and (body > threshold) and (ltfClose[1] < ltfOpen)
+bearishOB = (ltfClose < ltfOpen) and (body > threshold) and (ltfClose[1] > ltfOpen)
+
+// رسم Order Blocks
+plotshape(bullishOB, title="Bullish OB", location=location.belowbar, color=color.lime, style=shape.square, size=size.tiny)
+plotshape(bearishOB, title="Bearish OB", location=location.abovebar, color=color.maroon, style=shape.square, size=size.tiny)
+
+// كشف Rejection Blocks على فريم الساعة
+upperWick = ltfHigh - math.max(ltfClose, ltfOpen)
+lowerWick = math.min(ltfClose, ltfOpen) - ltfLow
+
+bullishRB = (lowerWick > body * 2) and (ltfClose > ltfOpen)
+bearishRB = (upperWick > body * 2) and (ltfClose < ltfOpen)
+
+// رسم Rejection Blocks
+plotshape(bullishRB, title="Bullish RB", location=location.belowbar, color=color.aqua, style=shape.circle, size=size.tiny)
+plotshape(bearishRB, title="Bearish RB", location=location.abovebar, color=color.purple, style=shape.circle, size=size.tiny)
+
+// كشف Breaker Blocks
+bosBull = ltfClose > ltfHigh[1]
+bosBear = ltfClose < ltfLow[1]
+
+breakerBull = bosBull and (ltfClose < ltfOpen)
+breakerBear = bosBear and (ltfClose > ltfOpen)
+
+// رسم Breaker Blocks
+plotshape(breakerBull, title="

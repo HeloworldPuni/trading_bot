@@ -1,0 +1,131 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © sirawitchchairuangsirikul
+
+//@version=6
+strategy("S501 M30 Strategy",overlay=true,default_qty_type=strategy.fixed ,default_qty_value=1,commission_type=strategy.commission.cash_per_contract,commission_value=43.1,slippage=2)
+
+// price = request.security(syminfo.tickerid, "30", close)   // to restrict timeframe 30 for trading
+fast_ema = ta.ema(close, 50)
+slow_ema = ta.ema(close, 100)
+vol_avg = ta.sma(volume, 20)
+tpPercent = 2.0    // 2% TP
+slPercent = 1.0    // 1% SL
+var float entry_price = na
+var float tpLevel = na
+var float slLevel = na
+var float halfTP = na
+
+// get asia time
+timeInZone = time(timeframe.period, "Asia/Bangkok")
+h = hour(timeInZone)
+m = minute(timeInZone)
+
+// function to check valid time
+inTimeRange() =>
+    in_session1 = (h == 10 and m >= 15) or (h == 11) or (h == 12 and m <= 30)
+    in_session2 = (h == 14 and m >= 30) or (h == 15) or (h == 16 and m <= 15)
+    in_session1 or in_session2
+
+// trade
+if (inTimeRange())
+    f_con = close > fast_ema and close > slow_ema 
+    f2_con = close < fast_ema and close < slow_ema
+    s_con = volume > vol_avg
+    buySignal = f_con and s_con
+    sellSignal = f2_con and s_con
+
+    if(buySignal and strategy.position_size == 0) // only have a position
+        strategy.entry("Buy", strategy.long)
+        entry_price := strategy.position_avg_price  // can get entry price
+        // tpLevel := entry_price * (1 + tpPercent / 100)
+        // slLevel := entry_price * (1 - slPercent / 100)
+        // halfTP := entry_price * (1 + (tpPercent / 2) / 100)
+
+    if(sellSignal and strategy.position_size == 0)
+        strategy.entry("Short", strategy.short)
+        entry_price := strategy.position_avg_price
+        // tpLevel := entry_price * (1 - tpPercent / 100)
+        // slLevel := entry_price * (1 + slPercent / 100)
+        // halfTP := entry_price * (1 - (tpPercent / 2) / 100)
+else
+    if (strategy.position_size != 0)
+        strategy.close_all("Close Out Of Time")
+
+var bool sl_moved_to_entry = false 
+// tp and sl
+if (strategy.position_size > 0) // Long position
+    current_entry_price = strategy.position_avg_price 
+    current_tp_level = current_entry_price * (1 + tpPercent / 100)
+    current_sl_level = current_entry_price * (1 - slPercent / 100)
+    current_half_tp = current_entry_price * (1 + (tpPercent / 2) / 100)
+
+    if (close > current_half_tp and not sl_moved_to_entry) // ถึงครึ่ง TP และ SL ยังไม่ถูกเลื่อน
+        sl_moved_to_entry := true
+        strategy.exit("Long TP/SL", from_entry="Buy", limit=current_tp_level, stop=current_entry_price)
+    else if (sl_moved_to_entry) // เงื่อนไขที่ 2: SL ถูกเลื่อนไปแล้ว
+        strategy.exit("Long TP/SL", from_entry="Buy", limit=current_tp_level, stop=current_entry_price)
+    else // ยังไม่ถึงครึ่ง TP และ SL ยังไม่ได้เลื่อน
+        strategy.exit("Long TP/SL", from_entry="Buy", limit=current_tp_level, stop=current_sl_level)
+
+if (strategy.position_size < 0) // Short position
+    current_entry_price = strategy.position_avg_price 
+    current_tp_level = current_entry_price * (1 - tpPercent / 100)
+    current_sl_level = current_entry_price * (1 + slPercent / 100)
+    current_half_tp = current_entry_price * (1 - (tpPercent / 2) / 100)
+
+    if (close < current_half_tp and not sl_moved_to_entry)
+        sl_moved_to_entry := true
+        strategy.exit("Short TP/SL", from_entry="Short", limit=current_tp_level, stop=current_entry_price)
+    else if (sl_moved_to_entry)
+        strategy.exit("Short TP/SL", from_entry="Short", limit=current_tp_level, stop=current_entry_price)
+    else
+        strategy.exit("Short TP/SL", from_entry="Short", limit=current_tp_level, stop=current_sl_level)
+
+// if (strategy.position_size < 0)
+//     if (close < halfTP)
+//         check = true
+//         strategy.exit("Short TP/SL", from_entry="Short", limit=tpLevel, stop=entry_price)
+//     else
+//         check = false
+//         strategy.exit("Short TP/SL", from_entry="Short", limit=tpLevel, stop=slLevel)
+
+// plot
+bgcolor(inTimeRange() ? color.new(color.green,90):na) 
+plot(fast_ema, title="EMA50", color=color.orange, force_overlay = true )
+plot(slow_ema, title="EMA100", color=color.blue, force_overlay = true )
+
+// plot tp sl
+ep = strategy.opentrades > 0 ? strategy.opentrades.entry_price(0) : na  // return  “ราคาเปิด” ของเทรดลำดับ index
+tpPlot = strategy.position_size > 0 ? ep * (1 + tpPercent / 100) :
+         strategy.position_size < 0 ? ep * (1 - tpPercent / 100) : na
+
+slPlot = strategy.position_size > 0 ? ep * (1 - slPercent / 100) :
+         strategy.position_size < 0 ? ep * (1 + slPercent / 100) : na
+
+plot(strategy.opentrades > 0 ? strategy.opentrades.entry_price(0):na , "Entry Price", color=color.gray, style=plot.style_circles, linewidth=2)
+// plot(check ? entry_price : slPlot, color=color.red, style=plot.style_linebr, linewidth=2)
+// plot(tpPlot, color=color.green, style=plot.style_linebr, linewidth=2)
+//plot(slPlot, color=color.red, style=plot.style_linebr, linewidth=2)
+// Plot Entry, TP, and SL dynamically
+var float plot_entry_price = na
+var float plot_tp_level = na
+var float plot_sl_level = na
+
+if (strategy.position_size > 0)
+    plot_entry_price := strategy.position_avg_price
+    plot_tp_level := plot_entry_price * (1 + tpPercent / 100)
+    plot_sl_level := sl_moved_to_entry ? plot_entry_price : plot_entry_price * (1 - slPercent / 100)
+else if (strategy.position_size < 0)
+    plot_entry_price := strategy.position_avg_price
+    plot_tp_level := plot_entry_price * (1 - tpPercent / 100)
+    plot_sl_level := sl_moved_to_entry ? plot_entry_price : plot_entry_price * (1 + slPercent / 100) 
+else
+    plot_entry_price := na 
+    plot_tp_level := na
+    plot_sl_level := na
+    sl_moved_to_entry := false
+
+plot(plot_entry_price, "Entry Price", color=color.gray, style=plot.style_circles, linewidth=2)
+plot(plot_tp_level, "TP Level", color=color.green, style=plot.style_linebr, linewidth=2)
+plot(plot_sl_level, "SL Level", color=color.red, style=plot.style_linebr, linewidth=2)
+

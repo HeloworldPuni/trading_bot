@@ -1,0 +1,59 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Dynamictradingstrategies
+
+//@version=5
+strategy("EMA CROSSOVER STRATEGY WITH STOPLOSS", overlay = true)
+
+///// USER INPUTS 
+
+SEMA = input.int(defval = 13, title = "SEMA LENGTH")
+LEMA = input.int(defval = 34, title = "LEMA LENGTH")
+
+LONGSTOP = input.float(defval = 1, title = "LONG STOP")
+SHORTSTOP = input.float(defval = 1, title = "SHORT STOP")
+
+
+
+///////  TRADING INDICATOR AND STOPLOSS CALCULATION 
+
+EMA1 = ta.ema(close,SEMA)
+EMA2 = ta.ema(close,LEMA)
+
+
+LS = (strategy.position_avg_price * (1-(LONGSTOP/100)))
+SS = (strategy.position_avg_price * (1+(SHORTSTOP/100)))
+
+
+
+///// BUY AND SHORT SIGNALS
+
+buy = ta.crossover(EMA1,EMA2)
+short = ta.crossunder(EMA1,EMA2)
+
+
+///// STRATEGY 
+
+if buy 
+    strategy.entry("long", direction = strategy.long, comment = "LONG")
+
+if strategy.position_size > 0
+    strategy.exit("long", from_entry = "long", stop = LS, comment = "STOPLOSS LONG")
+
+
+if short
+    strategy.entry("short", direction = strategy.short, comment = "SHORT")
+
+if strategy.position_size < 0
+    strategy.exit("short", from_entry = "short", stop = SS, comment = "STOPLOSS SHORT")
+
+
+
+//// PLOT
+
+plot(strategy.position_size > 0 ? LS : na, color = color.red, linewidth = 2, style = plot.style_steplinebr)
+plot(strategy.position_size < 0 ? SS : na, color = color.red, linewidth = 2, style = plot.style_steplinebr)
+
+a = plot(EMA1, color = color.new(color.green,100))
+b = plot(EMA2,color = color.new(color.red,100) )
+
+fill(a,b, color = EMA1 > EMA2 ? color.new(color.green,70) : EMA1 < EMA2 ? color.new(color.red,80) : na)

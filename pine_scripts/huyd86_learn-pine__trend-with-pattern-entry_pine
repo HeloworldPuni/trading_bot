@@ -1,0 +1,115 @@
+// Source: https://kodify.net/tradingview/strategies/trend-with-pattern-entry/
+// The Trend with Pattern Entry trading strategy coded for TradingView
+
+// Trading rules of the Trend with Pattern Entry strategy
+
+Enter long:
+Go long with a market order the next day when the price is above the 100-bar Simple Moving Average (SMA), and
+The closing price decreased during the last three days.
+Exit long:
+The trailing stop-loss for long positions is calculated as follows: closing price - 4 times the 10-bar Average True Range (ATR).
+Enter short:
+Go short with a market order the next day when the price is below the 100-bar SMA, and
+The closing price increased during the last three days.
+Exit short:
+The trailing stop-loss for short positions is calculated as follows: closing price + 4 times the 10-bar ATR.
+Position sizing:
+The initial risk for each position (difference between entry price and stop-loss price) is 2% of equity.
+The maximum exposure (that is, the margin to equity ratio) for a single position is 10% of equity.
+
+// Full code: the Trend with Pattern Entry strategy for TradingView
+
+//@version=3
+
+// Step 1) Define strategy settings
+strategy(title="Trend with Pattern Entry", overlay=true,
+     pyramiding=0, initial_capital=100000,
+     commission_type=strategy.commission.cash_per_order,
+     commission_value=4, slippage=2)
+
+smaLen = input(title="SMA Length", type=integer, defval=100)
+
+// Stop inputs
+atrLen = input(title="ATR Length", type=integer, defval=10)
+stopOffset = input(title="Stop Offset Multiple", type=float,
+     defval=4, step=.25)
+
+// Position sizing inputs
+usePosSize = input(title="Use Position Sizing?", type=bool,
+     defval=true)
+maxRisk = input(title="Max Position Risk %", type=float,
+     defval=2, step=.25)
+maxExposure = input(title="Max Position Exposure %", type=float,
+     defval=10, step=1)
+marginPerc = input(title="Margin %", type=integer, defval=10)
+
+// Step 2) Calculate strategy values
+smaValue  = sma(close, smaLen)
+stopValue = atr(atrLen) * stopOffset
+
+tradeWindow = time <= timenow - (86400000 * 3)
+
+// Calculate position size
+riskEquity = (maxRisk * 0.01) * strategy.equity
+riskTrade  = stopValue * syminfo.pointvalue
+
+maxPos = ((maxExposure * 0.01) * strategy.equity) /
+     ((marginPerc * 0.01) * (close * syminfo.pointvalue))
+
+posSize = usePosSize ? min(floor(riskEquity / riskTrade), maxPos) : 1
+
+// Step 3) Determine long trading conditions
+lowerCloses = (close < close[1]) and (close[1] < close[2])
+     and (close[2] < close[3])
+
+enterLong = (close > smaValue) and lowerCloses and
+     tradeWindow
+
+// Determine long stop
+longStop = 0.0
+
+longStop := if enterLong and (strategy.position_size < 1)
+    close - stopValue
+else
+    max(close - stopValue, longStop[1])
+
+// Step 4) Code short trading conditions
+higherCloses = (close > close[1]) and (close[1] > close[2])
+     and (close[2] > close[3])
+
+enterShort = (close < smaValue) and higherCloses and
+     tradeWindow
+
+// Determine short stop
+shortStop = 0.0
+
+shortStop := if enterShort and (strategy.position_size > -1)
+    close + stopValue
+else
+    min(close + stopValue, shortStop[1])
+
+// Step 5) Output strategy data
+plot(series=smaValue, color=#4169e1, linewidth=2, title="SMA")
+
+plot(series=strategy.position_size > 0 ? longStop : na,
+     style=linebr, color=lime, title="Long stop",
+     linewidth=2)
+plot(series=strategy.position_size < 0 ? shortStop : na,
+     style=linebr, color=red, title="Short stop",
+     linewidth=2)
+
+// Step 6) Submit entry orders
+if (enterLong)
+    strategy.entry(id="EL", long=true, qty=posSize)
+
+if (enterShort)
+    strategy.entry(id="ES", long=false, qty=posSize)
+
+// Step 7) Submit exit orders
+if (strategy.position_size > 0)
+    strategy.exit(id="XL", from_entry="EL", stop=longStop)
+
+if (strategy.position_size < 0)
+    strategy.exit(id="XS", from_entry="ES", stop=shortStop)
+
+strategy.close_all(when=not tradeWindow)

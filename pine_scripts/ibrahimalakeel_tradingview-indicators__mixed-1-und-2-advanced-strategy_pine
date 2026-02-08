@@ -1,0 +1,77 @@
+//@version=5
+indicator("Mixed 1 and 2 Advanced Strategy", overlay=true)
+
+// Input parameters
+shortEmaLength = input.int(12, title="Short EMA Length", minval=1)
+longEmaLength = input.int(26, title="Long EMA Length", minval=1)
+rsiLength = input.int(14, title="RSI Length", minval=1)
+rsiOverbought = input.int(70, title="RSI Overbought Level", minval=50)
+rsiOversold = input.int(30, title="RSI Oversold Level", minval=10)
+macdFastLength = input.int(12, title="MACD Fast Length", minval=1)
+macdSlowLength = input.int(26, title="MACD Slow Length", minval=1)
+macdSignalSmoothing = input.int(9, title="MACD Signal Smoothing", minval=1)
+bbLength = input.int(20, title="Bollinger Bands Length", minval=1)
+bbMultiplier = input.float(2.0, title="Bollinger Bands Multiplier", minval=0.1)
+atrLength = input.int(14, title="ATR Length", minval=1)
+atrMultiplier = input.float(1.5, title="ATR Multiplier", minval=0.1)
+
+// EMA calculations
+shortEma = ta.ema(close, shortEmaLength)
+longEma = ta.ema(close, longEmaLength)
+
+// RSI calculation
+rsi = ta.rsi(close, rsiLength)
+
+// MACD calculation
+[macdLine, signalLine, _] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalSmoothing)
+macdHist = macdLine - signalLine
+
+// Bollinger Bands calculation
+basis = ta.sma(close, bbLength)
+dev = bbMultiplier * ta.stdev(close, bbLength)
+upperBand = basis + dev
+lowerBand = basis - dev
+
+// ATR calculation
+atr = ta.atr(atrLength)
+
+// Buy and Sell conditions
+bullishEma = ta.crossover(shortEma, longEma)
+bearishEma = ta.crossunder(shortEma, longEma)
+bullishRsi = rsi < rsiOversold
+bearishRsi = rsi > rsiOverbought
+bullishMacd = ta.crossover(macdLine, signalLine) and macdHist > 0
+bearishMacd = ta.crossunder(macdLine, signalLine) and macdHist < 0
+bullishBb = close < lowerBand
+bearishBb = close > upperBand
+
+buyCondition = bullishEma and bullishRsi and bullishMacd and bullishBb
+sellCondition = bearishEma and bearishRsi and bearishMacd and bearishBb
+
+// Risk management: Stop loss and take profit
+longStopLoss = close - atr * atrMultiplier
+shortStopLoss = close + atr * atrMultiplier
+longTakeProfit = close + atr * atrMultiplier * 2
+shortTakeProfit = close - atr * atrMultiplier * 2
+
+// Plotting EMAs
+plot(shortEma, color=color.blue, title="Short EMA")
+plot(longEma, color=color.red, title="Long EMA")
+
+// Plotting Bollinger Bands
+plot(upperBand, color=color.orange, title="Upper Bollinger Band")
+plot(lowerBand, color=color.orange, title="Lower Bollinger Band")
+
+// Plot Buy and Sell signals
+plotshape(series=buyCondition, location=location.belowbar, color=color.green, style=shape.labelup, title="Buy Signal", text="BUY")
+plotshape(series=sellCondition, location=location.abovebar, color=color.red, style=shape.labeldown, title="Sell Signal", text="SELL")
+
+// Plot stop loss and take profit levels
+plot(series=buyCondition ? longStopLoss : na, title="Long Stop Loss", color=color.red, linewidth=2)
+plot(series=buyCondition ? longTakeProfit : na, title="Long Take Profit", color=color.green, linewidth=2)
+plot(series=sellCondition ? shortStopLoss : na, title="Short Stop Loss", color=color.red, linewidth=2)
+plot(series=sellCondition ? shortTakeProfit : na, title="Short Take Profit", color=color.green, linewidth=2)
+
+// Alerts
+alertcondition(buyCondition, title="Buy Alert", message="Here Buy Signal")
+alertcondition(sellCondition, title="Sell Alert", message="Here Sell Signal")

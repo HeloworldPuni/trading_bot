@@ -1,0 +1,421 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © wallneradam
+//@version=5
+
+// @description Object Oriented TA library
+library("OOTA", overlay = true)
+
+
+/////////////
+// Classes //
+/////////////
+
+//
+// Moving averages
+//
+
+// @type SMACtx		SMA context type
+export type SMACtx
+	int length
+	// Private
+	float[] _storage
+	float _summ = 0.0
+
+// @function sma	Create SMA object
+// @param length	Length of the EMA
+// @returns			EMA object
+export sma(simple int length) =>
+	SMACtx.new(length, array.new<float>())
+
+// @method next		Calculate next value of the SMA
+// @param ctx		The SMA context object
+// @param src 		The source to calculate SMA from
+// @returns 		The calculated Simple Moving Average
+export method next(SMACtx ctx, series float src) =>    
+	if na(src)
+		na
+	else if ctx.length == 1
+		src
+	else
+		ctx._storage.push(src)
+		ctx._summ += src
+		
+		int s = ctx._storage.size()
+		if s > ctx.length
+			ctx._summ -= ctx._storage.shift()
+			s -= 1
+
+		ctx._summ / s
+
+
+// @type EMACtx		EMA context type
+export type EMACtx
+	int length
+	// Private
+	SMACtx _sma
+	float _alpha
+	int _length = 0
+	float _val = 0.0
+
+// @function ema	Create EMA object
+// @param length	The length of the EMA
+// @returns 		EMA object
+export ema(simple int length) =>
+	EMACtx.new(length, SMACtx.new(length, array.new<float>()), 2 / (length + 1))
+
+// @function rma	Create EMA object with RMA alpha
+// @param length	The length of the RMA
+// @returns 		EMA object with RMA alpha
+export rma(simple int length) =>
+	EMACtx.new(length, SMACtx.new(length, array.new<float>()), 1 / length)
+
+// @method next		Calculate next value of EMA
+// @param ctx		The EMA context object
+// @param src		The source to calculate EMA from
+// @returns 		The calculated Exponential Moving Average
+export method next(EMACtx ctx, series float src) =>
+	if na(src)
+		na
+	else if ctx.length == 1
+		src
+	else
+		if ctx._length < ctx.length
+			ctx._val := ctx._sma.next(src)
+			ctx._length := ctx._length + 1
+		else
+			ctx._val := ctx._alpha * src + (1 - ctx._alpha) * ctx._val
+		
+		ctx._val
+
+
+// @type WMACtx		Weighted Moving Average context type
+export type WMACtx
+	int length
+	// Private
+	float[] _storage
+	float[] _weights
+
+// @function wma	Create WMA object
+// @param length	Length of the EMA
+// @returns			WMA object
+export wma(simple int length) =>
+	WMACtx.new(length, array.new<float>(length, na), array.new<float>(length, na))
+
+// @method next		Calculate next value of the WMA
+// @param ctx		The WMA context object
+// @param src 		The source to calculate WMA from
+// @returns 		The calculated Simple Moving Average
+export method next(WMACtx ctx, series float src, series float weight = na) =>
+	if na(src)
+		na
+	else if ctx.length == 1
+		src
+	else
+		ctx._storage.push(src)
+		ctx._storage.shift()
+		if not na(weight)
+			ctx._weights.push(weight)
+			ctx._weights.shift()		
+
+		// For WMA unfortunately we must use cycles //TODO: we may use matrices? Would it be faster?
+		float summ = 0.0
+		float weight_summ = 0.0
+		for i = 0 to ctx._storage.size() - 1	
+			float w = nz(ctx._weights.get(i), i + 1)
+			float d = ctx._storage.get(i) * w
+			if not na(d)
+				summ += d
+				weight_summ += w
+
+		summ / weight_summ
+
+
+// @type HMACtx		HMA context type
+export type HMACtx
+	int length
+	// Private
+	WMACtx _wma
+	WMACtx _np2
+	WMACtx _sqrt
+
+// @function hma	Create HMA object
+// @param length	The length of the HMA
+// @returns 		HMA object
+export hma(simple int length) =>
+	HMACtx.new(length, wma(length), wma(int(length / 2)), wma(int(math.sqrt(length))))
+
+
+// @method next		Calculate next value of HMA
+// @param ctx		The HMA context object
+// @param src		The source to calculate HMA from
+// @returns 		The calculated Hull Moving Average
+export method next(HMACtx ctx, series float src) =>
+	if na(src)
+		na
+	else if ctx.length == 1
+		src
+	else
+		ma = ctx._wma.next(src)
+		np2 = ctx._np2.next(src)
+		ctx._sqrt.next(2 * np2 - ma)
+
+
+// @type MACtx		Universal Moving Average context type
+export type MACtx
+	string ma_type
+	// Private
+	SMACtx _sma
+	EMACtx _ema
+	WMACtx _wma
+	HMACtx _hma
+
+// @function ma		Create an universal MA object
+// @param length	The length of the MA calculation
+// @param ma_type	The name of the MA type
+// @returns 		MA object
+export ma(simple int length, simple string ma_type) =>
+	ma_type == "SMA" ? MACtx.new('SMA', _sma=sma(length)) :
+		 ma_type == "EMA" ? MACtx.new('EMA', _ema=ema(length)) :
+		 ma_type == "RMA" ? MACtx.new('EMA', _ema=rma(length)) :
+		 ma_type == "WMA" ? MACtx.new('WMA', _wma=wma(length)) :
+		 ma_type == "HMA" ? MACtx.new('HMA', _hma=hma(length)) :
+		 na
+
+// @method next		Calculate the next value of MA object
+// @param ctx		The MA context object
+// @param src		The source to calculate MA from
+// @returns 		The calculated Exponential Moving Average
+export method next(MACtx ctx, series float src) =>	
+	ctx.ma_type == "SMA" ? ctx._sma.next(src) :
+		 ctx.ma_type == "EMA" or ctx.ma_type == "RMA" ? ctx._ema.next(src) :
+		 ctx.ma_type == "WMA" ? ctx._wma.next(src) :
+		 ctx.ma_type == "HMA" ? ctx._hma.next(src) :
+		 na
+
+
+// 
+// Oscillators
+//
+
+// @type RSICtx		RSI context type
+export type RSICtx
+	// Private
+	EMACtx _ma_gain
+	EMACtx _ma_loss
+	float _last_low = na
+	float _last_high = na
+
+// @function		Create RSI context object
+// @param length	The lentgh of RSI calculation
+// @param use_ema	Use EMA for average gain/loss instead of RMA (Wilder MA)
+export rsi(simple int length, simple bool use_ema=false) =>
+	if not use_ema
+		RSICtx.new(rma(length), rma(length))
+	else
+		RSICtx.new(ema(length), ema(length))
+
+// @method next		Calculate next value of the RSI
+// @param ctx		The RSI context object
+// @param src		The source to calculate RSI from
+// @param src_low	If you want to give different source for high and low, this will be the low and src will be the high
+// @returns			The next value of the rsi 
+export method next(RSICtx ctx, series float src, series float src_low = na) =>
+	float h = src
+	float l = nz(src_low, src)
+	float gain = h - ctx._last_high
+	float loss = ctx._last_low - l
+	gain := gain > 0.0 ? gain : 0.0
+	loss := loss > 0.0 ? loss : 0.0
+	float avg_gain = ctx._ma_gain.next(gain)
+	float avg_loss = ctx._ma_loss.next(loss)	
+	float rs = avg_gain <= 0.0 ? 0.0 : avg_loss == 0.0 ? 1.0 : avg_gain / avg_loss
+	ctx._last_high := h
+	ctx._last_low := l
+	math.min(100.0, math.max(0.0, 100.0 - 100.0 / (1.0 + rs)))
+
+
+// @type		Stochastic Context type
+export type StochCtx
+	int length
+	// Private
+	float[] _highs
+	float[] _lows
+	SMACtx _k_percent_ma
+	SMACtx _d_percent_ma
+
+// @function				Create Stoch context object
+// @param length			Length of stochastic calculation
+// @param d_smooth_length	Length of smoothing %D
+// @param k_smooth_length	Length of smoothing %K
+export stoch(simple int length, simple int d_smooth_length = 3, simple int k_smooth_length = 1) =>
+	StochCtx.new(length, array.new<float>(), array.new<float>(), sma(k_smooth_length), sma(d_smooth_length))
+
+// @function				Calculate next stochastic value
+// @param ctx				The Stoch context object
+// @param src				The source the stoch calculated from
+// @param src_high			If you want to give different source for high
+// @param src_low			If you want to give different source for low
+// @returns					[%K, %D]
+export method next(StochCtx ctx, series float src, series float src_high = na, series float src_low = na) =>	
+	if na(src)
+		[na, na]
+
+	else
+		float h = nz(src_high, src)
+		float l = nz(src_low, src)
+		
+		ctx._highs.push(h)
+		int s = ctx._highs.size()
+		if s > ctx.length
+			ctx._highs.shift()		
+		ctx._lows.push(l)
+		if s > ctx.length
+			ctx._lows.shift()
+
+		float hmax = ctx._highs.max()
+		float lmin = ctx._lows.min()
+
+		float hl_diff = hmax - lmin
+		float dl_diff = src - lmin
+
+		float k_percent = if dl_diff > 0.0
+			float kp = hl_diff != 0 ? (100.0 * dl_diff / hl_diff) : 100.0
+			kp > 100.0 ? 100.0 : kp < 0.0 ? 0.0 : kp
+		else
+			0.0
+
+		float k = ctx._k_percent_ma.next(k_percent)
+		float d = ctx._d_percent_ma.next(k)
+		[k, d]
+
+
+// @type StochRSICtx	
+export type StochRSICtx
+	// Private
+	RSICtx _rsi
+	StochCtx _stoch
+
+// @function				Create StochRSI context object
+// @param length_rsi		Length of RSI calculation
+// @param length_stoch		Length of Stoch calculation
+// @param d_smooth_length	Length of smoothing %D
+// @param k_smooth_length	Length of smoothing %K
+export stochrsi(simple int length_rsi, simple int length_stoch, simple int d_smooth_length = 3, simple int k_smooth_length = 3) =>
+	StochRSICtx.new(rsi(length_rsi), stoch(length_stoch, d_smooth_length, k_smooth_length))
+
+// @method next	    Calculate next value of the StochRSI
+// @param ctx		The StochRSI context object
+// @param src		The source to calculate StochRSI from
+// @param src_low	If you want to give different source for high and low, this will be the low and src will be the high
+// @returns			The next value of the rsi 
+export method next(StochRSICtx ctx, series float src, series float src_low = na) =>
+	rsi = ctx._rsi.next(src, src_low)
+	ctx._stoch.next(rsi)
+	
+
+// @type MACDCtx		Moving Average Convergence Divergence context
+export type MACDCtx
+	// Private
+	MACtx _fast_ma
+	MACtx _slow_ma
+	MACtx _signal_ma
+
+// @function macd	 		Creates an MACD context object
+// @param fast_length		The length of fast MA
+// @param slow_length		The length of slow MA
+// @param signal_length		The length of signal MA
+// @returns					MACD context object
+export macd(simple int fast_length, simple int slow_length, simple int signal_length,
+	 		 simple string fast_ma_type="EMA", simple string slow_ma_type="EMA", simple string signal_ma_type="EMA") =>
+	MACDCtx.new(ma(fast_length, fast_ma_type), ma(slow_length, slow_ma_type), ma(signal_length, signal_ma_type))
+
+// @method next				Calculates the MACD values
+// @param ctx				The Stoch context object
+// @param src				The source the stoch calculated from
+// @returns					Tuple of three MACD series: MACD, signal and histogram
+export method next(MACDCtx ctx, series float src) =>
+	if na(src)
+		[na, na, na]
+
+	else
+		float slow = ctx._slow_ma.next(src)
+		float fast = ctx._fast_ma.next(src)
+		float macd = fast - slow
+		float signal = ctx._signal_ma.next(macd)
+		[macd, signal, macd - signal]
+
+
+// @type ATRCtx			Average True Range context
+export type ATRCtx
+	// Private
+	MACtx _atr_ma
+	float lc = na
+
+// @function atr	 	Creates an MACD context object
+// @param length		The length of fast MA
+// @returns				ATR context object
+export atr(simple int length, simple string ma_type="RMA") =>
+	ATRCtx.new(ma(length, ma_type))
+
+// @method next			Calculates the MACD values
+// @param ctx			The Stoch context object
+// @param h				The high value
+// @param l				The low value
+// @param c				The close value
+// @returns				The ATR value
+export method next(ATRCtx ctx, series float h, series float l, series float c) =>
+	float dhl = h - l
+	float dhd = math.abs(nz(h - ctx.lc))
+	float dld = math.abs(nz(l - ctx.lc))
+	ctx.lc := c
+
+	float tr = math.max(dhl, dhd, dld)
+	ctx._atr_ma.next(tr)
+
+
+///////////
+// Tests //
+///////////
+
+length = input(14, "Length")
+offset = input(10, "Offset")
+
+var sma_ctx = sma(length)
+plot(sma_ctx.next(close[offset]), color=color.blue)
+
+var ema_ctx = ema(length)
+plot(ema_ctx.next(close[offset]), color=color.aqua)
+
+var rma_ctx = rma(length)
+plot(rma_ctx.next(close[offset]), color=color.teal)
+
+var wma_ctx = wma(length)
+plot(wma_ctx.next(close[offset]), color=color.olive)
+
+var vwma_ctx = wma(length)
+plot(vwma_ctx.next(close[offset], volume[offset]), color=color.fuchsia)
+
+var hma_ctx = hma(length)
+plot(hma_ctx.next(close[offset]), color=color.maroon)
+
+// var rsi_ctx = rsi(length)
+// plot(rsi_ctx.next(close[offset]))
+// hline(70)
+// hline(50)
+// hline(30)
+
+// var stoch_ctx = stoch(length)
+// [k, d] = stoch_ctx.next(close[offset], high[offset], low[offset])
+// plot(k, "K", color=color.blue)
+// plot(d, "D", color=color.orange)
+// hline(70)
+// hline(50)
+// hline(30)
+
+// var macd_ctx = macd(12, 26, 9, "WMA", "WMA", "SMA")
+// [macd, signal, hist] = macd_ctx.next(close[offset])
+// plot(macd, "MACD", color=color.blue)
+// plot(signal, "Signal", color=color.orange)
+
+// var atr_ctx = atr(14)
+// plot(atr_ctx.next(high[offset], low[offset], close[offset]), "ATR")

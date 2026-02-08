@@ -1,0 +1,132 @@
+//@version=4
+strategy("Goodest Martingale Strategy Short ( for Bitcoin )", shorttitle="GOODEST_MARTINGALE_BTC_SHORT", overlay=true, pyramiding=100, initial_capital = 100000, commission_type = strategy.commission.percent, commission_value = 0.0,slippage=0)
+
+//////////////////////////////////////////////
+//      Goodest Martingale Strategy Short ( for Bitcoin )
+//      v.1.0
+//////////////////////////////////////////////
+// v.1.0        : 2024-04-26    : initial version
+
+// color code
+color_blue   = #0000FF
+color_green  = #00FF00
+color_red    = #FF0000
+color_yellow = #FFFF00
+
+// SETTING UP VARIABLES //
+
+//data array
+price = input(type=input.source, defval=close)
+
+//position size parameter
+fixed_position_size_bool = input(false,type=input.bool,title="Fixed position size ( Unchecked for percent of initial capital )")
+start_position_size = input(5.0, type=input.float, title= "Start Position Size ( Fixed or Percent )")
+
+//first entry logic
+// first_position_logic = input(defval="MACD Line > 0", options=["MACD Line > 0","STO RSI cross up","ATR Channel"], title = "Start Position Logic")
+
+//take profit %
+take_profit_percent = input(3.0, type=input.float, title="Take Profit Percent")
+
+//martingale setup
+martingale_percent = input(1.0, type=input.float, title="Start Martingale if price rise with this Percent")
+martingale_mult = input(2.0, type=input.float, title= "Martingale Multiplier")
+martingale_max = input(6, type=input.integer, title= "Max number of Martingale orders (first order does not count)")
+
+//trade direction ( Long only because short side is unlimit risk, limit profit)
+// trade_side = input(defval="Long Only", options=["Long Only"], title = "Trade direction")
+
+// === BACKTEST RANGE ===
+use_date_range = input(true)
+FromYear  = input(defval = 2018, title = "From Year", minval = 1950)
+FromMonth = input(defval = 1, title = "From Month", minval = 1)
+FromDay   = input(defval = 1, title = "From Day", minval = 1)
+ToYear    = input(defval = 9999, title = "To Year", minval = 1950)
+ToMonth   = input(defval = 1, title = "To Month", minval = 1)
+ToDay     = input(defval = 1, title = "To Day", minval = 1)
+in_date_range = use_date_range ? (time > timestamp(FromYear, FromMonth, FromDay, 00, 00)) and (time < timestamp(ToYear, ToMonth, ToDay, 23, 59)) : true
+
+takeProfit = price * take_profit_percent / 100  / syminfo.mintick
+
+//////////////////////////////////////////////
+//    Buy - Sell Signal toggle          //
+//////////////////////////////////////////////
+Buy = true
+Sell = false
+
+
+// Take profit logic
+pricePercent = (strategy.position_avg_price - price) * 100 / strategy.position_avg_price
+if ( pricePercent > take_profit_percent )
+    Sell := true
+
+// double down logic
+// BuyMore = pricePercent <= ( martingale_percent * -1 )
+BuyMore = pricePercent * -1 >= martingale_percent
+
+//////////////////////////////////////////////
+//    Position Size calculation         //
+//////////////////////////////////////////////
+var countMartingale = 0.0    //martingale count
+
+var startUnitSize = 0.0
+var unit_size = 0.0
+var unit_size_martingale = 0.0
+
+//position size calculation
+if (fixed_position_size_bool)
+    unit_size := start_position_size
+else
+    unit_size := strategy.equity *  ( start_position_size  / 100 ) / price
+
+startUnitSize := unit_size
+unit_size_martingale := startUnitSize *  pow(martingale_mult,(countMartingale))
+
+//extra vars to check account equity/capital
+var liquidate_price = 0.0
+var current_leverage = 0.0
+var current_loss = 0.0
+var current_capital = 0.0
+
+current_capital := strategy.initial_capital + strategy.netprofit
+current_leverage :=  current_capital / strategy.equity
+liquidate_price := strategy.position_avg_price - (strategy.position_avg_price / ( current_leverage + 1 ))
+
+
+
+//////////////////////////////////////////////
+//    define strategy entry / exit          //
+//////////////////////////////////////////////
+if (Buy and in_date_range and countMartingale == 0.0 and strategy.equity >= 0 )
+    strategy.entry("Short", strategy.short, qty=unit_size,when=strategy.position_size <= 0 )
+    countMartingale := 1
+    Sell := false
+
+if (BuyMore and countMartingale > 0 and countMartingale <=martingale_max)
+    strategy.entry("Short", strategy.short, qty=unit_size_martingale,when=strategy.position_size < 0 and strategy.equity >= 0 )
+    countMartingale := countMartingale + 1
+    Sell := false
+
+if (Sell or strategy.equity <= 0    )
+    strategy.close("Short")
+    countMartingale := 0
+
+//////////////////////////////////////////////
+//      plot data for debugging
+//////////////////////////////////////////////
+
+
+// plotchar(BuyMore, title="BuyMore", char="", location=location.top)
+// plotchar(countMartingale, title="countMartingale", char="", location=location.top)
+// plotchar(pricePercent, title="pricePercent", char="", location=location.top)
+// plotchar(strategy.position_avg_price, title="strategy.position_avg_price", char="", location=location.top)
+// plotchar(price, title="price", char="", location=location.top)
+plotchar(strategy.position_size, title="strategy.position_size", char="", location=location.top)
+
+plot(strategy.equity,color=color.orange)
+plot(strategy.position_avg_price,color=color.white)
+//plot(liquidate_price,color=color.red)
+//plot(current_leverage)
+//plot(current_capital)
+//plot(strategy.position_size)
+// plot(countMartingale, title = "countMartingale", color=color.red, join = true,trackprice = true)

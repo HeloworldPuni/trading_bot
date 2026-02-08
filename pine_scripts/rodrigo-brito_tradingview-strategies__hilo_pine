@@ -1,0 +1,24 @@
+//@version=4
+study("HiLo Activator - brito.com.br", overlay=true)
+
+// inputs
+period = input(3, "HiLo Period")
+shift = input(1, "HiLo Shift")
+
+// indicators
+max = sma(high[shift], period)
+min = sma(low[shift], period)
+
+// initialize direction
+var direction = close < min ? -1 : 1
+
+if (direction == 1 and close <= min)
+    direction := -1 
+
+if (direction == -1 and close >= max)
+    direction := 1
+
+rising = direction[0] == 1
+
+plot(rising ? min : na, color=rising ? color.green : na, linewidth=1, style=plot.style_stepline)
+plot(not rising ? max : na, color=not rising ? color.red : na, linewidth=1, style=plot.style_stepline)

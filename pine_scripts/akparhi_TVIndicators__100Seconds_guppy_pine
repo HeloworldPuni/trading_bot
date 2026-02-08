@@ -1,0 +1,116 @@
+//@version=4
+study("100Seconds (Super Guppy)", shorttitle="100Seconds_Super_Guppy", overlay=true)
+
+Lookback = input(6, title="Alert Lookback Length")
+minMode = input(false, title="Minimal Mode")
+
+//Fast EMA
+emaF1  = ema(close, 3)
+emaF2  = ema(close, 5)
+emaF3  = ema(close, 7)
+emaF4  = ema(close, 9)
+emaF5  = ema(close, 11)
+emaF6  = ema(close, 13)
+emaF7  = ema(close, 15)
+emaF8  = ema(close, 17)
+emaF9  = ema(close, 19)
+emaF10 = ema(close, 21)
+emaF11 = ema(close, 23)
+emafast = (emaF1 + emaF2 + emaF3 + emaF4 + emaF5 + emaF6 + emaF7 + emaF8 + emaF9 + emaF10 + emaF11)/11
+
+//Slow EMA
+emaS1 = ema(close, 25)
+emaS2 = ema(close, 28)
+emaS3 = ema(close, 31)
+emaS4 = ema(close, 34)
+emaS5 = ema(close, 37)
+emaS6 = ema(close, 40)
+emaS7 = ema(close, 43)
+emaS8 = ema(close, 46)
+emaS9 = ema(close, 49)
+emaS10 = ema(close, 52)
+emaS11 = ema(close, 55)
+emaS12 = ema(close, 58)
+emaS13 = ema(close, 61)
+emaS14 = ema(close, 64)
+emaS15 = ema(close, 67)
+emaS16 = ema(close, 70)
+emaslow = (emaS1 + emaS2 + emaS3 + emaS4 + emaS5 + emaS6 + emaS7 + emaS8 + 
+          emaS9 + emaS10 + emaS11 + emaS12 + emaS13 + emaS14 + emaS15 + emaS16)/16
+
+//Fast EMA Color Rules
+colfastL = (emaF1 > emaF2 and emaF2 > emaF3 and emaF3 > emaF4 and emaF4 > emaF5 and emaF5 > emaF6 and emaF6 > emaF7 and emaF7 > emaF8 and emaF8 > emaF9 and emaF9 > emaF10 and emaF10 > emaF11)
+colfastS = (emaF1 < emaF2 and emaF2 < emaF3 and emaF3 < emaF4 and emaF4 < emaF5 and emaF5 < emaF6 and emaF6 < emaF7 and emaF7 < emaF8 and emaF8 < emaF9 and emaF9 < emaF10 and emaF10 < emaF11)
+//Slow EMA Color Rules
+colslowL = (emaS1 > emaS2 and emaS2 > emaS3 and emaS3 > emaS4 and emaS4 > emaS5 and emaS5 > emaS6 and emaS6 > emaS7 and emaS7 > emaS8) and
+           (emaS8 > emaS9 and emaS9 > emaS10 and emaS10 > emaS11 and emaS11 > emaS12 and emaS12 > emaS13 and emaS13 > emaS14 and emaS14 > emaS15 and emaS15 > emaS16)
+colslowS = (emaS1 < emaS2 and emaS2 < emaS3 and emaS3 < emaS4 and emaS4<emaS5 and emaS5<emaS6 and emaS6<emaS7 and emaS7<emaS8) and
+           (emaS8 < emaS9 and emaS9 < emaS10 and emaS10 < emaS11 and emaS11 < emaS12 and emaS12 < emaS13 and emaS13 < emaS14 and emaS14 < emaS15 and emaS15 < emaS16)
+
+//Fast EMA Final Color Rules
+colFinal = colfastL and emaS1 > emaS16 ? color.aqua : colfastS and emaS1 < emaS16 ? color.orange : color.gray
+//Slow EMA Final Color Rules
+colFinal2 = colslowL ? color.lime : colslowS ? color.red : color.gray
+
+//Fast EMA Plots
+p1=plot(minMode ? na : emaF1, title="Fast EMA 1", linewidth=2, color=colFinal, transp=20)
+plot(minMode ? na : emaF2, title="Fast EMA 2", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF3, title="Fast EMA 3", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF4, title="Fast EMA 4", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF5, title="Fast EMA 5", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF6, title="Fast EMA 6", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF7, title="Fast EMA 7", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF8, title="Fast EMA 8", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF9, title="Fast EMA 9", linewidth=1, color=colFinal, transp=20)
+plot(minMode ? na : emaF10, title="Fast EMA 10", linewidth=1, color=colFinal, transp=20)
+p2=plot(minMode ? na : emaF11, title="Fast EMA 11", linewidth=1, color=colFinal, transp=20)
+
+fill(p1,p2,color=color.silver, transp=95)
+
+//Slow EMA Plots
+p3=plot(minMode ? na : emaS1, title="Slow EMA 1", linewidth=2, color=colFinal2, transp=20)
+plot(minMode ? na : emaS2, title="Slow EMA 2", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS3, title="Slow EMA 3", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS4, title="Slow EMA 4 - EMA(11, 34)", linewidth=2, color= emaS4 < emaF5 ? color.fuchsia : #FFD700 , transp=0, style=plot.style_circles,join=true)
+plot(minMode ? na : emaS5, title="Slow EMA 5", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS6, title="Slow EMA 6", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS7, title="Slow EMA 7", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS8, title="Slow EMA 8", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS9, title="Slow EMA 9", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS10, title="Slow EMA 10", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS11, title="Slow EMA 11", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS12, title="Slow EMA 12", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS13, title="Slow EMA 13", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS14, title="Slow EMA 14", linewidth=1, color=colFinal2, transp=20)
+plot(minMode ? na : emaS15, title="Slow EMA 15", linewidth=1, color=colFinal2, transp=20)
+p4=plot(minMode ? na : emaS16, title="Slow EMA 16", linewidth=2, color=colFinal2,transp=20)
+
+fill(p3,p4, color=color.silver, transp=95)
+
+// BUY & SELL (STRONG)
+buySwing = 0
+sellSwing = 0
+buySwing := colFinal[1] == color.gray and colFinal == color.aqua ? nz(buySwing[1]) > 0 ? buySwing[1] + 1 : 1 : 0
+sellSwing := colFinal[1] == color.gray  and colFinal == color.orange ? nz(sellSwing[1]) > 0 ? sellSwing[1] + 1 : 1 : 0
+
+
+plotshape(buySwing==1 and barssince(nz(buySwing[1], 1)==1) > Lookback ? 1 : na, title="Buy Swing", text="E", location=location.belowbar, style=shape.labelup, size=size.tiny, color=color.aqua, textcolor=color.white, transp=0)
+plotshape(sellSwing==1 and barssince(nz(sellSwing[1], 1)==1) > Lookback ? -1 : na, title="Sell Swing", text="E", location=location.abovebar, style=shape.labeldown, size=size.tiny, color=color.orange, textcolor=color.white, transp=0)
+plotshape(colFinal2[1] != color.lime and colFinal2 == color.lime ? 1 : na, title="Long Start", text="Buy", location=location.belowbar, style=shape.labelup, size=size.tiny, color=color.green, textcolor=color.white, transp=0)
+plotshape(colFinal2[1] == color.lime and colFinal2 != color.lime ? 1 : na, title="Long Stop", text="End", location=location.abovebar, style=shape.labeldown, size=size.tiny, color=color.black, textcolor=color.white, transp=0)
+plotshape(colFinal2[1] != color.red and colFinal2 == color.red ? -1 : na, title="Short Start", text="Sell", location=location.abovebar, style=shape.labeldown, size=size.tiny, color=color.red, textcolor=color.white, transp=0)
+plotshape(colFinal2[1] == color.red and colFinal2 != color.red ? 1 : na, title="Short Stop", text="End", location=location.belowbar, style=shape.labelup, size=size.tiny, color=color.black, textcolor=color.white, transp=0)
+
+alertcondition(colFinal2[1] != color.lime and colFinal2 == color.lime, "SG - Long Start", "SG - Long Start")
+alertcondition(colFinal2[1] != color.red and colFinal2 == color.red, "SG - Short Start", "SG - Short Start")
+
+
+//////////////////////////////////////////////////////////////////////////
+// Colored EMA Long
+//////////////////////////////////////////////////////////////////////////
+emaLong = ema(close, 180)
+
+TrendColor = emaS16 > emaLong and emaF4 > emaLong ? #00ff80 : 
+   emaS16 < emaLong and emaF4 < emaLong ? #ff0080 : #b2b5be
+
+plot(minMode ? na : emaLong, color=TrendColor, linewidth=3, transp=20, title="Colored EMA Long")

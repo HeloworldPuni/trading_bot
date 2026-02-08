@@ -1,0 +1,231 @@
+//@version=5
+strategy("Automated Scalping Strategy - $500 Capital", 
+         shorttitle="AutoScalp", 
+         overlay=true, 
+         initial_capital=500, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=2, // 2% risk per trade
+         commission_type=strategy.commission.percent, 
+         commission_value=0.1, // 0.1% commission
+         slippage=2)
+
+// ============================================================================
+// RISK MANAGEMENT PARAMETERS
+// ============================================================================
+var float INITIAL_CAPITAL = 500.0
+var float DAILY_LOSS_LIMIT = 25.0  // 5% of capital
+var float MAX_RISK_PER_TRADE = 10.0  // 2% of capital
+var float TARGET_DAILY_PROFIT = 25.0  // 5% daily target (realistic)
+var int MAX_TRADES_PER_DAY = 8
+var int MAX_CONSECUTIVE_LOSSES = 3
+
+// Daily tracking variables
+var float daily_pnl = 0.0
+var int daily_trades = 0
+var int consecutive_losses = 0
+var bool trading_halted = false
+
+// Reset daily counters at market open
+if ta.change(time("1D"))
+    daily_pnl := 0.0
+    daily_trades := 0
+    consecutive_losses := 0
+    trading_halted := false
+
+// ============================================================================
+// TECHNICAL INDICATORS
+// ============================================================================
+
+// Multi-timeframe EMAs
+ema_20 = ta.ema(close, 20)
+ema_50 = ta.ema(close, 50)
+ema_200 = ta.ema(close, 200)
+
+// Momentum indicators
+rsi = ta.rsi(close, 14)
+macd_line = ta.ema(close, 12) - ta.ema(close, 26)
+macd_signal = ta.ema(macd_line, 9)
+macd_histogram = macd_line - macd_signal
+
+// Volatility
+atr = ta.atr(14)
+bb_upper = ta.sma(close, 20) + (ta.stdev(close, 20) * 2)
+bb_lower = ta.sma(close, 20) - (ta.stdev(close, 20) * 2)
+bb_middle = ta.sma(close, 20)
+
+// Volume analysis
+vol_sma = ta.sma(volume, 20)
+high_volume = volume > vol_sma * 1.5
+
+// Support and Resistance
+highest_high = ta.highest(high, 20)
+lowest_low = ta.lowest(low, 20)
+
+// ============================================================================
+// SCALPING ENTRY CONDITIONS
+// ============================================================================
+
+// Trend confirmation
+bull_trend = close > ema_20 and ema_20 > ema_50 and ema_50 > ema_200
+bear_trend = close < ema_20 and ema_20 < ema_50 and ema_50 < ema_200
+
+// Momentum conditions
+bull_momentum = rsi > 50 and rsi < 80 and macd_line > macd_signal
+bear_momentum = rsi < 50 and rsi > 20 and macd_line < macd_signal
+
+// Volatility breakout
+volatility_breakout = atr > ta.sma(atr, 14) * 1.2
+
+// Price action signals
+bull_breakout = close > bb_upper[1] and high_volume
+bear_breakout = close < bb_lower[1] and high_volume
+
+// Support/Resistance bounce
+support_bounce = low <= lowest_low * 1.001 and close > low
+resistance_rejection = high >= highest_high * 0.999 and close < high
+
+// ============================================================================
+// ENTRY LOGIC
+// ============================================================================
+
+// Long entry conditions
+long_condition = bull_trend and bull_momentum and (bull_breakout or support_bounce) and volatility_breakout
+
+// Short entry conditions  
+short_condition = bear_trend and bear_momentum and (bear_breakout or resistance_rejection) and volatility_breakout
+
+// Risk management checks
+can_trade = not trading_halted and 
+           daily_trades < MAX_TRADES_PER_DAY and 
+           math.abs(daily_pnl) < DAILY_LOSS_LIMIT and 
+           consecutive_losses < MAX_CONSECUTIVE_LOSSES
+
+// ============================================================================
+// POSITION SIZING & RISK CALCULATION
+// ============================================================================
+
+// Dynamic position sizing based on volatility
+base_risk = MAX_RISK_PER_TRADE
+volatility_multiplier = math.min(2.0, math.max(0.5, ta.sma(atr, 14) / atr))
+adjusted_risk = base_risk * volatility_multiplier
+
+// Calculate position size
+stop_distance_long = close - (close - atr * 2)
+stop_distance_short = (close + atr * 2) - close
+
+position_size_long = adjusted_risk / stop_distance_long * close
+position_size_short = adjusted_risk / stop_distance_short * close
+
+// ============================================================================
+// ENTRY EXECUTION
+// ============================================================================
+
+if long_condition and can_trade and strategy.position_size == 0
+    stop_loss_long = close - atr * 2
+    take_profit_long = close + atr * 3  // 1:1.5 risk reward
+    
+    strategy.entry("Long", strategy.long, qty=position_size_long/close)
+    strategy.exit("Long Exit", "Long", stop=stop_loss_long, limit=take_profit_long)
+    
+    // Update tracking
+    daily_trades := daily_trades + 1
+    
+    // Alert for webhook
+    alert('{"action":"ENTER-LONG","exchange":"BINANCE","pair":"ETHUSDT","timeframe":"' + timeframe.period + '","price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(stop_loss_long) + ',"take_profit":' + str.tostring(take_profit_long) + ',"quantity":' + str.tostring(position_size_long/close) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+if short_condition and can_trade and strategy.position_size == 0
+    stop_loss_short = close + atr * 2
+    take_profit_short = close - atr * 3  // 1:1.5 risk reward
+    
+    strategy.entry("Short", strategy.short, qty=position_size_short/close)
+    strategy.exit("Short Exit", "Short", stop=stop_loss_short, limit=take_profit_short)
+    
+    // Update tracking
+    daily_trades := daily_trades + 1
+    
+    // Alert for webhook
+    alert('{"action":"ENTER-SHORT","exchange":"BINANCE","pair":"ETHUSDT","timeframe":"' + timeframe.period + '","price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(stop_loss_short) + ',"take_profit":' + str.tostring(take_profit_short) + ',"quantity":' + str.tostring(position_size_short/close) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+// ============================================================================
+// TRADE MANAGEMENT
+// ============================================================================
+
+// Track trade results
+if strategy.closedtrades > strategy.closedtrades[1]
+    last_trade_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    daily_pnl := daily_pnl + last_trade_pnl
+    
+    // Update consecutive losses
+    if last_trade_pnl < 0
+        consecutive_losses := consecutive_losses + 1
+    else
+        consecutive_losses := 0
+    
+    // Check if daily limits reached
+    if daily_pnl <= -DAILY_LOSS_LIMIT
+        trading_halted := true
+        strategy.close_all(comment="Daily Loss Limit Reached")
+        alert('{"action":"HALT-TRADING","reason":"Daily loss limit reached","pnl":' + str.tostring(daily_pnl) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+    
+    if daily_pnl >= TARGET_DAILY_PROFIT
+        trading_halted := true
+        strategy.close_all(comment="Daily Target Reached")
+        alert('{"action":"HALT-TRADING","reason":"Daily target reached","pnl":' + str.tostring(daily_pnl) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+// Emergency exit conditions
+if consecutive_losses >= MAX_CONSECUTIVE_LOSSES
+    trading_halted := true
+    strategy.close_all(comment="Max Consecutive Losses")
+    alert('{"action":"EMERGENCY-EXIT","reason":"Max consecutive losses","secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Plot EMAs
+plot(ema_20, color=color.blue, title="EMA 20")
+plot(ema_50, color=color.orange, title="EMA 50")
+plot(ema_200, color=color.red, title="EMA 200")
+
+// Plot Bollinger Bands
+plot(bb_upper, color=color.gray, title="BB Upper")
+plot(bb_lower, color=color.gray, title="BB Lower")
+plot(bb_middle, color=color.yellow, title="BB Middle")
+
+// Plot support/resistance
+plot(highest_high, color=color.red, style=plot.style_stepline, title="Resistance")
+plot(lowest_low, color=color.green, style=plot.style_stepline, title="Support")
+
+// Display daily stats
+var table info_table = table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Daily P&L:", text_color=color.black)
+    table.cell(info_table, 1, 0, str.tostring(daily_pnl, "#.##"), text_color=daily_pnl >= 0 ? color.green : color.red)
+    
+    table.cell(info_table, 0, 1, "Trades Today:", text_color=color.black)
+    table.cell(info_table, 1, 1, str.tostring(daily_trades), text_color=color.black)
+    
+    table.cell(info_table, 0, 2, "Consecutive Losses:", text_color=color.black)
+    table.cell(info_table, 1, 2, str.tostring(consecutive_losses), text_color=consecutive_losses >= 2 ? color.red : color.black)
+    
+    table.cell(info_table, 0, 3, "Trading Status:", text_color=color.black)
+    table.cell(info_table, 1, 3, trading_halted ? "HALTED" : "ACTIVE", text_color=trading_halted ? color.red : color.green)
+    
+    table.cell(info_table, 0, 4, "RSI:", text_color=color.black)
+    table.cell(info_table, 1, 4, str.tostring(rsi, "#.#"), text_color=color.black)
+    
+    table.cell(info_table, 0, 5, "ATR:", text_color=color.black)
+    table.cell(info_table, 1, 5, str.tostring(atr, "#.####"), text_color=color.black)
+
+// ============================================================================
+// ALERTS CONFIGURATION
+// ============================================================================
+
+// Additional monitoring alerts
+if daily_pnl <= -DAILY_LOSS_LIMIT * 0.8  // 80% of loss limit
+    alert('{"action":"WARNING","message":"Approaching daily loss limit","current_pnl":' + str.tostring(daily_pnl) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+if consecutive_losses >= 2
+    alert('{"action":"WARNING","message":"High consecutive losses","count":' + str.tostring(consecutive_losses) + ',"secret":"clurut_webhook_2025"}', alert.freq_once_per_bar)
+
+// End of strategy

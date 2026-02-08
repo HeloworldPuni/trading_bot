@@ -1,0 +1,74 @@
+//@version=4
+study(title = "100Seconds VSA", shorttitle = '100Seconds_VSA')
+
+
+xjMult = input(2.5, title="Turnover mult", minval=1)
+xlCoeff = input(23, title="Turnover coeff", minval=1)
+// Vol calculations
+body = abs(close - open)
+spread = high - low
+pSpread = 100 * spread / open
+absSpread = 2 * spread - body
+pAbsSpread = 100 * absSpread / open
+topwick = abs(high - max(open, close))
+bottomwick = abs(min(open, close) - low)
+
+fractionup = iff(close > open, spread/absSpread, (topwick + bottomwick)/absSpread)
+fractiondown = iff(close > open, -(topwick + bottomwick)/absSpread, -spread/absSpread)
+
+nvol = nz(volume) * hlc3
+volup = nvol * fractionup
+voldown = nvol * fractiondown
+
+//turnover rate calculation
+xj = nvol / (xjMult * spread - body)
+xl = iff(close > open, xj * spread, iff(close < open, xj * (topwick + bottomwick), nvol / 2)) + iff(close > open, -xj * (topwick + bottomwick), iff(close < open, -xj * spread, -nvol / 2))
+tor = xl / xlCoeff
+
+// === PLOT ===
+//red bar volume is defined as red volume candle
+plotcandle(0,nvol,0,nvol,color=close < open ? color.new(color.red,0):na)
+//down trend Doji volume as red volume candle
+plotcandle(0,nvol,0,nvol,color=close == open and close < close[1] ? color.new(color.red,0) : na)
+//up trend Doji volume is defined as green volume candle
+plotcandle(0,nvol,0,nvol,color=close == open and close > close[1] ? color.new(color.green,0) : na)
+//green bar volume is defined as green volume candle
+plotcandle(0,nvol,0,nvol,color=close > open ? color.new(color.green,0):na)
+
+//active buying volume with yellow color
+plotcandle(0,volup,0,volup,color=volup > 0 ? color.new(color.yellow,0) : na)
+//active selling volume with fuchsia color
+plotcandle(0,voldown,0,voldown,color=voldown < 0 ? color.new(color.fuchsia,0) : na)
+
+//high active buying turn over rate with navy candle
+// abtor = tor * 4 >= 0
+// plotcandle(0,tor *4 *13,0,tor *4 *13,color= abtor ? color.new(color.navy,0):na)
+// //high active selling turn over rate with white candle
+// astor = tor * 4 < 0
+// plotcandle(0,tor *4 *13,0,tor *4 *13,color= astor ? color.new(color.white,0):na)
+
+// OTHER info
+// mult = input(10000000000, title="BullBear mult", minval=1)
+// //define bull, bear price levels
+// bear = (ema(close,9)-ema(close,2))/2 * mult
+// bull = (ema(close,2)-ema(close,9))/2 * mult
+
+// //define output variables
+// var1a = (close*2.5+high+low)/4*0.75 * mult
+// var1d = (close*2.5+high+low)/4 * mult
+// //define covergence and divergence
+// cd = ema(var1d,5)-ema(var1d,13)
+// // define positioning
+// positioning = 1.1*ema(ema(var1d,5)-ema(var1d,13),2)
+// // define call the shots signal
+// callthshots = (bull-bear)
+
+// //plot price trend together with volume candles
+// pcd = plot(cd,color=color.new(color.lime, 0), linewidth=1)
+// ppos = plot(positioning,color=color.new(color.red, 0), linewidth=1)
+// pcal = plot(callthshots,color=color.new(color.orange, 0), linewidth=4)
+// //plot lime-red narrow price band
+// fill(pcd,ppos,color=cd>positioning?color.lime:color.red, transp=00)
+// //plot yellow-fuchsia wide price band
+// fill(pcd,pcal,color=cd<callthshots?color.yellow:color.fuchsia, transp=40)
+

@@ -1,0 +1,270 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title         = "[Z] Meta Divergence Alert", 
+     shorttitle         = "MetaDiv Alert", 
+     overlay            = true,
+     max_bars_back      = 1000, 
+     max_lines_count    = 400, 
+     max_labels_count   = 400)
+
+// ##################
+// === Parameters ===
+// ##################
+
+prd                 = input.int(5, title = "Pivot Period", minval = 1, maxval = 50)
+source              = input.string("VWMA", title = "Source for Pivot Points", options = ["Close", "High/Low", "VWMA"])
+src                 = input(hlc3, title = "Source for VWMA")
+searchdiv           = input.string("Regular", title = "Divergence Type", options = ["Regular", "Hidden", "Regular/Hidden"])
+showlimit           = input.int(5, title="Minimum Number of Divergence", minval = 1, maxval = 12)
+maxpp               = input.int(10, title = "Maximum Pivot Points to Check", minval = 1, maxval = 20)
+maxbars             = input.int(100, title = "Maximum Bars to Check", minval = 30, maxval = 200)
+dontconfirm         = input.bool(false, title = "Don't Wait for Confirmation")
+calcmacd            = input.bool(true, title = "MACD")
+calcmacda           = input.bool(true, title = "MACD Histogram")
+calcrsi             = input.bool(true, title = "RSI")
+calcstoc            = input.bool(true, title = "Stochastic")
+calccci             = input.bool(true, title = "CCI")
+calcmom             = input.bool(true, title = "Momentum")
+calcobv             = input.bool(true, title = "OBV")
+calcvwmacd          = input.bool(true, title = "VWmacd")
+calccmf             = input.bool(true, title = "Chaikin Money Flow")
+calcmfi             = input.bool(true, title = "Money Flow Index")
+calcsmi             = input.bool(true, title = "Stochastic Momentum Index")
+calcext             = input.bool(false, title = "Check External Indicator")
+externalindi        = input(close, title = "External Indicator")
+
+// ########################
+// === Basic Indicators ===
+// ########################
+
+rsi     = ta.rsi(close, 14) // RSI
+moment  = ta.mom(close, 10) // Momentum
+cci     = ta.cci(close, 10) // CCI
+Obv     = ta.obv // OBV
+stk     = ta.sma(ta.stoch(close, high, low, 14), 3) // Stoch
+maFast  = ta.vwma(close, 12), maSlow = ta.vwma(close, 26), vwmacd = maFast - maSlow // volume weighted macd
+Cmfm    = ((close-low) - (high-close)) / (high - low), Cmfv = Cmfm * volume, cmf = ta.sma(Cmfv, 21) / ta.sma(volume,21) // Chaikin money flow
+Mfi     = ta.mfi(close, 14) // Moneyt Flow Index
+[macd, signal, macdhist] = ta.macd(close, 12, 26, 9) // MACD
+
+// SMI
+emaEma(source, length) => ta.ema(ta.ema(source, length), length)
+highestHigh         = ta.highest(10)
+lowestLow           = ta.lowest(10)
+smi                 = 200 * (emaEma(close - (highestHigh + lowestLow) / 2, 10) / emaEma(highestHigh - lowestLow, 10))
+
+// ##############
+// === Pivots ===
+// ##############
+
+// Check if we get new Pivot High Or Pivot Low
+
+secondsInTf = timeframe.in_seconds(timeframe.period)
+vwemalen = if secondsInTf >= timeframe.in_seconds("1M")
+    int(timeframe.in_seconds("1Y") / secondsInTf)
+else if secondsInTf >= timeframe.in_seconds("1W")
+    int(timeframe.in_seconds("3M") / secondsInTf)
+else if secondsInTf >= timeframe.in_seconds("1D")/2
+    int(timeframe.in_seconds("1W") / secondsInTf)
+else if secondsInTf >= 3600
+    int(timeframe.in_seconds("1D") / secondsInTf)
+else if secondsInTf >= 900
+    int(14400 / secondsInTf)
+else if secondsInTf >= 120
+    int(3600/secondsInTf)
+else
+    int(900/secondsInTf)
+
+// Volume Weighted Exponential Moving Average
+vwema(src, len)=>
+    ta.ema(src * volume, len) / ta.ema(volume, len)
+
+vwmaP = vwema(src, vwemalen)
+
+// vwmaP = ta.vwma(hlc3, 20)
+float ph = ta.pivothigh((source == "VWMA" ? vwmaP : (source == "Close" ? close : high)), prd, prd)
+float pl = ta.pivotlow((source == "VWMA" ? vwmaP : (source == "Close" ? close : low)), prd, prd)
+
+// keep values and positions of Pivot Highs/Lows in the arrays
+var int maxarraysize = 20
+var ph_positions = array.new_int(maxarraysize, 0)
+var pl_positions = array.new_int(maxarraysize, 0)
+var ph_vals = array.new_float(maxarraysize, 0.)
+var pl_vals = array.new_float(maxarraysize, 0.)
+
+// add PHs to the array
+if not na(ph)
+    array.unshift(ph_positions, bar_index)
+    array.unshift(ph_vals, ph)
+    if array.size(ph_positions) > maxarraysize
+        array.pop(ph_positions)
+        array.pop(ph_vals)
+
+// add PLs to the array
+if not na(pl)
+    array.unshift(pl_positions, bar_index)
+    array.unshift(pl_vals, pl)
+    if array.size(pl_positions) > maxarraysize
+        array.pop(pl_positions)
+        array.pop(pl_vals)
+
+// ##################
+// === Divergence ===
+// ##################
+
+// functions to check Regular Divergences and Hidden Divergences
+
+// function to check positive regular or negative hidden divergence
+// cond == 1 => positive_regular, cond == 2=> negative_hidden
+positive_regular_positive_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "VWMA" ? vwmaP : (source == "Close" ? close : low)
+    // if indicators higher than last value and close price is higher than las close 
+    if dontconfirm or src > src[1] or close > close[1]
+        startpoint = dontconfirm ? 0 : 1 // don't check last candle
+        // we search last 15 PPs
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(pl_positions, x) + prd
+            // if we reach non valued array element or arrived 101. or previous bars then we don't search more
+            if array.get(pl_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and 
+               ((cond == 1 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(pl_vals, x))) or
+               (cond == 2 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(pl_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - close[len]) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] < virtual_line1 or nz(close[y]) < virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+// function to check negative regular or positive hidden divergence
+// cond == 1 => negative_regular, cond == 2=> positive_hidden
+negative_regular_negative_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "VWMA" ? vwmaP : (source == "Close" ? close : high)
+    // if indicators higher than last value and close price is higher than las close 
+    if dontconfirm or src < src[1] or close < close[1]
+        startpoint = dontconfirm ? 0 : 1 // don't check last candle
+        // we search last 15 PPs
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(ph_positions, x) + prd
+            // if we reach non valued array element or arrived 101. or previous bars then we don't search more
+            if array.get(ph_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and 
+               ((cond == 1 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(ph_vals, x))) or 
+               (cond == 2 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(ph_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - nz(close[len])) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] > virtual_line1 or nz(close[y]) > virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+// calculate 4 types of divergence if enabled in the options and return divergences in an array
+calculate_divs(cond, indicator)=>
+    divs = array.new_int(4, 0)
+    array.set(divs, 0, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? positive_regular_positive_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 1, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? negative_regular_negative_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 2, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? positive_regular_positive_hidden_divergence(indicator, 2) : 0)
+    array.set(divs, 3, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? negative_regular_negative_hidden_divergence(indicator, 2) : 0)
+    divs
+
+// array to keep all divergences
+var all_divergences = array.new_int(48) // 12 indicators * 4 divergence = 48 elements
+// set related array elements
+array_set_divs(div_pointer, index)=>
+    for x = 0 to 3
+        array.set(all_divergences, index * 4 + x, array.get(div_pointer, x))
+
+// set divergences array 
+array_set_divs(calculate_divs(calcmacd, macd), 0)
+array_set_divs(calculate_divs(calcmacda, macdhist), 1)
+array_set_divs(calculate_divs(calcrsi, rsi), 2)
+array_set_divs(calculate_divs(calcstoc, stk), 3)
+array_set_divs(calculate_divs(calccci, cci), 4)
+array_set_divs(calculate_divs(calcmom, moment), 5)
+array_set_divs(calculate_divs(calcobv, Obv), 6)
+array_set_divs(calculate_divs(calcvwmacd, vwmacd), 7)
+array_set_divs(calculate_divs(calccmf, cmf), 8)
+array_set_divs(calculate_divs(calcmfi, Mfi), 9)
+array_set_divs(calculate_divs(calcsmi, smi), 10)
+array_set_divs(calculate_divs(calcext, externalindi), 11)
+
+// check minimum number of divergence, if less than showlimit then delete all divergence
+total_div = 0
+for x = 0 to array.size(all_divergences) - 1
+    total_div := total_div + math.round(math.sign(array.get(all_divergences, x)))
+
+if total_div < showlimit
+    array.fill(all_divergences, 0)
+
+
+// ##############
+// === Alerts ===
+// ##############
+
+// variables for Alerts
+pos_reg_div_detected = false
+neg_reg_div_detected = false
+pos_hid_div_detected = false
+neg_hid_div_detected = false
+
+for x = 0 to 11
+    div_type = -1
+    for y = 0 to 3
+        if array.get(all_divergences, x * 4 + y) > 0 // any divergence?   
+            // set variables for alerts
+            if y == 0
+                pos_reg_div_detected := true
+            if y == 1
+                neg_reg_div_detected := true
+            if y == 2
+                pos_hid_div_detected := true
+            if y == 3
+                neg_hid_div_detected := true
+
+alertcondition(pos_reg_div_detected, title='Positive Regular Divergence Detected', message='Positive Regular Divergence Detected')
+alertcondition(neg_reg_div_detected, title='Negative Regular Divergence Detected', message='Negative Regular Divergence Detected')
+alertcondition(pos_hid_div_detected, title='Positive Hidden Divergence Detected', message='Positive Hidden Divergence Detected')
+alertcondition(neg_hid_div_detected, title='Negative Hidden Divergence Detected', message='Negative Hidden Divergence Detected')
+
+alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Divergence Detected', message='Positive Divergence Detected')
+alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
+
+// #############
+// === Plots ===
+// #############
+
+seriesNeg = searchdiv == "Regular" ? neg_reg_div_detected : (searchdiv == "Hidden" ? neg_hid_div_detected : (neg_reg_div_detected or neg_hid_div_detected))
+seriesPos = searchdiv == "Regular" ? pos_reg_div_detected : (searchdiv == "Hidden" ? pos_hid_div_detected : (pos_reg_div_detected or pos_hid_div_detected))
+plotshape(seriesNeg,  title = "Down",  location=location.abovebar, color=color.rgb(241, 222, 15),  style=shape.labeldown, size = size.small, display = display.pane)
+plotshape(seriesPos,  title = "Up",  location=location.belowbar, color=color.rgb(145, 222, 106), style=shape.labelup, size = size.small, display = display.pane)
+
+//plotshape(pos_reg_div_detected,  title = "Positive Regular",  location=location.belowbar, color=color.yellow,  style=shape.labelup, display = display.pane)
+//plotshape(pos_hid_div_detected,  title = "Positive Hidden",  location=location.belowbar, color=color.lime,  style=shape.labelup, display = display.pane)
+//plotshape(neg_reg_div_detected,  title = "Negative Regular",  location=location.abovebar, color=color.navy,  style=shape.labeldown, display = display.pane)
+//plotshape(neg_hid_div_detected,  title = "Negative Hidden",  location=location.abovebar, color=color.red,  style=shape.labeldown, display = display.pane)

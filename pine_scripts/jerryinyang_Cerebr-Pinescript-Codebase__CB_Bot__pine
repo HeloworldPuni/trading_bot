@@ -1,0 +1,951 @@
+//@version=4
+
+maxBoxes = 500, maxFvg = 500
+study("Cerebr Bot", overlay=true, max_boxes_count = maxBoxes, precision=5)
+
+// FUNCTIONS
+// [
+
+barInZone(_top, _bott, _index) => _index == 0 ? (high <= _top and high >= _bott ) or 
+  ( low <= _top and low >= _bott) or (high >= _top and low <= _bott) : 
+  (high[_index] <= _top and high[_index] >= _bott ) or 
+  ( low[_index] <= _top and low[_index] >= _bott) or (high[_index] >= _top and low[_index] <= _bott)
+
+znInZone(_top, _bott, _top2, _bott2) => 
+    tp1 = max(_top, _bott),  bt1 = min(_top, _bott)
+    tp2 = max(_top2, _bott2),  bt2 = min(_top2, _bott2)
+
+    (tp2 <= tp1 and tp2 >= bt1 ) or ( bt2 <= tp1 and bt2 >= bt1) or (tp2 >= tp1 and bt2 <= bt1)
+    
+tf(_res, _exp, gaps_on)  => gaps_on == 0 ? security(syminfo.tickerid, _res, _exp) :
+  gaps_on == true ? security(syminfo.tickerid, _res, _exp, barmerge.gaps_on, barmerge.lookahead_off ) : 
+  security(syminfo.tickerid, _res, _exp, barmerge.gaps_off, barmerge.lookahead_off )
+  
+boxinbox(op1, cl1, op2, cl2) => (op2 > op1 and op2 < cl1) or (op1 > op2 and op1 < cl2)
+
+nullbox = box.new(na, na, na , na, color(na), xloc = xloc.bar_time, bgcolor = color(na))
+
+lineInZone(_top, _bott, _line) => (_line <= _top and _line >= _bott )
+
+//Period Converter Function
+//{
+resToInt(_res) =>
+    resInt = 0
+    if _res == "D"
+        resInt := 1440
+    else if _res == "W"
+        resInt := 10080
+    else if _res == "M"
+        resInt := 43200
+    else
+        resInt := round(tonumber(_res))
+    
+    resInt
+
+periodConv(_len, _res) =>
+    xtf = round(tonumber(timeframe.period))
+    htfi = resToInt(_res)
+    
+    len = xtf < htfi ? ((htfi * _len) / xtf) : na
+    
+    len
+//}
+
+// ]
+
+
+// >>>>>>>>>>>>>>> IMBALANCE <<<<<<<<<<<<<<<//
+// [
+
+// PARAMETERS
+// {
+
+htf = "" //input("", "Higher Time Frame", input.resolution, group="IMBALANCE: SETTINGS")
+
+ascColor = color(na), descColor = color(na)
+bodyTrans = 100, wickTrans = 100
+
+// }
+
+// CANDLES AND FVG SCANNING
+// {
+    
+// HTF CANDLES CALCULATION AND PLOTTING
+// {
+ctfCandleDeltaTime() =>
+    if timeframe.isseconds
+        timeframe.multiplier * 1000
+    else if timeframe.isminutes
+        timeframe.multiplier * 1000 * 60
+    else if timeframe.isdaily
+        timeframe.multiplier * 1000 * 60 * 1440
+    else if timeframe.isweekly
+        timeframe.multiplier * 1000 * 60 * 1440 * 7
+    else if timeframe.ismonthly
+        timeframe.multiplier * 1000 * 60 * 1440 * 30
+    else
+        0
+
+var bodies = array.new_box()
+var wicks = array.new_box()
+var color bodyColor = color(na)
+var color wickColor = color(na)
+
+htfO = security(syminfo.tickerid, htf, open)
+htfH = security(syminfo.tickerid, htf, high)
+htfL = security(syminfo.tickerid, htf, low)
+htfC = security(syminfo.tickerid, htf, close)
+htfOpenTime = security(syminfo.tickerid, htf, time)
+htfCloseTime = security(syminfo.tickerid, htf, time_close)
+
+if array.size(bodies) > 0 and htfOpenTime == htfOpenTime[1]
+    box.delete(array.pop(bodies))
+    box.delete(array.pop(wicks))
+if array.size(bodies) == maxBoxes / 2
+    box.delete(array.shift(bodies))
+    box.delete(array.shift(wicks))
+
+bodyTop = max(htfO, htfC)
+bodyBottom = min(htfO, htfC)
+wickLeft = htfOpenTime + ((htfCloseTime - htfOpenTime) / 2) - ctfCandleDeltaTime()
+wickRight = htfCloseTime - ((htfCloseTime - htfOpenTime) / 2) + (ctfCandleDeltaTime() / 2)
+bodyColor := htfO > htfC ? color.new(descColor, bodyTrans) : htfO < htfC ? color.new(ascColor, bodyTrans) : bodyColor
+wickColor := htfO > htfC ? color.new(descColor, wickTrans) : htfO < htfC ? color.new(ascColor, wickTrans) : wickColor
+
+wickChange = barssince(change(wickLeft))
+var periodChecker = array.new_float(3, 0.05)
+if change(wickLeft)
+    array.shift(periodChecker)
+    array.push(periodChecker, wickChange[1] + 1)
+    
+period = array.max(periodChecker)
+
+array.push(bodies, box.new(htfOpenTime, bodyTop, htfCloseTime, bodyBottom, bodyTop == bodyBottom ? 
+  bodyColor : color(na), xloc = xloc.bar_time, bgcolor = bodyColor))
+array.push(wicks, box.new(htfOpenTime, htfH, htfCloseTime , htfL, color(na), xloc = xloc.bar_time, bgcolor = wickColor))
+// }
+
+// SCAN FOR FVG FROM BOX ARRAY
+// {
+w_datasize = array.size(wicks)
+
+var upfvgBox = array.new_box()
+var dnfvgBox = array.new_box()
+
+upboxReplaced = false, dnboxReplaced = false
+
+newFvgAbove = false, newFvgBelow = false
+
+// FUNCTION TO CALCULATE IMBALANCES
+// {
+
+boxInx = w_datasize - 1
+box1 = box(na), box2 = box(na), box3 = box(na)
+
+if boxInx - 3 >= 0
+    box1 := array.get(wicks, boxInx - 1)
+    box3 := array.get(wicks, boxInx - 3)
+
+hi1 = box.get_top(box1) , lo1 = box.get_bottom(box1)
+hi3 = box.get_top(box3) , lo3 = box.get_bottom(box3)
+op3 = box.get_left(box3), cl1 = box.get_right(box1)
+
+fvg = "none"
+if lo3 > hi1
+    fvg := "above"
+else if hi3 < lo1
+    fvg := "below"
+    
+new_fvg = box(na)
+
+if fvg == "above"
+    // PLOT THE FVG BLOCK
+    new_fvg := box.new(op3, hi1, cl1 , lo3, color(na), xloc = xloc.bar_time, bgcolor = color(na))
+    newFvgAbove := true
+    
+    if array.size(upfvgBox) < maxBoxes / 2
+        array.push(upfvgBox, new_fvg)
+        
+    else if array.size(upfvgBox) == maxBoxes / 2
+        box.delete(array.shift(upfvgBox))
+        upboxReplaced := true
+        array.push(upfvgBox, new_fvg)
+
+else if fvg == "below"
+    // PLOT THE FVG BLOCK
+    new_fvg := box.new(op3, lo1, cl1 , hi3, color(na), xloc = xloc.bar_time, bgcolor =  color(na))
+    newFvgBelow := true
+    
+    if array.size(dnfvgBox) < maxBoxes / 2
+        array.push(dnfvgBox, new_fvg)
+        
+    else if array.size(dnfvgBox) == maxBoxes / 2
+        box.delete(array.shift(dnfvgBox))
+        dnboxReplaced := true
+        array.push(dnfvgBox, new_fvg)
+// }
+
+// }
+
+upfvg_datasize = array.size(upfvgBox)
+dnfvg_datasize = array.size(dnfvgBox)
+// }
+
+// ]
+
+
+// >>>>>>>>>>>>>>> ORDER BLOCK <<<<<<<<<<<<<<<//
+// [
+
+// PARAMETERS
+// {
+minCand = input(3, "Minimum Candle for OB Validation", input.integer, minval=2, group="ORDER BLOCK")
+maxCand = input(6, "Maximum Candle for OB Validation", input.integer, minval=4, maxval=10, group="ORDER BLOCK", tooltip="Value must be larger than Mininum Candle")
+
+indLimit = input(1, "No-Body Candle Buffer", input.integer, tooltip="Value must be lower than Minimum Candle for OB", group="ORDER BLOCK")
+
+useObDist = input(true, "Filter Orderblock by Reversal Magnitude", input.bool, group="ORDER BLOCK: DISTANCE FILTER")
+distMeth = input("Candle Body", "Method to Calculate Reversal Magnitude", options=["Candle Body", "ATR"], group="ORDER BLOCK: DISTANCE FILTER")
+distMult = input(2, "Reversal Distance Multiplier", input.float, minval=1.5, step=0.1, group="ORDER BLOCK: DISTANCE FILTER")
+
+upCand = open < close, dnCand = open > close, neutCand = open == close
+// }
+
+// CALCULATE ORDER BLOCK INDEX
+// {
+bullObCandInx = minCand + 1
+bearObCandInx = minCand + 1
+
+for i = maxCand + 1 to minCand + 1
+    bullCond = false
+    
+    if dnCand[i]
+        bullCond := true
+        
+    if bullCond 
+        bullObCandInx := i
+        break
+
+for i = maxCand + 1 to minCand + 1
+    bearCond = false
+    
+    if upCand[i]
+        bearCond := true
+        
+    if bearCond 
+        bearObCandInx := i
+        break
+// }
+
+// ORDER BLOCK SETUP SCANNER
+// {
+
+bullSetup = false, bearSetup = false
+
+// FOR BUY
+bullObDist = 0
+
+if (dnCand[bullObCandInx])
+
+    for i = maxCand to minCand
+        upCount = 0
+        for j = i to 1
+            if upCand[j]
+                upCount += 1
+        
+        neutCount = 0
+        for k = i to 1
+            if neutCand[k]
+                neutCount += 1
+        
+        if upCount == i or ((upCount == i - indLimit) and (neutCount == indLimit))
+            bullSetup := true
+            bullObDist := i + 1
+            break
+    
+
+// FOR SELL
+
+var bearObDist = 0
+if (upCand[bearObCandInx])
+    
+    bearObDist := 0
+    for i = maxCand to minCand
+        dnCount = 0
+        for j = i to 1
+            if dnCand[j]
+                dnCount += 1
+        
+        neutCount = 0
+        for k = i to 1
+            if neutCand[k]
+                neutCount += 1
+        
+        if dnCount == i or ((dnCount == i - indLimit) and (neutCount == indLimit))
+            bearSetup := true
+            bearObDist := i + 1
+            break
+
+// }
+
+// REVERSAL MAGNITUDE VALIDATION
+// {
+bullObValid = false, bearObValid = false
+bullObInx = bullObDist, bearObInx = bearObDist
+
+
+// Method 1: Candle Body
+bullObCand_open = open[bullObInx]
+bullObCand_close = close[bullObInx]
+
+bearObCand_open = open[bearObInx]
+bearObCand_close = close[bearObInx]
+
+bullObCand_hi = high[bullObInx], bullObCand_lo = low[bullObInx]
+bearObCand_hi = high[bearObInx], bearObCand_lo = low[bearObInx]
+
+calcBullRevDist() =>
+    totDist = float(0)
+    if bullObInx != 0
+        for i = bullObInx - 1 to 1
+            totDist := (abs(open[i] - close[i])) + totDist
+        totDist
+
+calcBearRevDist() =>
+    totDist = float(0)
+    if bearObInx != 0
+        for i = bearObInx - 1 to 1
+            totDist := (abs(open[i] - close[i])) + totDist
+        totDist
+
+bullObCandDist = abs(bullObCand_open - bullObCand_close)
+bearObCandDist = abs(bearObCand_open - bearObCand_close)
+
+bullRevDist = calcBullRevDist(), bearRevDist = calcBearRevDist()
+
+// Method 2: ATR 
+distAtr = atr(14)
+
+// Conditions
+if bullSetup
+    if distMeth == "Candle Body" and (bullRevDist >= (bullObCandDist * distMult))
+        bullObValid := true
+    
+    else if distMeth == "ATR" and (bullRevDist >= (distAtr[bullObInx] * distMult))
+        bullObValid := true
+
+if bearSetup
+    if distMeth == "Candle Body" and (bearRevDist >= (bearObCandDist * distMult))
+        bearObValid := true
+    
+    else if distMeth == "ATR" and (bearRevDist >= (distAtr[bearObInx] * distMult))
+        bearObValid := true
+
+// }
+
+// ORDER BLOCK PLOTTING
+// {
+b_bullOb = false, b_bearOb = false
+
+if useObDist
+    if bullSetup and bullObValid
+        b_bullOb := true 
+    if bearSetup and bearObValid
+        b_bearOb := true
+else 
+    if bullSetup
+        b_bullOb := true 
+    if bearSetup
+        b_bearOb := true
+
+// }
+
+// ]
+
+
+// >>>>>>>>>>>>>>> CB ORDER BLOCK SCANNER  <<<<<<<<<<<<<<<//
+// [
+
+// PARAMETERS
+// {
+useobfvg = true //input(false, "Use FVG Filter for Order Block", input.bool, group="CB Orderblock Scanner")
+histObToSaved = 3 //input(3, "How many Order Block in History should be referenced?", input.integer, maxval=5, minval=1, group="CB Orderblock Scanner")
+
+// }
+
+// STORE NEW OB VALUES
+// {
+
+bullObBlocks = array.new_box(histObToSaved + 1, nullbox)
+
+
+bearObBlocks = array.new_box(histObToSaved + 1, nullbox)
+
+if b_bullOb
+    obOp = time[bullObInx], obCl = time
+    obHi = bullObCand_hi, obLo = bullObCand_lo
+    
+    newOb = box.new(obOp, obHi, obCl , obLo, color(na), xloc = xloc.bar_time, bgcolor = color(na))
+    
+    array.shift(bullObBlocks)
+    array.push(bullObBlocks, newOb)
+
+if b_bearOb
+    obOp = time[bearObInx], obCl = time
+    obHi = bearObCand_hi, obLo = bearObCand_lo
+    
+    newOb = box.new(obOp, obHi, obCl , obLo, color(na), xloc = xloc.bar_time, bgcolor = color(na))
+    
+    array.shift(bearObBlocks)
+    array.push(bearObBlocks, newOb)
+
+isBullCbOb = false, isBearCbOb = false
+conv = periodConv(10, htf) 
+
+// }
+
+// FUNCTIONAL METHOD : CURRENT TIMEFRAME
+// {
+
+// upfvgBox, dnfvgBox, upfvg_datasize, dnfvg_datasize
+count_bullObFvg = 0, count_bearObFvg = 0
+
+if not (conv != 10)
+    
+    if b_bullOb and dnfvg_datasize > 3
+        for i = bullObCandInx - 3 to 0
+            
+            if i == 0
+                if newFvgBelow
+                    count_bullObFvg += 1
+                    isBullCbOb := true
+                
+            else if newFvgBelow[i]
+                count_bullObFvg += 1
+                isBullCbOb := true
+
+
+    if b_bearOb and upfvg_datasize > 3
+        for i = bearObCandInx - 3 to 0
+            
+            if i == 0
+                if newFvgAbove
+                    count_bearObFvg += 1
+                    isBearCbOb := true
+                
+            else if newFvgAbove[i]
+                count_bearObFvg += 1
+                isBearCbOb := true
+    
+// }
+
+// EXPERIMENTAL METHOD : HIGHER TIMEFRAME.
+// {
+if conv != 10
+    if newFvgBelow and not(newFvgBelow[1])
+
+        fvgOp = box.get_left(array.get(dnfvgBox, dnfvg_datasize - 1))
+        fvgCl = box.get_right(array.get(dnfvgBox, dnfvg_datasize - 1))
+        
+        for i = 0 to histObToSaved
+            obOp = box.get_left(array.get(bullObBlocks, i))
+            obCl = box.get_right(array.get(bullObBlocks, i))
+            
+            if  obOp > fvgOp
+                isBullCbOb := true
+    
+    else if newFvgAbove and not(newFvgAbove[1])
+
+        fvgOp = box.get_left(array.get(upfvgBox, upfvg_datasize - 1))
+        fvgCl = box.get_right(array.get(upfvgBox, upfvg_datasize - 1))
+        
+        for i = 0 to histObToSaved
+            obOp = box.get_left(array.get(bearObBlocks, i))
+            obCl = box.get_right(array.get(bearObBlocks, i))
+            
+            // if  boxinbox(fvgOp, fvgCl, obOp, obCl)
+            if obOp > fvgOp
+                isBearCbOb := true
+// }
+
+// PLOTS
+// {
+
+obPlotMeth = input("High/Low", "What Values to use for Top/Bottom of Orderblock?", options=["High/Low", "Open/Close", "Dynamic Wick/Body"], group="OB Plots")
+
+upcol = color.new(color.lime, 80) , dncol = color.new(color.red, 80)
+
+bullCbOb = useobfvg ? isBullCbOb : b_bullOb
+bearCbOb = useobfvg ? isBearCbOb : b_bearOb
+
+bullObTop = obPlotMeth == "High/Low" ? bullObCand_hi :
+  obPlotMeth == "Open/Close" ? max(bullObCand_open, bullObCand_close) : 
+  obPlotMeth == "Dynamic Wick/Body" ? max(bullObCand_open, bullObCand_close) : na
+  
+bullObBott = obPlotMeth == "High/Low" ? bullObCand_lo :
+  obPlotMeth == "Open/Close" ? min(bullObCand_open, bullObCand_close) : 
+  obPlotMeth == "Dynamic Wick/Body" ? bullObCand_lo : na
+  
+bearObTop = obPlotMeth == "High/Low" ? bearObCand_hi :
+  obPlotMeth == "Open/Close" ? max(bearObCand_open, bearObCand_close) : 
+  obPlotMeth == "Dynamic Wick/Body" ? bearObCand_hi : na
+  
+bearObBott = obPlotMeth == "High/Low" ? bearObCand_lo :
+  obPlotMeth == "Open/Close" ? min(bearObCand_open, bearObCand_close) : 
+  obPlotMeth == "Dynamic Wick/Body" ? min(bearObCand_open, bearObCand_close) : na
+
+var float bullTop = 0, var float bullBott = 0, var float bearTop = 0, var float bearBott = 0
+
+if bullCbOb
+    bullTop := bullObTop
+    bullBott := bullObBott
+
+if bearCbOb
+    bearTop := bearObTop
+    bearBott := bearObBott
+
+bgcolor(bullCbOb ? color.new(upcol, 90) : bearCbOb ? color.new(dncol, 90) : na)
+obTop = plot(bullCbOb ? bullObTop : bearCbOb ? bearObTop : na, "OB Top", bullCbOb ? upcol : bearCbOb ? dncol : na, 2, plot.style_linebr, editable=false)
+obBott = plot(bullCbOb ? bullObBott : bearCbOb ? bearObBott : na, "OB Bottom", bullCbOb ? upcol : bearCbOb ? dncol : na, 2, plot.style_linebr, editable=false)
+
+slAtr = atr(14)
+plot(bullCbOb ? bullObBott - slAtr : bearCbOb ? bearObTop + slAtr : na, "Stop Loss", color.aqua, 2, plot.style_linebr, editable=false)
+
+// }
+
+// ]
+// SIGNALS : bullCbOb, bearCbOb
+
+
+// >>>>>>>>>>>>>>> REGULAR AND HIDDEN DIVERGENCE  <<<<<<<<<<<<<<<//
+// [
+
+//<<<<< RSI >>>>>//
+// {
+divRsi = rsi(close, 14)
+i_rsiOb = input(70, "RSI Overbought", input.float, group="RSI DIVERGENCE")
+i_rsiOs = input(30, "RSI Oversold", input.float, group="RSI DIVERGENCE")
+lback = input(2, "Pivot Lookback Bars", input.integer, group="RSI DIVERGENCE")
+vertLback = input(1, "Additional Vertices Lookback", input.integer, minval=0, group="RSI DIVERGENCE")
+
+newPHi = pivothigh(divRsi, lback, lback), newPLo = pivotlow(divRsi, lback, lback)
+
+var recRsiHi = 0.0, var recRsiLo = 0.0
+var prevRsiHi = 0.0, var prevRsiLo = 0.0
+
+if newPHi
+    prevRsiHi := recRsiHi
+    recRsiHi := newPHi
+
+if newPLo
+    prevRsiLo := recRsiLo
+    recRsiLo := newPLo
+
+validPHi = newPHi and ( (recRsiHi > prevRsiHi) )
+validPLo = newPLo and ( (recRsiLo < prevRsiLo) )
+
+var arr_valid_recRsiHi = array.new_float(vertLback + 2, 0), var arr_valid_recRsiLo = array.new_float(vertLback + 2, 0)
+
+if validPHi
+    array.shift(arr_valid_recRsiHi), array.push(arr_valid_recRsiHi, recRsiHi)
+    
+if validPLo
+    array.shift(arr_valid_recRsiLo), array.push(arr_valid_recRsiLo, recRsiLo)
+
+// }
+
+//<<<<< PRICE >>>>>//
+// {
+recPriceHi = high[lback], recPriceLo = low[lback]
+
+var arr_valid_PriceHi = array.new_float(vertLback + 2, 0), var arr_valid_PriceLo = array.new_float(vertLback + 2, 0)
+
+if validPHi
+    array.shift(arr_valid_PriceHi), array.push(arr_valid_PriceHi, recPriceHi)
+    
+if validPLo
+    array.shift(arr_valid_PriceLo), array.push(arr_valid_PriceLo, recPriceLo)
+
+// }
+
+//<<<<< DIVERGENCE SCANNER >>>>>//
+// {
+divergence() =>
+    
+    signal = ""
+    
+    for i = 0 to vertLback
+        _rsiHi = array.get(arr_valid_recRsiHi, vertLback + 1), _rsiLo = array.get(arr_valid_recRsiLo, vertLback + 1)
+        _prevRsiHi = array.get(arr_valid_recRsiHi, i), _prevRsiLo = array.get(arr_valid_recRsiLo, i)
+        
+        _priceHi = array.get(arr_valid_PriceHi, vertLback + 1), _priceLo = array.get(arr_valid_PriceLo, vertLback + 1)
+        _prevPriceHi = array.get(arr_valid_PriceHi, i), _prevPriceLo = array.get(arr_valid_PriceLo, i)
+        
+        regDiv = ( _prevPriceLo > _priceLo ) and ( _prevRsiLo < _rsiLo ) ? "reg bull" : 
+          ( _prevPriceHi < _priceHi ) and ( _prevRsiHi > _rsiHi ) ? "reg bear" : 
+          "none"
+    
+        hidDiv = ( _prevPriceLo < _priceLo ) and ( _prevRsiLo > _rsiLo ) ? "hid bull" : 
+          ( _prevPriceHi > _priceHi ) and ( _prevRsiHi < _rsiHi ) ? "hid bear" : 
+          "none"
+    
+        if regDiv != "none"
+            signal := regDiv
+        else if hidDiv != "none"
+            signal := hidDiv
+
+    //RETURN
+    signal
+    
+bullRegDiv = divRsi[lback] < 40 and validPLo and divergence() == "reg bull"
+bearRegDiv = divRsi[lback] > 60 and validPHi and divergence() == "reg bear"
+
+
+var float val_bullTop = 0, var float val_bullBott = 0, var float val_bearTop = 0, var float val_bearBott = 0 
+
+if bullRegDiv
+    val_bullTop := bullTop
+    val_bullBott := bullBott
+    
+if bearRegDiv
+    val_bearTop := bearTop
+    val_bearBott := bearBott
+
+// }
+
+// ]
+// SIGNALS : bullRegDiv, bearRegDiv 
+
+
+// >>>>>>>>>>>>>>> RSI OB/OS  <<<<<<<<<<<<<<<//
+// [
+
+// PARAMETERS
+// {
+rsiRes = input("", "RSI Timeframe", input.resolution, group="RSI OB/OS")
+obos_rsi = tf(rsiRes, divRsi, 0), obBaseZn = 55, osBaseZn = 45
+c_rsiOb = crossover(obos_rsi, i_rsiOb), c_rsiOs = crossunder(obos_rsi, i_rsiOs)
+
+obBaseX = i_rsiOs, osBaseX = i_rsiOb
+obZnLimTop = max(obBaseZn, obBaseX), obZnLimBott = min(obBaseZn, obBaseX)
+// }
+
+// OB/OS COUNTERS (SQ & NSQ)
+// { 
+
+// TRIGGER FOR BASE ZONE TOUCH : OVERBOUGHT {
+rsiInObLimZn = crossunder(obos_rsi, obZnLimTop) and obZnLimBott <= obos_rsi
+rsiAboveObLimZn = (not rsiInObLimZn) and obos_rsi > obZnLimTop
+rsiBelowObLimZn = (not rsiInObLimZn) and obos_rsi < obZnLimBott
+// }
+
+// TRIGGER FOR BASE ZONE TOUCH : OVERSOLD {
+osZnLimTop = max(osBaseZn, osBaseX), osZnLimBott = min(osBaseZn, osBaseX)
+
+rsiInOsLimZn = crossover(obos_rsi, osZnLimBott) and osZnLimTop >= obos_rsi
+rsiAboveOsLimZn = (not rsiInOsLimZn) and obos_rsi > osZnLimTop
+rsiBelowOsLimZn = (not rsiInOsLimZn) and obos_rsi < osZnLimBott
+// }
+
+// NON-SEQUENCING ALGORITHM
+// {
+var nsq_countOb = 0, var nsq_countOs = 0
+
+if c_rsiOb
+    nsq_countOb += 1
+if c_rsiOs
+    nsq_countOs += 1
+// }
+
+// SEQUENCING ALGORITHM FOR SELL/OVERBOUGHT SCEANRIOS
+// {
+
+var countOB = 0
+var countObZn = 0
+
+var obDone = "none"
+var obNext = "" 
+
+if obNext == ""
+    if c_rsiOb and countOB == 0 
+        countOB := 1
+        obDone := "ob 1"
+        obNext := "lim 1"
+    
+else if obNext == "lim 1"
+    if rsiInObLimZn and countObZn == 0 and obDone == "ob 1" 
+        countObZn := 1
+        obDone := "lim 1"
+        obNext := "ob 2"
+
+else if obNext == "ob 2"
+    if c_rsiOb and countOB == 1 and obDone == "lim 1" 
+        countOB := 2
+        obDone := "ob 2"
+        obNext := "lim 2"
+
+else if obNext == "lim 2"
+    if rsiInObLimZn and countObZn == 1 and obDone == "ob 2" 
+        countObZn := 2
+        obDone := "lim 2"
+        obNext := "ob 3"
+        
+else if obNext == "ob 3"
+    if c_rsiOb and countOB == 2 and obDone == "lim 2" 
+        countOB := 3
+        obDone := "ob 3"
+        obNext := "lim 3"
+
+else if obNext == "lim 3"
+    if rsiInObLimZn and countObZn == 2 and obDone == "ob 3" 
+        obDone := "lim 3"
+        obNext := "ob 4"
+    
+else if obNext == "ob 4"
+    if c_rsiOb and countOB == 3 and obDone == "lim 3" 
+        countOB := 4
+        obDone := "ob 4"
+        obNext := "lim 4"
+
+else if obNext == "lim 4"
+    if rsiInObLimZn and countObZn == 3 and obDone == "ob 4" 
+        countObZn := 4
+        obDone := "lim 4"
+
+// }
+
+// SEQUENCING ALGORITHM FOR BUY/OVERSOLD SCEANRIOS
+// {
+    
+var countOS = 0
+var countOsZn = 0
+
+var osDone = "none"
+var osNext = "" 
+
+if osNext == ""
+    if c_rsiOs and countOS == 0 
+        countOS := 1
+        osDone := "os 1"
+        osNext := "lim 1"
+    
+else if osNext == "lim 1"
+    if rsiInOsLimZn and countOsZn == 0 and osDone == "os 1" 
+        countOsZn := 1
+        osDone := "lim 1"
+        osNext := "os 2"
+
+else if osNext == "os 2"
+    if c_rsiOs and countOS == 1 and osDone == "lim 1" 
+        countOS := 2
+        osDone := "os 2"
+        osNext := "lim 2"
+
+else if osNext == "lim 2"
+    if rsiInOsLimZn and countOsZn == 1 and osDone == "os 2" 
+        countOsZn := 2
+        osDone := "lim 2"
+        osNext := "os 3"
+        
+else if osNext == "os 3"
+    if c_rsiOs and countOS == 2 and osDone == "lim 2" 
+        countOS := 3
+        osDone := "os 3"
+        osNext := "lim 3"
+
+else if osNext == "lim 3"
+    if rsiInOsLimZn and countOsZn == 2 and osDone == "os 3" 
+        countOsZn := 3
+        osDone := "lim 3"
+        osNext := "os 4"
+    
+else if osNext == "os 4"
+    if c_rsiOs and countOS == 3 and osDone == "lim 3" 
+        countOS := 4
+        osDone := "os 4"
+        osNext := "lim 4"
+
+else if osNext == "lim 4"
+    if rsiInOsLimZn and countOsZn == 3 and osDone == "os 4"
+        countOsZn := 4
+        osDone := "lim 4"
+
+// }
+
+// RESET OF COUNTERS
+// {
+
+if rsiBelowObLimZn
+    countOB := 0
+    countObZn := 0
+    obDone := "none"
+    obNext := "" 
+    nsq_countOb := 0
+
+    
+if rsiAboveOsLimZn
+    countOS := 0
+    countOsZn := 0
+    osDone := "none"
+    osNext := ""
+    nsq_countOs := 0
+
+// }
+
+// }
+
+// ALGORITHM
+// {
+minSeqObOs = input(2, "Threshold Sequenced Overbought/Oversold", options=[1, 2, 3, 4], group="RSI OB/OS: ALGORITHM")
+minNsqObOs = input(4, "Threshold Non-sequenced Overbought/Oversold", input.integer, group="RSI OB/OS: ALGORITHM")
+useSumObOs = input(true, "Sum Sequenced/Non-sequenced Overbought/Oversold", input.bool, group="RSI OB/OS: ALGORITHM", 
+  tooltip="This still applies the Threshold Sequence rule")
+minSumObOs = input(4, "Threshold Summed Overbought/Oversold", input.integer, group="RSI OB/OS: ALGORITHM")
+
+var seqObVal = 0, var seqOsVal = 0
+
+seqObVal := obDone == "ob 1" ? 1 : obDone == "ob 2" ? 2 : obDone == "ob 3" ? 3 : obDone == "ob 4" ? 4 : seqObVal
+seqOsVal := osDone == "os 1" ? 1 : osDone == "os 2" ? 2 : osDone == "os 3" ? 3 : osDone == "os 4" ? 4 : seqOsVal
+
+seqObVal := seqOsVal == 1 ? 0 : seqObVal
+seqOsVal := seqObVal == 1 ? 0 : seqOsVal
+
+bull_rsiOs = useSumObOs ? (seqOsVal + nsq_countOs) >= minSumObOs and (seqOsVal >= minSeqObOs) : (seqOsVal >= minSeqObOs) and (nsq_countOs >= minNsqObOs)
+bear_rsiOb = useSumObOs ? (seqObVal + nsq_countOb) >= minSumObOs and (seqObVal >= minSeqObOs) : (seqObVal >= minSeqObOs) and (nsq_countOb >= minNsqObOs)
+
+// }
+
+// ]
+// SIGNALS : bull_rsiOs, bear_rsiOs
+
+
+// >>>>>>>>>>>>>>> PLOTS  <<<<<<<<<<<<<<<//
+// [
+
+plotshape( bullRegDiv, "Bullish Divergence", shape.triangleup, location.belowbar, #00ff00, offset=0, text="D", textcolor=color.white)
+plotshape( bearRegDiv, "Bearish Divergence", shape.triangledown, location.abovebar, #ff0000, offset=0, text="D", textcolor=color.white)
+
+// PLOT PEAKS {
+plotshape(obDone == "ob 1" and obDone[1] != "ob 1" , "Shape: OB 1", shape.labeldown, location.abovebar, color.maroon, text="1", textcolor=color.white, size = size.tiny)
+plotshape(obDone == "ob 2" and obDone[1] != "ob 2" , "Shape: OB 2", shape.labeldown, location.abovebar, color.maroon, text="2", textcolor=color.white, size = size.tiny)
+plotshape(obDone == "ob 3" and obDone[1] != "ob 3" , "Shape: OB 3", shape.labeldown, location.abovebar, color.maroon, text="3", textcolor=color.white, size = size.tiny)
+plotshape(obDone == "ob 4" and obDone[1] != "ob 4" , "Shape: OB 4", shape.labeldown, location.abovebar, color.maroon, text="4", textcolor=color.white, size = size.tiny)
+// }
+
+// PLOT VALLEYS {
+plotshape(osDone == "os 1" and osDone[1] != "os 1" , "Shape: OS 1", shape.labelup, location.belowbar, color.olive, text="1", textcolor=color.white, size = size.tiny)
+plotshape(osDone == "os 2" and osDone[1] != "os 2" , "Shape: OS 2", shape.labelup, location.belowbar, color.olive, text="2", textcolor=color.white, size = size.tiny)
+plotshape(osDone == "os 3" and osDone[1] != "os 3" , "Shape: OS 3", shape.labelup, location.belowbar, color.olive, text="3", textcolor=color.white, size = size.tiny)
+plotshape(osDone == "os 4" and osDone[1] != "os 4" , "Shape: OS 4", shape.labelup, location.belowbar, color.olive, text="4", textcolor=color.white, size = size.tiny)
+// }
+
+// PLOT 
+// plot(nsq_countOs, color=color.white)
+// plot(nsq_countOb, color=color.black)
+
+// ]
+
+
+// >>>>>>>>>>>>>>> STRATEGY EXECUTION  <<<<<<<<<<<<<<<//
+// [
+
+var bullSeq = "nil", var bearSeq = "nil"
+
+bullSeq := bull_rsiOs ? "bull rsios" : seqObVal == 1 ? "nil" : bullSeq // with nullifier 
+bearSeq := bear_rsiOb ? "bear rsiob" : seqOsVal == 1 ? "nil" : bearSeq // with nullifier 
+
+if bullSeq == "bull rsios"
+    bullSeq := bullRegDiv ? "bull reg div" : bullSeq
+
+if bearSeq == "bear rsiob"
+    bearSeq := bearRegDiv ? "bear reg div" : bearSeq
+
+// ENTRIES
+// {
+
+i_entBuffer = input("Closest FVG to Price", "What Structure Should Be Used for Entry?", options=["Closest FVG to Price", 
+  "Closest FVG to Orderblock", "Average of Both FVGs", "Orderblock High/Low"])
+  
+// STRATEGY 1:
+// Set Limit Order At Valid CB Orderblock or Associated FVG
+// {
+
+
+strategy1_entry = float(na)
+
+if dnfvg_datasize > 2
+    
+    if bullCbOb and count_bullObFvg > 0
+        
+        strategy1_entry := i_entBuffer == "Closest FVG to Price" ? box.get_top( array.get(dnfvgBox, array.size(dnfvgBox) - 1) ) :
+          i_entBuffer == "Closest FVG to Orderblock" ? box.get_top( array.get(dnfvgBox, array.size(dnfvgBox) - count_bullObFvg) ) : 
+          i_entBuffer == "Average of Both FVGs" ? ( ( box.get_top( array.get(dnfvgBox, array.size(dnfvgBox) - 1) ) ) + 
+             ( box.get_top( array.get(dnfvgBox, array.size(dnfvgBox) - count_bullObFvg) ) ) ) / 2 : 
+          i_entBuffer == "Orderblock High/Low" ? bullObTop : na
+
+if upfvg_datasize > 2
+    if bearCbOb and count_bearObFvg > 0
+        
+        strategy1_entry := i_entBuffer == "Closest FVG to Price" ? box.get_bottom( array.get(upfvgBox, array.size(upfvgBox) - 1) ) :
+          i_entBuffer == "Closest FVG to Orderblock" ? box.get_bottom( array.get(upfvgBox, array.size(upfvgBox) - count_bearObFvg) ) : 
+          i_entBuffer == "Average of Both FVGs" ? ( ( box.get_bottom( array.get(upfvgBox, array.size(upfvgBox) - 1) ) ) + 
+             ( box.get_bottom( array.get(upfvgBox, array.size(upfvgBox) - count_bearObFvg) ) ) ) / 2 :
+          i_entBuffer == "Orderblock High/Low" ? bearObBott : na
+// }
+
+// STRATEGY 2: REVERSAL STRATEGY
+// Upon validated trend direction reversal, wait for price to break most recent (opposite-in-direction) Order Block
+// Place Limit Order above or below the market
+
+// FILTER APPLICATION
+// {
+var pendingRevBull = false, var pendingRevBear = false
+
+if bullSeq == "bull reg div"
+    pendingRevBull := true
+if bearSeq == "bear reg div"
+    pendingRevBear := true
+
+// RESETTING PENDING LISTENERS
+if bullSeq == "nil" and pendingRevBull
+    pendingRevBull := false
+if bearSeq == "nil" and pendingRevBear
+    pendingRevBear := false
+// }
+
+bgcolor(pendingRevBull ? color.lime : na)
+bgcolor(pendingRevBear ? color.fuchsia : na)
+
+// BREAKOUT FOR LONGS
+// {
+prevBar2InShortZn = barInZone(val_bullTop, val_bullBott, 2)
+prevBar2AboveShortZn = (not prevBar2InShortZn) and low[2] > val_bullTop
+prevBar2BelowShortZn = (not prevBar2InShortZn) and high[2] < val_bullBott
+
+prevBarInShortZn = barInZone(val_bullTop, val_bullBott, 1)
+prevBarAboveShortZn = (not prevBarInShortZn) and low[1] > val_bullTop
+prevBarBelowShortZn = (not prevBarInShortZn) and high[1] < val_bullBott
+
+bullBreakout = pendingRevBull ? prevBar2InShortZn and prevBarAboveShortZn : na
+pendingRevBull := bullBreakout ? false : true
+//}
+
+// BREAKOUT FOR SHORTS
+// {
+prevBar2InLongZn = barInZone(val_bearTop, val_bearBott, 2)
+prevBar2AboveLongZn = (not prevBar2InLongZn) and low[2] > val_bearTop
+prevBar2BelowLongZn = (not prevBar2InLongZn) and high[2] < val_bearBott
+
+prevBarInLongZn = barInZone(val_bearTop, val_bearBott, 1)
+prevBarAboveLongZn = (not prevBarInLongZn) and low[1] > val_bearTop
+prevBarBelowLongZn = (not prevBarInLongZn) and high[1] < val_bearBott
+
+bearBreakout = pendingRevBear ? prevBar2InLongZn and prevBarBelowLongZn : na
+pendingRevBear := bearBreakout ? false : true
+//}
+
+plot(strategy1_entry, color=color.white, style=plot.style_linebr)
+// }
+
+// ]
+

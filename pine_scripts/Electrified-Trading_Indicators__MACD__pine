@@ -1,0 +1,84 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified (electrifiedtrading)
+
+//@version=5
+indicator(title="MACD+")
+import Electrified/Momentum/5
+import Electrified/MomentumSignals/10 as MS
+import Electrified/DataCleaner/7 as Data
+
+// Constants
+SOURCE = "Source", FAST = "Fast", SLOW = "Slow"
+MACD = "MACD", SIGNAL = "Signal", HISTOGRAM = "Histogram"
+SIGNAL_COLORS = "Signal Colors", DEVIATION = "Deviation Confirmation"
+SMA = 'SMA', EMA = 'EMA', WMA = 'WMA', VWMA = 'VWMA', VAWMA = 'VAWMA'
+
+// Inputs
+src         = input.source( hlc3, SOURCE, inline=SOURCE)
+fast_len    = input.int(    18, FAST, inline=FAST, minval=1)
+fast_mode   = input.string( WMA, "", inline=FAST, options=[SMA, EMA, WMA, VWMA, VAWMA])
+slow_len    = input.int(    34, SLOW, inline=SLOW, minval=1)
+slow_mode   = input.string( WMA, "", inline=SLOW, options=[SMA, EMA, WMA, VWMA, VAWMA])
+signal_len  = input.int(    10, SIGNAL, inline=SIGNAL, minval = 1)
+signal_mode = input.string( SMA, "", inline=SIGNAL, options=[SMA, EMA, WMA, VWMA, VAWMA])
+enable_bg   = input.bool(   true, "Show", group=SIGNAL_COLORS)
+stdLen      = input.int(    100, "Length", group=DEVIATION, minval=1, tooltip="Length of standard deviation measurement before confirming change")
+stdM        = input.float(  2.5, "Multiple", group=DEVIATION, minval=0, step=0.5, tooltip="The number of standard deviations before confirming change")
+
+
+// Plot colors
+col_grow_above = #26A69A
+col_grow_below = #FFCDD2
+col_fall_above = #B2DFDB
+col_fall_below = #EF5350
+col_macd = #0094ff
+col_signal = #ff6a00
+col_macd_fill = color.new(#0094ff, 75)
+col_signal_fill = color.new(#ff6a00, 75)
+
+[m, s, h] = Momentum.macd(fast_len, slow_len, signal_len, src, fast_mode, slow_mode, signal_mode)
+// r = ta.wma(Data.outlierLevel(m, 4000, 1.5), 4000)
+// m /= r
+// s /= r
+// h /= r
+
+// Plotting
+mPlot = plot(m, MACD, col_macd)
+sPlot = plot(s, SIGNAL, col_signal)
+plot(h, HISTOGRAM, (h>=0 ? (h[1] < h ? col_grow_above : col_fall_above) : (h[1] < h ? col_grow_below : col_fall_below)), style=plot.style_columns)
+fill(mPlot, sPlot, h > 0 ? col_macd_fill : h < 0 ? col_signal_fill : color.gray, 'Signal Fill', true)
+
+signal = MS.special(m, s, stdLen, stdM)
+
+color signalColor = switch signal
+    +4 => color.new(color.green, 20)
+    +3 => color.new(color.green, 40)
+    +2 => color.new(color.green, 60)
+    +1 => color.new(color.green, 80)
+    -1 => color.new(color.red, 80)
+    -2 => color.new(color.red, 60)
+    -3 => color.new(color.red, 40)
+    -4 => color.new(color.red, 20)
+    => na
+    
+bgcolor(enable_bg ? signalColor : na)
+
+condition = m>0 and m>h ? +1 : m<0 and m<h ? -1 : 0
+
+alertcondition(condition<0 and signal>0,
+  "1) ⤷ Slowing", "Oversold ⤷ with momentum slowing. ({{ticker}} {{interval}})")
+alertcondition(condition<0 and signal>+1,
+  "2) ⤻ Reversing ▲", "Oversold ⤻ with momentum reversing. ▲ ({{ticker}} {{interval}})")
+alertcondition(condition<0 and ta.crossover(m, s),
+  "3) ⤻ Crossover ▲", "Oversold ⤻ with momentum signal (crossover). ▲ ({{ticker}} {{interval}})")   
+alertcondition(condition<0 and signal>+2,
+  "4) ⤴ Confirmed ▲▲", "Oversold ⤴ momentum confirmed. ▲▲ ({{ticker}} {{interval}})")
+
+alertcondition(condition>0 and signal<0,
+  "5) ⤳ Slowing", "Overbought ⤳ with momentum slowing. ({{ticker}} {{interval}})")
+alertcondition(condition>0 and signal<-1,
+  "6) ⤼ Reversing ▼", "Overbought ⤼ with momentum reversing. ▼ ({{ticker}} {{interval}})")
+alertcondition(condition>0 and ta.crossunder(m, s),
+  "7) ⤼ Crossunder ▼", "Overbought ⤼ with momentum signal (crossunder). ▼ ({{ticker}} {{interval}})")
+alertcondition(condition>0 and signal<-2,
+  "8) ⤵ Confirmed ▼▼", "Overbought ⤵ with momentum confirmed. ▼▼ ({{ticker}} {{interval}})")

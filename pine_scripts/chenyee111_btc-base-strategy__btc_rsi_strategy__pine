@@ -1,0 +1,71 @@
+//@version=6
+strategy("BTC RSI Strategy v2 - 多空雙向強化版", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=3)
+
+// === RSI 設定 ===
+rsiLength = input.int(14, "RSI 週期")
+rsiOverSold = input.int(30, "超賣（做多）")
+rsiOverBought = input.int(70, "超買（做空）")
+
+// === 風控參數 ===
+takeProfitPts = input.int(300, "固定停利")
+stopLossPts = input.int(200, "固定止損")
+trailStopPts = input.int(200, "追蹤止損")
+reentryGap = input.int(100, "補倉點差")
+breakevenLine = input.int(188, "盈虧分水")
+baseLeverage = input.int(100, "槓桿倍率")
+
+// === RSI 計算 ===
+rsi = ta.rsi(close, rsiLength)
+
+// === 持倉追蹤 ===
+var float longEntryPrice = na
+var float shortEntryPrice = na
+var bool longAdded = false
+var bool shortAdded = false
+
+// === 多單條件（不持有多單時開倉） ===
+canLong = strategy.position_size <= 0
+longCondition = rsi < rsiOverSold and canLong
+
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+    longEntryPrice := close
+    longAdded := false
+
+// === 空單條件（不持有空單時開倉） ===
+canShort = strategy.position_size >= 0
+shortCondition = rsi > rsiOverBought and canShort
+
+if (shortCondition)
+    strategy.entry("Short", strategy.short)
+    shortEntryPrice := close
+    shortAdded := false
+
+// === 多單補倉條件（只補一次） ===
+longAddCondition = (strategy.position_size > 0) and (not longAdded) and (close < longEntryPrice - reentryGap)
+if (longAddCondition)
+    strategy.order("Long-Add", strategy.long, qty=strategy.equity * 0.02 / close)
+    longEntryPrice := (longEntryPrice * 3 + close * 2) / 5
+    longAdded := true
+
+// === 空單補倉條件（只補一次） ===
+shortAddCondition = (strategy.position_size < 0) and (not shortAdded) and (close > shortEntryPrice + reentryGap)
+if (shortAddCondition)
+    strategy.order("Short-Add", strategy.short, qty=strategy.equity * 0.02 / close)
+    shortEntryPrice := (shortEntryPrice * 3 + close * 2) / 5
+    shortAdded := true
+
+// === 多單出場（固定+追蹤止損） ===
+if (strategy.position_size > 0)
+    strategy.exit("Exit Long", from_entry="Long", limit=longEntryPrice + takeProfitPts, stop=longEntryPrice - stopLossPts, trail_offset=trailStopPts, trail_points=trailStopPts)
+
+// === 空單出場（固定+追蹤止損） ===
+if (strategy.position_size < 0)
+    strategy.exit("Exit Short", from_entry="Short", limit=shortEntryPrice - takeProfitPts, stop=shortEntryPrice + stopLossPts, trail_offset=trailStopPts, trail_points=trailStopPts)
+
+// === 盈虧平衡線圖示 ===
+breakevenLong = longEntryPrice + breakevenLine / baseLeverage
+breakevenShort = shortEntryPrice - breakevenLine / baseLeverage
+
+plot(strategy.position_size > 0 ? breakevenLong : na, color=color.green, title="多單盈虧線", style=plot.style_linebr)
+plot(strategy.position_size < 0 ? breakevenShort : na, color=color.red, title="空單盈虧線", style=plot.style_linebr)

@@ -1,0 +1,175 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified
+
+//@version=6
+//@description=Tracks the VWAP for the latest/current and previous session.
+indicator('VWAP2D+', overlay = true)
+
+source = input.source(hlc3, 'Source')
+extended = input.bool(false, 'Allow start from early extended session')
+alertSource = input.bool(false, 'Use open value instead of close for alerts') ? open : close
+theme = color.rgb(174, 136, 60)
+
+type VWAP
+	float sum
+	float volume
+	float value
+
+getDailyVwapData(series float source, int maxDays, simple bool extended = false) =>
+    var days = array.new<VWAP>()
+
+    if extended ? session.isfirstbar : session.isfirstbar_regular
+        array.unshift(days, VWAP.new(0, 0, 0))
+
+    if array.size(days) > maxDays
+        array.pop(days)
+
+    size = array.size(days)
+    if size != 0
+        v0 = volume
+        s0 = source
+        sv = s0 * v0
+        for i = 0 to size - 1 by 1
+            d = array.get(days, i)
+            v = d.volume + v0
+            s = d.sum + sv
+            x = VWAP.new(s, v, s / v)
+            array.set(days, i, x)
+
+    days
+
+getVwapForDay(simple int day, simple int maxDays) =>
+    days = getDailyVwapData(source, maxDays, extended)
+    if array.size(days) > day
+        d = array.get(days, day)
+        d.value
+    else
+        float(na)
+
+vwap0 = getVwapForDay(0, 2)
+vwap1 = getVwapForDay(1, 2)
+plot(vwap1, 'Previous', theme, 1, plot.style_circles)
+plot(vwap0, 'Latest', theme, 2, plot.style_circles)
+plot(vwap0, 'Click Assist', color.new(theme, 100), 5, plot.style_linebr, display = display.pane)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+MEASUREMENT = 'Deviation Measurement'
+days = input.int(50, 'Days', group = MEASUREMENT, tooltip = 'The number of days to measure.')
+
+EXCEEDED = 'Exceeded'
+FULL = 'Full'
+HIDDEN = 'Hidden'
+
+mode = input.string(
+  EXCEEDED, 
+  'Display Mode',
+  [EXCEEDED, FULL, HIDDEN],
+  'Determines how the deviation is rendered\nExceeded: only show when exceeded\nFull: show the full range\nHidden: don\'t calculate and don\'t display',
+  group = MEASUREMENT)
+
+type TimeOfDay
+	array<float> data
+
+[mean, standardDeviation] = if mode == HIDDEN
+    [0, 0]
+else
+    var data = array.new<TimeOfDay>()
+
+    dayStart = time('D')
+    // Time of day in seconds
+    timeOfDay = (time - dayStart) / 1000
+
+    multiple = switch 
+        timeframe.isminutes => 60 * timeframe.multiplier
+        timeframe.isseconds => timeframe.multiplier
+        => timeOfDay
+
+    barOfDay = math.floor(timeOfDay / multiple)
+
+    while barOfDay >= data.size()
+        data.push(TimeOfDay.new(array.new_float()))
+
+    entries = data.size() == 0 ? array.new_float() : data.get(barOfDay).data
+
+    mean = entries.avg()
+    diff2sum = 0.0
+    for e in entries
+        diff2sum := diff2sum + e * e
+
+    variance = diff2sum / entries.size()
+    standardDeviation = math.sqrt(variance)
+
+    // Delay adding today's data
+    entries.push(math.abs(nz(source - vwap0)))
+    if entries.size() > days
+        entries.shift()
+    [mean, standardDeviation]
+
+plus1 = mean + standardDeviation
+
+avgPosValue = vwap0 + mean
+avgNegValue = vwap0 - mean
+stdDev1PosValue = vwap0 + plus1
+stdDev1NegValue = vwap0 - plus1
+avgPos = plot(avgPosValue, '+Average', color.orange, 1, display = display.none)
+avgNeg = plot(avgNegValue, '-Average', color.orange, 1, display = display.none)
+stdDev1Pos = plot(stdDev1PosValue, '+1 Standard Deviation', color.yellow, 1, display = display.none)
+stdDev1Neg = plot(stdDev1NegValue, '-1 Standard Deviation', color.yellow, 1, display = display.none)
+
+vwapHiColor = color.yellow
+vwapLoColor = color.blue
+
+hiPlot = plot(math.max(open, close), 'High', display = display.none)
+loPlot = plot(math.min(open, close), 'Low', display = display.none)
+
+
+fill(avgPos, hiPlot, avgPosValue, stdDev1PosValue, color.new(vwapHiColor, 100), color.new(vwapHiColor, 65),
+  'VWAP High Exeeded', display = mode == EXCEEDED ? display.all : display.none)
+fill(avgNeg, loPlot, avgNegValue, stdDev1NegValue, color.new(vwapLoColor, 100), color.new(vwapLoColor, 65),
+  'VWAP Low Exeeded', display = mode == EXCEEDED ? display.all : display.none)
+
+fill(avgPos, stdDev1Pos, avgPosValue, stdDev1PosValue, color.new(vwapHiColor, 100), color.new(vwapHiColor, 65),
+  'VWAP High Range', display = mode == FULL ? display.all : display.none)
+fill(avgNeg, stdDev1Neg, avgNegValue, stdDev1NegValue, color.new(vwapLoColor, 100), color.new(vwapLoColor, 65),
+  'VWAP Low Range', display = mode == FULL ? display.all : display.none)
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+import Electrified/Volatility/8
+import Electrified/Time/7
+
+ATR = 'Closing In Range (ATR)'
+showAtrRange = input.bool(false, 'Show',
+  'Shows the zone that "Closing In Range" will be triggered. Useful at anticipating VWAP touches.', group = ATR)
+
+tr = Volatility.fromTrueRange(
+  input.int(500, 'Length', tooltip = 'The number of bars to measure the average true range.', group = ATR),
+  input.float(3.5, 'TR Max Outlier', tooltip = 'The maximum outlier level to allow when calculating the average true range.', group = ATR),
+  smoothing = input.int(100, 'Smoothing', tooltip = 'The number of bars to average in order to smooth out the result.', group = ATR))
+
+atr = tr.average * input.float(0.5, 'Multiple', step = 0.1, tooltip = 'The multiple to apply the the ATR.', group = ATR)
+
+if input.bool(true, 'Adjust for intraday timeframe', 'Modifies the multiple based upon the timeframe.', group = ATR)
+    var adjustment = math.pow(60 * 1000 / Time.bar(), 0.5)
+    atr := atr * adjustment
+
+
+
+hiAtr = plot(vwap0 + atr, 'ATR High', theme, 1, display = display.none)
+loAtr = plot(vwap0 - atr, 'ATR Low', theme, 1, display = display.none)
+
+fill(hiAtr, loAtr, color.new(theme, 50), display = showAtrRange ? display.all : display.none)
+
+// Alerts
+alertcondition(close > vwap0 - atr and close < vwap0 + atr,
+  'Closing In Range', message = 'VWAP2D+, Closing In Range ({{ticker}} {{interval}})')
+alertcondition(ta.cross(alertSource, vwap0),
+  'Crossing Current', message = 'VWAP2D+, Crossed Current ({{ticker}} {{interval}})')
+alertcondition(ta.cross(alertSource, vwap0),
+  'Crossing Previous', message = 'VWAP2D+, Crossed Previous ({{ticker}} {{interval}})')
+alertcondition(ta.cross(vwap0, vwap1),
+  'Current Crossing Previous', message = 'VWAP2D+, Current Crossing Previous ({{ticker}} {{interval}})')
+alertcondition(alertSource < vwap0 and alertSource < vwap1,
+  'Fall Below Both', message = 'VWAP2D+, Fell Below ({{ticker}} {{interval}})')
+alertcondition(alertSource > vwap0 and alertSource > vwap1,
+  'Rise Above Both', message = 'VWAP2D+, Rose Above ({{ticker}} {{interval}})')

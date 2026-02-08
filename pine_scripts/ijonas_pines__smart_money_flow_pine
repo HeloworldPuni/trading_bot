@@ -1,0 +1,309 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════
+// Smart Money Flow Indicator
+// ══════════════════════════════════════════════════════════════════════════════
+// Description: Tracks institutional order flow and smart money activity
+// Features: Accumulation/Distribution, large order detection, divergence alerts
+// Author: Pine Script Collection
+// Version: 1.0
+// ══════════════════════════════════════════════════════════════════════════════
+
+indicator("Smart Money Flow", shorttitle="Smart Money", format=format.volume)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Money Flow Index Settings ===
+mfiLength = input.int(14, "MFI Length", minval=1, group="Money Flow Index")
+mfiOverbought = input.int(80, "MFI Overbought", minval=70, maxval=95, group="Money Flow Index")
+mfiOversold = input.int(20, "MFI Oversold", minval=5, maxval=30, group="Money Flow Index")
+
+// === Accumulation/Distribution Settings ===
+adLength = input.int(14, "A/D EMA Length", minval=1, group="Accumulation/Distribution")
+showADLine = input.bool(true, "Show A/D Line", group="Accumulation/Distribution")
+
+// === Volume Analysis ===
+volumeMALength = input.int(20, "Volume MA Length", minval=5, group="Volume Analysis")
+largeOrderMultiplier = input.float(2.5, "Large Order Multiplier", minval=1.5, maxval=5.0, step=0.1, group="Volume Analysis", tooltip="Volume must be X times average")
+showLargeOrders = input.bool(true, "Highlight Large Orders", group="Volume Analysis")
+
+// === Divergence Detection ===
+enableDivergence = input.bool(true, "Enable Divergence Detection", group="Divergence")
+pivotLookback = input.int(5, "Pivot Lookback", minval=3, maxval=20, group="Divergence")
+
+// === Smart Money Phases ===
+showPhases = input.bool(true, "Show Accumulation/Distribution Phases", group="Phases")
+phaseLength = input.int(20, "Phase Detection Length", minval=10, maxval=50, group="Phases")
+
+// === Visual Settings ===
+showHistogram = input.bool(true, "Show Flow Histogram", group="Visual")
+showSignals = input.bool(true, "Show Buy/Sell Signals", group="Visual")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MONEY FLOW INDEX (MFI)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Typical Price
+typicalPrice = hlc3
+
+// Money Flow
+moneyFlow = typicalPrice * volume
+
+// Positive and Negative Money Flow
+positiveFlow = typicalPrice > typicalPrice[1] ? moneyFlow : 0
+negativeFlow = typicalPrice < typicalPrice[1] ? moneyFlow : 0
+
+// Money Ratio
+positiveFlowSum = math.sum(positiveFlow, mfiLength)
+negativeFlowSum = math.sum(negativeFlow, mfiLength)
+moneyRatio = positiveFlowSum / negativeFlowSum
+
+// Money Flow Index
+mfi = 100 - (100 / (1 + moneyRatio))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ACCUMULATION/DISTRIBUTION LINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Chaikin A/D Line
+clv = ((close - low) - (high - close)) / (high - low)
+adLine = ta.cum(na(clv) ? 0 : clv * volume)
+adEMA = ta.ema(adLine, adLength)
+
+// A/D momentum
+adMomentum = adLine - adLine[10]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VOLUME ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+
+volumeMA = ta.sma(volume, volumeMALength)
+volumeRatio = volume / volumeMA
+
+// Large order detection
+largeOrder = volume > (volumeMA * largeOrderMultiplier)
+largeBuyOrder = largeOrder and close > open
+largeSellOrder = largeOrder and close < open
+
+// Volume trend
+volumeTrend = ta.ema(volume, 10) > ta.ema(volume, 30)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ON-BALANCE VOLUME (OBV)
+// ══════════════════════════════════════════════════════════════════════════════
+
+obvValue = ta.cum(close > close[1] ? volume : close < close[1] ? -volume : 0)
+obvEMA = ta.ema(obvValue, 20)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SMART MONEY PHASES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Price and volume relationship
+priceChange = ta.change(close, phaseLength)
+volumeChange = ta.change(volumeMA, phaseLength)
+adChange = ta.change(adLine, phaseLength)
+
+// Phase detection
+accumulation = priceChange < 0 and volumeChange > 0 and adChange > 0  // Price down, volume up, A/D up
+distribution = priceChange > 0 and volumeChange > 0 and adChange < 0  // Price up, volume up, A/D down
+markup = priceChange > 0 and adChange > 0 and mfi > 50  // Price up, A/D up, MFI bullish
+markdown = priceChange < 0 and adChange < 0 and mfi < 50  // Price down, A/D down, MFI bearish
+
+// Current phase
+currentPhase = accumulation ? "Accumulation" :
+               distribution ? "Distribution" :
+               markup ? "Markup" :
+               markdown ? "Markdown" : "Neutral"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Price pivots
+priceHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+priceLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+
+// MFI pivots
+mfiHigh = ta.pivothigh(mfi, pivotLookback, pivotLookback)
+mfiLow = ta.pivotlow(mfi, pivotLookback, pivotLookback)
+
+// Store previous pivots
+var float lastPriceHigh = na
+var float lastPriceLow = na
+var float lastMFIHigh = na
+var float lastMFILow = na
+
+if not na(priceHigh)
+    lastPriceHigh := priceHigh
+if not na(priceLow)
+    lastPriceLow := priceLow
+if not na(mfiHigh)
+    lastMFIHigh := mfiHigh
+if not na(mfiLow)
+    lastMFILow := mfiLow
+
+// Bullish divergence (price lower low, MFI higher low)
+bullishDiv = enableDivergence and not na(priceLow) and not na(lastPriceLow) and
+             not na(mfiLow) and not na(lastMFILow) and
+             priceLow < lastPriceLow and mfiLow > lastMFILow
+
+// Bearish divergence (price higher high, MFI lower high)
+bearishDiv = enableDivergence and not na(priceHigh) and not na(lastPriceHigh) and
+             not na(mfiHigh) and not na(lastMFIHigh) and
+             priceHigh > lastPriceHigh and mfiHigh < lastMFIHigh
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SMART MONEY SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Bullish signals
+mfiBullish = ta.crossover(mfi, mfiOversold)
+adBullish = ta.crossover(adLine, adEMA)
+obvBullish = ta.crossover(obvValue, obvEMA)
+
+smartMoneyBuy = (mfiBullish or adBullish or bullishDiv) and adMomentum > 0
+
+// Bearish signals
+mfiBearish = ta.crossunder(mfi, mfiOverbought)
+adBearish = ta.crossunder(adLine, adEMA)
+obvBearish = ta.crossunder(obvValue, obvEMA)
+
+smartMoneySell = (mfiBearish or adBearish or bearishDiv) and adMomentum < 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMPOSITE SMART MONEY INDEX
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Normalize indicators to 0-100 scale
+mfiNorm = mfi
+adNorm = ta.rsi(adLine, 14)  // Use RSI to normalize A/D
+obvNorm = ta.rsi(obvValue, 14)  // Use RSI to normalize OBV
+
+// Composite index (weighted average)
+smartMoneyIndex = (mfiNorm * 0.4) + (adNorm * 0.35) + (obvNorm * 0.25)
+
+// Smooth the index
+smartMoneySmooth = ta.ema(smartMoneyIndex, 5)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTTING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === MFI ===
+plot(mfi, "MFI", color=color.new(color.blue, 0), linewidth=2)
+
+// === Overbought/Oversold Levels ===
+hline(mfiOverbought, "Overbought", color=color.new(color.red, 50), linestyle=hline.style_dashed)
+hline(mfiOversold, "Oversold", color=color.new(color.green, 50), linestyle=hline.style_dashed)
+hline(50, "Midline", color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+
+// === Smart Money Index ===
+plot(smartMoneySmooth, "Smart Money Index", color=color.new(color.orange, 30), linewidth=2, style=plot.style_line)
+
+// === Money Flow Histogram ===
+flowHistogram = positiveFlowSum - negativeFlowSum
+histColor = flowHistogram > 0 ? color.new(color.green, 50) : color.new(color.red, 50)
+plot(showHistogram ? ta.rsi(flowHistogram, 14) : na, "Flow Histogram",
+     color=histColor, style=plot.style_columns, linewidth=3)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+plotshape(showSignals and smartMoneyBuy, "Buy Signal", shape.triangleup, location.bottom,
+          color=color.new(color.green, 0), size=size.small, text="BUY")
+plotshape(showSignals and smartMoneySell, "Sell Signal", shape.triangledown, location.top,
+          color=color.new(color.red, 0), size=size.small, text="SELL")
+
+// Large orders
+plotshape(showLargeOrders and largeBuyOrder, "Large Buy", shape.diamond, location.bottom,
+          color=color.new(color.lime, 30), size=size.tiny, text="💰")
+plotshape(showLargeOrders and largeSellOrder, "Large Sell", shape.diamond, location.top,
+          color=color.new(color.maroon, 30), size=size.tiny, text="💰")
+
+// Divergences
+plotshape(bullishDiv, "Bullish Divergence", shape.labelup, location.bottom,
+          color=color.new(color.green, 0), textcolor=color.white, size=size.small, text="Bull Div")
+plotshape(bearishDiv, "Bearish Divergence", shape.labeldown, location.top,
+          color=color.new(color.red, 0), textcolor=color.white, size=size.small, text="Bear Div")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BACKGROUND COLORS
+// ══════════════════════════════════════════════════════════════════════════════
+
+bgColor = showPhases ?
+          (accumulation ? color.new(color.green, 95) :
+           distribution ? color.new(color.red, 95) :
+           markup ? color.new(color.aqua, 97) :
+           markdown ? color.new(color.orange, 97) : na) : na
+
+bgcolor(bgColor, title="Smart Money Phase")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INFORMATION TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
+    var table infoTable = table.new(position.top_right, 2, 5,
+                                     bgcolor=color.new(color.black, 85),
+                                     frame_color=color.gray, frame_width=1)
+
+    table.cell(infoTable, 0, 0, "Phase:", text_color=color.white, text_size=size.small)
+    phaseColor = accumulation ? color.green :
+                 distribution ? color.red :
+                 markup ? color.aqua :
+                 markdown ? color.orange : color.gray
+    table.cell(infoTable, 1, 0, currentPhase, text_color=phaseColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 1, "MFI:", text_color=color.white, text_size=size.small)
+    mfiColor = mfi > mfiOverbought ? color.red :
+               mfi < mfiOversold ? color.green : color.yellow
+    table.cell(infoTable, 1, 1, str.tostring(mfi, "#.##"), text_color=mfiColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 2, "A/D Momentum:", text_color=color.white, text_size=size.small)
+    adColor = adMomentum > 0 ? color.green : color.red
+    adText = adMomentum > 0 ? "Bullish ↗" : "Bearish ↘"
+    table.cell(infoTable, 1, 2, adText, text_color=adColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 3, "Volume:", text_color=color.white, text_size=size.small)
+    volText = str.tostring(volumeRatio, "#.##") + "x avg"
+    volColor = volumeRatio > largeOrderMultiplier ? color.orange : color.white
+    table.cell(infoTable, 1, 3, volText, text_color=volColor, text_size=size.small)
+
+    table.cell(infoTable, 0, 4, "Signal:", text_color=color.white, text_size=size.small)
+    signalText = smartMoneyBuy ? "🟢 BUY" :
+                 smartMoneySell ? "🔴 SELL" :
+                 bullishDiv ? "Bull Div" :
+                 bearishDiv ? "Bear Div" : "-"
+    signalColor = smartMoneyBuy ? color.green :
+                  smartMoneySell ? color.red : color.gray
+    table.cell(infoTable, 1, 4, signalText, text_color=signalColor, text_size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(smartMoneyBuy, "Smart Money Buy", "Smart Money BUY signal - {{ticker}} @ {{close}}")
+alertcondition(smartMoneySell, "Smart Money Sell", "Smart Money SELL signal - {{ticker}} @ {{close}}")
+alertcondition(largeBuyOrder, "Large Buy Order", "Large institutional BUY order detected - {{ticker}}")
+alertcondition(largeSellOrder, "Large Sell Order", "Large institutional SELL order detected - {{ticker}}")
+alertcondition(accumulation, "Accumulation Phase", "Smart money accumulation phase detected - {{ticker}}")
+alertcondition(distribution, "Distribution Phase", "Smart money distribution phase detected - {{ticker}}")
+alertcondition(bullishDiv, "Bullish MFI Divergence", "Bullish MFI divergence - potential reversal up")
+alertcondition(bearishDiv, "Bearish MFI Divergence", "Bearish MFI divergence - potential reversal down")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USAGE NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+// Accumulation: Smart money buying while price drops (prepare for up move)
+// Distribution: Smart money selling while price rises (prepare for down move)
+// Markup: Bullish phase, price rising with smart money support
+// Markdown: Bearish phase, price falling with smart money pressure
+// Large orders: Institutional activity, follow the direction
+// MFI > 80: Overbought, potential reversal
+// MFI < 20: Oversold, potential reversal
+// Divergences: Early warning signals for trend changes
+// Use with price action and other indicators for confirmation
+// ══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,68 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Dynamictradingstrategies
+
+//@version=5
+strategy("INTRADAY ATR BANDS TRADING STRATEGY", overlay = true)
+
+/////// USER INPUTS
+
+ATR_L = input.int(10,"ATR LENGTH")
+MULTIPLIER = input.int(5,"MULTIPLIER")
+
+SESSION = input.session("0915-1445")
+SQOFF = input.session("1445-1500")
+
+///TIMING FUNCTIONS 
+
+Insession = time(timeframe.period,SESSION) //// We are going to take trades between 0915-1445
+Sqoff = time(timeframe.period, SQOFF)  //// We are going to sqoff our trades after 1445-1500
+
+
+///// SOURCE MULTIPLE TIMEFRAME VALUE
+
+DAILY_CLOSE = request.security(syminfo.tickerid, "D", close[barstate.isrealtime ? 1  : 0])
+
+
+///// ATR INDICATOR 
+
+ATR = ta.atr(ATR_L)
+
+/////// CREATING BANDS 
+
+upperband = DAILY_CLOSE + (ATR * MULTIPLIER) //// 1000 + (100 * 5) = 1000 +(500) = 1500
+lowerband = DAILY_CLOSE - (ATR * MULTIPLIER) //// 1000 - (100 * 5) = 1000 -(500) = 500
+median = (upperband  + lowerband)/2
+
+
+//// BUY AND SHORT SIGNALS 
+
+buy = ta.crossover(close,upperband) and Insession
+short = ta.crossunder(close,lowerband) and Insession
+
+sell = ta.crossunder(close,median) //or Sqoff
+cover = ta.crossover(close,median) //or Sqoff
+
+
+///// STRATEGY FUNCTIONS 
+
+if buy
+    strategy.entry("long", direction = strategy.long, comment = "LONG")
+
+if sell
+    strategy.close("long", comment = "BUYEXIT")
+
+if short
+    strategy.entry("short", direction = strategy.short, comment = "SHORT")
+
+if cover
+    strategy.close("short", comment = "SHORTEXIT")
+
+if Sqoff
+    strategy.close_all("SQOFF")
+
+///// PLOTTING ATR BANDS
+
+plot(upperband)
+plot(lowerband)
+plot(median)
+

@@ -1,0 +1,438 @@
+//@version=6
+indicator('Multi Rolling VWAP', shorttitle = 'Multi-RVWAP', overlay = true, max_bars_back = 4999)
+
+import PineCoders/ConditionalAverages/2 as pc
+
+// Time constants
+int MS_IN_MIN  = 60 * 1000
+int MS_IN_HOUR = MS_IN_MIN  * 60
+int MS_IN_DAY  = MS_IN_HOUR * 24
+
+// Source input
+srcInput = input.source(hlc3, 'Source', tooltip = 'The source series for VWAP calculation. Default is average of high, low, and close prices.', display = display.data_window)
+minBarsInput = input.int(10, 'Minimum Window Size (bars)', tooltip = 'Minimum number of bars to preserve in calculations, even outside the time window. Helps avoid empty periods during gaps.', display = display.data_window)
+
+// Time / Period Settings
+string GRP_TIME = 'Time / Period Settings'
+useTradingDaysInsteadOfCalendarDays = input.bool(false, 'Use Trading Days', group = GRP_TIME, tooltip = 'When enabled, 30D becomes 22D, 90D becomes 66D, and 365D becomes 252D')
+useWeeklyReset = input.bool(false, 'Use Weekly Reset (7D)', group = GRP_TIME, tooltip = 'When enabled, 7D VWAP resets every Monday instead of rolling')
+useMonthlyReset = input.bool(false, 'Use Monthly Reset (30D)', group = GRP_TIME, tooltip = 'When enabled, 30D VWAP resets every month instead of rolling')
+useOpexMonthly = input.bool(false, 'Use OPEX Monthly (30D)', group = GRP_TIME, tooltip = 'When enabled, 30D VWAP resets on OPEX (third Friday)')
+useQuarterlyReset = input.bool(false, 'Use Quarterly Reset (90D)', group = GRP_TIME, tooltip = 'When enabled, 90D VWAP resets every quarter instead of rolling')
+useQuarterlyOpexMonthly = input.bool(false, 'Use Quarterly OPEX (90D)', group = GRP_TIME, tooltip = 'When enabled, 90D VWAP resets on quarterly OPEX')
+useYearlyAnchor = input.bool(false, 'Use Yearly Anchor (365D)', group = GRP_TIME, tooltip = 'When enabled, 365D VWAP anchors to January 1st instead of rolling')
+
+// Display Settings
+string GRP_DISPLAY = 'Display Settings'
+enable7d = input.bool(false, 'Show 7D VWAP', group = GRP_DISPLAY)
+enable30d = input.bool(true, 'Show 30D VWAP', group = GRP_DISPLAY)
+enable90d = input.bool(true, 'Show 90D VWAP', group = GRP_DISPLAY)
+enable365d = input.bool(true, 'Show 365D VWAP', group = GRP_DISPLAY)
+show7dBands = input.bool(false, 'Show 7D Bands', group = GRP_DISPLAY)
+show30dBands = input.bool(false, 'Show 30D Bands', group = GRP_DISPLAY)
+show90dBands = input.bool(false, 'Show 90D Bands', group = GRP_DISPLAY)
+show365dBands = input.bool(false, 'Show 365D Bands', group = GRP_DISPLAY)
+
+// Label Settings
+string GRP_LABELS = 'Label Settings'
+showLabels = input.bool(true, 'Show Labels', group = GRP_LABELS)
+showPrices = input.bool(true, 'Show Prices in Labels', group = GRP_LABELS)
+showBandLabels = input.bool(true, 'Show Band Labels (VAH/VAL)', group = GRP_LABELS, tooltip = 'Shows Value Area High/Low labels on bands')
+labelSize = input.string('Small', 'Label Size', options=['Tiny', 'Small', 'Normal', 'Large'], group = GRP_LABELS)
+labelOffset = input.int(10, 'Label Offset (bars)', minval=0, maxval=100, group = GRP_LABELS)
+
+// VWAP Colors (muted for white background)
+string GRP_COLORS = 'VWAP Colors'
+vwap7Color = input.color(color.new(#808080, 0), '7D VWAP', group = GRP_COLORS, inline = '7d')
+vwap30Color = input.color(color.new(#666666, 0), '30D VWAP', group = GRP_COLORS, inline = '30d')
+vwap90Color = input.color(color.new(#999999, 0), '90D VWAP', group = GRP_COLORS, inline = '90d')
+vwap365Color = input.color(color.new(#555555, 0), '365D VWAP', group = GRP_COLORS, inline = '365d')
+
+// Band Colors (more visible)
+string GRP_BAND_COLORS = 'Band Colors'
+color7d_1 = input.color(color.new(#808080, 70), '7D Band 1', group = GRP_BAND_COLORS, inline = '7db')
+color30d_1 = input.color(color.new(#666666, 70), '30D Band 1', group = GRP_BAND_COLORS, inline = '30db')
+color90d_1 = input.color(color.new(#999999, 70), '90D Band 1', group = GRP_BAND_COLORS, inline = '90db')
+color365d_1 = input.color(color.new(#555555, 70), '365D Band 1', group = GRP_BAND_COLORS, inline = '365db')
+
+// Band Multipliers (Standard Deviation)
+string GRP_BANDS = 'Band Settings'
+band7d_1 = input.float(1.0, '7D Band 1 (StdDev)', minval=0, group = GRP_BANDS, inline = '7dm', tooltip = 'Bands show price volatility around VWAP. 1.0 = 1 standard deviation (~68% of price action), 2.0 = 2 std dev (~95%). Most traders use 1.0 or 2.0.')
+band30d_1 = input.float(1.0, '30D Band 1 (StdDev)', minval=0, group = GRP_BANDS, inline = '30dm')
+band90d_1 = input.float(1.0, '90D Band 1 (StdDev)', minval=0, group = GRP_BANDS, inline = '90dm')
+band365d_1 = input.float(1.0, '365D Band 1 (StdDev)', minval=0, group = GRP_BANDS, inline = '365dm')
+
+// Line Settings
+string GRP_LINE = 'Line Settings'
+vwap7Width = input.int(1, '7D Width', minval=1, maxval=5, group = GRP_LINE, inline = '7dw')
+vwap30Width = input.int(1, '30D Width', minval=1, maxval=5, group = GRP_LINE, inline = '30dw')
+vwap90Width = input.int(1, '90D Width', minval=1, maxval=5, group = GRP_LINE, inline = '90dw')
+vwap365Width = input.int(1, '365D Width', minval=1, maxval=5, group = GRP_LINE, inline = '365dw')
+bandLineWidth = input.int(1, 'Band Width', minval=1, maxval=3, group = GRP_LINE)
+
+// Detect if crypto pair
+isCrypto = syminfo.type == 'crypto' or str.contains(str.lower(syminfo.ticker), 'btc') or str.contains(str.lower(syminfo.ticker), 'eth') or str.contains(str.lower(syminfo.ticker), 'usdt') or str.contains(str.lower(syminfo.ticker), 'usdc')
+
+// Volume aggregation for crypto (used in VWAP calculations)
+vol_to_use = volume
+
+if isCrypto
+    vol_mex = syminfo.basecurrency == 'BTC' ? 'XBT' : string(syminfo.basecurrency)
+    vol_base = string(syminfo.basecurrency)
+    vol_base_alt = '1000' + string(syminfo.basecurrency)
+
+    // Crypto volume aggregation from multiple exchanges
+    vol_binance1 = request.security('BINANCE' + ':' + vol_base + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_binance1a = request.security('BINANCE' + ':' + vol_base_alt + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_binance2 = request.security('BINANCE' + ':' + vol_base + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_binance2a = request.security('BINANCE' + ':' + vol_base_alt + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_binance3 = request.security('BINANCE' + ':' + vol_base + 'BUSD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_binance3a = request.security('BINANCE' + ':' + vol_base_alt + 'BUSD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bitmex1 = request.security('BITMEX' + ':' + vol_mex + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bitmex2 = request.security('BITMEX' + ':' + vol_mex + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_kraken1 = request.security('KRAKEN' + ':' + vol_base + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_kraken1a = request.security('KRAKEN' + ':' + vol_base_alt + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bybit1 = request.security('BYBIT' + ':' + vol_base + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bybit1a = request.security('BYBIT' + ':' + vol_base_alt + 'USD.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bybit2 = request.security('BYBIT' + ':' + vol_base + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_bybit2a = request.security('BYBIT' + ':' + vol_base_alt + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    vol_okex = request.security('OKX' + ':' + vol_base + 'USDT.P', timeframe.period, volume, ignore_invalid_symbol = true)
+    current_price = request.security('OKX' + ':' + vol_base + 'USDT.P', timeframe.period, close, ignore_invalid_symbol = true)
+
+    // Aggregate volume (convert USD volumes to coins)
+    vol_aggregated = nz(vol_binance1, 0) + nz(vol_binance1a, 0) + (nz(vol_binance2, 0) + nz(vol_binance2a, 0)) / close + nz(vol_binance3, 0) + nz(vol_binance3a, 0) + nz(vol_bitmex1, 0) / close + nz(vol_bitmex2, 0) + (nz(vol_kraken1, 0) + nz(vol_kraken1a, 0)) / close + (nz(vol_bybit1, 0) + nz(vol_bybit1a, 0)) / close + nz(vol_bybit2, 0) + nz(vol_bybit2a, 0) + (not na(vol_okex) and not na(current_price) and current_price > 0 ? vol_okex / current_price : 0)
+
+    vol_to_use := vol_aggregated > 0 ? vol_aggregated : volume
+
+// Calculate time periods in milliseconds
+time7d = useTradingDaysInsteadOfCalendarDays ? MS_IN_DAY * 8 : MS_IN_DAY * 7
+time30d = useTradingDaysInsteadOfCalendarDays ? MS_IN_DAY * 21 : MS_IN_DAY * 30
+time90d = useTradingDaysInsteadOfCalendarDays ? MS_IN_DAY * 89 : MS_IN_DAY * 90
+time365d = useTradingDaysInsteadOfCalendarDays ? MS_IN_DAY * 377 : MS_IN_DAY * 365
+
+// Helper function for rolling VWAP calculation using PineCoders library
+calculateTimeBasedVWAP(int timeInMs) =>
+    // Calculate sums over the time window using the efficient library function
+    float sumSrcVol = pc.totalForTimeWhen(srcInput * vol_to_use, timeInMs, true, minBarsInput)
+    float sumVol = pc.totalForTimeWhen(vol_to_use, timeInMs, true, minBarsInput)
+    float sumSrcSrcVol = pc.totalForTimeWhen(vol_to_use * math.pow(srcInput, 2), timeInMs, true, minBarsInput)
+    
+    // Calculate VWAP
+    float vwapValue = sumSrcVol / sumVol
+    
+    // Calculate variance and standard deviation
+    float variance = math.max(sumSrcSrcVol / sumVol - math.pow(vwapValue, 2), 0.0)
+    float stdDev = math.sqrt(variance)
+    
+    [vwapValue, stdDev]
+
+// Period reset functions
+get_third_friday(yearParam, monthParam) =>
+    first_day = timestamp(yearParam, monthParam, 1, 0, 0, 0)
+    first_weekday = dayofweek(first_day)
+    days_to_friday = first_weekday <= dayofweek.friday ? dayofweek.friday - first_weekday : 7 - (first_weekday - dayofweek.friday)
+    third_friday_day = 1 + days_to_friday + 14
+    timestamp(yearParam, monthParam, third_friday_day, 16, 0, 0)
+
+isNewWeeklyPeriod() =>
+    var int last_week = na
+    current_week = weekofyear(time)
+    bool is_monday = dayofweek(time) == dayofweek.monday
+    bool new_week = na(last_week) or current_week != last_week
+    if is_monday and new_week
+        last_week := current_week
+        true
+    else
+        false
+
+isNewMonthlyPeriod() =>
+    var int last_month = na
+    var int last_year = na
+    current_month = month(time)
+    current_year = year(time)
+    bool is_first_day = dayofmonth(time) == 1
+    bool new_month = na(last_month) or current_month != last_month or current_year != last_year
+    if is_first_day and new_month
+        last_month := current_month
+        last_year := current_year
+        true
+    else
+        false
+
+isNewOpexPeriod() =>
+    var int last_opex_month = na
+    current_year = year(time)
+    current_month = month(time)
+    current_opex = get_third_friday(current_year, current_month)
+    bool past_opex = time >= current_opex
+    bool new_opex_month = na(last_opex_month) or current_month != last_opex_month
+    bool new_month_reset = useMonthlyReset and isNewMonthlyPeriod()
+    if (past_opex and new_opex_month) or new_month_reset
+        last_opex_month := current_month
+        true
+    else
+        false
+
+isNewQuarterlyPeriod() =>
+    var int last_quarter = na
+    var int last_year = na
+    current_month = month(time)
+    current_year = year(time)
+    current_quarter = current_month <= 3 ? 1 : current_month <= 6 ? 2 : current_month <= 9 ? 3 : 4
+    bool is_first_day_of_quarter = (current_month == 1 or current_month == 4 or current_month == 7 or current_month == 10) and dayofmonth(time) == 1
+    bool new_quarter = na(last_quarter) or current_quarter != last_quarter or current_year != last_year
+    if is_first_day_of_quarter and new_quarter
+        last_quarter := current_quarter
+        last_year := current_year
+        true
+    else
+        false
+
+isNewQuarterlyOpexPeriod() =>
+    var int last_quarterly_opex_timestamp = na
+    current_year = year(time)
+    current_month = month(time)
+    current_quarterly_month = current_month <= 3 ? 3 : current_month <= 6 ? 6 : current_month <= 9 ? 9 : 12
+    current_quarterly_opex = get_third_friday(current_year, current_quarterly_month)
+    bool past_quarterly_opex = time >= current_quarterly_opex
+    bool new_quarterly_opex = na(last_quarterly_opex_timestamp) or current_quarterly_opex != last_quarterly_opex_timestamp
+    bool new_quarter_reset = useQuarterlyReset and isNewQuarterlyPeriod()
+    if (past_quarterly_opex and new_quarterly_opex) or new_quarter_reset
+        last_quarterly_opex_timestamp := current_quarterly_opex
+        true
+    else
+        false
+
+// VWAP Variables
+var float vwap7d = na
+var float std7d = na
+var float vwap7dSumPV = 0.0
+var float vwap7dSumV = 0.0
+var float vwap7dSumPP = 0.0
+
+var float vwap30d = na
+var float std30d = na
+var float vwap30dSumPV = 0.0
+var float vwap30dSumV = 0.0
+var float vwap30dSumPP = 0.0
+
+var float vwap90d = na
+var float std90d = na
+var float vwap90dSumPV = 0.0
+var float vwap90dSumV = 0.0
+var float vwap90dSumPP = 0.0
+
+var float vwap365d = na
+var float std365d = na
+var float vwap365dSumPV = 0.0
+var float vwap365dSumV = 0.0
+var float vwap365dSumPP = 0.0
+
+// 7D VWAP Calculation
+if useWeeklyReset
+    bool newWeeklyPeriod = isNewWeeklyPeriod()
+    if newWeeklyPeriod or na(vwap7d)
+        vwap7dSumPV := srcInput * vol_to_use
+        vwap7dSumV := vol_to_use
+        vwap7dSumPP := vol_to_use * math.pow(srcInput, 2)
+    else
+        vwap7dSumPV += srcInput * vol_to_use
+        vwap7dSumV += vol_to_use
+        vwap7dSumPP += vol_to_use * math.pow(srcInput, 2)
+    
+    if vwap7dSumV > 0
+        vwap7d := vwap7dSumPV / vwap7dSumV
+        float variance7d = math.max(vwap7dSumPP / vwap7dSumV - math.pow(vwap7d, 2), 0.0)
+        std7d := math.sqrt(variance7d)
+else
+    [vwap7d_calc, std7d_calc] = calculateTimeBasedVWAP(time7d)
+    vwap7d := vwap7d_calc
+    std7d := std7d_calc
+
+// 30D VWAP Calculation
+if useOpexMonthly
+    bool newOpexPeriod = isNewOpexPeriod()
+    if newOpexPeriod or na(vwap30d)
+        vwap30dSumPV := srcInput * vol_to_use
+        vwap30dSumV := vol_to_use
+        vwap30dSumPP := vol_to_use * math.pow(srcInput, 2)
+    else
+        vwap30dSumPV += srcInput * vol_to_use
+        vwap30dSumV += vol_to_use
+        vwap30dSumPP += vol_to_use * math.pow(srcInput, 2)
+    
+    if vwap30dSumV > 0
+        vwap30d := vwap30dSumPV / vwap30dSumV
+        float variance30d = math.max(vwap30dSumPP / vwap30dSumV - math.pow(vwap30d, 2), 0.0)
+        std30d := math.sqrt(variance30d)
+else
+    [vwap30d_calc, std30d_calc] = calculateTimeBasedVWAP(time30d)
+    vwap30d := vwap30d_calc
+    std30d := std30d_calc
+
+// 90D VWAP Calculation
+if useQuarterlyOpexMonthly
+    bool newQuarterlyOpexPeriod = isNewQuarterlyOpexPeriod()
+    if newQuarterlyOpexPeriod or na(vwap90d)
+        vwap90dSumPV := srcInput * vol_to_use
+        vwap90dSumV := vol_to_use
+        vwap90dSumPP := vol_to_use * math.pow(srcInput, 2)
+    else
+        vwap90dSumPV += srcInput * vol_to_use
+        vwap90dSumV += vol_to_use
+        vwap90dSumPP += vol_to_use * math.pow(srcInput, 2)
+    
+    if vwap90dSumV > 0
+        vwap90d := vwap90dSumPV / vwap90dSumV
+        float variance90d = math.max(vwap90dSumPP / vwap90dSumV - math.pow(vwap90d, 2), 0.0)
+        std90d := math.sqrt(variance90d)
+else
+    [vwap90d_calc, std90d_calc] = calculateTimeBasedVWAP(time90d)
+    vwap90d := vwap90d_calc
+    std90d := std90d_calc
+
+// 365D VWAP Calculation
+if useYearlyAnchor
+    bool newYearlyPeriod = month(time) == 1 and dayofmonth(time) == 1
+    if newYearlyPeriod or na(vwap365d)
+        vwap365dSumPV := srcInput * vol_to_use
+        vwap365dSumV := vol_to_use
+        vwap365dSumPP := vol_to_use * math.pow(srcInput, 2)
+    else
+        vwap365dSumPV += srcInput * vol_to_use
+        vwap365dSumV += vol_to_use
+        vwap365dSumPP += vol_to_use * math.pow(srcInput, 2)
+    
+    if vwap365dSumV > 0
+        vwap365d := vwap365dSumPV / vwap365dSumV
+        float variance365d = math.max(vwap365dSumPP / vwap365dSumV - math.pow(vwap365d, 2), 0.0)
+        std365d := math.sqrt(variance365d)
+else
+    [vwap365d_calc, std365d_calc] = calculateTimeBasedVWAP(time365d)
+    vwap365d := vwap365d_calc
+    std365d := std365d_calc
+
+// Plot VWAPs
+plot(enable7d ? vwap7d : na, '7D VWAP', color = vwap7Color, linewidth = vwap7Width)
+plot(enable30d ? vwap30d : na, '30D VWAP', color = vwap30Color, linewidth = vwap30Width)
+plot(enable90d ? vwap90d : na, '90D VWAP', color = vwap90Color, linewidth = vwap90Width)
+plot(enable365d ? vwap365d : na, '365D VWAP', color = vwap365Color, linewidth = vwap365Width)
+
+// Plot Bands
+plot7dUpper1 = enable7d and show7dBands and band7d_1 != 0 and not na(vwap7d) and not na(std7d) ? vwap7d + std7d * band7d_1 : na
+plot7dLower1 = enable7d and show7dBands and band7d_1 != 0 and not na(vwap7d) and not na(std7d) ? vwap7d - std7d * band7d_1 : na
+plot(plot7dUpper1, '7D Upper Band', color = color7d_1, linewidth = bandLineWidth)
+plot(plot7dLower1, '7D Lower Band', color = color7d_1, linewidth = bandLineWidth)
+
+plot30dUpper1 = enable30d and show30dBands and band30d_1 != 0 and not na(vwap30d) and not na(std30d) ? vwap30d + std30d * band30d_1 : na
+plot30dLower1 = enable30d and show30dBands and band30d_1 != 0 and not na(vwap30d) and not na(std30d) ? vwap30d - std30d * band30d_1 : na
+plot(plot30dUpper1, '30D Upper Band', color = color30d_1, linewidth = bandLineWidth)
+plot(plot30dLower1, '30D Lower Band', color = color30d_1, linewidth = bandLineWidth)
+
+plot90dUpper1 = enable90d and show90dBands and band90d_1 != 0 and not na(vwap90d) and not na(std90d) ? vwap90d + std90d * band90d_1 : na
+plot90dLower1 = enable90d and show90dBands and band90d_1 != 0 and not na(vwap90d) and not na(std90d) ? vwap90d - std90d * band90d_1 : na
+plot(plot90dUpper1, '90D Upper Band', color = color90d_1, linewidth = bandLineWidth)
+plot(plot90dLower1, '90D Lower Band', color = color90d_1, linewidth = bandLineWidth)
+
+plot365dUpper1 = enable365d and show365dBands and band365d_1 != 0 and not na(vwap365d) and not na(std365d) ? vwap365d + std365d * band365d_1 : na
+plot365dLower1 = enable365d and show365dBands and band365d_1 != 0 and not na(vwap365d) and not na(std365d) ? vwap365d - std365d * band365d_1 : na
+plot(plot365dUpper1, '365D Upper Band', color = color365d_1, linewidth = bandLineWidth)
+plot(plot365dLower1, '365D Lower Band', color = color365d_1, linewidth = bandLineWidth)
+
+// Helper function for label size
+getLabelSize() =>
+    switch labelSize
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        => size.small
+
+// Helper function to format price
+formatPrice(price) =>
+    str.tostring(price, format.mintick)
+
+// Create labels on the last bar
+if showLabels and barstate.islast
+    labelX = bar_index + labelOffset
+    labelTextSize = getLabelSize()
+    
+    // 7D VWAP Label
+    if enable7d and not na(vwap7d)
+        label7dText = useWeeklyReset ? 'Weekly' : '7D'
+        label7dText := showPrices ? label7dText + '\n' + formatPrice(vwap7d) : label7dText
+        label.new(labelX, vwap7d, label7dText, 
+                  color=color.new(color.white, 100), 
+                  textcolor=vwap7Color, 
+                  style=label.style_label_left, 
+                  size=labelTextSize,
+                  text_font_family=font.family_monospace)
+    
+    // 30D VWAP Label
+    if enable30d and not na(vwap30d)
+        label30dText = useOpexMonthly ? (useMonthlyReset ? 'Monthly' : 'OPEX') : '30D'
+        label30dText := showPrices ? label30dText + '\n' + formatPrice(vwap30d) : label30dText
+        label.new(labelX, vwap30d, label30dText, 
+                  color=color.new(color.white, 100), 
+                  textcolor=vwap30Color, 
+                  style=label.style_label_left, 
+                  size=labelTextSize,
+                  text_font_family=font.family_monospace)
+    
+    // 90D VWAP Label
+    if enable90d and not na(vwap90d)
+        label90dText = useQuarterlyOpexMonthly ? (useQuarterlyReset ? 'Quarterly' : 'QOPEX') : '90D'
+        label90dText := showPrices ? label90dText + '\n' + formatPrice(vwap90d) : label90dText
+        label.new(labelX, vwap90d, label90dText, 
+                  color=color.new(color.white, 100), 
+                  textcolor=vwap90Color, 
+                  style=label.style_label_left, 
+                  size=labelTextSize,
+                  text_font_family=font.family_monospace)
+    
+    // 365D VWAP Label
+    if enable365d and not na(vwap365d)
+        label365dText = useYearlyAnchor ? 'Yearly' : '365D'
+        label365dText := showPrices ? label365dText + '\n' + formatPrice(vwap365d) : label365dText
+        label.new(labelX, vwap365d, label365dText, 
+                  color=color.new(color.white, 100), 
+                  textcolor=vwap365Color, 
+                  style=label.style_label_left, 
+                  size=labelTextSize,
+                  text_font_family=font.family_monospace)
+
+// Create band labels (VAH/VAL)
+if showBandLabels and barstate.islast
+    labelX = bar_index + labelOffset
+    
+    // 7D Band Labels
+    if enable7d and show7dBands and band7d_1 != 0 and not na(vwap7d) and not na(std7d)
+        upperBand = vwap7d + std7d * band7d_1
+        lowerBand = vwap7d - std7d * band7d_1
+        bandPrefix = useWeeklyReset ? 'Week' : '7D'
+        label.new(labelX, upperBand, bandPrefix + ' VAH', color=color.new(color.white, 100), textcolor=color7d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+        label.new(labelX, lowerBand, bandPrefix + ' VAL', color=color.new(color.white, 100), textcolor=color7d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+    
+    // 30D Band Labels
+    if enable30d and show30dBands and band30d_1 != 0 and not na(vwap30d) and not na(std30d)
+        upperBand = vwap30d + std30d * band30d_1
+        lowerBand = vwap30d - std30d * band30d_1
+        bandPrefix = useOpexMonthly ? (useMonthlyReset ? 'Month' : 'OPEX') : '30D'
+        label.new(labelX, upperBand, bandPrefix + ' VAH', color=color.new(color.white, 100), textcolor=color30d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+        label.new(labelX, lowerBand, bandPrefix + ' VAL', color=color.new(color.white, 100), textcolor=color30d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+    
+    // 90D Band Labels
+    if enable90d and show90dBands and band90d_1 != 0 and not na(vwap90d) and not na(std90d)
+        upperBand = vwap90d + std90d * band90d_1
+        lowerBand = vwap90d - std90d * band90d_1
+        bandPrefix = useQuarterlyOpexMonthly ? (useQuarterlyReset ? 'Quarter' : 'QOPEX') : '90D'
+        label.new(labelX, upperBand, bandPrefix + ' VAH', color=color.new(color.white, 100), textcolor=color90d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+        label.new(labelX, lowerBand, bandPrefix + ' VAL', color=color.new(color.white, 100), textcolor=color90d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+    
+    // 365D Band Labels
+    if enable365d and show365dBands and band365d_1 != 0 and not na(vwap365d) and not na(std365d)
+        upperBand = vwap365d + std365d * band365d_1
+        lowerBand = vwap365d - std365d * band365d_1
+        bandPrefix = useYearlyAnchor ? 'Year' : '365D'
+        label.new(labelX, upperBand, bandPrefix + ' VAH', color=color.new(color.white, 100), textcolor=color365d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)
+        label.new(labelX, lowerBand, bandPrefix + ' VAL', color=color.new(color.white, 100), textcolor=color365d_1, style=label.style_label_left, size=size.tiny, text_font_family=font.family_monospace)

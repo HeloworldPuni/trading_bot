@@ -1,0 +1,19 @@
+//@version=5
+
+// NEW CODE
+strategy("My strategy", overlay=true, margin_long=100, margin_short=100)
+
+longCondition = ta.crossover(ta.sma(close, 14), ta.sma(close, 28))
+if (longCondition)
+    strategy.entry("LONG", strategy.long)
+
+shortCondition = ta.crossunder(ta.sma(close, 14), ta.sma(close, 28))
+if (shortCondition)
+    strategy.entry("SHORT", strategy.short)
+
+// Here is the key part for you
+////////////////////////////////
+if 0 < strategy.closedtrades.profit(strategy.closedtrades - 1) // profit of the last closed trade is positive
+    strategy.entry("NET P&L", strategy.long) // entry new trade
+
+///////////////////////////

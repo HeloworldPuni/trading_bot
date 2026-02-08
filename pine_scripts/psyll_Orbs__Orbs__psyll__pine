@@ -1,0 +1,319 @@
+//@version=6
+// Author: Psyll.com
+// Email: info@psyll.com
+// Website: https://psyll.com
+// Copyright: Copyright © 2025 Psyll.com. All rights reserved.
+strategy('Orbs [psyll]', overlay = false, pyramiding = 5, initial_capital = 1000, default_qty_value = 1, commission_value = 0, max_labels_count = 500)
+colorBull = input.color(title = 'Bullish', defval = color.new(#00bcd4, 0), group = 'Colors', inline = 'Main colors', display = display.none)
+colorBear = input.color(title = 'Bearish', defval = color.new(#e91e63, 0), group = 'Colors', inline = 'Main colors', display = display.none)
+group_main ="MA"
+group_ma ="MA"
+ma_source = input.source(close, 'Source', group=group_ma)
+ma_type = input.string(title = 'Type',  display = display.none, group = group_ma, defval = 'SMA | Simple Moving Average', options = ['AHMA | Ahrens Moving Average', 'COMPLEXMA | Complex Moving Average', 'DEMA | Double Exponential Moving Average', 'DONCHIAN | Donchian', 'DONCHIAN2 | Donchian V2', 'DUALMA | Dual Length Moving Average', 'EMA | Exponential Moving Average', 'EMADYN | Dynamic Exponential Moving Average', 'FIBMA | Fibonacci Moving Average', 'FRAMA | Fractal Reactive Moving Average', 'GMMA | Guppy Multiple Moving Average', 'HMA | Hull Moving Average', 'JURIK | Jurik Moving Average', 'KAMA | Kaufmans Adaptive Moving Average', 'MMA | Modified Moving Average', 'RMA | Relative Moving Average', 'SMA | Simple Moving Average', 'SMMA | Smoothed Moving Average', 'SMASMOOTH | Smoothed Simple Moving Average', 'TEMA | Triple Exponential Moving Average', 'TMA | Triangular Moving Average', 'TMA2 | Second Triangular Moving Average', 'TMADYN | Triangular Moving Average Dynamic', 'UPDOWNMA | Up/Down Moving Average', 'VWMA | Volume-Weighted Moving Average', 'WMA | Weighted Moving Average', 'WMA2 | Weighted Moving Average 2', 'XEMA | Exponential Moving Average Optimized', 'ZLEMA | Zero-Lag Exponential Moving Average'])
+ma_length = input.int(7, 'Length', group = group_ma, display = display.none)
+
+tf_group = 'MA Timeframe'
+tf_confirmation_wait = input.bool(defval = true, title = 'Wait for confirm', group = tf_group, inline = tf_group, display = display.none)
+tf_no_repaint_security = input.bool(defval = true, title = 'No repaint', group = tf_group, inline = tf_group, display = display.none)
+tf_barmerge_lookahead = input.bool(defval = false, title = 'Lookahead', group = tf_group, inline = tf_group, display = display.none)
+tf_barmerge_gaps = input.bool(defval = false, title = 'Gaps', group = tf_group, inline = tf_group, display = display.none)
+tf_type = input.string(title = 'Type', options = ['Static', 'Custom'], defval = 'Static', group = tf_group, display = display.none)
+tf_static = input.timeframe(defval = '', title = 'Static', group = tf_group, display = display.none)
+tf_custom = str.tostring(input.int(1, 'Custom', group = tf_group, display = display.none))
+tf_type_value = switch tf_type
+    'Static' => tf_static
+    'Custom' => tf_custom
+tf_security(source) =>
+    request.security(syminfo.tickerid, tf_type_value, tf_no_repaint_security ? source[barstate.isrealtime ? 1 : 0] : source, gaps = tf_barmerge_gaps ? barmerge.gaps_on : barmerge.gaps_off, lookahead = tf_barmerge_lookahead ? barmerge.lookahead_on : barmerge.lookahead_off)[tf_no_repaint_security ? barstate.isrealtime ? 0 : 1 : 0]
+ma(float source, int length, string ma_type) =>
+    float result = na
+    float lowest = ta.lowest(source, length)
+    float highest = ta.highest(source, length)
+    EMA = ta.ema(source, length)
+    SMA = ta.sma(source, length)
+    RMA = ta.rma(source, length)
+    HMA = ta.hma(source, length)
+    WMA = ta.wma(source, length)
+    VWMA = ta.vwma(source, length)
+    DEMA = 2 * EMA - ta.ema(EMA, length)
+    TEMA = 3 * (EMA - ta.ema(EMA, length)) + ta.ema(ta.ema(EMA, length), length)
+    ZLEMA = ta.ema(source + source - source[(length - 1) / 2], length)
+    TMA = ta.sma(ta.sma(source, math.ceil(length / 2)), math.floor(length / 2) + 1)
+    XEMA = 2.0 / (length + 1.0) * source + (1.0 - 2.0 / (length + 1.0)) * nz(result[1], source)
+    kama_dist = math.abs(source[0] - source[1])
+    kama_signal = math.abs(source - source[length])
+    kama_noise = math.sum(kama_dist, length)
+    kama_effr = kama_noise != 0 ? kama_signal / kama_noise : 1
+    kama_sc = math.pow(kama_effr * (0.666 - 0.0645) + 0.0645, 2)
+    KAMA = nz(result[1]) + kama_sc * (source - nz(result[1]))
+    frama_n3 = (ta.highest(high, length) - ta.lowest(low, length)) / length
+    frama_hd2 = ta.highest(high, length / 2)
+    frama_ld2 = ta.lowest(low, length / 2)
+    frama_n2 = (frama_hd2 - frama_ld2) / (length / 2)
+    frama_n1 = (frama_hd2[length / 2] - frama_ld2[length / 2]) / (length / 2)
+    frama_dim = frama_n1 > 0 and frama_n2 > 0 and frama_n3 > 0 ? (math.log(frama_n1 + frama_n2) - math.log(frama_n3)) / math.log(2) : 0
+    frama_alpha = math.exp(-4.6 * (frama_dim - 1))
+    frama_sc = frama_alpha < 0.01 ? 0.01 : frama_alpha > 1 ? 1 : frama_alpha
+    FRAMA = ta.cum(1) <= 2 * length ? source : source * frama_sc + nz(source[1]) * (1 - frama_sc)
+    DONCHIAN = math.avg(lowest, highest)
+    DONCHIAN2 = (math.avg(lowest, highest) + math.avg(ta.lowest(source, length / 2), ta.highest(source, length / 2))) / 2
+    FIBMA = ta.sma(source, math.round(length * 0.618))
+    GMMA = (ta.sma(source, math.round(length * 0.5)) + SMA) / 2
+    TMADYN = ta.sma(source, math.round(length * 1.5))
+    EMADYN = ta.ema(source, math.max(length, math.round(length * 1.2)))
+    UPDOWNMA = ta.sma(source > source[1] ? source : na, length)
+    MMA = ta.sma(source * math.pow(0.95, math.abs(source - source[1])), length)
+    SMASMOOTH = ta.sma(ta.sma(source, math.ceil(length / 2)), length)
+    COMPLEXMA = (EMA + ta.wma(source, length) + SMA) / 3
+    DUALMA = (ta.sma(source, math.ceil(length / 2)) + ta.sma(source, math.floor(length * 1.5))) / 2
+    SMMA = (nz(result[1]) * (length - 1) + source) / length
+    weighted_sum = 0.0
+    for i = 0 to length - 1 by 1
+        weighted_sum := weighted_sum + (i + 1) * source[i]
+        weighted_sum
+    WMA2 = weighted_sum / (length * (length + 1) / 2)
+    TMA2 = ta.sma(ta.sma(source, math.ceil(length / 2)), math.floor(length / 2))
+    AHMA = nz(source[1], source) + (source - nz(source[length], source)) / length
+    jurik_tmp0 = 0.0
+    jurik_tmp1 = 0.0
+    jurik_tmp2 = 0.0
+    jurik_tmp3 = 0.0
+    jurik_tmp4 = 0.0
+    jurik_beta = 0.45 * (length - 1) / (0.45 * (length - 1) + 2)
+    jurik_alpha = jurik_beta
+    jurik_tmp1 := (source - jurik_tmp0[0]) * (1 - jurik_beta) + jurik_beta * nz(jurik_tmp1[1])
+    jurik_tmp2 := jurik_tmp0[0] + jurik_tmp1[0]
+    jurik_tmp3 := (jurik_tmp2[0] - nz(jurik_tmp4[1])) * (1 - jurik_alpha) * (1 - jurik_alpha) + jurik_alpha * jurik_alpha * nz(jurik_tmp3[1])
+    jurik_tmp4 := nz(jurik_tmp4[1]) + jurik_tmp3[0]
+    JURIK = jurik_tmp4
+    if ma_type == 'Disabled' or ma_type == 'off' or ma_type == 'false'
+        result := source
+    else if ( ma_type == 'EMA | Exponential Moving Average' or str.lower(ma_type) == 'ema')
+        result := EMA
+    else if ( ma_type == 'SMA | Simple Moving Average' or str.lower(ma_type) == 'sma')
+        result := SMA
+    else if ( ma_type == 'RMA | Relative Moving Average' or str.lower(ma_type) == 'rma')
+        result := RMA
+    else if ( ma_type == 'HMA | Hull Moving Average' or str.lower(ma_type) == 'hma')
+        result := HMA
+    else if ( ma_type == 'WMA | Weighted Moving Average' or str.lower(ma_type) == 'wma')
+        result := WMA
+    else if ( ma_type == 'VWMA | Volume-Weighted Moving Average' or str.lower(ma_type) == 'vwma')
+        result := VWMA
+    else if ( ma_type == 'DEMA | Double Exponential Moving Average' or str.lower(ma_type) == 'dema')
+        result := DEMA
+    else if ( ma_type == 'TEMA | Triple Exponential Moving Average' or str.lower(ma_type) == 'tema')
+        result := TEMA
+    else if ( ma_type == 'ZLEMA | Zero-Lag Exponential Moving Average' or str.lower(ma_type) == 'zlema')
+        result := ZLEMA
+    else if ( ma_type == 'TMA | Triangular Moving Average' or str.lower(ma_type) == 'tma')
+        result := TMA
+    else if ( ma_type == 'XEMA | Exponential Moving Average Optimized' or str.lower(ma_type) == 'xema')
+        result := XEMA
+    else if ( ma_type == 'KAMA | Kaufmans Adaptive Moving Average' or str.lower(ma_type) == 'kama')
+        result := KAMA
+    else if ( ma_type == 'FRAMA | Fractal Reactive Moving Average' or str.lower(ma_type) == 'frama')
+        result := FRAMA
+    else if ( ma_type == 'DONCHIAN | Donchian' or str.lower(ma_type) == 'DONCHIan')
+        result := DONCHIAN
+    else if ( ma_type == 'DONCHIAN2 | Donchian V2' or str.lower(ma_type) == 'DOnchian2')
+        result := DONCHIAN2
+    else if ( ma_type == 'FIBMA | Fibonacci Moving Average' or str.lower(ma_type) == 'fibma')
+        result := FIBMA
+    else if ( ma_type == 'GMMA | Guppy Multiple Moving Average' or str.lower(ma_type) == 'gmma')
+        result := GMMA
+    else if ( ma_type == 'TMADYN | Triangular Moving Average Dynamic' or str.lower(ma_type) == 'tmadyn')
+        result := TMADYN
+    else if ( ma_type == 'EMADYN | Dynamic Exponential Moving Average' or str.lower(ma_type) == 'emadyn')
+        result := EMADYN
+    else if ( ma_type == 'UPDOWNMA | Up/Down Moving Average' or str.lower(ma_type) == 'updownma')
+        result := UPDOWNMA
+    else if ( ma_type == 'MMA | Modified Moving Average' or str.lower(ma_type) == 'mma')
+        result := MMA
+    else if ( ma_type == 'SMASMOOTH | Smoothed Simple Moving Average' or str.lower(ma_type) == 'smasmootH')
+        result := SMASMOOTH
+    else if ( ma_type == 'COMPLEXMA | Complex Moving Average' or str.lower(ma_type) == 'complexma')
+        result := COMPLEXMA
+    else if ( ma_type == 'DUALMA | Dual Length Moving Average' or str.lower(ma_type) == 'dualma')
+        result := DUALMA
+    else if ( ma_type == 'SMMA | Smoothed Moving Average' or str.lower(ma_type) == 'smma')
+        result := SMMA
+    else if ( ma_type == 'WMA2 | Weighted Moving Average 2' or str.lower(ma_type) == 'wma2')
+        result := WMA2
+    else if ( ma_type == 'TMA2 | Second Triangular Moving Average' or str.lower(ma_type) == 'tma')
+        result := TMA2
+    else if ( ma_type == 'AHMA | Ahrens Moving Average' or str.lower(ma_type) == 'ahma')
+        result := AHMA
+    else if (  ma_type == 'JURIK | Jurik Moving Average' or str.lower(ma_type) == 'jurik')
+        result := JURIK
+    tf_security(result)
+decimal_places = 0
+tick_size = syminfo.mintick
+while tick_size < 1
+    tick_size := tick_size * 10
+    decimal_places := decimal_places + 1
+    decimal_places
+// ############################################################################
+// INFO TABLE
+// ############################################################################
+group_table_info = 'Info Table ######################################'
+display_table_info = input.bool(true, title = 'Display info table', group = group_table_info, display = display.none)
+display_table_info_info = input.bool(true, title = 'Info', group = group_table_info, display = display.none, inline = group_table_info)
+display_table_info_time = input.bool(true, title = 'Time', group = group_table_info, display = display.none, inline = group_table_info)
+display_table_info_position = input.bool(true, title = 'Position', group = group_table_info, display = display.none, inline = group_table_info)
+display_table_info_performance = input.bool(true, title = 'Performance', group = group_table_info, display = display.none, inline = group_table_info)
+display_table_info_capital = input.bool(true, title = 'Capital', group = group_table_info, display = display.none, inline = group_table_info)
+display_table_info_contracs = input.bool(true, title = 'Contracts held', group = group_table_info, display = display.none, inline = group_table_info)
+// ############################################################################
+// RUNTME
+// ############################################################################
+group_runtime_period = 'Runtime period ################################'
+runtime_start = input.time(defval = timestamp('1 sep 2023 13:30 +0000'), title = 'Start', group = group_runtime_period, display = display.none)
+runtime_end = input.time(defval = timestamp('31 jan 2030 13:30 +0000'), title = 'End', group = group_runtime_period, display = display.none)
+runtime = time > runtime_start and time < runtime_end
+barssince_runtime = ta.barssince(runtime == false)
+barssince_last_trade = ta.barssince(strategy.opentrades != strategy.opentrades[1])
+// ############################################################################
+// SETTINGS
+// ############################################################################
+group_settings = 'Settings ################################'
+direction = input.string('Longs', 'Direction', options = ['Longs', 'Shorts', 'Both'], group = group_settings, display = display.none)
+Length = input.int(16, 'Length', minval = 1, group = group_settings, display = display.none)
+Smooth = input.int(2, 'Smooth', minval = 2, group = group_settings, display = display.none)
+Source = input.source(close, 'Source', group = group_settings, display = display.none)
+OverSold = input.float(20, 'Oversold', minval = 0, maxval = 100, group = group_settings, display = display.none)
+OverBought = input.float(80, ' Overbought', minval = 0, maxval = 100, group = group_settings, display = display.none)
+OverBoughtMethod = input.string('Exit', 'Overbought Mehtod', options = ['Exit', 'Entry', 'None'], group = group_settings, display = display.none)
+OverSoldMethod = input.string('Exit', 'Oversold Mehtod', options = ['Exit', 'Entry', 'None'], group = group_settings, display = display.none)
+StopLossActive = input.bool(false, title = 'Stop Loss Enabled', group = group_settings, display = display.none)
+StopLossPercent = input.float(2.0, 'Stop Loss Percentage', minval = 0.01, maxval = 99.0, step = 0.01, group = group_settings, display = display.none)
+group_trailing = 'Trailing Exit (Works only for longs and shorts) #########'
+trailing = input.bool(false, title = 'User trailing Exit', group = group_trailing, display = display.none)
+trailing_points = input.float(100, 'Trailing Points', minval = 0.01, group = group_trailing, display = display.none)
+trailing_offset = input.float(100, 'Trailing Offset', minval = 0.01, group = group_trailing, display = display.none)
+RsiVwap = ta.rsi(ta.vwap(ma(ma_source, ma_length, ma_type)), Length)
+FillColorOverBought = RsiVwap > OverBought ? color.new(colorBear, 70) : na
+FillColorOverSold = RsiVwap < OverSold ? color.new(colorBull, 70) : na
+OverBoughtLine = plot(OverBought, 'Overbought', colorBear, display = display.pane)
+OverSoldLine = plot(OverSold, 'Oversold', colorBull, display = display.pane)
+RsiVwapLineBcg = plot(RsiVwap, 'RSI/VWAP background', color.black, linewidth = 3, display = display.pane)
+RsiVwapLine = plot(RsiVwap, 'RSI/VWAP', color.white, linewidth = 1, display = display.pane)
+fill(RsiVwapLine, OverBoughtLine, FillColorOverBought)
+fill(RsiVwapLine, OverSoldLine, FillColorOverSold)
+Equity = strategy.equity
+Balance = strategy.initial_capital + strategy.netprofit
+RealizedPnL = strategy.netprofit
+Floating = strategy.openprofit
+PercentFloating = Floating / strategy.initial_capital * 100
+PercentRealizedPnL = RealizedPnL / strategy.initial_capital * 100
+URealizedPnL = Floating + RealizedPnL
+PercentURealizedPnL = URealizedPnL / strategy.initial_capital * 100
+PositionSize = strategy.position_size * strategy.position_avg_price
+// Buy/Long shapes
+var bool long = false
+isLong = false
+isShort = false
+if ta.crossover(RsiVwap[1], OverSold) and OverSoldMethod == 'Exit' or ta.crossunder(RsiVwap[1], OverSold) and OverSoldMethod == 'Entry'
+    isLong := true
+    isLong
+if ta.crossunder(RsiVwap[1], OverBought) and OverBoughtMethod == 'Exit' or ta.crossover(RsiVwap[1], OverBought) and OverBoughtMethod == 'Entry'
+    isShort := true
+    isShort
+
+if isLong
+    label.new(bar_index, OverSold, color = color.new(colorBull, 25), style = label.style_circle, size = size.tiny)
+
+if isShort
+    label.new(bar_index, OverBought, color = color.new(colorBear, 25), style = label.style_circle, size = size.tiny)
+if runtime
+    if direction == 'Longs'
+        if isLong
+            strategy.entry('Long', strategy.long)
+
+        if isShort
+            strategy.exit('Exit long', 'Long', qty = 999, trail_price = close, trail_offset = trailing_offset)
+    if direction == 'Shorts'
+        strategy.exit('Exit Short', 'Short', qty = 999, trail_price = close, trail_offset = trailing_offset)
+        if isLong and not trailing
+            strategy.close('Short', 'Close short')
+    if direction == 'Both'
+        if isLong
+            strategy.entry('Long', strategy.long, stop = close * (1 - StopLossPercent / 100))
+        if isShort
+            strategy.entry('Short', strategy.short, stop = close * (1 + StopLossPercent / 100))
+// ############################################################################
+// PSYLL TABLE
+// ############################################################################
+var int openTrades = 0
+openTrades := strategy.opentrades
+var int maxOpenTrades = 0
+maxOpenTrades := math.max(maxOpenTrades, openTrades)
+psyll_table = table.new(position = position.bottom_right, columns = 10, rows = 10, bgcolor = #000000, frame_width = 1, border_width = 1, border_color = #333333, frame_color = #333333, force_overlay = true)
+// -----
+// ############### COL 1 ###############
+table.merge_cells(psyll_table, 0, 1, 1, 1)
+table.cell(psyll_table, column = 0, row = 1, text = 'Trades', text_size = size.small, text_color = #f5bd00, bgcolor=#181818, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 2, text = 'Open trades', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 2, text = str.tostring(strategy.opentrades), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 3, text = 'Open profit %', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 3, text =  str.format("{0,number,#.##}%", strategy.openprofit_percent), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 4, text = 'Max open trades', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 4, text=str.tostring(maxOpenTrades), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 5, text = 'Closed trades', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 5, text = str.tostring(strategy.closedtrades), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 6, text = 'Max contracts held', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 6, text = str.tostring(strategy.max_contracts_held_all), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 7, text = 'Max contracts long', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 7, text = str.tostring(strategy.max_contracts_held_long), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 0, row = 8, text = 'Max contracts short', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 1, row = 8, text = str.tostring(strategy.max_contracts_held_short), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// ############### COL 2 ###############
+table.merge_cells(psyll_table, 2, 1, 3, 1)
+table.cell(psyll_table, column = 2, row = 1, text = 'Stats', text_size = size.small, text_color = #f5bd00, bgcolor=#181818, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 2, row = 2, text = 'Profit', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 2, text = str.format("{0,number,#.##}", strategy.netprofit), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 2, row = 3, text = 'Profit %', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 3, text = str.format("{0,number,#.##}%", strategy.netprofit_percent), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+winRate = strategy.wintrades / strategy.closedtrades * 100
+table.cell(psyll_table, column = 2, row = 4, text = 'Win rate', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 4, text = str.format("{0,number,#.##}%", winRate), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 2, row = 5, text = 'Win trades', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 5, text = str.tostring(strategy.wintrades), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 2, row = 6, text = 'Loss trades', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 6, text = str.tostring(strategy.losstrades), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 2, row = 7, text = 'Avarage trade', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 7, text = str.format("{0,number,#.##%}", strategy.avg_trade_percent), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// -----
+profitFactor = strategy.grossprofit / math.max(strategy.grossloss, 0.01)
+table.cell(psyll_table, column = 2, row = 8, text = 'Profit factor', text_color = #FFFFFF, text_size = size.small, bgcolor = #000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 3, row = 8, text = str.format("{0,number,#.##}", profitFactor), text_color = #f5bd00, text_size = size.small, bgcolor = #000000, text_halign = text.align_left, text_formatting = text.format_bold)
+// ############### COL 3 ###############
+table.merge_cells(psyll_table, 4, 1, 5, 1)
+table.cell(psyll_table, column = 4, row = 1, text = 'Runup / drawdown', text_size = size.small, text_color = #f5bd00, bgcolor=#181818, text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 4, row = 2, text = 'Max drawdown', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 5, row = 2, text = str.format("{0,number,#.##}", strategy.max_drawdown), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 4, row = 3, text = 'Max drawdown %', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 5, row = 3, text = str.format("{0,number,#.## (%)}", strategy.max_drawdown_percent), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 4, row = 4, text = 'Max runup', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 5, row = 4, text = str.format("{0,number,#.##}", strategy.max_runup), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+// -----
+table.cell(psyll_table, column = 4, row = 5, text = 'Max runup %', text_color = #FFFFFF, text_size = size.small, bgcolor=#000000, text_halign = text.align_left)
+table.cell(psyll_table, column = 5, row = 5, text = str.format("{0,number,#.## (%)}", strategy.max_runup_percent), text_color = #f5bd00, text_size = size.small, bgcolor=#000000, text_halign = text.align_left,  text_formatting = text.format_bold)
+
+

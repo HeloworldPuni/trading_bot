@@ -1,0 +1,135 @@
+//@version=5
+indicator(title="Positive RSI Divergence Detector", shorttitle="RSI Div+", overlay=true, max_lines_count=100, max_labels_count=100)
+
+// Inputs
+rsiLengthInput = input.int(14, title="RSI Length", minval=1)
+pivotLeftInput = input.int(5, title="Pivot Lookback Left", minval=1, tooltip="Number of bars to the left for pivot identification.")
+pivotRightInput = input.int(5, title="Pivot Lookback Right", minval=1, tooltip="Number of bars to the right to confirm a pivot. This introduces a delay.")
+maxLookbackInput = input.int(60, title="Max Bars Between Pivots", minval=5, tooltip="Maximum number of bars to look back for the first pivot of a divergence.")
+minLookbackInput = input.int(3, title="Min Bars Between Pivots", minval=1, tooltip="Minimum number of bars between the two pivots forming a divergence.")
+
+// Calculate RSI
+rsiValue = ta.rsi(close, rsiLengthInput)
+
+// Arrays to store historical pivot points (price, RSI value, and bar index)
+var priceAtPivotLow = array.new<float>()
+var rsiAtPivotLow = array.new<float>()
+var barIndexOfPivotLow = array.new<int>()
+
+// --- Pivot Detection ---
+// Detect new pivot low. A pivot low is confirmed 'pivotRightInput' bars after it actually occurs.
+// ta.pivotlow() returns the price of the pivot if one is found, otherwise na.
+// The actual pivot occurred at 'bar_index - pivotRightInput'.
+confirmedPivotLowPricePoint = ta.pivotlow(low, pivotLeftInput, pivotRightInput)
+
+if not na(confirmedPivotLowPricePoint)
+    // A pivot low was confirmed. The actual low was 'pivotRightInput' bars ago.
+    actualPivotBarIndex = bar_index - pivotRightInput
+    actualPivotPrice = low[pivotRightInput]    // Price at the actual pivot low bar
+    actualPivotRSI = rsiValue[pivotRightInput] // RSI value at the actual pivot low bar
+
+    // Add to our historical pivots if it's a new pivot (not a duplicate of the last one)
+    // Corrected logic to prevent "Cannot call `last()` if array is empty" error
+    if array.size(barIndexOfPivotLow) == 0
+        array.push(priceAtPivotLow, actualPivotPrice)
+        array.push(rsiAtPivotLow, actualPivotRSI)
+        array.push(barIndexOfPivotLow, actualPivotBarIndex)
+    else if array.get(barIndexOfPivotLow, array.size(barIndexOfPivotLow) - 1) != actualPivotBarIndex
+        // If array is not empty, check if the new pivot is different from the last one.
+        // Using array.get() with last index instead of array.last() for consistency
+        array.push(priceAtPivotLow, actualPivotPrice)
+        array.push(rsiAtPivotLow, actualPivotRSI)
+        array.push(barIndexOfPivotLow, actualPivotBarIndex)
+
+    // Keep arrays from growing excessively by removing very old pivots
+    // Pivots older than 'maxLookbackInput' plus some buffer are unlikely to be used.
+    if array.size(barIndexOfPivotLow) > 0 and (bar_index - array.get(barIndexOfPivotLow, 0) > maxLookbackInput + pivotLeftInput + pivotRightInput + 20)
+        array.shift(priceAtPivotLow)
+        array.shift(rsiAtPivotLow)
+        array.shift(barIndexOfPivotLow)
+
+// --- Divergence Detection ---
+isBullishDivergenceFound = false
+var pivot1_bar = 0
+var pivot2_bar = 0 // Bar indices for the two lows of the divergence
+var pivot1_price = 0.0
+var pivot2_price = 0.0
+// float pivot1_rsi = na, pivot2_rsi = na // Not strictly needed for alert message text if using bar indices/time
+
+if array.size(barIndexOfPivotLow) >= 2
+    // The latest confirmed pivot is "Pivot 2" (the more recent low)
+    p2_array_idx = array.size(barIndexOfPivotLow) - 1
+    pivot2_bar := array.get(barIndexOfPivotLow, p2_array_idx) // Re-assignment to already declared var, so := is ok
+    pivot2_price := array.get(priceAtPivotLow, p2_array_idx)   // Re-assignment to already declared var, so := is ok
+    p2_rsi = array.get(rsiAtPivotLow, p2_array_idx)      // New declaration in scope, use =
+
+    // Iterate through previous pivots ("Pivot 1" candidates - the earlier low)
+    // We start from the second to last pivot and go backwards.
+    for i = array.size(barIndexOfPivotLow) - 2 to 0
+        p1_bar_candidate = array.get(barIndexOfPivotLow, i)
+        p1_price_candidate = array.get(priceAtPivotLow, i)
+        p1_rsi_candidate = array.get(rsiAtPivotLow, i)
+
+        // Check if Pivot 1 is within the lookback period relative to Pivot 2
+        if (pivot2_bar - p1_bar_candidate <= maxLookbackInput) and (pivot2_bar - p1_bar_candidate >= minLookbackInput)
+            // Bullish Divergence Condition:
+            // Price: Lower Low (Pivot 2 price < Pivot 1 price)
+            // RSI: Higher Low (Pivot 2 RSI > Pivot 1 RSI)
+            if pivot2_price < p1_price_candidate and p2_rsi > p1_rsi_candidate
+                isBullishDivergenceFound := true // Re-assignment to already declared var
+                // Store the details of the pivots forming this specific divergence
+                pivot1_bar := p1_bar_candidate   // Re-assignment
+                pivot1_price := p1_price_candidate // Re-assignment
+                // pivot1_rsi := p1_rsi_candidate // Stored if needed for other plots
+                // pivot2_price and pivot2_bar are already set
+
+                // Found a valid divergence, no need to check older Pivot 1 candidates for this Pivot 2.
+                // The loop naturally finds the P1 closest to P2 first (if multiple P1s could form a divergence with P2).
+                break
+        else if (pivot2_bar - p1_bar_candidate > maxLookbackInput)
+            // Optimization: If this Pivot 1 candidate is too old, any earlier ones will also be too old.
+            break
+
+// --- Alerting and Plotting ---
+var lastAlertedPivot2Bar = 0 // Tracks the bar index of the last Pivot 2 that triggered an alert/label
+triggerVisualsAndAlert = false
+
+if isBullishDivergenceFound
+    if pivot2_bar != lastAlertedPivot2Bar // Ensure we only act once for each confirmed Pivot 2 of a divergence
+        triggerVisualsAndAlert := true // Re-assignment
+        lastAlertedPivot2Bar := pivot2_bar // Re-assignment
+
+        // Draw a line on the price chart connecting the two lows of the divergence
+        line.new(x1=pivot1_bar, y1=pivot1_price,
+                 x2=pivot2_bar, y2=pivot2_price,
+                 color=color.new(color.blue, 0), width=2, style=line.style_solid)
+
+        // Optional: Draw a line on the RSI chart (requires RSI to be plotted in the same pane or a separate pane by this script)
+        // For now, this script assumes you might have a separate RSI indicator.
+        // If plotting RSI here: plot(rsiValue, "RSI", color.purple)
+        // line.new(x1=pivot1_bar, y1=array.get(rsiAtPivotLow, /*index of p1*/),
+        //          x2=pivot2_bar, y2=array.get(rsiAtPivotLow, /*index of p2*/),
+        //          color=color.new(color.blue, 50), width=1, style=line.style_dashed)
+        // Finding exact array indices for p1_rsi for line drawing needs care if array is shifted.
+        // Simpler to just use p1_rsi_candidate and p2_rsi from the detection loop if that line is desired.
+
+        // Add a label below the second low (Pivot 2) of the divergence
+        label.new(x=pivot2_bar, y=pivot2_price, text="RSI Div+",
+                  xloc=xloc.bar_index, yloc=yloc.belowbar,
+                  color=color.new(color.green, 75), textcolor=color.white,
+                  style=label.style_label_up, size=size.small,
+                  tooltip="Positive RSI Divergence\n" +
+                          "Low 1 (Bar: " + str.tostring(pivot1_bar) + "): " + str.tostring(pivot1_price, format.mintick) + "\n" +
+                          "Low 2 (Bar: " + str.tostring(pivot2_bar) + "): " + str.tostring(pivot2_price, format.mintick))
+
+
+// Alert Condition: Triggers when a new divergence is confirmed
+alertcondition(triggerVisualsAndAlert,
+               title="Positive RSI Divergence",
+               message="{{ticker}} ({{interval}}): Positive RSI Divergence detected! Check chart for details.")
+
+// For visual confirmation of RSI, you can add the standard RSI indicator to your chart separately.
+// Or, to plot RSI in a separate pane with this script:
+// 1. Change `overlay=true` to `overlay=false` in the `indicator()` line.
+// 2. Uncomment the following line:
+// plot(rsiValue, title="RSI", color=color.new(color.purple, 0))

@@ -1,0 +1,84 @@
+//@version=5
+indicator("Smart Market Structure (Swing BOS & MSS)", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// Inputs
+left      = input.int(6, "Swing Left", minval=1)
+right     = input.int(6, "Swing Right", minval=1)
+rayLength = input.int(2, "Ray Length (for swing rays)", minval=1)
+
+swingHigh = ta.pivothigh(high, left, right)
+swingLow  = ta.pivotlow(low, left, right)
+
+var swingHighLines = array.new_line()
+var swingLowLines  = array.new_line()
+
+if not na(swingHigh)
+    l = line.new(x1=bar_index - right, y1=swingHigh,
+                 x2=bar_index - right + rayLength, y2=swingHigh,
+                 color=color.black, width=2, extend=extend.none)
+    array.push(swingHighLines, l)
+
+if not na(swingLow)
+    l = line.new(x1=bar_index - right, y1=swingLow,
+                 x2=bar_index - right + rayLength, y2=swingLow,
+                 color=color.black, width=2, extend=extend.none)
+    array.push(swingLowLines, l)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var int   lastHighBar   = na
+var int   lastLowBar    = na
+
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+    lastHighBar   := bar_index - right
+
+if not na(swingLow)
+    lastSwingLow := swingLow
+    lastLowBar   := bar_index - right
+
+var int lastBOSHighBar = na
+var int lastBOSLowBar  = na
+
+bosBull = not na(lastSwingHigh) and ta.crossover(close, lastSwingHigh) and (na(lastBOSHighBar) or lastHighBar != lastBOSHighBar)
+bosBear = not na(lastSwingLow)  and ta.crossunder(close, lastSwingLow) and (na(lastBOSLowBar) or lastLowBar  != lastBOSLowBar)
+
+var string lastBOSDir = "none"
+mssBull = (lastBOSDir == "bear") and bosBull
+mssBear = (lastBOSDir == "bull") and bosBear
+
+centerX(_x1, _x2) =>
+    int(math.round((_x1 + _x2) / 2.0))
+
+if bosBull
+    x1 = lastHighBar
+    y  = lastSwingHigh
+    caption = mssBull ? "MSS" : "BOS"
+    _ = line.new(x1=x1, y1=y, x2=bar_index, y2=y,
+                 color=color.new(color.green, 0), width=1,
+                 style=line.style_dashed, extend=extend.none)
+    label.new(centerX(x1, bar_index), y, caption,
+              style=label.style_label_down, textcolor=color.white,
+              color=color.new(color.green, 0),
+              size=size.small)
+    lastBOSHighBar := lastHighBar
+    lastBOSDir := "bull"
+
+if bosBear
+    x1 = lastLowBar
+    y  = lastSwingLow
+    caption = mssBear ? "MSS" : "BOS"
+    _ = line.new(x1=x1, y1=y, x2=bar_index, y2=y,
+                 color=color.new(color.red, 0), width=1,
+                 style=line.style_dashed, extend=extend.none)
+    label.new(centerX(x1, bar_index), y, caption,
+              style=label.style_label_up, textcolor=color.white,
+              color=color.new(color.red, 0),
+              size=size.small)
+    lastBOSLowBar := lastLowBar
+    lastBOSDir := "bear"
+
+alertcondition(bosBull, title="Bullish BOS", message="Bullish Break of Structure confirmed.")
+alertcondition(bosBear, title="Bearish BOS", message="Bearish Break of Structure confirmed.")
+alertcondition(mssBull, title="Bullish MSS", message="Market Structure Shift to Bullish.")
+alertcondition(mssBear, title="Bearish MSS", message="Market Structure Shift to Bearish.")

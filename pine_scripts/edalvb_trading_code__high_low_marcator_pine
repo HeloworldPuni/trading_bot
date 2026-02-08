@@ -1,0 +1,25 @@
+//@version=5
+indicator("High/Low Marcador", overlay=true)
+
+// Entrada del usuario para el precio objetivo
+precioObjetivo = input.float(title="Precio Objetivo", defval=10000)
+
+// Función para verificar si el precio objetivo está dentro del rango de la vela
+dentroDelRango(precio, high, low) =>
+    precio >= low and precio <= high
+
+// Verificar si el precio objetivo está dentro del rango de la vela actual
+dentroDelRangoActual = dentroDelRango(precioObjetivo, high, low)
+
+// Lógica para el color de la vela
+colorVela = dentroDelRangoActual ? color.new(color.yellow, 80) : na
+
+// Plotear velas coloreadas si el precio objetivo está dentro del rango
+// barcolor(colorVela)
+
+// Etiquetas para indicar si el precio objetivo está en el high o low
+if dentroDelRangoActual
+    if high == precioObjetivo
+        label.new(x=bar_index, y=high, text="🎯 High", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)
+    if low == precioObjetivo
+        label.new(x=bar_index, y=high, text="🎯 Low", color=color.blue, style=label.style_label_down, textcolor=color.white, size=size.normal)

@@ -1,0 +1,41 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Dynamictradingstrategies
+
+//@version=5
+indicator("ADVANCE MULTI MOVING AVERAGE INDICATOR", overlay = true)
+
+/// USER INPUTS 
+
+MA_TYPE = input.string(defval = "SMA", options =["EMA","SMA","HMA","WMA","VWAP","VWMA","LINREG"])
+MA_L = input.int(defval = 21, title = "MA LENGTH")
+
+//// SWITCH 
+
+float ma = switch MA_TYPE
+    "EMA" => ta.ema(close,MA_L)
+    "HMA" => ta.hma(close,MA_L)
+    "WMA" => ta.wma(close,MA_L)
+    "VWAP" => ta.vwap(hlc3)
+    "VWMA" => ta.vwma(hlc3,MA_L)
+    "LINREG" => ta.linreg(close,MA_L,0)
+    => ta.sma(close,MA_L)
+
+
+//// COLOR CONDITION 
+
+Color_cond = ma > ma[1] ? color.green : ma < ma[1] ? color.red : na
+
+
+///// PLOT AND BARCOLOR 
+
+plot(ma, color = Color_cond, linewidth = 3)
+barcolor(Color_cond)
+
+
+///// ALERTS 
+
+if ma > ma[1]
+    alert("BUY", alert.freq_once_per_bar_close)
+
+if ma < ma[1]
+    alert("SHORT", alert.freq_once_per_bar_close)

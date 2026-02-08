@@ -1,0 +1,643 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © LonesomeThecolor.blue
+
+//@version=5
+strategy("'43.FB Higher High Lower Low Strategy'", overlay = true , default_qty_value = 100, default_qty_type = strategy.percent_of_equity, initial_capital = 1000000, max_lines_count=500)
+
+//=============================================================================
+// STRATEGY EXPLANATION
+//=============================================================================
+// This strategy identifies trading opportunities based on market structure patterns
+// (Higher Highs, Lower Lows, Higher Lows, and Lower Highs) combined with
+// momentum indicators and moving averages.
+//
+// CORE COMPONENTS:
+// 1. Market Structure Analysis:
+//    - Uses pivot points to identify significant highs and lows
+//    - Detects patterns: Higher Highs (HH), Lower Lows (LL), Higher Lows (HL), Lower Highs (LH)
+//    - Establishes dynamic support and resistance levels based on these patterns
+//
+// 2. Trend Confirmation:
+//    - Uses 50 and 100 period Simple Moving Averages (SMA) crossovers
+//    - SMA50 > SMA100 indicates bullish trend
+//    - SMA50 < SMA100 indicates bearish trend
+//
+// 3. Momentum Analysis:
+//    - RSI(14) for overbought/oversold conditions
+//    - Custom angle calculations to measure trend strength and momentum
+//    - Angle calculations convert price movement into normalized values (-1 to 1)
+//
+// 4. Entry Conditions:
+//    - BUY: When SMA50 > SMA100, a Higher Low is detected, and momentum is positive
+//    - SELL: When SMA50 < SMA100, RSI is below threshold, or momentum angles are strongly negative
+//
+// 5. Risk Management:
+//    - Uses a fixed percentage of equity (100%) for position sizing
+//    - Exits positions when conditions reverse or when outside the trading window
+//
+// The strategy is designed for swing trading and aims to capture intermediate
+// trend movements while filtering out market noise.
+//=============================================================================
+
+var int haveStock = 0 // Declare the global count variable
+_offset = 0
+
+// ******************************
+// ***** inTradeWindow ***** 
+// Define the backtest period for strategy evaluation
+
+_backtestStartDate = input.time(timestamp("4 Apr 2019 09:00"), 
+     title="Start Date", group="Backtest Time Period", confirm = true,
+     tooltip="This start date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+_backtestEndDate = input.time(timestamp("4 Apr 2023 09:00"), 
+     title="End Date", group="Backtest Time Period", confirm = true,
+     tooltip="This end date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+
+// Only execute trades within the specified date range
+inTradeWindow =  (time >= _backtestStartDate and time < _backtestEndDate)     
+bgcolor(inTradeWindow ? color.rgb(245, 250, 219) : na)
+
+
+
+// Average True Range (ATR) - Measures market volatility
+// Higher ATR values indicate higher volatility, lower values indicate lower volatility
+// ATR is calculated using the greatest of: current high - current low, 
+// current high - previous close, or current low - previous close
+//atrLength = input.int(title='ATR Length', defval=12)
+atrLength=12
+//get current ATR over the specified period (12 bars)
+atr = ta.atr(atrLength)
+// ATR can be used for setting stop losses, determining position size, or identifying
+// potential breakout levels, though in this strategy it's primarily used for reference
+
+
+// Simple Moving Averages (SMAs) - Used for trend identification and confirmation
+// SMAs smooth price data by calculating the average price over a specified period
+// The relationship between shorter and longer-term SMAs helps identify trend direction:
+// - When shorter SMA (50) crosses above longer SMA (100), it signals a potential bullish trend
+// - When shorter SMA (50) crosses below longer SMA (100), it signals a potential bearish trend
+// - The slope of the SMAs can indicate trend strength and momentum
+// In this strategy, the SMA crossover is a primary filter for trade direction
+sma50 = ta.sma(close, 50)  // 50-period Simple Moving Average
+sma100 = ta.sma(close, 100)  // 100-period Simple Moving Average
+
+// Relative Strength Index (RSI) - Momentum oscillator that measures the speed and change of price movements
+// RSI values range from 0 to 100:
+// - Values above 70 typically indicate overbought conditions (potential sell signal)
+// - Values below 30 typically indicate oversold conditions (potential buy signal)
+// - The centerline (50) can indicate trend direction (above 50 = bullish, below 50 = bearish)
+// In this strategy, RSI is primarily used as a sell signal when it falls below a threshold
+// The 14-period setting is the standard lookback period for RSI calculation
+rsi14 = ta.rsi(close,14)
+
+// RSI threshold for sell signals - lower values make the strategy less sensitive to RSI
+// The default value of 18 is quite low, meaning the strategy only uses RSI for significant bearish momentum
+// This is a key parameter that can be adjusted to change the strategy's sensitivity to market downturns
+rsiInput = input.int(18,"rsiLevel", tooltip="RSI threshold for sell signals")
+
+
+
+// ******************************
+// ***** ESSENTIAL TRADING PARAMETERS *****
+// These parameters directly affect the pattern detection and trading logic
+
+// Pivot point detection parameters - critical for identifying market structure
+lb = input.int(15, title='Left Bars', minval=1, tooltip="Number of bars to look back for pivot points")
+rb = input.int(10, title='Right Bars', minval=1, tooltip="Number of bars to look ahead for pivot points")
+
+// Maximum size for pattern storage arrays - affects how many patterns are remembered
+max = input.int(10, title='Max size arrays', minval=3, maxval=50, inline='style', tooltip="Maximum number of pattern points to store")
+
+// ******************************
+// ***** VISUALIZATION PARAMETERS *****
+// These parameters only affect how the strategy is displayed on charts
+// They do NOT impact the actual trading signals or performance
+
+// Display mode for patterns and angles (purely visual)
+showMode = input.int(1, title='show HL(1) and/or Angle (2)', minval = 0, maxval=3)
+
+// Support/Resistance line display settings (purely visual)
+showsupres = input.bool(true, title='Support/Resistance', inline='srcol')
+supcol = input.color(color.lime, title='', inline='srcol')
+rescol = input.color(color.red, title='', inline='srcol')
+srlinestyle = input.string(line.style_dotted, title='Line Style/Width', options=[line.style_solid, line.style_dashed, line.style_dotted], inline='style')
+srlinewidth = input.int(3, title='', minval=1, maxval=5, inline='style')
+
+// Bar color settings (purely visual)
+changebarcol = input.bool(true, title='Change Bar Color', inline='bcol')
+bcolup = input.color(color.rgb(200, 244, 178), title='', inline='bcol')
+bcoldn = input.color(color.rgb(242, 247, 206), title='', inline='bcol')
+
+// ******************************
+// ***** CORE PATTERN DETECTION LOGIC *****
+// This section contains essential code for the trading strategy
+// It identifies market structure patterns that drive trading decisions
+
+// Arrays to store price action data for pattern analysis
+// These arrays are critical for calculating momentum and storing pattern information
+var float   [] a_HighClose    = array.new_float   (3)  // Stores closing prices at high points
+var int     [] a_HighDir      = array.new_int     (3)  // Stores direction at high points (1=up, -1=down)
+var int     [] a_HighIndex    = array.new_int     (3)  // Stores bar indices of high points
+var float   [] a_LowClose     = array.new_float   (3)  // Stores closing prices at low points
+var int     [] a_LowDir       = array.new_int     (3)  // Stores direction at low points (1=up, -1=down)
+var int     [] a_LowIndex     = array.new_int     (3)  // Stores bar indices of low points
+
+// Manage array size to prevent memory issues
+// This ensures the arrays don't grow too large and cause performance problems
+if array.size(a_HighClose) > max
+    array.pop(a_HighClose)
+    array.pop(a_HighDir)
+    array.pop(a_HighIndex)
+if array.size(a_LowClose) > max
+    array.pop(a_LowClose)
+    array.pop(a_LowDir)
+    array.pop(a_LowIndex)
+
+
+// Pivot point detection for market structure analysis
+// These functions identify significant highs and lows in the price action
+// CRITICAL: This is the foundation of the pattern recognition system
+ph = ta.pivothigh(lb, rb)  // Identifies pivot highs looking lb bars left and rb bars right
+pl = ta.pivotlow(lb, rb)   // Identifies pivot lows looking lb bars left and rb bars right
+
+// ZigZag construction for pattern identification
+// This creates a zigzag-like structure connecting significant pivot points
+// CRITICAL: This forms the basis for identifying market structure patterns (HH, LL, HL, LH)
+iff_1 = pl ? -1 : na  // Trend direction: -1 at pivot lows
+hl = ph ? 1 : iff_1   // Trend direction: 1 at pivot highs, -1 at pivot lows
+iff_2 = pl ? pl : na  // Price value at pivot lows
+zz = ph ? ph : iff_2  // Price value: high value at pivot highs, low value at pivot lows
+
+// Filter zigzag points to create cleaner pattern identification
+// These complex conditions ensure we only keep significant pivot points
+// and filter out minor fluctuations that could create false patterns
+valuewhen_1 = ta.valuewhen(hl, hl, 1)  // Previous trend direction
+valuewhen_2 = ta.valuewhen(zz, zz, 1)  // Previous zigzag price
+zz := pl and hl == -1 and valuewhen_1 == -1 and pl > valuewhen_2 ? na : zz  // Filter higher lows in downtrend
+
+valuewhen_3 = ta.valuewhen(hl, hl, 1)
+valuewhen_4 = ta.valuewhen(zz, zz, 1)
+zz := ph and hl == 1 and valuewhen_3 == 1 and ph < valuewhen_4 ? na : zz  // Filter lower highs in uptrend
+
+valuewhen_5 = ta.valuewhen(hl, hl, 1)
+valuewhen_6 = ta.valuewhen(zz, zz, 1)
+hl := hl == -1 and valuewhen_5 == 1 and zz > valuewhen_6 ? na : hl  // Filter direction changes
+
+valuewhen_7 = ta.valuewhen(hl, hl, 1)
+valuewhen_8 = ta.valuewhen(zz, zz, 1)
+hl := hl == 1 and valuewhen_7 == -1 and zz < valuewhen_8 ? na : hl  // Filter direction changes
+zz := na(hl) ? na : zz  // Clear zigzag value if direction is cleared
+
+// ******************************
+// ***** PATTERN ANALYSIS FUNCTIONS *****
+// CRITICAL: This function is essential for identifying market structure patterns
+
+// Function to find previous pivot points for pattern analysis
+// This searches through historical data to find the previous pivot points
+// needed to identify patterns like Higher Highs, Lower Lows, etc.
+findprevious() =>  // finds previous four points (b, c, d, e)
+    ehl = hl == 1 ? -1 : 1  // Opposite direction of current pivot
+    loc1 = 0.0  // Will store the first previous pivot price
+    loc2 = 0.0  // Will store the second previous pivot price
+    loc3 = 0.0  // Will store the third previous pivot price
+    loc4 = 0.0  // Will store the fourth previous pivot price
+    xx = 0      // Index tracker for the search
+    
+    // Find the first previous pivot (opposite direction)
+    for x = 1 to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc1 := zz[x]  // Store the price value
+            xx := x + 1    // Update the search index
+            break
+            
+    ehl := hl  // Same direction as current pivot
+    // Find the second previous pivot (same direction)
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc2 := zz[x]
+            xx := x + 1
+            break
+            
+    ehl := hl == 1 ? -1 : 1  // Back to opposite direction
+    // Find the third previous pivot (opposite direction)
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc3 := zz[x]
+            xx := x + 1
+            break
+            
+    ehl := hl  // Same direction as current pivot
+    // Find the fourth previous pivot (same direction)
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc4 := zz[x]
+            break
+            
+    [loc1, loc2, loc3, loc4]  // Return all four previous pivot prices
+
+// ******************************
+// ***** PATTERN IDENTIFICATION *****
+// CRITICAL: This section identifies the specific patterns that drive trading decisions
+
+// Variables to store pivot points for pattern analysis
+// These store the current and previous pivot points needed for pattern recognition
+float a = na  // Current pivot point price
+float b = na  // First previous pivot point price
+float c = na  // Second previous pivot point price
+float d = na  // Third previous pivot point price
+float e = na  // Fourth previous pivot point price
+
+// Get the previous pivot points when we have a valid pivot
+if not na(hl)
+    [loc1, loc2, loc3, loc4] = findprevious()  // Call the function to find previous pivots
+    a := zz      // Current pivot price
+    b := loc1    // First previous pivot price
+    c := loc2    // Second previous pivot price
+    d := loc3    // Third previous pivot price
+    e := loc4    // Fourth previous pivot price
+    e
+
+// Pattern detection logic - CRITICAL for trading decisions
+// These conditions define the four key market structure patterns
+// Each pattern has specific price relationships that must be satisfied
+
+// HH: Higher High - bullish continuation pattern
+// Condition: Current pivot (a) is higher than previous high (b) and previous high (c) is higher than the one before it (d)
+_hh = zz and a > b and a > c and c > b and c > d
+
+// LL: Lower Low - bearish continuation pattern
+// Condition: Current pivot (a) is lower than previous low (b) and previous low (c) is lower than the one before it (d)
+_ll = zz and a < b and a < c and c < b and c < d
+
+// HL: Higher Low - bullish reversal pattern (USED IN BUY CONDITION)
+// Two possible patterns:
+// 1. Current low (a) is higher than previous low (c), with specific relationships between other points
+// 2. Current low (a) is lower than previous high (b) but higher than previous low (c)
+_hl = zz and (a >= c and b > c and b > d and d > c and d > e or a < b and a > c and b < d)
+
+// LH: Lower High - bearish reversal pattern
+// Two possible patterns:
+// 1. Current high (a) is lower than previous high (c), with specific relationships between other points
+// 2. Current high (a) is higher than previous low (b) but lower than previous high (c)
+_lh = zz and (a <= c and b < c and b < d and d < c and d < e or a > b and a < c and b > d)
+
+// ******************************
+// ***** PATTERN STORAGE *****
+// CRITICAL: This section stores detected patterns for momentum calculations
+// These arrays are used later to calculate the angle/momentum values
+// that are essential components of the trading conditions
+
+// Store Higher High pattern data
+if _hh
+    array.unshift(a_HighClose, close[rb])  // Store closing price at the pattern point
+    array.unshift(id = a_HighIndex, value = bar_index-rb)  // Store bar index of the pattern
+    array.unshift(a_HighDir, 1)  // Store direction (1 = bullish)
+
+// Store Lower High pattern data
+if _lh
+    array.unshift(a_HighClose, close[rb])  // Store closing price at the pattern point
+    array.unshift(id = a_HighIndex, value = bar_index-rb)  // Store bar index of the pattern
+    array.unshift(a_HighDir, -1)  // Store direction (-1 = bearish)
+
+// Store Higher Low pattern data
+if _hl
+    array.unshift(a_LowClose, close[rb])  // Store closing price at the pattern point
+    array.unshift(id = a_LowIndex, value = bar_index-rb)  // Store bar index of the pattern
+    array.unshift(a_LowDir, 1)  // Store direction (1 = bullish)
+
+// Store Lower Low pattern data
+if _ll
+    array.unshift(a_LowClose, close[rb])  // Store closing price at the pattern point
+    array.unshift(id = a_LowIndex, value = bar_index-rb)  // Store bar index of the pattern
+    array.unshift(a_LowDir, -1)  // Store direction (-1 = bearish)
+
+// ******************************
+// ***** VISUALIZATION COLORS *****
+// These color definitions are only used for display purposes
+// They do NOT affect the trading logic or signals
+
+colUp = supcol  // Color for bullish elements (from visualization parameters)
+colDn = rescol  // Color for bearish elements (from visualization parameters)
+
+// Calculate angle of price movement to measure momentum strength
+// The angle calculation is a key component of this strategy as it quantifies
+// the rate and direction of price change relative to previous pattern points
+// This creates a normalized momentum indicator that ranges from -1 to 1
+angle_len = input.int(2,"angle length", step=1, tooltip="Number of points to use for angle calculation")
+angle_factor= input.int (20,"angle multiply factor", step=10, tooltip="Multiplier to amplify angle values")
+pi= 3.141592 // Mathematical constant used in arctangent normalization
+
+// Calculate percentage change and normalize with angle calculation
+// These formulas calculate the percentage change in price relative to the time elapsed
+// since the last significant high/low pattern point was identified
+// Formula explanation:
+// 1. Calculate price change: (current price - pattern point price)
+// 2. Convert to percentage: divide by current price and multiply by 100
+// 3. Normalize by time elapsed: divide by the number of bars since the pattern
+// This gives a rate of change per bar, which measures momentum strength
+perc_High = array.size(a_HighIndex)<9? 0 : ((close - array.get(id = a_HighClose, index = 0 ))  / close * 100) / (bar_index - array.get(id = a_HighIndex, index = 0 )) 
+perc_Low = array.size(a_LowIndex)<9? 0 :((close - array.get(id = a_LowClose, index = 0 )) / close * 100)  / (bar_index - array.get(id = a_LowIndex, index = 0 ))  
+
+// ******************************
+// ***** DATA WINDOW INFORMATION *****
+// VISUALIZATION ONLY: These plots only display values in the data window
+// They do NOT affect the trading logic or signals
+
+// Display percentage change values in data window
+plot (perc_High ,"High perc", display = display.data_window, color = perc_High>0?colUp:colDn)
+plot (perc_Low ,"Low perc", display = display.data_window, color = perc_Low>0?colUp:colDn)
+
+// Calculate arctangent values for normalized momentum
+// CRITICAL: These values are used in the trading conditions
+atan_High = math.atan(perc_High  * angle_factor) / pi * 2
+atan_Low = math.atan(perc_Low * angle_factor) / pi * 2
+
+// Display arctangent values in data window
+plot (atan_High ,"High atan", display = display.data_window, color = perc_High>0?colUp:colDn)
+plot (atan_Low ,"Low atan", display = display.data_window, color = perc_Low>0?colUp:colDn)
+
+// ******************************
+// ***** ANGLE VISUALIZATION *****
+// VISUALIZATION ONLY: These plots display the angle values on the chart
+// They do NOT affect the trading logic or signals
+
+// Determine whether to show angle visualization based on user setting
+showAngle = (showMode==2) or (showMode==3)
+
+// Commented out code for creating a background box
+//if showAngle
+//    myBox = box.new(left=bar_index[1], top=0.5,	 right=bar_index, bottom=-0.5,	 bgcolor=color.new(color.gray,70))
+//    box.set_extend(id=myBox, extend=extend.both)
+
+// Plot angle values on chart if enabled
+plot (showAngle ? atan_High : na ,"High atan", display = display.pane, color = colUp)
+plot (showAngle ? atan_Low : na ,"Low atan", display = display.pane, color = colDn)
+plot (showAngle ? 0 : na)  // Zero line for reference
+
+// ******************************
+// ***** DEBUGGING INFORMATION *****
+// VISUALIZATION ONLY: These plots display technical values in the data window
+// They are useful for debugging but do NOT affect the trading logic
+
+// Display basic information
+plot (bar_index ,"bar_index", display = display.data_window)
+plot (close ,"close", display = display.data_window)
+
+// Display stored pattern data for high points
+plot (array.get(id = a_HighIndex, index = 0 ) ,"High0 barindex", display = display.data_window, color = array.get(id = a_HighDir, index = 0 )>0?colUp:colDn)
+plot (array.get(id = a_HighClose, index = 0 ) ,"High0 close", display = display.data_window, color = array.get(id = a_HighDir, index = 0 )>0?colUp:colDn)
+plot (array.get(id = a_HighIndex, index = 1 ) ,"High1 barindex", display = display.data_window, color = array.get(id = a_HighDir, index = 1 )>0?colUp:colDn)
+plot (array.get(id = a_HighClose, index = 1 ) ,"High1 close", display = display.data_window, color = array.get(id = a_HighDir, index = 1 )>0?colUp:colDn)
+plot (array.get(id = a_HighIndex, index = 2 ) ,"High2 barindex", display = display.data_window, color = array.get(id = a_HighDir, index = 2 )>0?colUp:colDn)
+plot (array.get(id = a_HighClose, index = 2 ) ,"High2 close", display = display.data_window, color = array.get(id = a_HighDir, index = 2 )>0?colUp:colDn)
+
+// Display stored pattern data for low points
+plot (array.get(id = a_LowIndex, index = 0 ) ,"Low0 barindex", display = display.data_window, color = array.get(id = a_LowDir, index = 0 )>0?colUp:colDn)
+plot (array.get(id = a_LowClose, index = 0 ) ,"Low0 close", display = display.data_window, color = array.get(id = a_LowDir, index = 0 )>0?colUp:colDn)
+plot (array.get(id = a_LowIndex, index = 1 ) ,"Low1 barindex", display = display.data_window, color = array.get(id = a_LowDir, index = 1 )>0?colUp:colDn)
+plot (array.get(id = a_LowClose, index = 1 ) ,"Low1 close", display = display.data_window, color = array.get(id = a_LowDir, index = 1 )>0?colUp:colDn)
+plot (array.get(id = a_LowIndex, index = 2 ) ,"Low2 barindex", display = display.data_window, color = array.get(id = a_LowDir, index = 2 )>0?colUp:colDn)
+plot (array.get(id = a_LowClose, index = 2 ) ,"Low2 close", display = display.data_window, color = array.get(id = a_LowDir, index = 2 )>0?colUp:colDn)
+
+// ******************************
+// ***** PATTERN VISUALIZATION *****
+// VISUALIZATION ONLY: These shapes display pattern labels on the chart
+// They do NOT affect the trading logic or signals
+
+// Determine whether to show pattern labels based on user setting
+showHL = (showMode == 1) or (showMode == 3)
+
+// Display pattern labels on chart if enabled
+plotshape(showHL and _hl, text='HL', title='Higher Low', style=shape.labelup, color=color.new(color.lime, 0), textcolor=color.new(color.black, 0), location=location.belowbar, offset=-rb)
+plotshape(showHL and _hh, text='HH', title='Higher High', style=shape.labeldown, color=color.new(color.lime, 0), textcolor=color.new(color.black, 0), location=location.abovebar, offset=-rb)
+plotshape(showHL and _ll, text='LL', title='Lower Low', style=shape.labelup, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), location=location.belowbar, offset=-rb)
+plotshape(showHL and _lh, text='LH', title='Lower High', style=shape.labeldown, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), location=location.abovebar, offset=-rb)
+
+// Support and resistance levels based on market structure
+// This section establishes dynamic support and resistance levels based on the
+// identified market structure patterns (Higher Highs, Lower Lows, etc.)
+// Support levels are created from Higher Low patterns, which represent price floors
+// Resistance levels are created from Lower High patterns, which represent price ceilings
+// These levels adapt to changing market conditions and provide key decision points
+float res = na  // Resistance level
+float sup = na  // Support level
+res := _lh ? zz : res[1]  // Update resistance when a Lower High is detected
+sup := _hl ? zz : sup[1]  // Update support when a Higher Low is detected
+
+// Determine trend direction based on price relative to support/resistance
+// This creates a binary trend indicator (1 for bullish, -1 for bearish)
+// The trend is determined by comparing current price to the established support/resistance levels
+// - When price breaks above resistance, trend becomes bullish (1)
+// - When price breaks below support, trend becomes bearish (-1)
+// - Otherwise, the trend remains unchanged from the previous bar
+int trend = na  // Variable to store trend direction
+iff_3 = close < sup ? -1 : nz(trend[1])  // If price is below support, trend is bearish, otherwise keep previous trend
+trend := close > res ? 1 : iff_3  // If price is above resistance, trend is bullish, otherwise use the value from iff_3
+
+// Update support/resistance based on trend direction and new patterns
+// This section refines the support/resistance levels based on the current trend direction
+// In a bullish trend (trend == 1):
+//   - Higher Highs become new resistance levels (potential targets)
+//   - Higher Lows become new support levels (potential entry points)
+// In a bearish trend (trend == -1):
+//   - Lower Highs become new resistance levels (potential short entry points)
+//   - Lower Lows become new support levels (potential targets)
+// This adaptive approach ensures the levels remain relevant to the current market structure
+res := trend == 1 and _hh or trend == -1 and _lh ? zz : res
+sup := trend == 1 and _hl or trend == -1 and _ll ? zz : sup
+rechange = res != res[1]  // Detect when resistance level changes
+suchange = sup != sup[1]  // Detect when support level changes
+
+// ******************************
+// ***** SUPPORT/RESISTANCE VISUALIZATION *****
+// VISUALIZATION ONLY: This section draws support and resistance lines on the chart
+// The lines themselves do NOT affect the trading logic, but they visualize
+// the support/resistance levels that ARE used in the trading logic
+
+// Variables to store line objects
+var line resline = na  // Line object for resistance
+var line supline = na  // Line object for support
+
+// Draw support/resistance lines if enabled by user
+if showsupres and showHL
+    // Update resistance line when resistance level changes
+    if rechange
+        // End the previous resistance line at current bar
+        line.set_x2(resline, bar_index)
+        line.set_extend(resline, extend=extend.none)
+        
+        // Create a new resistance line from current bar extending right
+        resline := line.new(
+            x1=bar_index - rb,  // Start at the pivot point
+            y1=res,             // At the resistance level
+            x2=bar_index,       // To current bar
+            y2=res,             // At same price level
+            color=rescol,       // Using resistance color
+            extend=extend.right, // Extend to the right
+            style=srlinestyle,   // Using user-selected line style
+            width=srlinewidth)   // Using user-selected line width
+        resline
+
+    // Update support line when support level changes
+    if suchange
+        // End the previous support line at current bar
+        line.set_x2(supline, bar_index)
+        line.set_extend(supline, extend=extend.none)
+        
+        // Create a new support line from current bar extending right
+        supline := line.new(
+            x1=bar_index - rb,  // Start at the pivot point
+            y1=sup,             // At the support level
+            x2=bar_index,       // To current bar
+            y2=sup,             // At same price level
+            color=supcol,       // Using support color
+            extend=extend.right, // Extend to the right
+            style=srlinestyle,   // Using user-selected line style
+            width=srlinewidth)   // Using user-selected line width
+        supline
+
+// ******************************
+// ***** BAR COLOR SETTINGS *****
+// VISUALIZATION ONLY: These settings only affect the appearance of bars
+// They do NOT impact the trading logic or signals
+
+// Determine bar color based on trend
+iff_4 = trend == 1 ? bcolup : bcoldn
+
+// Commented out code for changing bar colors
+//barcolor(color=changebarcol ? iff_4 : na)
+// bgcolor(iff_4)
+
+// Trading conditions
+// This section defines the precise entry and exit conditions for the strategy
+// The conditions combine multiple technical factors to filter out false signals
+// and identify high-probability trading opportunities
+
+// Buy Conditions Explanation:
+// 1. SMA50 is above SMA100 (bullish trend) - Confirms overall market direction is up
+// 2. A Higher Low pattern is detected (_hl == 1) - Confirms bullish market structure
+// 3. Momentum is positive (either High or Low angle is positive) - Confirms price momentum
+// All three conditions must be met simultaneously to generate a buy signal
+// This creates a robust filter that requires trend, structure, and momentum alignment
+buyConditions = sma50>=sma100 and _hl ==1 and (atan_Low >0 or atan_High>0)
+
+// Sell Conditions Explanation:
+// 1. SMA50 is below SMA100 (bearish trend) - Confirms overall market direction is down
+// 2. Either:
+//    a. RSI is below threshold (rsi14 < rsiInput) - Confirms bearish momentum
+//    b. Momentum angles are strongly negative (< -0.90) - Confirms strong downward price action
+// The -0.90 threshold for angles represents a significant downward momentum
+// This creates a responsive exit mechanism that can trigger on either RSI or angle conditions
+sellConditions = (sma50<=sma100 and (rsi14<rsiInput or atan_Low< -0.90 or atan_High<-0.90))
+
+plot(buyConditions?1:na, title="buyConditions", color=buyConditions?color.green:color.red, display = display.data_window, offset = -_offset )
+plot(sellConditions?1:na, title="sellConditions", color=sellConditions?color.green:color.red, display = display.data_window, offset = -_offset )
+
+
+// ******************************
+// ***** Trade Execution Logic ***** 
+// This section contains the actual order execution logic based on the trading conditions
+// The strategy only executes trades within the specified backtest date range
+// and manages position state through the haveStock variable
+
+// Sell Logic:
+// - Only executes when within the trading window
+// - Only sells if we currently have a position (haveStock > 0)
+// - Requires sell conditions to be true
+// - Uses strategy.close() to exit the position with a "sell" comment
+// - Resets position state and triggers an alert
+if inTradeWindow and (haveStock>0) and sellConditions
+    if haveStock==1
+        strategy.close("EN", comment = "sell")  // Close the position with "sell" comment
+    haveStock := 0  // Reset position state to indicate no position
+    alert('VUSD sell')  // Trigger sell alert
+
+// Date Range Exit Logic:
+// - Executes when we move outside the trading window (inTradeWindow becomes false)
+// - Cancels all pending orders with strategy.cancel_all()
+// - Closes all active positions with strategy.close_all()
+// - Resets position state and triggers an exit alert
+// - This ensures clean exit at the end of the backtest period
+if not inTradeWindow and inTradeWindow[1]
+    strategy.cancel_all()  // Cancel any pending orders
+    strategy.close_all(comment="Date Range Exit")  // Close all positions
+    haveStock := 0  // Reset position state
+    alert('VUSD exit')  // Trigger exit alert
+
+// Buy Logic:
+// - Only executes when within the trading window
+// - Only buys if we don't currently have a position (haveStock != 1)
+// - Requires buy conditions to be true AND sell conditions to be false
+// - Uses strategy.entry() to enter a long position with a "buy" comment
+// - Updates position state and triggers a buy alert
+if inTradeWindow and (haveStock != 1) and buyConditions and not sellConditions
+    strategy.entry("EN", strategy.long, comment="buy")  // Enter long position with "buy" comment
+    haveStock := 1  // Update position state to indicate we have a position
+    alert('VUSD buy')  // Trigger buy alert
+
+
+
+bgcolor(haveStock==2 ? color.rgb(238, 244, 214)  : haveStock==1 ? color.rgb(235, 253, 163)  : na)
+// ***** trade ***** 
+// ******************************
+
+
+
+
+plot(haveStock?1:na, title="haveStock", color=haveStock?color.blue:color.red, display = display.data_window, offset = -_offset )
+
+
+// ******************************
+// ***** ENTRY VISUALIZATION *****
+// VISUALIZATION ONLY: This section draws entry lines and boxes on the chart
+// These visual elements help track entry points and price performance
+// They do NOT affect the trading logic or signals
+
+// Variables to store visualization objects
+var line entryLine = na      // Line object for entry price
+var float buyPrice = 0       // Stores the entry price
+var box entryBox = na        // Box object around entry price
+
+// Detect when we've entered a long position
+wentLong = (strategy.position_size > 0) and (strategy.position_size[1] <= 0)
+
+// Determine color based on current performance
+// Green if price is above entry, orange if below
+color1 = color.new(
+    (close > line.get_y2(id=entryLine)) ? 
+        color.rgb(137, 219, 178) :  // Green for profitable positions
+        color.rgb(235, 153, 91),    // Orange for losing positions
+    60)  // 60% transparency
+
+// Alternative color scheme (commented out)
+//color1 = (close > line.get_y2(id=entryLine)) ? color.rgb(137, 219, 178) : color.rgb(192, 253, 223)
+
+// When a new long position is entered
+if (wentLong)
+    // Draw a horizontal line at the entry price
+    entryLine := line.new(
+        x1=bar_index[1],               // Start at previous bar
+        y1=strategy.position_avg_price, // At entry price
+        x2=bar_index+200,              // Extend 200 bars forward
+        y2=strategy.position_avg_price, // At same price level
+        width=1,                       // Line width
+        color=color1)                  // Using performance-based color
+    
+    // Store the entry price
+    buyPrice := strategy.position_avg_price
+    
+    // Draw a box around the entry price
+    entryBox := box.new(
+        left=bar_index[1],        // Start at previous bar
+        top=buyPrice*1.01,        // 1% above entry price
+        right=bar_index,          // To current bar
+        bottom=buyPrice*0.99,     // 1% below entry price
+        bgcolor=color1,           // Using performance-based color
+        border_color=color.new(color.black, 50))  // Black border with 50% transparency
+    
+    // Extend the box 200 bars forward
+    box.set_right(entryBox, bar_index+200)

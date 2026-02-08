@@ -1,0 +1,34 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+//@version=5
+
+
+// MACD
+// 説明文を読んでコーディングしてみただけなので、おそらく正しくない
+// ta.macdという関数があるので、それを使うのが正しいと思われる
+
+indicator('MACD' ,overlay = false)
+
+shortEMA = ta.ema(close, 12)    // 短期EMA 12
+longEMA = ta.ema(close, 26)     // 長期EMA 26
+
+slEMA = shortEMA - longEMA
+
+// MACDのシグナル
+macdEMA = ta.ema(slEMA, 9)      // MACDのシグナル 9
+
+// 差
+closs = slEMA - macdEMA
+
+// 0（中心線）
+neutral = 0
+
+// 描画
+plot(slEMA, color = color.yellow)
+plot(macdEMA, color = color.red)
+macd_Line = plot(closs, color = color.rgb(212, 212, 212), linewidth = 2)
+neutral_Line = plot(neutral, color = color.rgb(215, 210, 216))
+
+// 色塗り
+fill(neutral_Line, macd_Line, color = color.rgb(184, 183, 183, 80))

@@ -1,0 +1,3322 @@
+//@version=6
+indicator("OT-Market-Structures", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_bars_back=5000)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUT PARAMETERS
+// ═══════════════════════════════════════════════════════════════════════
+
+// Swing High/Low Detection Settings
+swingGroup = "Swing High/Low Settings"
+leftBars = input.int(3, "Bars to Left", minval=1, maxval=50, group=swingGroup, tooltip="Number of bars to the left that must be lower/higher")
+rightBars = input.int(3, "Bars to Right", minval=1, maxval=50, group=swingGroup, tooltip="Number of bars to the right that must be lower/higher")
+swingMinMove = input.float(0.5, "Minimum Move (% for 1H TF)", minval=0.0, maxval=10.0, step=0.1, group=swingGroup, tooltip="Minimum percentage move from previous swing point to confirm new swing high/low.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+extremeSwingCount = input.int(3, "Swing Points for Extreme", minval=1, maxval=10, group=swingGroup, tooltip="Number of swing points before and after to check for Highest High / Lowest Low")
+
+// Fair Value Gap Settings
+fvgGroup = "Fair Value Gap Settings"
+showFVG = input.bool(true, "Show Fair Value Gaps", group=fvgGroup)
+fvgMinSize = input.float(0.05, "Minimum FVG Size (% for 1H TF)", minval=0.0, maxval=10.0, step=0.01, group=fvgGroup, tooltip="Minimum gap size as percentage of price.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+fvgMaxCount = input.int(20, "Maximum FVG Boxes", minval=1, maxval=100, group=fvgGroup, tooltip="Maximum number of unfilled FVG boxes to display")
+fvgExtendRight = input.bool(true, "Extend FVG Until Filled", group=fvgGroup, tooltip="Extend FVG boxes to the right until price fills the gap")
+fvgDeleteOnMitigate = input.bool(false, "Delete FVG When Mitigated", group=fvgGroup, tooltip="Remove FVG box when price enters the gap")
+fvgDeleteOnFill = input.bool(true, "Delete FVG When Filled", group=fvgGroup, tooltip="Remove FVG box when price completely fills the gap")
+
+// Order Block Settings
+obGroup = "Order Block Settings"
+showOB = input.bool(true, "Show Order Blocks", group=obGroup)
+obMinMove = input.float(0.5, "Minimum Move (% for 1H TF)", minval=0.1, maxval=10.0, step=0.1, group=obGroup, tooltip="Minimum percentage move to qualify as order block.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+obMaxCandles = input.int(5, "Maximum Candles", minval=2, maxval=20, group=obGroup, tooltip="Maximum number of candles to complete the move")
+obMaxCount = input.int(30, "Maximum OB Boxes", minval=1, maxval=100, group=obGroup, tooltip="Maximum number of unmitigated OB boxes to display")
+obExtendRight = input.bool(true, "Extend OB Until Mitigated", group=obGroup, tooltip="Extend OB boxes to the right until price mitigates them")
+obExtendAfterBroken = input.bool(false, "Extend OB After Broken", group=obGroup, tooltip="Continue extending broken OB (gray) until re-mitigated")
+obDeleteOnMitigate = input.bool(false, "Delete OB When Mitigated", group=obGroup, tooltip="Remove OB box when price mitigates the order block")
+obDeleteOnFill = input.bool(true, "Delete OB When Filled", group=obGroup, tooltip="Remove OB box when price completely fills the order block")
+
+// Market Structure Settings
+msGroup = "Market Structure Settings"
+showCHoCH = input.bool(true, "Show Change of Character", group=msGroup, tooltip="Show CHoCH when price breaks counter-trend swing")
+showBOS = input.bool(true, "Show Break of Structure", group=msGroup, tooltip="Show BOS when price breaks trend swing")
+msMaxCount = input.int(20, "Maximum MS Lines", minval=5, maxval=50, group=msGroup, tooltip="Maximum number of CHoCH/BOS lines to display")
+
+// Trading Alert Settings
+alertGroup = "Trading Alert Settings"
+showOBFVGConfluence = input.bool(true, "OB+FVG Confluence Alerts", group=alertGroup, tooltip="Alert when Order Block overlaps with FVG")
+showFVGSweep = input.bool(true, "FVG Sweep Alerts", group=alertGroup, tooltip="Alert when FVG is swept by opposing FVG within 10 candles")
+showLiquidityRunFVGAlert = input.bool(true, "Liquidity Run FVG Alerts", group=alertGroup, tooltip="Alert on Liquidity Run FVG formation with automated entry/exit parameters. Strong pattern: market runs through liquidity without fair value consolidation.")
+alertRiskRewardRatio = input.float(2.0, "Alert TP Risk:Reward Ratio", minval=1.0, maxval=10.0, step=0.5, group=alertGroup, tooltip="Risk-reward ratio for take profit when no opposite element found (e.g., 2.0 means TP is 2x the SL distance). Higher values = more aggressive TP targets. Industry standard: 2.0 (minimum for profitable trading).")
+useATRMinimumSL = input.bool(true, "Use ATR Minimum SL", group=alertGroup, tooltip="Apply ATR-based minimum stop loss distance. If calculated SL is closer than ATR(14), use ATR distance instead. Prevents tight stops in volatile markets.")
+atrLength = input.int(14, "ATR Length", minval=1, maxval=100, group=alertGroup, tooltip="Period for ATR calculation used as minimum SL distance")
+enableAlertTimeWindow = input.bool(true, "Enable Alert Time Window", group=alertGroup, tooltip="Only fire alerts during specified time window. Labels still show on chart, but alerts only fire during active hours. Uses chart timezone (not exchange timezone).")
+alertStartHour = input.int(8, "Start Hour", minval=0, maxval=23, group=alertGroup, inline="start", tooltip="Start hour for alert time window in chart timezone (0-23). Default: 8 AM")
+alertStartMinute = input.int(0, "Minute", minval=0, maxval=59, group=alertGroup, inline="start", tooltip="Start minute for alert time window. Default: 0 minutes")
+alertEndHour = input.int(22, "End Hour", minval=0, maxval=23, group=alertGroup, inline="end", tooltip="End hour for alert time window in chart timezone (0-23). Default: 10 PM")
+alertEndMinute = input.int(30, "Minute", minval=0, maxval=59, group=alertGroup, inline="end", tooltip="End minute for alert time window. Default: 30 minutes")
+minMAScoreForAlert = input.float(6.0, "Minimum MA_Score for Alert", minval=0.0, maxval=10.0, step=0.1, group=alertGroup, tooltip="Minimum MA_Score required to fire alerts (0.0-10.0). Score based on 9 parameters: EMA support (200/100/50), VWAP, Volume, Trend TF, Structure Confluence (OB/FVG), BOS Momentum, and Liquidity Events. If set to 0, all alerts fire. Labels show on chart for all patterns regardless. Default: 6.0 (60% threshold - requires strong institutional support plus additional confluence).")
+maxCandlesForConfirmation = input.int(25, "Max Candles for Reversal Confirmation", minval=5, maxval=100, group=alertGroup, tooltip="Maximum number of candles to monitor for reversal pattern after entry price is reached. If reversal pattern not detected within this window or price closes beyond SL, stop monitoring.")
+maxConfirmationRR = input.float(0.5, "Max Confirmation RR Multiplier", minval=0.1, maxval=2.0, step=0.1, group=alertGroup, tooltip="Maximum risk-reward multiplier for confirmation entry. Confirmation is only valid if reversal candle closes between SL and (Entry ± Risk × Multiplier). Lower values = stricter confirmation timing. Default: 0.5 (50% of initial risk distance)")
+showPotentialAlerts = input.bool(true, "Show Potential OB+FVG Alerts", group=alertGroup, tooltip="Show labels and fire alerts for Potential OB+FVG Confluence patterns. If disabled, no Potential labels or alerts will be generated.")
+showInvalidConfirmation = input.bool(true, "Show Invalid Confirmation Labels", group=alertGroup, tooltip="Show orange labels when confirmation is invalid (outside acceptable RR range). If disabled, invalid labels are deleted. Note: Potential Alerts toggle is the master control - if disabled, invalid labels are also hidden. Default: ON")
+showConfirmedAlerts = input.bool(true, "Show Confirmed OB+FVG Alerts", group=alertGroup, tooltip="Show labels and fire alerts for Confirmed OB+FVG Confluence patterns (reversal confirmation). If disabled, monitoring still occurs but no Confirmed labels or alerts will be generated.")
+showConfirmedPriceLevels = input.bool(true, "Show Confirmed Price Level Lines", group=alertGroup, tooltip="Show horizontal dashed lines for Entry (white), SL (red), and TP (green) when Confirmed alerts are created. Lines extend until SL or TP is hit.")
+showAllConfirmedLines = input.bool(false, "Show All Confirmed Lines", group=alertGroup, tooltip="If enabled, shows price level lines for all Confirmed alerts. If disabled, only shows lines for the most recent Confirmed alert (previous lines deleted when new Confirmed alert appears).")
+showPotentialPriceLevels = input.bool(true, "Show Potential Price Level Lines", group=alertGroup, tooltip="Show horizontal dashed lines for Entry (white), SL (red), and TP (green) when Potential alerts are created. Lines extend until SL or TP is hit.")
+showAllPotentialLines = input.bool(false, "Show All Potential Lines", group=alertGroup, tooltip="If enabled, shows price level lines for all Potential alerts. If disabled, only shows lines for the most recent Potential alert (previous lines deleted when new Potential alert appears).")
+showPnLTable = input.bool(true, "Show PnL Statistics Table", group=alertGroup, tooltip="Display trading statistics table below Beta/Config table showing Total PnL, Win/Loss counts, Win/Loss counts, Win Ratio, and Profit Ratio for Confirmed OB+FVG alerts.")
+
+// Beta Calculation Settings
+betaGroup = "Beta Calculation Settings"
+showBeta = input.bool(true, "Show Beta", group=betaGroup, tooltip="Calculate and display beta relative to ES1! (S&P 500 E-mini futures)")
+useBetaMultiplier = input.bool(true, "Use Beta as Multiplier", group=betaGroup, tooltip="Apply beta as multiplier to all % config values (% value * TF multiplier * Beta)")
+betaLookback = input.int(500, "Beta Lookback Period", minval=50, maxval=5000, group=betaGroup, tooltip="Number of candles to use for beta calculation")
+
+// Risk Management Settings
+riskGroup = "Risk Management Settings"
+initialEquity = input.float(100000, "Initial Equity", minval=1000, group=riskGroup, tooltip="Cash available for trading. Used to calculate position size based on risk per trade.")
+riskPerTrade = input.float(0.5, "% Risk Per Trade", minval=0.01, maxval=100, step=0.01, group=riskGroup, tooltip="Percentage of initial equity to risk per trade. Position size calculated to risk this amount. Example: 0.5% means you risk $500 on a $100,000 account.")
+updateCapital = input.bool(false, "Update Capital with PnL", group=riskGroup, tooltip="If enabled, adds current total PnL to initial equity when calculating position size. This compounds gains/losses - increases risk after wins, decreases after losses. Separate for POTENTIAL vs CONFIRMED strategies. SAFETY: Capital floor set at 10% of initial equity to prevent excessive drawdown.")
+
+// Display Settings
+displayGroup = "Display Settings"
+showMTFInfo = input.bool(true, "Show MTF Info", group=displayGroup, tooltip="Display Multi-Timeframe information table showing EntryTF, PatternTF, and TrendTF")
+minCandlesBeforeMitigation = input.int(5, "Min Candles Before Mitigation", minval=0, maxval=20, group=displayGroup, tooltip="Minimum candles after structure creation before considering it mitigated. Prevents immediate false mitigations. Applies to OB and FVG. Set to 0 to disable.")
+showSwingHighs = input.bool(true, "Show Swing Highs", group=displayGroup)
+showSwingLows = input.bool(true, "Show Swing Lows", group=displayGroup)
+showLabels = input.bool(true, "Show Labels", group=displayGroup)
+showPriceInLabel = input.bool(false, "Show Price in Labels", group=displayGroup, tooltip="Display price values in swing point labels")
+showLines = input.bool(true, "Show Horizontal Lines", group=displayGroup)
+labelOffset = input.int(5, "Label Offset (Candles)", minval=0, maxval=100, group=displayGroup, tooltip="Offset labels to the right by this many candles for OB and FVG")
+opportunityLabelOffset = input.int(20, "Trading Opportunity Label Offset", minval=0, maxval=100, group=displayGroup, tooltip="Offset trading opportunity labels to the right by this many candles to avoid overlap with structure labels")
+showAlertPrices = input.bool(true, "Show Alert Prices (EN/SL/TP)", group=displayGroup, tooltip="Display entry, stop loss, and take profit prices on alert labels. Disable to reduce chart clutter while still getting full details in JSON alert messages.")
+
+// Style Settings
+styleGroup = "Style Settings"
+swingHighColor = input.color(color.new(color.red, 0), "Swing High Color", group=styleGroup)
+swingLowColor = input.color(color.new(color.green, 0), "Swing Low Color", group=styleGroup)
+bullishFVGColor = input.color(color.new(#00ff00, 85), "Bullish FVG Color", group=styleGroup)
+bearishFVGColor = input.color(color.new(#ff0000, 85), "Bearish FVG Color", group=styleGroup)
+bullishOBColor = input.color(color.new(#00cc00, 80), "Bullish OB Color", group=styleGroup)
+bearishOBColor = input.color(color.new(#cc0000, 80), "Bearish OB Color", group=styleGroup)
+mitigatedColor = input.color(color.new(color.yellow, 85), "Mitigated Structure Color", group=styleGroup, tooltip="Color for structures that are mitigated (one edge touched) but not yet filled")
+filledColor = input.color(color.new(color.gray, 90), "Filled Structure Color", group=styleGroup, tooltip="Color for structures that are completely filled (both edges touched) or broken")
+labelSizeInput = input.string("tiny", "Label Size", options=["tiny", "small", "normal", "large"], group=styleGroup)
+lineWidth = input.int(1, "Line Width", minval=1, maxval=4, group=styleGroup)
+lineStyleInput = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group=styleGroup)
+
+// ═══════════════════════════════════════════════════════════════════════
+// PnL STATISTICS TRACKING VARIABLES
+// ═══════════════════════════════════════════════════════════════════════
+
+// PnL Statistics Tracking (Confirmed OB+FVG only)
+var float totalPnL = 0.0
+var int totalTrades = 0
+var int tpHits = 0
+var int slHits = 0
+var float totalWinAmount = 0.0
+var float totalLossAmount = 0.0
+
+// Duration and bar tracking
+var int firstTradeTime = na          // Timestamp of first trade (milliseconds)
+var int lastTradeTime = na           // Timestamp of last trade (milliseconds)
+var int totalBarsInTrades = 0        // Total bars across all trades
+var int totalBarsInWins = 0          // Total bars in winning trades
+var int totalBarsInLosses = 0        // Total bars in losing trades
+
+// R Multiple tracking for TP trades
+var float totalRMultipleTP = 0.0     // Sum of R multiples for TP trades
+
+// PnL Statistics Tracking (Potential OB+FVG only)
+var float totalPotentialPnL = 0.0
+var int totalPotentialTrades = 0
+var int potentialTPHits = 0
+var int potentialSLHits = 0
+var int potentialDiscarded = 0      // Trades where TP/SL hit before entry reached
+var float totalPotentialWinAmount = 0.0
+var float totalPotentialLossAmount = 0.0
+
+// Duration and bar tracking for Potential
+var int firstPotentialTradeTime = na     // Timestamp of first Potential trade (milliseconds)
+var int lastPotentialTradeTime = na      // Timestamp of last Potential trade (milliseconds)
+var int totalBarsInPotentialTrades = 0   // Total bars across all Potential trades
+var int totalBarsInPotentialWins = 0     // Total bars in Potential winning trades
+var int totalBarsInPotentialLosses = 0   // Total bars in Potential losing trades
+
+// R Multiple tracking for Potential TP trades
+var float totalRMultiplePotentialTP = 0.0     // Sum of R multiples for Potential TP trades
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+getLineStyle(style) =>
+    style == "Dashed" ? line.style_dashed : style == "Dotted" ? line.style_dotted : line.style_solid
+
+getLabelSize(size) =>
+    size == "tiny" ? size.tiny : size == "small" ? size.small : size == "large" ? size.large : size.normal
+
+currentLineStyle = getLineStyle(lineStyleInput)
+currentLabelSize = getLabelSize(labelSizeInput)
+swingHighColorTransparent = color.new(swingHighColor, 70)
+swingLowColorTransparent = color.new(swingLowColor, 70)
+
+rangesOverlap(top1, bottom1, top2, bottom2) =>
+    not (bottom1 > top2 or bottom2 > top1)
+
+proximityPercent(currentPrice, targetPrice) =>
+    math.abs((currentPrice - targetPrice) / targetPrice) * 100
+
+// Calculate position size based on risk management
+// Uses syminfo.pointvalue as contract multiplier (e.g., MNQ=2, NQ=20, ES=50)
+// Returns minimum quantity of 1 if calculation results in 0
+calculatePositionSize(entryPrice, stopLossPrice, currentCapital) =>
+    slAmount = math.abs(entryPrice - stopLossPrice)
+    contractMultiplier = syminfo.pointvalue
+    if slAmount > 0 and contractMultiplier > 0
+        // Formula: quantity = (Current Capital × % Risk Per Trade) / (100 × SL_amount × Contract Multiplier)
+        // Current Capital = Initial Equity (default) or Initial Equity + PnL (if updateCapital ON)
+        rawQty = (currentCapital * riskPerTrade) / (100 * slAmount * contractMultiplier)
+        qty = math.floor(rawQty)
+        math.max(qty, 1)  // Minimum 1 contract
+    else
+        1  // Default to 1 if invalid parameters
+
+// Format duration from milliseconds to "XY XM XD" format
+// Returns "--" if no trades exist yet
+formatDuration(startTime, endTime) =>
+    if na(startTime) or na(endTime)
+        "--"
+    else
+        durationMs = endTime - startTime
+        totalDays = math.floor(durationMs / (1000 * 60 * 60 * 24))
+        years = math.floor(totalDays / 365)
+        remainingDays = totalDays % 365
+        months = math.floor(remainingDays / 30)
+        days = remainingDays % 30
+
+        str.tostring(years) + "Y " + str.tostring(months) + "M " + str.tostring(days) + "D"
+
+// Get current capital for position sizing based on strategy type and updateCapital flag
+// strategyType: "Potential", "Confirmed", or "Other" (Liquidity Run FVG, FVG Sweep)
+// Returns: Adjusted capital based on PnL if updateCapital is ON, otherwise initial equity
+// SAFETY: Enforces minimum capital floor at 10% of initial equity
+getCurrentCapital(string strategyType) =>
+    baseCapital = initialEquity
+    if updateCapital
+        if strategyType == "Potential"
+            // POTENTIAL strategy uses its own PnL pool for independent tracking
+            baseCapital := initialEquity + totalPotentialPnL
+        else  // "Confirmed" or "Other" - use CONFIRMED PnL
+            // CONFIRMED strategy and standalone patterns (Liquidity Run FVG, FVG Sweep) use CONFIRMED PnL
+            baseCapital := initialEquity + totalPnL
+    // Safety floor: Never allow capital to drop below 10% of initial equity
+    math.max(baseCapital, initialEquity * 0.1)
+
+// Check if wave continues without opposing candle color between two bars
+// For bullish wave: Returns true if no red candles between startBar and endBar
+// For bearish wave: Returns true if no green candles between startBar and endBar
+// startBar: Earlier bar index (OB formation)
+// endBar: Later bar index (FVG formation)
+isWaveContinuous(bool isBullish, int startBar, int endBar) =>
+    bool continuous = true
+    // Calculate offsets from current bar
+    startOffset = bar_index - startBar  // Larger offset (further back in time)
+    endOffset = bar_index - endBar      // Smaller offset (more recent)
+
+    // Loop through candles between startBar and endBar (exclusive of endpoints)
+    if startOffset > endOffset + 1  // There are candles in between
+        for i = startOffset - 1 to endOffset + 1
+            if isBullish
+                // Bullish wave: check for red candles (close < open)
+                if close[i] < open[i]
+                    continuous := false
+                    break
+            else
+                // Bearish wave: check for green candles (close > open)
+                if close[i] > open[i]
+                    continuous := false
+                    break
+    continuous
+
+// ═══════════════════════════════════════════════════════════════════════
+// ATR CALCULATION (for candlestick pattern detection)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Calculate ATR for minimum stop loss distance and pattern tolerance
+atrValue = ta.atr(atrLength)
+
+// ═══════════════════════════════════════════════════════════════════════
+// CANDLESTICK REVERSAL PATTERN DETECTION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Detect Pin Bar (Hammer/Shooting Star)
+// Returns: [detected, barStart, barEnd]
+// Parameters:
+//   lookForBullish: true for hammer (bullish), false for shooting star (bearish)
+//   candleOffset: Number of candles back to check (0 = current bar)
+//   wickRatio: Minimum wick length as % of total range (default: 0.6 = 60%)
+//   bodyRatio: Maximum body size as % of total range (default: 0.3 = 30%)
+isPinBar(bool lookForBullish, int candleOffset, float wickRatio, float bodyRatio) =>
+    bool detected = false
+    int barStart = bar_index - candleOffset
+    int barEnd = bar_index - candleOffset
+
+    float o = open[candleOffset]
+    float c = close[candleOffset]
+    float h = high[candleOffset]
+    float l = low[candleOffset]
+
+    float totalRange = h - l
+    float bodySize = math.abs(c - o)
+
+    if totalRange > 0
+        float bodyPercent = bodySize / totalRange
+
+        if lookForBullish
+            // Bullish Pin Bar (Hammer): Long lower wick, small body
+            float lowerWick = math.min(o, c) - l
+            float lowerWickPercent = lowerWick / totalRange
+
+            if lowerWickPercent >= wickRatio and bodyPercent <= bodyRatio
+                detected := true
+        else
+            // Bearish Pin Bar (Shooting Star): Long upper wick, small body
+            float upperWick = h - math.max(o, c)
+            float upperWickPercent = upperWick / totalRange
+
+            if upperWickPercent >= wickRatio and bodyPercent <= bodyRatio
+                detected := true
+
+    [detected, barStart, barEnd]
+
+// Detect Engulfing Pattern
+// Returns: [detected, barStart, barEnd]
+// Parameters:
+//   lookForBullish: true for bullish engulfing, false for bearish engulfing
+//   candleOffset: Number of candles back to check current candle (0 = current bar)
+isEngulfing(bool lookForBullish, int candleOffset) =>
+    bool detected = false
+    int barStart = bar_index - candleOffset - 1  // Previous candle
+    int barEnd = bar_index - candleOffset        // Current candle
+
+    // Current candle (candleOffset)
+    float currentOpen = open[candleOffset]
+    float currentClose = close[candleOffset]
+    bool currentIsBullish = currentClose > currentOpen
+
+    // Previous candle (candleOffset + 1)
+    float prevOpen = open[candleOffset + 1]
+    float prevClose = close[candleOffset + 1]
+    bool prevIsBullish = prevClose > prevOpen
+
+    if lookForBullish
+        // Bullish Engulfing: Current bullish candle engulfs previous bearish candle
+        // Corrected: currentOpen <= prevClose (can start at or below prev close)
+        detected := currentIsBullish and not prevIsBullish and currentOpen <= prevClose and currentClose > prevOpen
+    else
+        // Bearish Engulfing: Current bearish candle engulfs previous bullish candle
+        // Corrected: currentOpen >= prevClose (can start at or above prev close)
+        detected := not currentIsBullish and prevIsBullish and currentOpen >= prevClose and currentClose < prevOpen
+
+    [detected, barStart, barEnd]
+
+// Detect Piercing Pattern (Bullish Piercing Line / Bearish Dark Cloud Cover)
+// Returns: [detected, barStart, barEnd]
+// Parameters:
+//   lookForBullish: true for piercing line, false for dark cloud cover
+//   candleOffset: Number of candles back to check current candle (0 = current bar)
+//   minPiercingPercent: Minimum penetration into previous body (default: 0.5 = 50%)
+isPiercing(bool lookForBullish, int candleOffset, float minPiercingPercent) =>
+    bool detected = false
+    int barStart = bar_index - candleOffset - 1  // Previous candle
+    int barEnd = bar_index - candleOffset        // Current candle
+
+    // Current candle (candleOffset)
+    float currentOpen = open[candleOffset]
+    float currentClose = close[candleOffset]
+    bool currentIsBullish = currentClose > currentOpen
+
+    // Previous candle (candleOffset + 1)
+    float prevOpen = open[candleOffset + 1]
+    float prevClose = close[candleOffset + 1]
+    bool prevIsBullish = prevClose > prevOpen
+
+    float prevBody = math.abs(prevClose - prevOpen)
+
+    if lookForBullish
+        // Bullish Piercing Line: Current bullish candle opens below prev low, closes >50% into prev body
+        if currentIsBullish and not prevIsBullish and currentOpen < prevClose and prevBody > 0
+            float penetration = currentClose - prevClose
+            float penetrationPercent = penetration / prevBody
+            if penetrationPercent >= minPiercingPercent and currentClose < prevOpen
+                detected := true
+    else
+        // Bearish Dark Cloud Cover: Current bearish candle opens above prev high, closes >50% into prev body
+        if not currentIsBullish and prevIsBullish and currentOpen > prevClose and prevBody > 0
+            float penetration = prevClose - currentClose
+            float penetrationPercent = penetration / prevBody
+            if penetrationPercent >= minPiercingPercent and currentClose > prevOpen
+                detected := true
+
+    [detected, barStart, barEnd]
+
+// Detect Tweezer Bottom/Top
+// Returns: [detected, barStart, barEnd]
+// Parameters:
+//   lookForBullish: true for tweezer bottom, false for tweezer top
+//   candleOffset: Number of candles back to check current candle (0 = current bar)
+//   tolerancePercent: Tolerance for matching high/low (as % of ATR, default: 0.2 = 20%)
+// Enhanced Rules (2025-10-23):
+//   Tweezer Bottom: First candle Red/Doji, second Green, second close > first open
+//   Tweezer Top: First candle Green/Doji, second Red, second close < first open
+//   Doji: Exact match (close == open)
+isTweezer(bool lookForBullish, int candleOffset, float tolerancePercent) =>
+    bool detected = false
+    int barStart = bar_index - candleOffset - 1  // Previous candle
+    int barEnd = bar_index - candleOffset        // Current candle
+
+    // Current candle (candleOffset) - SECOND candle in pattern
+    float currentOpen = open[candleOffset]
+    float currentClose = close[candleOffset]
+    float currentHigh = high[candleOffset]
+    float currentLow = low[candleOffset]
+
+    // Previous candle (candleOffset + 1) - FIRST candle in pattern
+    float prevOpen = open[candleOffset + 1]
+    float prevClose = close[candleOffset + 1]
+    float prevHigh = high[candleOffset + 1]
+    float prevLow = low[candleOffset + 1]
+
+    // Calculate tolerance based on ATR
+    float tolerance = atrValue * tolerancePercent
+
+    if lookForBullish
+        // Tweezer Bottom: Two candles with same low + reversal confirmation
+        if math.abs(currentLow - prevLow) <= tolerance
+            // First candle: Red or Doji (close <= open)
+            bool firstIsRedOrDoji = prevClose <= prevOpen
+            // Second candle: Green (close > open)
+            bool secondIsGreen = currentClose > currentOpen
+            // Second close > first open (reversal confirmation)
+            bool closeAboveOpen = currentClose > prevOpen
+
+            if firstIsRedOrDoji and secondIsGreen and closeAboveOpen
+                detected := true
+    else
+        // Tweezer Top: Two candles with same high + reversal confirmation
+        if math.abs(currentHigh - prevHigh) <= tolerance
+            // First candle: Green or Doji (close >= open)
+            bool firstIsGreenOrDoji = prevClose >= prevOpen
+            // Second candle: Red (close < open)
+            bool secondIsRed = currentClose < currentOpen
+            // Second close < first open (reversal confirmation)
+            bool closeBelowOpen = currentClose < prevOpen
+
+            if firstIsGreenOrDoji and secondIsRed and closeBelowOpen
+                detected := true
+
+    [detected, barStart, barEnd]
+
+// Combined reversal pattern check
+// Returns: [detected, patternName, barStart, barEnd]
+// Checks all 4 reversal patterns and returns the first one detected
+checkReversalPattern(bool lookForBullish, int candleOffset) =>
+    bool detected = false
+    string patternName = ""
+    int barStart = na
+    int barEnd = na
+
+    // Check Pin Bar (60% wick, 30% body)
+    [pinDetected, pinStart, pinEnd] = isPinBar(lookForBullish, candleOffset, 0.6, 0.3)
+    if pinDetected
+        detected := true
+        patternName := lookForBullish ? "Pin Bar (Hammer)" : "Pin Bar (Shooting Star)"
+        barStart := pinStart
+        barEnd := pinEnd
+
+    // Check Engulfing if Pin Bar not found
+    if not detected
+        [engulfDetected, engulfStart, engulfEnd] = isEngulfing(lookForBullish, candleOffset)
+        if engulfDetected
+            detected := true
+            patternName := lookForBullish ? "Bullish Engulfing" : "Bearish Engulfing"
+            barStart := engulfStart
+            barEnd := engulfEnd
+
+    // Check Piercing if Engulfing not found (50% penetration)
+    if not detected
+        [piercingDetected, piercingStart, piercingEnd] = isPiercing(lookForBullish, candleOffset, 0.5)
+        if piercingDetected
+            detected := true
+            patternName := lookForBullish ? "Piercing Line" : "Dark Cloud Cover"
+            barStart := piercingStart
+            barEnd := piercingEnd
+
+    // Check Tweezer if Piercing not found (20% ATR tolerance)
+    if not detected
+        [tweezerDetected, tweezerStart, tweezerEnd] = isTweezer(lookForBullish, candleOffset, 0.2)
+        if tweezerDetected
+            detected := true
+            patternName := lookForBullish ? "Tweezer Bottom" : "Tweezer Top"
+            barStart := tweezerStart
+            barEnd := tweezerEnd
+
+    [detected, patternName, barStart, barEnd]
+
+// Create arrow line from label to trigger bar (points to trigger candle)
+createArrowToLabel(triggerBar, labelBar, price, arrowColor) =>
+    line.new(x1=labelBar, y1=price, x2=triggerBar, y2=price, color=arrowColor, width=1, style=line.style_arrow_right, xloc=xloc.bar_index)
+
+// Check if current time is within alert active window (uses chart timezone)
+// Handles both same-day windows (e.g., 8:00-22:30) and overnight windows (e.g., 22:00-02:00)
+isWithinAlertTimeWindow() =>
+    if not enableAlertTimeWindow
+        true  // If time window disabled, always allow alerts
+    else
+        currentHour = hour(time)
+        currentMinute = minute(time)
+
+        // Convert times to minutes since midnight for easier comparison
+        currentTimeMinutes = currentHour * 60 + currentMinute
+        startTimeMinutes = alertStartHour * 60 + alertStartMinute
+        endTimeMinutes = alertEndHour * 60 + alertEndMinute
+
+        // Check if window crosses midnight (e.g., 22:00 to 02:00)
+        if startTimeMinutes > endTimeMinutes
+            // Overnight window: active if time >= start OR time <= end
+            currentTimeMinutes >= startTimeMinutes or currentTimeMinutes <= endTimeMinutes
+        else
+            // Same-day window: active if time >= start AND time <= end
+            currentTimeMinutes >= startTimeMinutes and currentTimeMinutes <= endTimeMinutes
+
+// Timeframe multiplier for percentage parameters
+// Base values are for 1H timeframe, multiplier adjusts for other timeframes
+getTimeframeMultiplier() =>
+    float multiplier = 1.0
+    int tfSeconds = timeframe.in_seconds(timeframe.period)
+
+    if tfSeconds < timeframe.in_seconds("5")
+        multiplier := 0.15
+    else if tfSeconds < timeframe.in_seconds("15")
+        multiplier := 0.25
+    else if tfSeconds < timeframe.in_seconds("60")
+        multiplier := 0.5
+    else if tfSeconds < timeframe.in_seconds("240")
+        multiplier := 1.0
+    else if tfSeconds < timeframe.in_seconds("1D")
+        multiplier := 2.0
+    else if tfSeconds < timeframe.in_seconds("1W")
+        multiplier := 5.0
+    else if tfSeconds < timeframe.in_seconds("1M")
+        multiplier := 10.0
+    else
+        multiplier := 15.0
+
+    multiplier
+
+tfMultiplier = getTimeframeMultiplier()
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME (MTF) SYSTEM
+// ═══════════════════════════════════════════════════════════════════════
+
+// Check if current timeframe is supported by this indicator
+// Supported timeframes: 1m, 5m, 15m, 1H, 4H, 1D, 1W, 1M
+// Returns true if supported, false if unsupported
+isSupportedTimeframe() =>
+    string currentTF = timeframe.period
+
+    // List of supported timeframes
+    bool isSupported = currentTF == "1" or currentTF == "5" or currentTF == "15" or
+                       currentTF == "60" or currentTF == "240" or
+                       currentTF == "D" or currentTF == "W" or currentTF == "M"
+
+    isSupported
+
+// Get timeframe hierarchy: [EntryTF, PatternTF, TrendTF]
+// EntryTF: Current timeframe (where entry signals are detected)
+// PatternTF: One level above (where patterns are identified)
+// TrendTF: Two levels above (where overall trend is determined)
+getTimeframeLevels() =>
+    string currentTF = timeframe.period
+    string entryTF = currentTF
+    string patternTF = ""
+    string trendTF = ""
+
+    // Timeframe sequence: 1m → 5m → 15m → 1H → 4H → 1D → 1W → 1M → 3M → 12M
+    if currentTF == "1"        // 1 minute
+        patternTF := "5"       // 5 minute
+        trendTF := "15"        // 15 minute
+    else if currentTF == "5"   // 5 minute
+        patternTF := "15"      // 15 minute
+        trendTF := "60"        // 1 hour
+    else if currentTF == "15"  // 15 minute
+        patternTF := "60"      // 1 hour
+        trendTF := "240"       // 4 hour
+    else if currentTF == "60"  // 1 hour
+        patternTF := "240"     // 4 hour
+        trendTF := "D"         // 1 day
+    else if currentTF == "240" // 4 hour
+        patternTF := "D"       // 1 day
+        trendTF := "W"         // 1 week
+    else if currentTF == "D"   // 1 day
+        patternTF := "W"       // 1 week
+        trendTF := "M"         // 1 month
+    else if currentTF == "W"   // 1 week
+        patternTF := "M"       // 1 month
+        trendTF := "3M"        // 3 months
+    else if currentTF == "M"   // 1 month
+        patternTF := "3M"      // 3 months
+        trendTF := "12M"       // 1 year (12 months)
+
+    [entryTF, patternTF, trendTF]
+
+// Get current MTF levels
+[entryTF, patternTF, trendTF] = getTimeframeLevels()
+isSupported = isSupportedTimeframe()
+
+// Fetch 200 EMA from Trend Timeframe for MA_Score
+// Uses request.security to get higher timeframe data
+trendTF_ema200 = request.security(syminfo.tickerid, trendTF, ta.ema(close, 200))
+
+// Helper function to format timeframe string for display
+// Used by MTF info table to convert Pine Script TF notation to readable format
+formatTimeframeForDisplay(string tf) =>
+    string displayTF = ""
+    if tf == "1"
+        displayTF := "1m"
+    else if tf == "5"
+        displayTF := "5m"
+    else if tf == "15"
+        displayTF := "15m"
+    else if tf == "60"
+        displayTF := "1H"
+    else if tf == "240"
+        displayTF := "4H"
+    else if tf == "D"
+        displayTF := "1D"
+    else if tf == "W"
+        displayTF := "1W"
+    else if tf == "M"
+        displayTF := "1M"
+    else if tf == "3M"
+        displayTF := "3M"
+    else if tf == "12M"
+        displayTF := "1Y"
+    else
+        displayTF := tf
+    displayTF
+
+// ═══════════════════════════════════════════════════════════════════════
+// BETA CALCULATION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Request ES1! futures data (S&P 500 E-mini) for beta calculation
+es1Data = request.security("ES1!", timeframe.period, close)
+
+// Calculate beta using covariance/variance method
+// Beta = Covariance(Security, Market) / Variance(Market)
+calculateBeta() =>
+    float beta = na
+    if showBeta and bar_index >= betaLookback
+        // Arrays to store returns
+        var array<float> securityReturns = array.new<float>()
+        var array<float> marketReturns = array.new<float>()
+
+        // Clear arrays
+        array.clear(securityReturns)
+        array.clear(marketReturns)
+
+        // Calculate returns for the lookback period
+        for i = 1 to betaLookback
+            if not na(close[i]) and not na(close[i+1]) and not na(es1Data[i]) and not na(es1Data[i+1])
+                secReturn = (close[i] - close[i+1]) / close[i+1]
+                mktReturn = (es1Data[i] - es1Data[i+1]) / es1Data[i+1]
+                array.push(securityReturns, secReturn)
+                array.push(marketReturns, mktReturn)
+
+        // Calculate means
+        if array.size(securityReturns) > 10
+            secMean = array.avg(securityReturns)
+            mktMean = array.avg(marketReturns)
+
+            // Calculate covariance and variance
+            float covariance = 0.0
+            float variance = 0.0
+
+            for i = 0 to array.size(securityReturns) - 1
+                secDev = array.get(securityReturns, i) - secMean
+                mktDev = array.get(marketReturns, i) - mktMean
+                covariance += secDev * mktDev
+                variance += mktDev * mktDev
+
+            // Calculate beta
+            if variance != 0
+                beta := covariance / variance
+    beta
+
+betaValue = calculateBeta()
+
+// Calculate combined multiplier (timeframe * beta)
+// If beta is not available or beta multiplier is disabled, use absolute value of 1.0
+betaMultiplier = useBetaMultiplier and not na(betaValue) ? math.abs(betaValue) : 1.0
+combinedMultiplier = tfMultiplier * betaMultiplier
+
+// Calculate final effective percentage values
+finalSwingMinMove = swingMinMove * combinedMultiplier
+finalFvgMinSize = fvgMinSize * combinedMultiplier
+finalObMinMove = obMinMove * combinedMultiplier
+
+// Calculate absolute values from percentages
+// Round to appropriate precision based on syminfo.mintick
+swingAbsValue = math.ceil((close * finalSwingMinMove / 100) / syminfo.mintick) * syminfo.mintick
+fvgAbsValue = math.ceil((close * finalFvgMinSize / 100) / syminfo.mintick) * syminfo.mintick
+obAbsValue = math.ceil((close * finalObMinMove / 100) / syminfo.mintick) * syminfo.mintick
+
+// Display beta and config values in table (merged with MTF info)
+var table betaTable = table.new(position.top_right, 2, 11, bgcolor=color.new(color.black, 10), frame_width=1, frame_color=color.gray, border_width=1, border_color=color.gray)
+
+if showBeta
+    // Header row - Beta value
+    betaColor = not na(betaValue) ? (betaValue >= 0 ? color.new(color.green, 0) : color.new(color.red, 0)) : color.gray
+    betaText = not na(betaValue) ? str.tostring(betaValue, "#.##") : "N/A"
+    table.cell(betaTable, 0, 0, "β", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    table.cell(betaTable, 1, 0, betaText, text_color=betaColor, text_size=size.normal, bgcolor=color.new(color.black, 20))
+
+    // Multipliers info - show combined multiplier value
+    table.cell(betaTable, 0, 1, "TF × β", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    finalCombinedMultiplier = tfMultiplier * betaMultiplier
+    multiplierText = str.tostring(tfMultiplier, "#.##") + " × " + str.tostring(betaMultiplier, "#.##") + " = " + str.tostring(finalCombinedMultiplier, "#.###")
+    table.cell(betaTable, 1, 1, multiplierText, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // MA_Score - Long row header (values calculated later after function definition)
+    table.cell(betaTable, 0, 2, "MA_Score - Long", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+
+    // MA_Score - Short row header (values calculated later after function definition)
+    table.cell(betaTable, 0, 3, "MA_Score - Short", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+
+    // Trend row header (values calculated later after function definition)
+    table.cell(betaTable, 0, 4, "Trend", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+
+    // Swing Min Move
+    table.cell(betaTable, 0, 5, "Swing", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    swingText = str.tostring(finalSwingMinMove, "#.###") + "% (" + str.tostring(swingAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 5, swingText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // FVG Min Size
+    table.cell(betaTable, 0, 6, "FVG", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    fvgText = str.tostring(finalFvgMinSize, "#.###") + "% (" + str.tostring(fvgAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 6, fvgText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // OB Min Move
+    table.cell(betaTable, 0, 7, "OB", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    obText = str.tostring(finalObMinMove, "#.###") + "% (" + str.tostring(obAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 7, obText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // MTF Info Rows (only show if supported timeframe and MTF display enabled)
+    if isSupported and showMTFInfo
+        // EntryTF row
+        table.cell(betaTable, 0, 8, "EntryTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 50))
+        table.cell(betaTable, 1, 8, formatTimeframeForDisplay(entryTF), text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+        // PatternTF row
+        table.cell(betaTable, 0, 9, "PatternTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.purple, 50))
+        table.cell(betaTable, 1, 9, formatTimeframeForDisplay(patternTF), text_color=color.fuchsia, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+        // TrendTF row
+        table.cell(betaTable, 0, 10, "TrendTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.orange, 50))
+        table.cell(betaTable, 1, 10, formatTimeframeForDisplay(trendTF), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+// ═══════════════════════════════════════════════════════════════════════
+// PnL STATISTICS TABLE (Bottom-Right Corner)
+// ═══════════════════════════════════════════════════════════════════════
+
+// PnL Statistics Table (bottom-right corner)
+// Note: Dynamically sized based on active flags (Potential/Confirmed)
+// Determine table columns: 2 if only one active, 3 if both active
+bothActive = showPotentialAlerts and showConfirmedAlerts
+tableColumns = bothActive ? 3 : 2
+var table pnlTable = table.new(position.bottom_right, tableColumns, 12, bgcolor=color.new(color.black, 10), frame_width=1, frame_color=color.gray, border_width=1, border_color=color.gray)
+
+if showPnLTable and isSupported and (showPotentialAlerts or showConfirmedAlerts)
+    // Calculate CONFIRMED statistics
+    winRate = totalTrades > 0 ? (tpHits / totalTrades) * 100 : 0
+    lossRate = totalTrades > 0 ? (slHits / totalTrades) * 100 : 0
+    avgWin = tpHits > 0 ? totalWinAmount / tpHits : 0
+    avgLoss = slHits > 0 ? totalLossAmount / slHits : 0
+    profitRatio = avgLoss > 0 ? avgWin / avgLoss : 0
+    avgRRTP = tpHits > 0 ? totalRMultipleTP / tpHits : 0
+
+    // Calculate POTENTIAL statistics
+    potentialWinRate = totalPotentialTrades > 0 ? (potentialTPHits / totalPotentialTrades) * 100 : 0
+    potentialLossRate = totalPotentialTrades > 0 ? (potentialSLHits / totalPotentialTrades) * 100 : 0
+    potentialAvgWin = potentialTPHits > 0 ? totalPotentialWinAmount / potentialTPHits : 0
+    potentialAvgLoss = potentialSLHits > 0 ? totalPotentialLossAmount / potentialSLHits : 0
+    potentialProfitRatio = potentialAvgLoss > 0 ? potentialAvgWin / potentialAvgLoss : 0
+    potentialAvgRRTP = potentialTPHits > 0 ? totalRMultiplePotentialTP / potentialTPHits : 0
+
+    // Determine column indices based on active flags
+    potentialCol = bothActive ? 1 : (showPotentialAlerts ? 1 : na)
+    confirmedCol = bothActive ? 2 : (showConfirmedAlerts ? 1 : na)
+
+    // Row 0: Headers (if both active)
+    if bothActive
+        table.cell(pnlTable, 0, 0, "", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+        table.cell(pnlTable, 1, 0, "POTENTIAL", text_color=color.white, bgcolor=color.new(color.blue, 60), text_size=size.small)
+        table.cell(pnlTable, 2, 0, "CONFIRMED", text_color=color.white, bgcolor=color.new(color.purple, 60), text_size=size.small)
+
+    // Row 1: Total PnL
+    rowIdx = bothActive ? 1 : 0
+    table.cell(pnlTable, 0, rowIdx, "Total PnL", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        pnlColor = totalPotentialPnL >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        pnlSign = totalPotentialPnL >= 0 ? "+" : ""
+        table.cell(pnlTable, potentialCol, rowIdx, pnlSign + "$" + str.tostring(totalPotentialPnL, "#,###.00"), text_color=color.white, bgcolor=pnlColor, text_size=size.normal)
+    if not na(confirmedCol)
+        pnlColor = totalPnL >= 0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        pnlSign = totalPnL >= 0 ? "+" : ""
+        table.cell(pnlTable, confirmedCol, rowIdx, pnlSign + "$" + str.tostring(totalPnL, "#,###.00"), text_color=color.white, bgcolor=pnlColor, text_size=size.normal)
+
+    // Row 2: Total Trades
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Total Trades", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        table.cell(pnlTable, potentialCol, rowIdx, str.tostring(totalPotentialTrades), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        table.cell(pnlTable, confirmedCol, rowIdx, str.tostring(totalTrades), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+
+    // Row 3: Total Profit
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Total Profit", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        profitSign = totalPotentialWinAmount >= 0 ? "+" : ""
+        table.cell(pnlTable, potentialCol, rowIdx, profitSign + "$" + str.tostring(totalPotentialWinAmount, "#,###.00"), text_color=color.white, bgcolor=color.new(color.green, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        profitSign = totalWinAmount >= 0 ? "+" : ""
+        table.cell(pnlTable, confirmedCol, rowIdx, profitSign + "$" + str.tostring(totalWinAmount, "#,###.00"), text_color=color.white, bgcolor=color.new(color.green, 70), text_size=size.normal)
+
+    // Row 4: Total Loss
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Total Loss", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        lossDisplay = totalPotentialLossAmount > 0 ? "-$" + str.tostring(totalPotentialLossAmount, "#,###.00") : "$0.00"
+        table.cell(pnlTable, potentialCol, rowIdx, lossDisplay, text_color=color.white, bgcolor=color.new(color.red, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        lossDisplay = totalLossAmount > 0 ? "-$" + str.tostring(totalLossAmount, "#,###.00") : "$0.00"
+        table.cell(pnlTable, confirmedCol, rowIdx, lossDisplay, text_color=color.white, bgcolor=color.new(color.red, 70), text_size=size.normal)
+
+    // Row 5: TP / SL Hits
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "TP / SL Hits", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        table.cell(pnlTable, potentialCol, rowIdx, str.tostring(potentialTPHits) + " / " + str.tostring(potentialSLHits), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        table.cell(pnlTable, confirmedCol, rowIdx, str.tostring(tpHits) + " / " + str.tostring(slHits), text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+
+    // Row 6: Discarded (POTENTIAL only)
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Discarded", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        table.cell(pnlTable, potentialCol, rowIdx, str.tostring(potentialDiscarded), text_color=color.white, bgcolor=color.new(color.orange, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        table.cell(pnlTable, confirmedCol, rowIdx, "N/A", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+
+    // Row 7: Win Ratio
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Win Ratio", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        winRatioColor = potentialWinRate >= 50 ? color.new(color.green, 70) : color.new(color.red, 70)
+        table.cell(pnlTable, potentialCol, rowIdx, str.tostring(potentialWinRate, "#.#") + "%", text_color=color.white, bgcolor=winRatioColor, text_size=size.normal)
+    if not na(confirmedCol)
+        winRatioColor = winRate >= 50 ? color.new(color.green, 70) : color.new(color.red, 70)
+        table.cell(pnlTable, confirmedCol, rowIdx, str.tostring(winRate, "#.#") + "%", text_color=color.white, bgcolor=winRatioColor, text_size=size.normal)
+
+    // Row 8: Profit Ratio
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Profit Ratio", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        profitRatioColor = potentialProfitRatio >= 1.0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        profitRatioText = potentialProfitRatio > 0 ? str.tostring(potentialProfitRatio, "#.##") : "N/A"
+        table.cell(pnlTable, potentialCol, rowIdx, profitRatioText, text_color=color.white, bgcolor=profitRatioColor, text_size=size.normal)
+    if not na(confirmedCol)
+        profitRatioColor = profitRatio >= 1.0 ? color.new(color.green, 70) : color.new(color.red, 70)
+        profitRatioText = profitRatio > 0 ? str.tostring(profitRatio, "#.##") : "N/A"
+        table.cell(pnlTable, confirmedCol, rowIdx, profitRatioText, text_color=color.white, bgcolor=profitRatioColor, text_size=size.normal)
+
+    // Row 9: Avg RR (TP)
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Avg RR (TP)", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        avgRRTPColor = potentialAvgRRTP >= 2.0 ? color.new(color.green, 70) : (potentialAvgRRTP >= 1.5 ? color.new(color.orange, 70) : color.new(color.red, 70))
+        avgRRTPText = potentialTPHits > 0 ? str.tostring(potentialAvgRRTP, "#.##") + "R" : "--"
+        table.cell(pnlTable, potentialCol, rowIdx, avgRRTPText, text_color=color.white, bgcolor=avgRRTPColor, text_size=size.normal)
+    if not na(confirmedCol)
+        avgRRTPColor = avgRRTP >= 2.0 ? color.new(color.green, 70) : (avgRRTP >= 1.5 ? color.new(color.orange, 70) : color.new(color.red, 70))
+        avgRRTPText = tpHits > 0 ? str.tostring(avgRRTP, "#.##") + "R" : "--"
+        table.cell(pnlTable, confirmedCol, rowIdx, avgRRTPText, text_color=color.white, bgcolor=avgRRTPColor, text_size=size.normal)
+
+    // Row 10: Duration
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Duration", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        durationText = formatDuration(firstPotentialTradeTime, lastPotentialTradeTime)
+        table.cell(pnlTable, potentialCol, rowIdx, durationText, text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        durationText = formatDuration(firstTradeTime, lastTradeTime)
+        table.cell(pnlTable, confirmedCol, rowIdx, durationText, text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+
+    // Row 11: Avg Bars
+    rowIdx := rowIdx + 1
+    table.cell(pnlTable, 0, rowIdx, "Avg Bars", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(potentialCol)
+        avgBarsOverall = totalPotentialTrades > 0 ? totalBarsInPotentialTrades / totalPotentialTrades : 0
+        avgBarsWins = potentialTPHits > 0 ? totalBarsInPotentialWins / potentialTPHits : 0
+        avgBarsLosses = potentialSLHits > 0 ? totalBarsInPotentialLosses / potentialSLHits : 0
+        avgBarsText = totalPotentialTrades > 0 ? str.tostring(avgBarsOverall, "#.#") + " (W:" + str.tostring(avgBarsWins, "#.#") + " / L:" + str.tostring(avgBarsLosses, "#.#") + ")" : "--"
+        table.cell(pnlTable, potentialCol, rowIdx, avgBarsText, text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+    if not na(confirmedCol)
+        avgBarsOverall = totalTrades > 0 ? totalBarsInTrades / totalTrades : 0
+        avgBarsWins = tpHits > 0 ? totalBarsInWins / tpHits : 0
+        avgBarsLosses = slHits > 0 ? totalBarsInLosses / slHits : 0
+        avgBarsText = totalTrades > 0 ? str.tostring(avgBarsOverall, "#.#") + " (W:" + str.tostring(avgBarsWins, "#.#") + " / L:" + str.tostring(avgBarsLosses, "#.#") + ")" : "--"
+        table.cell(pnlTable, confirmedCol, rowIdx, avgBarsText, text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.normal)
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME (MTF) DISPLAY TABLES
+// ═══════════════════════════════════════════════════════════════════════
+
+// Unsupported Timeframe Error Table (top-center position)
+var table errorTable = table.new(position.top_center, 1, 2, bgcolor=color.new(color.red, 20), frame_width=2, frame_color=color.red, border_width=1, border_color=color.red)
+
+if not isSupported
+    // Error header
+    table.cell(errorTable, 0, 0, "⚠️ UNSUPPORTED TIMEFRAME", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.red, 0))
+
+    // Instruction message
+    table.cell(errorTable, 0, 1, "Use: 1m, 5m, 15m, 1H, 4H, 1D, 1W, or 1M", text_color=color.white, text_size=size.small, bgcolor=color.new(color.orange, 0))
+
+// ═══════════════════════════════════════════════════════════════════════
+// ATR MINIMUM SL APPLICATION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper function to apply ATR minimum SL
+// Returns adjusted SL price and a boolean indicating if ATR was used
+applyATRMinimumSL(float entryPrice, float calculatedSL, bool isBullishSetup) =>
+    float adjustedSL = calculatedSL
+    bool atrUsed = false
+
+    if useATRMinimumSL
+        calculatedDistance = math.abs(entryPrice - calculatedSL)
+
+        if calculatedDistance < atrValue
+            // ATR is larger than calculated SL, use ATR distance
+            if isBullishSetup
+                adjustedSL := entryPrice - atrValue  // Bullish: SL below entry
+            else
+                adjustedSL := entryPrice + atrValue  // Bearish: SL above entry
+            atrUsed := true
+
+    [adjustedSL, atrUsed]
+
+// ═══════════════════════════════════════════════════════════════════════
+// MA SCORE CALCULATION (Moving Average Support Score)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Calculate moving averages
+ema200 = ta.ema(close, 200)
+ema100 = ta.ema(close, 100)
+ema50 = ta.ema(close, 50)
+vwapValue = ta.vwap(close)
+
+// Volume calculation for MA_Score
+avgVolume21 = ta.sma(volume, 21)
+
+// ═══════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+type FVGBox
+    box boxDrawing
+    label labelDrawing
+    float top
+    float bottom
+    int startBar
+    bool isBullish
+    bool mitigated
+    bool filled
+    bool isLiquidityRun
+    bool alertSent
+    bool confluenceMarked
+    bool topTouched      // Track if top edge has been touched
+    bool bottomTouched   // Track if bottom edge has been touched
+
+type OrderBlock
+    box boxDrawing
+    label labelDrawing
+    float top
+    float bottom
+    int startBar
+    int endBar
+    bool isBullish
+    bool mitigated
+    bool filled
+    bool broken
+    bool confluenceMarked
+    bool topTouched      // Track if top edge has been touched
+    bool bottomTouched   // Track if bottom edge has been touched
+
+type MarketStructure
+    line lineDrawing
+    label labelDrawing
+    float price
+    int startBar
+    int endBar
+    bool isBullish
+    bool isBOS
+
+type TradingOpportunity
+    label labelDrawing
+    line arrowDrawing
+    string patternType
+    float price
+    int detectionBar
+    bool alertSent
+    bool isValid
+    bool isBullish
+    float entryPrice
+    float stopLossPrice
+    float takeProfitPrice
+    float ltpAtAlert
+    string alertId
+    string state
+    bool entryReached
+    int entryReachedBar
+    string originalAlertId
+    box reversalBox
+    string reversalPattern
+    line slLine
+    line tpLine
+    line entryLine
+    bool slHit
+    bool tpHit
+    float pnlAmount
+    float rMultiple
+    bool fired
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE VARIABLES
+// ═══════════════════════════════════════════════════════════════════════
+
+var float prevSwingHighPrice = na
+var float prevSwingLowPrice = na
+var array<float> swingHighHistory = array.new<float>()
+var array<int> swingHighBarHistory = array.new<int>()
+var array<bool> swingHighConfirmedAsExtreme = array.new<bool>()
+var array<label> swingHighLabels = array.new<label>()
+var array<line> swingHighLines = array.new<line>()
+var array<float> swingLowHistory = array.new<float>()
+var array<int> swingLowBarHistory = array.new<int>()
+var array<bool> swingLowConfirmedAsExtreme = array.new<bool>()
+var array<label> swingLowLabels = array.new<label>()
+var array<line> swingLowLines = array.new<line>()
+
+var array<line> highestHighLines = array.new<line>()
+var array<label> highestHighLabels = array.new<label>()
+var array<float> highestHighPrices = array.new<float>()
+var array<line> lowestLowLines = array.new<line>()
+var array<label> lowestLowLabels = array.new<label>()
+var array<float> lowestLowPrices = array.new<float>()
+
+var array<FVGBox> activeFVGs = array.new<FVGBox>()
+var array<OrderBlock> activeOBs = array.new<OrderBlock>()
+var int lastOBDirection = 0
+
+var array<MarketStructure> activeMS = array.new<MarketStructure>()
+var float lastLH = na
+var float lastHL = na
+var float lastHH = na
+var float lastLL = na
+var int lastLHBar = na
+var int lastHLBar = na
+var int lastHHBar = na
+var int lastLLBar = na
+var int consecutiveLH = 0
+var int consecutiveHL = 0
+
+var array<TradingOpportunity> activeOpportunities = array.new<TradingOpportunity>()
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS (Alert Trading Parameters)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper function: Check if price is near an unmitigated structure (OB or FVG)
+// Used for Structure Confluence parameter in MA_Score
+// Returns true if price within 50% of any unmitigated same-direction structure
+isNearUnmitigatedStructure(bool isBullish, float price) =>
+    bool nearStructure = false
+    float proximityThreshold = 0.5  // 50% of zone height
+
+    // Check active FVGs for unmitigated zones
+    if array.size(activeFVGs) > 0
+        for i = 0 to array.size(activeFVGs) - 1
+            fvg = array.get(activeFVGs, i)
+            if not fvg.mitigated and fvg.isBullish == isBullish
+                zoneHeight = fvg.top - fvg.bottom
+                zoneMid = (fvg.top + fvg.bottom) / 2
+                if math.abs(price - zoneMid) <= (zoneHeight * proximityThreshold)
+                    nearStructure := true
+                    break
+
+    // Check active OBs if not found in FVGs
+    if not nearStructure and array.size(activeOBs) > 0
+        for i = 0 to array.size(activeOBs) - 1
+            ob = array.get(activeOBs, i)
+            if not ob.mitigated and ob.isBullish == isBullish
+                zoneHeight = ob.top - ob.bottom
+                zoneMid = (ob.top + ob.bottom) / 2
+                if math.abs(price - zoneMid) <= (zoneHeight * proximityThreshold)
+                    nearStructure := true
+                    break
+
+    nearStructure
+
+// Calculate MA Score (out of 10 points) - 9-Parameter Research-Based System
+// Weights based on institutional trading practices and SMC effectiveness research (2024-2025)
+//
+// TIER 1 - Institutional Trend Bias (48%): 4.8 points
+// 2.400 points: 200 EMA support (institutional "line in the sand")
+// 1.600 points: 100 EMA support (major trend identification, strong crossover signals)
+// 1.200 points: VWAP support (institutional execution benchmark, 69% follow rate)
+//
+// TIER 2 - Multi-Timeframe Context (24%): 2.4 points
+// 1.200 points: Trend TF Support (68% success rate with MTF alignment)
+// 0.600 points: Market Structure Momentum (recent BOS = trend continuation)
+// 0.600 points: Liquidity Event (70% reversion rate after sweeps/breaks)
+//
+// TIER 3 - Intermediate Confirmation (28%): 2.8 points
+// 0.800 points: 50 EMA support (swing trading key level)
+// 0.800 points: Volume confirmation (69% trend persistence when confirmed)
+// 0.800 points: Structure Confluence (alert near unmitigated OB/FVG)
+//
+// Returns: MA Score (0.0-10.0)
+calculateMAScore(bool isBullishSetup, float currentPrice) =>
+    float maScore = 0.0
+
+    if isBullishSetup
+        // Bullish trade: Price should be ABOVE MAs for support
+        if currentPrice > ema200
+            maScore := maScore + 2.400  // 200 EMA support (TIER 1)
+        if currentPrice > ema100
+            maScore := maScore + 1.600  // 100 EMA support (TIER 1)
+        if currentPrice > ema50
+            maScore := maScore + 0.800  // 50 EMA support (TIER 3)
+        if currentPrice > vwapValue
+            maScore := maScore + 1.200  // VWAP support (TIER 1)
+    else
+        // Bearish trade: Price should be BELOW MAs for support
+        if currentPrice < ema200
+            maScore := maScore + 2.400  // 200 EMA support (TIER 1)
+        if currentPrice < ema100
+            maScore := maScore + 1.600  // 100 EMA support (TIER 1)
+        if currentPrice < ema50
+            maScore := maScore + 0.800  // 50 EMA support (TIER 3)
+        if currentPrice < vwapValue
+            maScore := maScore + 1.200  // VWAP support (TIER 1)
+
+    // Volume parameter (0.800 points - TIER 3)
+    // If current volume > 21-period average volume, add 0.8 points
+    // Logic is same for both bullish and bearish (volume-agnostic)
+    if volume > avgVolume21
+        maScore := maScore + 0.800  // Volume confirmation
+
+    // Trend TF Support parameter (1.200 points - TIER 2)
+    // Bullish: Price above Trend TF 200 EMA = 1.2 points
+    // Bearish: Price below Trend TF 200 EMA = 1.2 points
+    if not na(trendTF_ema200)
+        if isBullishSetup
+            if currentPrice > trendTF_ema200
+                maScore := maScore + 1.200  // Bullish with higher TF support (TIER 2)
+        else
+            if currentPrice < trendTF_ema200
+                maScore := maScore + 1.200  // Bearish with higher TF support (TIER 2)
+
+    // Structure Confluence parameter (0.800 points - TIER 3)
+    // Alert near unmitigated Order Block or FVG in same direction
+    // Checks if price within 50% of any same-direction unmitigated structure
+    if isNearUnmitigatedStructure(isBullishSetup, currentPrice)
+        maScore := maScore + 0.800  // Structure confluence (OB or FVG)
+
+    // Market Structure Momentum parameter (0.600 points - TIER 2)
+    // Recent BOS (Break of Structure) in same direction (last 20 bars)
+    // BOS indicates trend continuation, increases setup confidence
+    int bosLookback = 20
+    if array.size(activeMS) > 0
+        for i = 0 to array.size(activeMS) - 1
+            ms = array.get(activeMS, i)
+            if ms.isBOS and (bar_index - ms.endBar) <= bosLookback
+                if ms.isBullish == isBullishSetup
+                    maScore := maScore + 0.600  // BOS momentum confirmation
+                    break  // Only count once
+
+    // Liquidity Event parameter (0.600 points - TIER 2)
+    // Recent liquidity sweep or XH/XL break (last 10 bars)
+    // Sweeps often precede reversals (70% reversion rate)
+    int liquidityLookback = 10
+    if array.size(activeOpportunities) > 0
+        for i = 0 to array.size(activeOpportunities) - 1
+            opp = array.get(activeOpportunities, i)
+            if (bar_index - opp.detectionBar) <= liquidityLookback
+                if opp.patternType == "External Liquidity" or opp.patternType == "FVG Sweep"
+                    maScore := maScore + 0.600  // Liquidity event detected
+                    break  // Only count once
+
+    maScore
+
+// Update MA_Score in beta table (if beta display is enabled)
+if showBeta
+    // Calculate MA scores for both directions
+    bullishMAScore = calculateMAScore(true, close)
+    bearishMAScore = calculateMAScore(false, close)
+
+    // MA_Score - Long (bullish) with up arrow, green color, size.normal
+    longScoreText = "↑ " + str.tostring(bullishMAScore, "#.#")
+    table.cell(betaTable, 1, 2, longScoreText, text_color=color.new(color.green, 0), text_size=size.normal, bgcolor=color.new(color.black, 20))
+
+    // MA_Score - Short (bearish) with down arrow, red color, size.normal
+    shortScoreText = "↓ " + str.tostring(bearishMAScore, "#.#")
+    table.cell(betaTable, 1, 3, shortScoreText, text_color=color.new(color.red, 0), text_size=size.normal, bgcolor=color.new(color.black, 20))
+
+    // Trend determination based on MA scores
+    trendText = ""
+    trendBgColor = color.gray
+    trendTextColor = color.white
+
+    if bullishMAScore >= 8.0
+        // Super Bullish: Dark green fill + bright white text
+        trendText := "Super Bullish"
+        trendBgColor := color.new(color.green, 0)  // Dark green (0% transparency = solid)
+        trendTextColor := color.new(color.white, 0)  // Bright white
+    else if bullishMAScore >= 6.0
+        // Bullish: Light green fill + normal white text
+        trendText := "Bullish"
+        trendBgColor := color.new(color.green, 70)  // Light green (70% transparency)
+        trendTextColor := color.white
+    else if bearishMAScore >= 8.0
+        // Super Bearish: Dark red fill + bright white text
+        trendText := "Super Bearish"
+        trendBgColor := color.new(color.red, 0)  // Dark red (0% transparency = solid)
+        trendTextColor := color.new(color.white, 0)  // Bright white
+    else if bearishMAScore >= 6.0
+        // Bearish: Light red fill + normal white text
+        trendText := "Bearish"
+        trendBgColor := color.new(color.red, 70)  // Light red (70% transparency)
+        trendTextColor := color.white
+    else
+        // Neutral: Light gray fill + normal white text
+        trendText := "Neutral"
+        trendBgColor := color.new(color.gray, 70)  // Light gray (70% transparency)
+        trendTextColor := color.white
+
+    // Update Trend row (row 4) with determined values
+    table.cell(betaTable, 1, 4, trendText, text_color=trendTextColor, text_size=size.normal, bgcolor=trendBgColor)
+
+// Generate unique alert ID using timestamp, bar index, and price
+// Format: YYYYMMDD-HHMMSS-BAR-PRICE (e.g., 20251008-143045-1234-17580)
+generateAlertId(barIndex, price) =>
+    // Get timestamp components
+    yearVal = year(time)
+    monthVal = month(time)
+    dayVal = dayofmonth(time)
+    hourVal = hour(time)
+    minuteVal = minute(time)
+    secondVal = second(time)
+
+    // Format with leading zeros
+    yearStr = str.tostring(yearVal)
+    monthStr = monthVal < 10 ? "0" + str.tostring(monthVal) : str.tostring(monthVal)
+    dayStr = dayVal < 10 ? "0" + str.tostring(dayVal) : str.tostring(dayVal)
+    hourStr = hourVal < 10 ? "0" + str.tostring(hourVal) : str.tostring(hourVal)
+    minuteStr = minuteVal < 10 ? "0" + str.tostring(minuteVal) : str.tostring(minuteVal)
+    secondStr = secondVal < 10 ? "0" + str.tostring(secondVal) : str.tostring(secondVal)
+
+    // Format price (remove decimal point, keep 2 digits)
+    priceInt = math.round(price * 100)
+
+    // Combine: YYYYMMDD-HHMMSS-BAR-PRICE
+    yearStr + monthStr + dayStr + "-" + hourStr + minuteStr + secondStr + "-" + str.tostring(barIndex) + "-" + str.tostring(priceInt)
+
+// Find next unmitigated opposite element for Take Profit
+// isBullishSetup: true = looking for bearish TP above, false = looking for bullish TP below
+// entryPrice: Entry price to search from
+// slPrice: Stop loss price (for fallback calculation)
+// rrRatio: Risk-reward ratio for fallback (user-configurable)
+// Returns: [TP price, TP criteria string]
+findTakeProfitPrice(bool isBullishSetup, float entryPrice, float slPrice, float rrRatio) =>
+    float tpPrice = na
+    string tpCriteria = ""
+
+    if isBullishSetup
+        // Bullish setup: Search for bearish elements above entry
+        // 1. Search bearish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if not fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.bottom > entryPrice
+                        if na(tpPrice) or fvg.bottom < tpPrice
+                            tpPrice := fvg.bottom
+                            tpCriteria := "FVG"
+
+        // 2. Search bearish OBs
+        if array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if not ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.bottom > entryPrice
+                        if na(tpPrice) or ob.bottom < tpPrice
+                            tpPrice := ob.bottom
+                            tpCriteria := "OB"
+
+        // 3. Enhanced Fallback: Try recent swing high first, then config RR
+        if na(tpPrice)
+            // Try to find recent swing high above entry
+            float swingTP = na
+            if array.size(swingHighHistory) > 0
+                for i = array.size(swingHighHistory) - 1 to 0
+                    swingHigh = array.get(swingHighHistory, i)
+                    if swingHigh > entryPrice
+                        swingTP := swingHigh
+                        break  // Use most recent swing high above entry
+
+            // Calculate RR for swing high vs config RR
+            float configTP = entryPrice + (entryPrice - slPrice) * rrRatio
+            float riskAmount = math.abs(entryPrice - slPrice)
+
+            if not na(swingTP) and riskAmount > 0
+                float swingReward = math.abs(swingTP - entryPrice)
+                float swingRR = swingReward / riskAmount
+                float configRR = rrRatio
+
+                // Use swing high if it gives better RR than config
+                if swingRR > configRR
+                    tpPrice := swingTP
+                    tpCriteria := "SwingHigh"
+                else
+                    tpPrice := configTP
+                    tpCriteria := "RR"
+            else
+                tpPrice := configTP
+                tpCriteria := "RR"
+    else
+        // Bearish setup: Search for bullish elements below entry
+        // 1. Search bullish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.top < entryPrice
+                        if na(tpPrice) or fvg.top > tpPrice
+                            tpPrice := fvg.top
+                            tpCriteria := "FVG"
+
+        // 2. Search bullish OBs
+        if array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.top < entryPrice
+                        if na(tpPrice) or ob.top > tpPrice
+                            tpPrice := ob.top
+                            tpCriteria := "OB"
+
+        // 3. Enhanced Fallback: Try recent swing low first, then config RR
+        if na(tpPrice)
+            // Try to find recent swing low below entry
+            float swingTP = na
+            if array.size(swingLowHistory) > 0
+                for i = array.size(swingLowHistory) - 1 to 0
+                    swingLow = array.get(swingLowHistory, i)
+                    if swingLow < entryPrice
+                        swingTP := swingLow
+                        break  // Use most recent swing low below entry
+
+            // Calculate RR for swing low vs config RR
+            float configTP = entryPrice - (slPrice - entryPrice) * rrRatio
+            float riskAmount = math.abs(slPrice - entryPrice)
+
+            if not na(swingTP) and riskAmount > 0
+                float swingReward = math.abs(entryPrice - swingTP)
+                float swingRR = swingReward / riskAmount
+                float configRR = rrRatio
+
+                // Use swing low if it gives better RR than config
+                if swingRR > configRR
+                    tpPrice := swingTP
+                    tpCriteria := "SwingLow"
+                else
+                    tpPrice := configTP
+                    tpCriteria := "RR"
+            else
+                tpPrice := configTP
+                tpCriteria := "RR"
+
+    [tpPrice, tpCriteria]
+
+// Enhanced TP finder for OB+FVG Confluence (minimum RR = 1.0)
+// Searches through ALL possible TP targets until finding one with RR >= 1.0
+// Priority: FVGs → OBs → BBs → Swing Points → RR Config
+findEnhancedTakeProfitPrice(bool isBullishSetup, float entryPrice, float slPrice, float rrRatio) =>
+    float tpPrice = na
+    string tpCriteria = ""
+    float riskAmount = math.abs(entryPrice - slPrice)
+    float minRR = 1.0  // Minimum acceptable RR for OB+FVG pattern
+
+    if isBullishSetup
+        // Bullish setup: Search for bearish elements above entry
+        // Priority 1: Search ALL bearish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if not fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.bottom > entryPrice
+                        potentialTP = fvg.bottom
+                        potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP < tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "FVG"
+
+        // Priority 2: Search ALL bearish OBs (if no valid FVG found)
+        if na(tpPrice) and array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if not ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.bottom > entryPrice
+                        potentialTP = ob.bottom
+                        potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP < tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "OB"
+
+        // Priority 3: Search swing highs (if no valid OB found)
+        if na(tpPrice) and array.size(swingHighHistory) > 0
+            for i = array.size(swingHighHistory) - 1 to 0
+                swingHigh = array.get(swingHighHistory, i)
+                if swingHigh > entryPrice
+                    potentialTP = swingHigh
+                    potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                    if potentialRR >= minRR
+                        tpPrice := potentialTP
+                        tpCriteria := "SwingHigh"
+                        break  // Use first valid swing high
+
+        // Priority 4: Fallback to config RR (guaranteed >= minRR if rrRatio >= 1.0)
+        if na(tpPrice)
+            tpPrice := entryPrice + (riskAmount * rrRatio)
+            tpCriteria := "RR"
+    else
+        // Bearish setup: Search for bullish elements below entry
+        // Priority 1: Search ALL bullish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.top < entryPrice
+                        potentialTP = fvg.top
+                        potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP > tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "FVG"
+
+        // Priority 2: Search ALL bullish OBs (if no valid FVG found)
+        if na(tpPrice) and array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.top < entryPrice
+                        potentialTP = ob.top
+                        potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP > tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "OB"
+
+        // Priority 3: Search swing lows (if no valid OB found)
+        if na(tpPrice) and array.size(swingLowHistory) > 0
+            for i = array.size(swingLowHistory) - 1 to 0
+                swingLow = array.get(swingLowHistory, i)
+                if swingLow < entryPrice
+                    potentialTP = swingLow
+                    potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                    if potentialRR >= minRR
+                        tpPrice := potentialTP
+                        tpCriteria := "SwingLow"
+                        break  // Use first valid swing low
+
+        // Priority 4: Fallback to config RR (guaranteed >= minRR if rrRatio >= 1.0)
+        if na(tpPrice)
+            tpPrice := entryPrice - (riskAmount * rrRatio)
+            tpCriteria := "RR"
+
+    [tpPrice, tpCriteria]
+
+// ═══════════════════════════════════════════════════════════════════════
+// SWING POINT DETECTION
+// ═══════════════════════════════════════════════════════════════════════
+
+isSwingHigh(leftBars, rightBars) =>
+    pivotHigh = high[rightBars]
+    isHigh = true
+    for i = 1 to leftBars
+        if high[rightBars + i] >= pivotHigh
+            isHigh := false
+            break
+    if isHigh
+        for i = 0 to rightBars - 1
+            if high[i] > pivotHigh
+                isHigh := false
+                break
+    isHigh
+
+isSwingLow(leftBars, rightBars) =>
+    pivotLow = low[rightBars]
+    isLow = true
+    for i = 1 to leftBars
+        if low[rightBars + i] <= pivotLow
+            isLow := false
+            break
+    if isLow
+        for i = 0 to rightBars - 1
+            if low[i] < pivotLow
+                isLow := false
+                break
+    isLow
+
+// ═══════════════════════════════════════════════════════════════════════
+// MAIN DETECTION LOGIC (Only runs on supported timeframes)
+// ═══════════════════════════════════════════════════════════════════════
+
+swingHigh = isSupported ? isSwingHigh(leftBars, rightBars) : false
+swingLow = isSupported ? isSwingLow(leftBars, rightBars) : false
+
+// ═══════════════════════════════════════════════════════════════════════
+// FAIR VALUE GAP DETECTION
+// ═══════════════════════════════════════════════════════════════════════
+
+bullishFVG = isSupported and (low[1] > high[3])
+bearishFVG = isSupported and (high[1] < low[3])
+
+if showFVG and isSupported
+    if bullishFVG
+        bullishFVGTop = low[1]
+        bullishFVGBottom = high[3]
+        bullishGapSize = ((bullishFVGTop - bullishFVGBottom) / bullishFVGBottom) * 100
+
+        if bullishGapSize >= (fvgMinSize * combinedMultiplier)
+            if array.size(activeFVGs) >= fvgMaxCount
+                oldestFVG = array.shift(activeFVGs)
+                box.delete(oldestFVG.boxDrawing)
+                label.delete(oldestFVG.labelDrawing)
+            
+            isLiquidityRunFVG = false
+            if not na(prevSwingHighPrice)
+                swingHighBar = array.size(swingHighBarHistory) > 0 ? array.get(swingHighBarHistory, array.size(swingHighBarHistory) - 1) : na
+                if not na(swingHighBar) and swingHighBar < bar_index - 2
+                    if bullishFVGBottom <= prevSwingHighPrice and bullishFVGTop >= prevSwingHighPrice
+                        isLiquidityRunFVG := true
+            
+            fvgLabelText = isLiquidityRunFVG ? "Bullish FVG\n(Liquidity Run)" : "Bullish FVG"
+            fvgBox = box.new(left=bar_index - 2, top=bullishFVGTop, right=bar_index - 1, bottom=bullishFVGBottom, border_color=bullishFVGColor, bgcolor=bullishFVGColor, border_width=1, extend=fvgExtendRight ? extend.right : extend.none)
+            fvgLabel = label.new(x=bar_index - 2 + labelOffset, y=(bullishFVGTop + bullishFVGBottom) / 2, text=fvgLabelText, style=label.style_label_left, color=bullishFVGColor, textcolor=color.white, size=size.small)
+            array.push(activeFVGs, FVGBox.new(fvgBox, fvgLabel, bullishFVGTop, bullishFVGBottom, bar_index - 2, true, false, false, isLiquidityRunFVG, false, false, false, false))
+            
+            if isLiquidityRunFVG and showLiquidityRunFVGAlert
+                // Calculate EN, SL, TP with enhanced TP logic
+                isBullishSetup = true
+                entryPrice = close[1]  // Entry at close of FVG confirmation candle (bar[1])
+                calculatedSL = bullishFVGBottom  // SL at bottom of FVG
+
+                // Apply ATR minimum SL
+                [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                // Use enhanced TP (search all structures until RR >= 1.0)
+                [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                // Calculate Risk-Reward ratio
+                riskAmount = math.abs(entryPrice - slPrice)
+                rewardAmount = math.abs(tpPrice - entryPrice)
+                tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                // Calculate MA Score (evaluate at confirmation candle)
+                maScore = calculateMAScore(isBullishSetup, close[1])
+
+                // Calculate position size based on risk management
+                // Liquidity Run FVG is a standalone pattern, uses "Other" strategy type (CONFIRMED PnL pool)
+                currentCapital = getCurrentCapital("Other")
+                qty = calculatePositionSize(entryPrice, slPrice, currentCapital)
+
+                // Generate unique alert ID
+                alertId = generateAlertId(bar_index - 1, entryPrice)
+
+                // Determine if alert will be fired and reason if not
+                withinTimeWindow = isWithinAlertTimeWindow()
+                meetsMAScore = maScore >= minMAScoreForAlert
+                alertWillFire = withinTimeWindow and meetsMAScore
+
+                firedStatus = alertWillFire ? "True" : "False"
+                firedReason = ""
+                if not alertWillFire
+                    if not withinTimeWindow and not meetsMAScore
+                        firedReason := " (OTW, Low MAS)"
+                    else if not withinTimeWindow
+                        firedReason := " (OTW)"
+                    else if not meetsMAScore
+                        firedReason := " (Low MAS)"
+
+                // Create label with conditional prices (multi-line)
+                labelText = "Liquidity Run FVG\n(Bullish)"
+                if showAlertPrices
+                    slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                    tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                    labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                    labelText := labelText + "\nSL=" + slText
+                    labelText := labelText + "\nTP=" + tpText
+                    labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                    labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                    labelText := labelText + "\nQuantity:" + str.tostring(qty)
+                    labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                oppLabel = label.new(x=bar_index - 1 + opportunityLabelOffset, y=close[1], text=labelText, style=label.style_label_left, color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
+                oppArrow = createArrowToLabel(bar_index - 2, bar_index - 1 + opportunityLabelOffset, close[1], color.new(color.green, 0))
+
+                // Create JSON alert message
+                ticker = syminfo.ticker
+                tf = timeframe.period
+                patternName = "Liquidity Run FVG Bullish"
+                timestamp = time[1]
+                alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"BUY","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close[1], format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"quantity":' + str.tostring(qty) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                if alertWillFire
+                    alert(alertMsg, alert.freq_once_per_bar)
+
+                // Push to active opportunities with all trading parameters
+                array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "Liquidity Run FVG", close[1], bar_index - 2, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close[1], alertId, "N/A", false, na, "", na, "", na, na, na, false, false, 0.0, 0.0, alertWillFire))
+
+    if bearishFVG
+        bearishFVGTop = low[3]
+        bearishFVGBottom = high[1]
+        bearishGapSize = ((bearishFVGTop - bearishFVGBottom) / bearishFVGBottom) * 100
+
+        if bearishGapSize >= (fvgMinSize * combinedMultiplier)
+            if array.size(activeFVGs) >= fvgMaxCount
+                oldestFVG = array.shift(activeFVGs)
+                box.delete(oldestFVG.boxDrawing)
+                label.delete(oldestFVG.labelDrawing)
+            
+            isLiquidityRunFVG = false
+            if not na(prevSwingLowPrice)
+                swingLowBar = array.size(swingLowBarHistory) > 0 ? array.get(swingLowBarHistory, array.size(swingLowBarHistory) - 1) : na
+                if not na(swingLowBar) and swingLowBar < bar_index - 2
+                    if bearishFVGBottom <= prevSwingLowPrice and bearishFVGTop >= prevSwingLowPrice
+                        isLiquidityRunFVG := true
+            
+            fvgLabelText = isLiquidityRunFVG ? "Bearish FVG\n(Liquidity Run)" : "Bearish FVG"
+            fvgBox = box.new(left=bar_index - 2, top=bearishFVGTop, right=bar_index - 1, bottom=bearishFVGBottom, border_color=bearishFVGColor, bgcolor=bearishFVGColor, border_width=1, extend=fvgExtendRight ? extend.right : extend.none)
+            fvgLabel = label.new(x=bar_index - 2 + labelOffset, y=(bearishFVGTop + bearishFVGBottom) / 2, text=fvgLabelText, style=label.style_label_left, color=bearishFVGColor, textcolor=color.white, size=size.small)
+            array.push(activeFVGs, FVGBox.new(fvgBox, fvgLabel, bearishFVGTop, bearishFVGBottom, bar_index - 2, false, false, false, isLiquidityRunFVG, false, false, false, false))
+            
+            if isLiquidityRunFVG and showLiquidityRunFVGAlert
+                // Calculate EN, SL, TP with enhanced TP logic
+                isBullishSetup = false
+                entryPrice = close[1]  // Entry at close of FVG confirmation candle (bar[1])
+                calculatedSL = bearishFVGTop  // SL at top of FVG
+
+                // Apply ATR minimum SL
+                [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                // Use enhanced TP (search all structures until RR >= 1.0)
+                [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                // Calculate Risk-Reward ratio
+                riskAmount = math.abs(entryPrice - slPrice)
+                rewardAmount = math.abs(tpPrice - entryPrice)
+                tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                // Calculate MA Score (evaluate at confirmation candle)
+                maScore = calculateMAScore(isBullishSetup, close[1])
+
+                // Calculate position size based on risk management
+                // Liquidity Run FVG is a standalone pattern, uses "Other" strategy type (CONFIRMED PnL pool)
+                currentCapital = getCurrentCapital("Other")
+                qty = calculatePositionSize(entryPrice, slPrice, currentCapital)
+
+                // Generate unique alert ID
+                alertId = generateAlertId(bar_index - 1, entryPrice)
+
+                // Determine if alert will be fired and reason if not
+                withinTimeWindow = isWithinAlertTimeWindow()
+                meetsMAScore = maScore >= minMAScoreForAlert
+                alertWillFire = withinTimeWindow and meetsMAScore
+
+                firedStatus = alertWillFire ? "True" : "False"
+                firedReason = ""
+                if not alertWillFire
+                    if not withinTimeWindow and not meetsMAScore
+                        firedReason := " (OTW, Low MAS)"
+                    else if not withinTimeWindow
+                        firedReason := " (OTW)"
+                    else if not meetsMAScore
+                        firedReason := " (Low MAS)"
+
+                // Create label with conditional prices (multi-line)
+                labelText = "Liquidity Run FVG\n(Bearish)"
+                if showAlertPrices
+                    slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                    tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                    labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                    labelText := labelText + "\nSL=" + slText
+                    labelText := labelText + "\nTP=" + tpText
+                    labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                    labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                    labelText := labelText + "\nQuantity:" + str.tostring(qty)
+                    labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                oppLabel = label.new(x=bar_index - 1 + opportunityLabelOffset, y=close[1], text=labelText, style=label.style_label_left, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+                oppArrow = createArrowToLabel(bar_index - 2, bar_index - 1 + opportunityLabelOffset, close[1], color.new(color.red, 0))
+
+                // Create JSON alert message
+                ticker = syminfo.ticker
+                tf = timeframe.period
+                patternName = "Liquidity Run FVG Bearish"
+                timestamp = time[1]
+                alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"SELL","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close[1], format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"quantity":' + str.tostring(qty) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                if alertWillFire
+                    alert(alertMsg, alert.freq_once_per_bar)
+
+                // Push to active opportunities with all trading parameters
+                array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "Liquidity Run FVG", close[1], bar_index - 2, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close[1], alertId, "N/A", false, na, "", na, "", na, na, na, false, false, 0.0, 0.0, alertWillFire))
+
+    if array.size(activeFVGs) > 0
+        for i = array.size(activeFVGs) - 1 to 0
+            fvg = array.get(activeFVGs, i)
+            if not fvg.filled
+                isMitigated = false
+                isFilled = false
+
+                // Check if minimum candles have passed since FVG creation
+                candlesSinceCreation = bar_index - fvg.startBar
+                canCheckMitigation = candlesSinceCreation >= minCandlesBeforeMitigation
+
+                if canCheckMitigation
+                    if fvg.isBullish
+                        // Bullish FVG: Gap below price
+                        // Track top edge touch (mitigation from above)
+                        if low <= fvg.top
+                            isMitigated := true
+                            fvg.topTouched := true
+                        // Track bottom edge touch
+                        if low <= fvg.bottom
+                            fvg.bottomTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if fvg.topTouched and fvg.bottomTouched
+                            isFilled := true
+                    else
+                        // Bearish FVG: Gap above price
+                        // Track bottom edge touch (mitigation from below)
+                        if high >= fvg.bottom
+                            isMitigated := true
+                            fvg.bottomTouched := true
+                        // Track top edge touch
+                        if high >= fvg.top
+                            fvg.topTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if fvg.topTouched and fvg.bottomTouched
+                            isFilled := true
+
+                if isFilled
+                    fvg.filled := true
+                    fvg.mitigated := true
+                    if fvgDeleteOnFill
+                        box.delete(fvg.boxDrawing)
+                        label.delete(fvg.labelDrawing)
+                        array.remove(activeFVGs, i)
+                    else
+                        box.set_right(fvg.boxDrawing, bar_index)
+                        box.set_extend(fvg.boxDrawing, extend.none)
+                        // Apply light gray for filled structures
+                        box.set_bgcolor(fvg.boxDrawing, filledColor)
+                        box.set_border_color(fvg.boxDrawing, filledColor)
+                        label.set_color(fvg.labelDrawing, filledColor)
+                else if isMitigated
+                    fvg.mitigated := true
+                    if fvgDeleteOnMitigate
+                        box.delete(fvg.boxDrawing)
+                        label.delete(fvg.labelDrawing)
+                        array.remove(activeFVGs, i)
+                    else
+                        // Apply light yellow for mitigated structures
+                        box.set_bgcolor(fvg.boxDrawing, mitigatedColor)
+                        box.set_border_color(fvg.boxDrawing, mitigatedColor)
+                        label.set_color(fvg.labelDrawing, mitigatedColor)
+                        // Extend if needed
+                        if fvgExtendRight
+                            box.set_right(fvg.boxDrawing, bar_index + 10)
+
+                else if fvgExtendRight
+                    box.set_right(fvg.boxDrawing, bar_index + 10)
+
+            // Re-apply colors for ALL mitigated/filled FVGs on every bar
+            if fvg.filled
+                // Light gray for filled structures
+                box.set_bgcolor(fvg.boxDrawing, filledColor)
+                box.set_border_color(fvg.boxDrawing, filledColor)
+                label.set_color(fvg.labelDrawing, filledColor)
+            else if fvg.mitigated
+                // Light yellow for mitigated structures
+                box.set_bgcolor(fvg.boxDrawing, mitigatedColor)
+                box.set_border_color(fvg.boxDrawing, mitigatedColor)
+                label.set_color(fvg.labelDrawing, mitigatedColor)
+
+// ═══════════════════════════════════════════════════════════════════════
+// SWING POINT PROCESSING
+// ═══════════════════════════════════════════════════════════════════════
+
+if swingHigh
+    swingHighPrice = high[rightBars]
+    swingHighBar = bar_index[rightBars]
+
+    meetsMinMove = false
+    shouldReplacePrevious = false
+
+    if na(prevSwingHighPrice)
+        meetsMinMove := true
+    else
+        movePercent = math.abs((swingHighPrice - prevSwingHighPrice) / prevSwingHighPrice) * 100
+        if movePercent >= (swingMinMove * combinedMultiplier)
+            meetsMinMove := true
+        else if swingHighPrice > prevSwingHighPrice
+            shouldReplacePrevious := true
+            meetsMinMove := true
+
+    if meetsMinMove
+        if shouldReplacePrevious and array.size(swingHighHistory) > 0
+            removedPrice = array.pop(swingHighHistory)
+            removedBar = array.pop(swingHighBarHistory)
+            array.pop(swingHighConfirmedAsExtreme)
+            if array.size(swingHighLabels) > 0
+                oldLabel = array.pop(swingHighLabels)
+                label.delete(oldLabel)
+            if array.size(swingHighLines) > 0
+                oldLine = array.pop(swingHighLines)
+                line.delete(oldLine)
+
+            if not na(lastHH) and lastHH == removedPrice and lastHHBar == removedBar
+                lastHH := na
+                lastHHBar := na
+            if not na(lastLH) and lastLH == removedPrice and lastLHBar == removedBar
+                lastLH := na
+                lastLHBar := na
+                consecutiveLH := 0
+
+            if array.size(activeMS) > 0
+                for i = array.size(activeMS) - 1 to 0
+                    ms = array.get(activeMS, i)
+                    if ms.price == removedPrice and ms.startBar == removedBar
+                        line.delete(ms.lineDrawing)
+                        label.delete(ms.labelDrawing)
+                        array.remove(activeMS, i)
+
+        array.push(swingHighHistory, swingHighPrice)
+        array.push(swingHighBarHistory, swingHighBar)
+        array.push(swingHighConfirmedAsExtreme, false)
+
+        swingHighLabel = na(prevSwingHighPrice) ? "HH" : (swingHighPrice > prevSwingHighPrice ? "HH" : "LH")
+
+        if swingHighLabel == "HH"
+            lastHH := swingHighPrice
+            lastHHBar := swingHighBar
+            consecutiveLH := 0
+        else if swingHighLabel == "LH"
+            lastLH := swingHighPrice
+            lastLHBar := swingHighBar
+            consecutiveLH += 1
+
+        prevSwingHighPrice := swingHighPrice
+
+        if showSwingHighs and showLabels
+            labelText = showPriceInLabel ? swingHighLabel + "\n" + str.tostring(swingHighPrice, format.mintick) : swingHighLabel
+            newLabel = label.new(x=swingHighBar, y=swingHighPrice, text=labelText, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingHighLabels, newLabel)
+
+        if showSwingHighs and showLines
+            newLine = line.new(x1=swingHighBar, y1=swingHighPrice, x2=bar_index, y2=swingHighPrice, color=swingHighColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingHighLines, newLine)
+
+        // Auto-promote to XH if swing high exceeds most recent XH
+        if array.size(highestHighPrices) > 0
+            mostRecentXH = array.get(highestHighPrices, array.size(highestHighPrices) - 1)
+            if swingHighPrice > mostRecentXH
+                // Mark this swing as extreme
+                array.set(swingHighConfirmedAsExtreme, array.size(swingHighHistory) - 1, true)
+
+                // Stop extending previous XH line
+                if array.size(highestHighLines) > 0
+                    lastLine = array.get(highestHighLines, array.size(highestHighLines) - 1)
+                    line.set_x2(lastLine, swingHighBar)
+                    line.set_extend(lastLine, extend.none)
+
+                // Create new XH line
+                newXHLine = line.new(x1=swingHighBar, y1=swingHighPrice, x2=bar_index + 100, y2=swingHighPrice, color=color.red, width=2, style=line.style_solid, extend=extend.right)
+                array.push(highestHighLines, newXHLine)
+                array.push(highestHighPrices, swingHighPrice)
+
+                // Update label to XH
+                if showSwingHighs and showLabels and array.size(swingHighLabels) > 0
+                    oldLabel = array.pop(swingHighLabels)
+                    label.delete(oldLabel)
+                    xhLabelText = showPriceInLabel ? "XH\n" + str.tostring(swingHighPrice, format.mintick) : "XH"
+                    newXHLabel = label.new(x=swingHighBar, y=swingHighPrice, text=xhLabelText, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+                    array.push(swingHighLabels, newXHLabel)
+                    array.push(highestHighLabels, newXHLabel)
+
+                // Clean up if more than 3 XH lines
+                if array.size(highestHighLines) > 3
+                    line.delete(array.shift(highestHighLines))
+                    array.shift(highestHighPrices)
+                    if array.size(highestHighLabels) > 0
+                        label.delete(array.shift(highestHighLabels))
+
+if swingLow
+    swingLowPrice = low[rightBars]
+    swingLowBar = bar_index[rightBars]
+
+    meetsMinMove = false
+    shouldReplacePrevious = false
+
+    if na(prevSwingLowPrice)
+        meetsMinMove := true
+    else
+        movePercent = math.abs((swingLowPrice - prevSwingLowPrice) / prevSwingLowPrice) * 100
+        if movePercent >= (swingMinMove * combinedMultiplier)
+            meetsMinMove := true
+        else if swingLowPrice < prevSwingLowPrice
+            shouldReplacePrevious := true
+            meetsMinMove := true
+
+    if meetsMinMove
+        if shouldReplacePrevious and array.size(swingLowHistory) > 0
+            removedPrice = array.pop(swingLowHistory)
+            removedBar = array.pop(swingLowBarHistory)
+            array.pop(swingLowConfirmedAsExtreme)
+            if array.size(swingLowLabels) > 0
+                oldLabel = array.pop(swingLowLabels)
+                label.delete(oldLabel)
+            if array.size(swingLowLines) > 0
+                oldLine = array.pop(swingLowLines)
+                line.delete(oldLine)
+
+            if not na(lastLL) and lastLL == removedPrice and lastLLBar == removedBar
+                lastLL := na
+                lastLLBar := na
+            if not na(lastHL) and lastHL == removedPrice and lastHLBar == removedBar
+                lastHL := na
+                lastHLBar := na
+                consecutiveHL := 0
+
+            if array.size(activeMS) > 0
+                for i = array.size(activeMS) - 1 to 0
+                    ms = array.get(activeMS, i)
+                    if ms.price == removedPrice and ms.startBar == removedBar
+                        line.delete(ms.lineDrawing)
+                        label.delete(ms.labelDrawing)
+                        array.remove(activeMS, i)
+
+        array.push(swingLowHistory, swingLowPrice)
+        array.push(swingLowBarHistory, swingLowBar)
+        array.push(swingLowConfirmedAsExtreme, false)
+
+        swingLowLabel = na(prevSwingLowPrice) ? "HL" : (swingLowPrice > prevSwingLowPrice ? "HL" : "LL")
+
+        if swingLowLabel == "HL"
+            lastHL := swingLowPrice
+            lastHLBar := swingLowBar
+            consecutiveHL += 1
+        else if swingLowLabel == "LL"
+            lastLL := swingLowPrice
+            lastLLBar := swingLowBar
+            consecutiveHL := 0
+
+        prevSwingLowPrice := swingLowPrice
+
+        if showSwingLows and showLabels
+            labelText = showPriceInLabel ? swingLowLabel + "\n" + str.tostring(swingLowPrice, format.mintick) : swingLowLabel
+            newLabel = label.new(x=swingLowBar, y=swingLowPrice, text=labelText, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingLowLabels, newLabel)
+
+        if showSwingLows and showLines
+            newLine = line.new(x1=swingLowBar, y1=swingLowPrice, x2=bar_index, y2=swingLowPrice, color=swingLowColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingLowLines, newLine)
+
+        // Auto-promote to XL if swing low goes below most recent XL
+        if array.size(lowestLowPrices) > 0
+            mostRecentXL = array.get(lowestLowPrices, array.size(lowestLowPrices) - 1)
+            if swingLowPrice < mostRecentXL
+                // Mark this swing as extreme
+                array.set(swingLowConfirmedAsExtreme, array.size(swingLowHistory) - 1, true)
+
+                // Stop extending previous XL line
+                if array.size(lowestLowLines) > 0
+                    lastLine = array.get(lowestLowLines, array.size(lowestLowLines) - 1)
+                    line.set_x2(lastLine, swingLowBar)
+                    line.set_extend(lastLine, extend.none)
+
+                // Create new XL line
+                newXLLine = line.new(x1=swingLowBar, y1=swingLowPrice, x2=bar_index + 100, y2=swingLowPrice, color=color.green, width=2, style=line.style_solid, extend=extend.right)
+                array.push(lowestLowLines, newXLLine)
+                array.push(lowestLowPrices, swingLowPrice)
+
+                // Update label to XL
+                if showSwingLows and showLabels and array.size(swingLowLabels) > 0
+                    oldLabel = array.pop(swingLowLabels)
+                    label.delete(oldLabel)
+                    xlLabelText = showPriceInLabel ? "XL\n" + str.tostring(swingLowPrice, format.mintick) : "XL"
+                    newXLLabel = label.new(x=swingLowBar, y=swingLowPrice, text=xlLabelText, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+                    array.push(swingLowLabels, newXLLabel)
+                    array.push(lowestLowLabels, newXLLabel)
+
+                // Clean up if more than 3 XL lines
+                if array.size(lowestLowLines) > 3
+                    line.delete(array.shift(lowestLowLines))
+                    array.shift(lowestLowPrices)
+                    if array.size(lowestLowLabels) > 0
+                        label.delete(array.shift(lowestLowLabels))
+
+if array.size(swingHighHistory) > 0
+    for i = 0 to array.size(swingHighHistory) - 1
+        if not array.get(swingHighConfirmedAsExtreme, i)
+            swingsBefore = i
+            swingsAfter = array.size(swingHighHistory) - 1 - i
+            
+            if swingsBefore >= extremeSwingCount and swingsAfter >= extremeSwingCount
+                candidatePrice = array.get(swingHighHistory, i)
+                candidateBar = array.get(swingHighBarHistory, i)
+                isExtremeHigh = true
+                
+                for j = 1 to extremeSwingCount
+                    if array.get(swingHighHistory, i - j) >= candidatePrice
+                        isExtremeHigh := false
+                        break
+                
+                if isExtremeHigh
+                    for j = 1 to extremeSwingCount
+                        if array.get(swingHighHistory, i + j) >= candidatePrice
+                            isExtremeHigh := false
+                            break
+                
+                if isExtremeHigh
+                    array.set(swingHighConfirmedAsExtreme, i, true)
+                    
+                    if array.size(highestHighLines) > 0
+                        lastLine = array.get(highestHighLines, array.size(highestHighLines) - 1)
+                        line.set_x2(lastLine, candidateBar)
+                        line.set_extend(lastLine, extend.none)
+                    
+                    newLine = line.new(x1=candidateBar, y1=candidatePrice, x2=bar_index + 100, y2=candidatePrice, color=color.red, width=2, style=line.style_solid, extend=extend.right)
+                    array.push(highestHighLines, newLine)
+                    array.push(highestHighPrices, candidatePrice)
+                    
+                    if showSwingHighs and showLabels
+                        labelText = showPriceInLabel ? "XH\n" + str.tostring(candidatePrice, format.mintick) : "XH"
+                        newLabel = label.new(x=candidateBar, y=candidatePrice, text=labelText, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+                        array.push(highestHighLabels, newLabel)
+                    
+                    if array.size(highestHighLines) > 3
+                        line.delete(array.shift(highestHighLines))
+                        array.shift(highestHighPrices)
+                        if array.size(highestHighLabels) > 0
+                            label.delete(array.shift(highestHighLabels))
+
+if array.size(swingLowHistory) > 0
+    for i = 0 to array.size(swingLowHistory) - 1
+        if not array.get(swingLowConfirmedAsExtreme, i)
+            swingsBefore = i
+            swingsAfter = array.size(swingLowHistory) - 1 - i
+            
+            if swingsBefore >= extremeSwingCount and swingsAfter >= extremeSwingCount
+                candidatePrice = array.get(swingLowHistory, i)
+                candidateBar = array.get(swingLowBarHistory, i)
+                isExtremeLow = true
+                
+                for j = 1 to extremeSwingCount
+                    if array.get(swingLowHistory, i - j) <= candidatePrice
+                        isExtremeLow := false
+                        break
+                
+                if isExtremeLow
+                    for j = 1 to extremeSwingCount
+                        if array.get(swingLowHistory, i + j) <= candidatePrice
+                            isExtremeLow := false
+                            break
+                
+                if isExtremeLow
+                    array.set(swingLowConfirmedAsExtreme, i, true)
+                    
+                    if array.size(lowestLowLines) > 0
+                        lastLine = array.get(lowestLowLines, array.size(lowestLowLines) - 1)
+                        line.set_x2(lastLine, candidateBar)
+                        line.set_extend(lastLine, extend.none)
+                    
+                    newLine = line.new(x1=candidateBar, y1=candidatePrice, x2=bar_index + 100, y2=candidatePrice, color=color.green, width=2, style=line.style_solid, extend=extend.right)
+                    array.push(lowestLowLines, newLine)
+                    array.push(lowestLowPrices, candidatePrice)
+                    
+                    if showSwingLows and showLabels
+                        labelText = showPriceInLabel ? "XL\n" + str.tostring(candidatePrice, format.mintick) : "XL"
+                        newLabel = label.new(x=candidateBar, y=candidatePrice, text=labelText, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+                        array.push(lowestLowLabels, newLabel)
+                    
+                    if array.size(lowestLowLines) > 3
+                        line.delete(array.shift(lowestLowLines))
+                        array.shift(lowestLowPrices)
+                        if array.size(lowestLowLabels) > 0
+                            label.delete(array.shift(lowestLowLabels))
+
+if array.size(highestHighLines) > 0
+    line.set_x2(array.get(highestHighLines, array.size(highestHighLines) - 1), bar_index)
+
+if array.size(lowestLowLines) > 0
+    line.set_x2(array.get(lowestLowLines, array.size(lowestLowLines) - 1), bar_index)
+
+if array.size(swingHighHistory) > 50
+    array.shift(swingHighHistory)
+    array.shift(swingHighBarHistory)
+    array.shift(swingHighConfirmedAsExtreme)
+    if array.size(swingHighLabels) > 0
+        oldLabel = array.shift(swingHighLabels)
+        label.delete(oldLabel)
+    if array.size(swingHighLines) > 0
+        oldLine = array.shift(swingHighLines)
+        line.delete(oldLine)
+
+if array.size(swingLowHistory) > 50
+    array.shift(swingLowHistory)
+    array.shift(swingLowBarHistory)
+    array.shift(swingLowConfirmedAsExtreme)
+    if array.size(swingLowLabels) > 0
+        oldLabel = array.shift(swingLowLabels)
+        label.delete(oldLabel)
+    if array.size(swingLowLines) > 0
+        oldLine = array.shift(swingLowLines)
+        line.delete(oldLine)
+
+// ═══════════════════════════════════════════════════════════════════════
+// MARKET STRUCTURE (CHoCH & BOS)
+// ═══════════════════════════════════════════════════════════════════════
+
+if showCHoCH and not na(lastLH) and not na(lastLHBar) and isSupported
+    if close > lastLH and close[1] <= lastLH
+        if array.size(activeMS) >= msMaxCount
+            oldestMS = array.shift(activeMS)
+            line.delete(oldestMS.lineDrawing)
+            label.delete(oldestMS.labelDrawing)
+        
+        chochText = "CHoCH"
+        chochLineStyle = line.style_dashed
+        chochLineWidth = 1
+        isPremiumCHoCH = false
+        
+        if consecutiveLH >= 3
+            chochText := "Premium\nCHoCH"
+            chochLineStyle := line.style_solid
+            chochLineWidth := 2
+            isPremiumCHoCH := true
+        else if consecutiveLH >= 2
+            chochText := "Better\nCHoCH"
+            chochLineStyle := line.style_solid
+            chochLineWidth := 1
+        
+        msLine = line.new(x1=lastLHBar, y1=lastLH, x2=bar_index, y2=lastLH, color=color.green, width=chochLineWidth, style=chochLineStyle)
+        centerBar = math.round((lastLHBar + bar_index) / 2)
+        msLabel = label.new(x=centerBar, y=lastLH, text=chochText, style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS, MarketStructure.new(msLine, msLabel, lastLH, lastLHBar, bar_index, true, false))
+
+        lastLH := na
+        lastLHBar := na
+        consecutiveLH := 0
+
+if showCHoCH and not na(lastHL) and not na(lastHLBar) and isSupported
+    if close < lastHL and close[1] >= lastHL
+        if array.size(activeMS) >= msMaxCount
+            oldestMS = array.shift(activeMS)
+            line.delete(oldestMS.lineDrawing)
+            label.delete(oldestMS.labelDrawing)
+        
+        chochText = "CHoCH"
+        chochLineStyle = line.style_dashed
+        chochLineWidth = 1
+        isPremiumCHoCH = false
+        
+        if consecutiveHL >= 3
+            chochText := "Premium\nCHoCH"
+            chochLineStyle := line.style_solid
+            chochLineWidth := 2
+            isPremiumCHoCH := true
+        else if consecutiveHL >= 2
+            chochText := "Better\nCHoCH"
+            chochLineStyle := line.style_solid
+            chochLineWidth := 1
+        
+        msLine = line.new(x1=lastHLBar, y1=lastHL, x2=bar_index, y2=lastHL, color=color.red, width=chochLineWidth, style=chochLineStyle)
+        centerBar = math.round((lastHLBar + bar_index) / 2)
+        msLabel = label.new(x=centerBar, y=lastHL, text=chochText, style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS, MarketStructure.new(msLine, msLabel, lastHL, lastHLBar, bar_index, false, false))
+
+        lastHL := na
+        lastHLBar := na
+        consecutiveHL := 0
+
+if showBOS and not na(lastHH) and not na(lastHHBar) and isSupported
+    if close > lastHH and close[1] <= lastHH
+        if array.size(activeMS) >= msMaxCount
+            oldestMS = array.shift(activeMS)
+            line.delete(oldestMS.lineDrawing)
+            label.delete(oldestMS.labelDrawing)
+        
+        msLine = line.new(x1=lastHHBar, y1=lastHH, x2=bar_index, y2=lastHH, color=color.green, width=1, style=line.style_dashed)
+        centerBar = math.round((lastHHBar + bar_index) / 2)
+        msLabel = label.new(x=centerBar, y=lastHH, text="BOS", style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS, MarketStructure.new(msLine, msLabel, lastHH, lastHHBar, bar_index, true, true))
+
+        lastHH := na
+        lastHHBar := na
+
+if showBOS and not na(lastLL) and not na(lastLLBar) and isSupported
+    if close < lastLL and close[1] >= lastLL
+        if array.size(activeMS) >= msMaxCount
+            oldestMS = array.shift(activeMS)
+            line.delete(oldestMS.lineDrawing)
+            label.delete(oldestMS.labelDrawing)
+        
+        msLine = line.new(x1=lastLLBar, y1=lastLL, x2=bar_index, y2=lastLL, color=color.red, width=1, style=line.style_dashed)
+        centerBar = math.round((lastLLBar + bar_index) / 2)
+        msLabel = label.new(x=centerBar, y=lastLL, text="BOS", style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS, MarketStructure.new(msLine, msLabel, lastLL, lastLLBar, bar_index, false, true))
+
+        lastLL := na
+        lastLLBar := na
+
+// ═══════════════════════════════════════════════════════════════════════
+// ORDER BLOCK & BREAKER BLOCK
+// ═══════════════════════════════════════════════════════════════════════
+
+detectBullishOB() =>
+    isValidOB = false
+    obStartBar = 0
+    obEndBar = 0
+    obBottom = 0.0
+    obTop = 0.0
+    
+    for numCandles = 2 to obMaxCandles
+        movePercent = ((close - close[numCandles]) / close[numCandles]) * 100
+
+        if movePercent >= (obMinMove * combinedMultiplier)
+            allCandlesBullish = true
+            for i = 1 to numCandles
+                if close[i] <= close[i + 1]
+                    allCandlesBullish := false
+                    break
+            
+            if allCandlesBullish
+                isValidOB := true
+                obStartBar := bar_index - numCandles
+                obEndBar := bar_index
+                obBottom := low[numCandles]
+                obTop := high[numCandles]
+                break
+    
+    [isValidOB, obStartBar, obEndBar, obBottom, obTop]
+
+detectBearishOB() =>
+    isValidOB = false
+    obStartBar = 0
+    obEndBar = 0
+    obBottom = 0.0
+    obTop = 0.0
+    
+    for numCandles = 2 to obMaxCandles
+        movePercent = ((close[numCandles] - close) / close[numCandles]) * 100
+
+        if movePercent >= (obMinMove * combinedMultiplier)
+            allCandlesBearish = true
+            for i = 1 to numCandles
+                if close[i] >= close[i + 1]
+                    allCandlesBearish := false
+                    break
+            
+            if allCandlesBearish
+                isValidOB := true
+                obStartBar := bar_index - numCandles
+                obEndBar := bar_index
+                obBottom := low[numCandles]
+                obTop := high[numCandles]
+                break
+    
+    [isValidOB, obStartBar, obEndBar, obBottom, obTop]
+
+[bullishOB, bullishOBStart, bullishOBEnd, bullishOBBottom, bullishOBTop] = detectBullishOB()
+[bearishOB, bearishOBStart, bearishOBEnd, bearishOBBottom, bearishOBTop] = detectBearishOB()
+
+if showOB and isSupported
+    if bullishOB and lastOBDirection != 1
+        if array.size(activeOBs) >= obMaxCount
+            oldestOB = array.shift(activeOBs)
+            box.delete(oldestOB.boxDrawing)
+            label.delete(oldestOB.labelDrawing)
+        
+        obBox = box.new(left=bullishOBStart, top=bullishOBTop, right=bullishOBEnd, bottom=bullishOBBottom, border_color=bullishOBColor, bgcolor=bullishOBColor, border_width=2, extend=obExtendRight ? extend.right : extend.none)
+        obLabel = label.new(x=bullishOBStart + labelOffset, y=(bullishOBTop + bullishOBBottom) / 2, text="Bullish OB", style=label.style_label_left, color=bullishOBColor, textcolor=color.white, size=size.small)
+        array.push(activeOBs, OrderBlock.new(obBox, obLabel, bullishOBTop, bullishOBBottom, bullishOBStart, bullishOBEnd, true, false, false, false, false, false, false))
+        lastOBDirection := 1
+    
+    if bearishOB and lastOBDirection != -1
+        if array.size(activeOBs) >= obMaxCount
+            oldestOB = array.shift(activeOBs)
+            box.delete(oldestOB.boxDrawing)
+            label.delete(oldestOB.labelDrawing)
+        
+        obBox = box.new(left=bearishOBStart, top=bearishOBTop, right=bearishOBEnd, bottom=bearishOBBottom, border_color=bearishOBColor, bgcolor=bearishOBColor, border_width=2, extend=obExtendRight ? extend.right : extend.none)
+        obLabel = label.new(x=bearishOBStart + labelOffset, y=(bearishOBTop + bearishOBBottom) / 2, text="Bearish OB", style=label.style_label_left, color=bearishOBColor, textcolor=color.white, size=size.small)
+        array.push(activeOBs, OrderBlock.new(obBox, obLabel, bearishOBTop, bearishOBBottom, bearishOBStart, bearishOBEnd, false, false, false, false, false, false, false))
+        lastOBDirection := -1
+    
+    if lastOBDirection == 1 and close < close[1]
+        lastOBDirection := 0
+    if lastOBDirection == -1 and close > close[1]
+        lastOBDirection := 0
+    
+    if array.size(activeOBs) > 0
+        for i = array.size(activeOBs) - 1 to 0
+            ob = array.get(activeOBs, i)
+
+            if not ob.filled and not ob.broken
+                isMitigated = false
+                isFilled = false
+                isBroken = false
+
+                // Check if minimum candles have passed since OB creation
+                candlesSinceCreation = bar_index - ob.startBar
+                canCheckMitigation = candlesSinceCreation >= minCandlesBeforeMitigation
+
+                if canCheckMitigation
+                    if ob.isBullish
+                        // Bullish OB: Zone below price (support)
+                        // Track top edge touch (mitigation from above)
+                        if low <= ob.top
+                            isMitigated := true
+                            ob.topTouched := true
+                        // Track bottom edge touch
+                        if low <= ob.bottom
+                            // Check if close breaks through (broken OB)
+                            if close < ob.bottom
+                                isBroken := true
+                            else
+                                ob.bottomTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if ob.topTouched and ob.bottomTouched
+                            isFilled := true
+                    else
+                        // Bearish OB: Zone above price (resistance)
+                        // Track bottom edge touch (mitigation from below)
+                        if high >= ob.bottom
+                            isMitigated := true
+                            ob.bottomTouched := true
+                        // Track top edge touch
+                        if high >= ob.top
+                            // Check if close breaks through (broken OB)
+                            if close > ob.top
+                                isBroken := true
+                            else
+                                ob.topTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if ob.topTouched and ob.bottomTouched
+                            isFilled := true
+
+                if isBroken
+                    ob.broken := true
+
+                    // Delete broken OB if flag is enabled or if not extending after broken
+                    if obDeleteOnFill or not obExtendAfterBroken
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        // Keep broken OB and apply gray color
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+
+                else if isFilled
+                    ob.filled := true
+                    ob.mitigated := true
+                    if obDeleteOnFill
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        // Apply light gray for filled structures
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+
+                else if isMitigated
+                    ob.mitigated := true
+                    if obDeleteOnMitigate
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        // Apply light yellow for mitigated structures
+                        box.set_bgcolor(ob.boxDrawing, mitigatedColor)
+                        box.set_border_color(ob.boxDrawing, mitigatedColor)
+                        label.set_color(ob.labelDrawing, mitigatedColor)
+                        // Extend if needed
+                        if obExtendRight
+                            box.set_right(ob.boxDrawing, bar_index + 10)
+
+                else if obExtendRight
+                    box.set_right(ob.boxDrawing, bar_index + 10)
+
+            // Re-apply colors for ALL non-deleted mitigated/filled/broken OBs on every bar
+            // (Only runs if OB was not deleted above due to continue statements)
+            if ob.filled or ob.broken
+                // Light gray for filled or broken structures
+                box.set_bgcolor(ob.boxDrawing, filledColor)
+                box.set_border_color(ob.boxDrawing, filledColor)
+                label.set_color(ob.labelDrawing, filledColor)
+            else if ob.mitigated
+                // Light yellow for mitigated structures
+                box.set_bgcolor(ob.boxDrawing, mitigatedColor)
+                box.set_border_color(ob.boxDrawing, mitigatedColor)
+                label.set_color(ob.labelDrawing, mitigatedColor)
+            
+            if ob.broken and not ob.mitigated and not ob.filled and obExtendAfterBroken
+                isReMitigated = false
+                isReFilled = false
+
+                if ob.isBullish
+                    if high >= ob.bottom
+                        isReMitigated := true
+                        if high >= ob.top
+                            isReFilled := true
+                else
+                    if low <= ob.top
+                        isReMitigated := true
+                        if low <= ob.bottom
+                            isReFilled := true
+
+                if isReFilled
+                    ob.filled := true
+                    ob.mitigated := true
+                    if obDeleteOnFill
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+                else if isReMitigated
+                    ob.mitigated := true
+                    if obDeleteOnMitigate
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+                else
+                    box.set_right(ob.boxDrawing, bar_index + 10)
+                    // Keep gray color for broken OBs even while extending
+                    box.set_bgcolor(ob.boxDrawing, filledColor)
+                    box.set_border_color(ob.boxDrawing, filledColor)
+                    label.set_color(ob.labelDrawing, filledColor)
+
+// ═══════════════════════════════════════════════════════════════════════
+// ADVANCED TRADING ALERTS
+// ═══════════════════════════════════════════════════════════════════════
+
+if array.size(activeOpportunities) > 20
+    oldOpportunity = array.shift(activeOpportunities)
+    label.delete(oldOpportunity.labelDrawing)
+    line.delete(oldOpportunity.arrowDrawing)
+    if not na(oldOpportunity.reversalBox)
+        box.delete(oldOpportunity.reversalBox)
+    // Delete price level lines to prevent orphaned lines
+    if not na(oldOpportunity.slLine)
+        line.delete(oldOpportunity.slLine)
+    if not na(oldOpportunity.tpLine)
+        line.delete(oldOpportunity.tpLine)
+    if not na(oldOpportunity.entryLine)
+        line.delete(oldOpportunity.entryLine)
+
+// ═══════════════════════════════════════════════════════════════════════
+// REVERSAL CONFIRMATION MONITORING
+// Monitor Potential OB+FVG alerts for entry reach and reversal patterns
+// ═══════════════════════════════════════════════════════════════════════
+
+if array.size(activeOpportunities) > 0
+    for i = 0 to array.size(activeOpportunities) - 1
+        opp = array.get(activeOpportunities, i)
+
+        // Only monitor OB+FVG Confluence alerts in Potential state that are still valid
+        if opp.patternType == "OB+FVG Confluence" and opp.state == "Potential" and opp.isValid
+
+            // Check if entry price has been reached
+            // Uses range-based detection to handle price gaps correctly
+            if not opp.entryReached
+                // Check if entry price falls within current candle's range [low, high]
+                // This ensures entry was actually touched, automatically handling gaps
+                if opp.entryPrice >= low and opp.entryPrice <= high
+                    opp.entryReached := true
+                    opp.entryReachedBar := bar_index
+
+            // If entry reached, monitor for reversal pattern
+            if opp.entryReached
+                candlesSinceEntry = bar_index - opp.entryReachedBar
+
+                // Check stop conditions
+                stopMonitoring = false
+
+                // Stop if close is beyond SL
+                if opp.isBullish
+                    if close < opp.stopLossPrice
+                        stopMonitoring := true
+                else
+                    if close > opp.stopLossPrice
+                        stopMonitoring := true
+
+                // Stop if timeout exceeded
+                if candlesSinceEntry > maxCandlesForConfirmation
+                    stopMonitoring := true
+
+                // If not stopped, check for reversal pattern (only on candle close)
+                if not stopMonitoring and barstate.isconfirmed
+                    // Check for reversal pattern on closed candle (offset = 0)
+                    [patternDetected, patternName, patternStart, patternEnd] = checkReversalPattern(opp.isBullish, 0)
+
+                    if patternDetected
+                        // Validate confirmation entry price is within acceptable RR range
+                        confirmedEntry = close
+
+                        // Calculate valid confirmation range based on Potential alert parameters
+                        potentialRiskAmount = math.abs(opp.entryPrice - opp.stopLossPrice)
+
+                        float validRangeLower = na
+                        float validRangeUpper = na
+
+                        if opp.isBullish
+                            // Bullish: Valid range = [SL, entry + maxConfirmationRR * risk]
+                            validRangeLower := opp.stopLossPrice
+                            validRangeUpper := opp.entryPrice + (potentialRiskAmount * maxConfirmationRR)
+                        else
+                            // Bearish: Valid range = [entry - maxConfirmationRR * risk, SL]
+                            validRangeLower := opp.entryPrice - (potentialRiskAmount * maxConfirmationRR)
+                            validRangeUpper := opp.stopLossPrice
+
+                        // Check if confirmation entry is within valid range
+                        isValidConfirmation = confirmedEntry >= validRangeLower and confirmedEntry <= validRangeUpper
+
+                        if isValidConfirmation
+                            // VALID CONFIRMATION - Create Confirmed alert with new entry = close of reversal candle
+                            confirmedSL = opp.stopLossPrice  // Keep same SL
+
+                            // Apply ATR minimum SL with new entry
+                            [confirmedSLAdjusted, atrUsed] = applyATRMinimumSL(confirmedEntry, confirmedSL, opp.isBullish)
+
+                            // Recalculate TP with new entry
+                            [confirmedTP, tpCriteria] = findEnhancedTakeProfitPrice(opp.isBullish, confirmedEntry, confirmedSLAdjusted, alertRiskRewardRatio)
+
+                            // Calculate new Risk-Reward ratio
+                            newRiskAmount = math.abs(confirmedEntry - confirmedSLAdjusted)
+                            newRewardAmount = math.abs(confirmedTP - confirmedEntry)
+                            newTradeRR = newRiskAmount > 0 ? newRewardAmount / newRiskAmount : 0
+
+                            // Recalculate MA Score with current market conditions
+                            newMAScore = calculateMAScore(opp.isBullish, close)
+
+                            // Recalculate position size with new entry and SL (CRITICAL: entry changed from Potential)
+                            // OB+FVG CONFIRMED uses "Confirmed" strategy type (CONFIRMED PnL pool)
+                            currentCapital = getCurrentCapital("Confirmed")
+                            confirmedQty = calculatePositionSize(confirmedEntry, confirmedSLAdjusted, currentCapital)
+
+                            // Generate unique alert ID for confirmed alert
+                            confirmedAlertId = generateAlertId(bar_index, confirmedEntry)
+
+                            // Calculate matching price for cleanup logic (midpoint - required for structure matching)
+                            confirmedMatchingPrice = (confirmedEntry + confirmedSLAdjusted) / 2
+
+                            // Calculate label Y-position for visual display (entry price - shows trade initiation)
+                            confirmedLabelYPosition = confirmedEntry
+
+                            // Determine if alert will be fired and reason if not
+                            withinTimeWindow = isWithinAlertTimeWindow()
+                            meetsMAScore = newMAScore >= minMAScoreForAlert
+                            alertWillFire = withinTimeWindow and meetsMAScore
+
+                            firedStatus = alertWillFire ? "True" : "False"
+                            firedReason = ""
+                            if not alertWillFire
+                                if not withinTimeWindow and not meetsMAScore
+                                    firedReason := " (OTW, Low MAS)"
+                                else if not withinTimeWindow
+                                    firedReason := " (OTW)"
+                                else if not meetsMAScore
+                                    firedReason := " (Low MAS)"
+
+                            // Create label, arrow, and box only if showConfirmedAlerts is enabled
+                            label confirmedLabel = na
+                            line confirmedArrow = na
+                            box reversalBox = na
+
+                            if showConfirmedAlerts
+                                // Create Confirmed label with pattern name
+                                confirmedLabelText = opp.isBullish ? "Bullish OB+FVG\nConfluence\n[CONFIRMED]\n" + patternName : "Bearish OB+FVG\nConfluence\n[CONFIRMED]\n" + patternName
+                                if showAlertPrices
+                                    slText = str.tostring(confirmedSLAdjusted, format.mintick) + (atrUsed ? " (ATR)" : "")
+                                    tpText = str.tostring(confirmedTP, format.mintick) + " (" + tpCriteria + ")"
+                                    confirmedLabelText := confirmedLabelText + "\nEN=" + str.tostring(confirmedEntry, format.mintick)
+                                    confirmedLabelText := confirmedLabelText + "\nSL=" + slText
+                                    confirmedLabelText := confirmedLabelText + "\nTP=" + tpText
+                                    confirmedLabelText := confirmedLabelText + "\nRR=" + str.tostring(newTradeRR, "#.##")
+                                    confirmedLabelText := confirmedLabelText + "\nMA_Score=" + str.tostring(newMAScore) + "/10"
+                                    confirmedLabelText := confirmedLabelText + "\nQuantity:" + str.tostring(confirmedQty)
+                                    confirmedLabelText := confirmedLabelText + "\nFired=" + firedStatus + firedReason
+
+                                confirmedLabelColor = opp.isBullish ? color.new(color.green, 0) : color.new(color.red, 0)
+                                confirmedLabel := label.new(x=bar_index + opportunityLabelOffset, y=confirmedLabelYPosition, text=confirmedLabelText, style=label.style_label_left, color=confirmedLabelColor, textcolor=color.white, size=size.normal)
+                                confirmedArrow := createArrowToLabel(bar_index, bar_index + opportunityLabelOffset, confirmedLabelYPosition, confirmedLabelColor)
+
+                                // Draw light box around reversal pattern candles
+                                // Extend box by 1 candle on each side to fully cover candle bodies
+                                // (bar indices represent candle centers, bodies extend left/right)
+                                patternBoxColor = opp.isBullish ? color.new(color.green, 80) : color.new(color.red, 80)
+                                patternHigh = math.max(high[bar_index - patternEnd], high[bar_index - patternStart])
+                                patternLow = math.min(low[bar_index - patternEnd], low[bar_index - patternStart])
+                                boxLeft = patternStart - 1
+                                boxRight = patternEnd + 1
+                                reversalBox := box.new(left=boxLeft, top=patternHigh, right=boxRight, bottom=patternLow, border_color=patternBoxColor, bgcolor=patternBoxColor, border_width=1, extend=extend.none)
+
+                            // Create price level lines (horizontal dashed lines)
+                            line slLineDrawing = na
+                            line tpLineDrawing = na
+                            line entryLineDrawing = na
+
+                            if showConfirmedPriceLevels and showConfirmedAlerts
+                                // Delete previous Confirmed lines if showAllConfirmedLines is OFF
+                                if not showAllConfirmedLines and array.size(activeOpportunities) > 0
+                                    for j = 0 to array.size(activeOpportunities) - 1
+                                        prevOpp = array.get(activeOpportunities, j)
+                                        if prevOpp.state == "Confirmed" and not prevOpp.slHit and not prevOpp.tpHit
+                                            if not na(prevOpp.slLine)
+                                                line.delete(prevOpp.slLine)
+                                            if not na(prevOpp.tpLine)
+                                                line.delete(prevOpp.tpLine)
+                                            if not na(prevOpp.entryLine)
+                                                line.delete(prevOpp.entryLine)
+
+                                // Create horizontal dashed lines extending right
+                                slLineDrawing := line.new(x1=bar_index, y1=confirmedSLAdjusted, x2=bar_index + 1, y2=confirmedSLAdjusted, color=color.new(color.red, 0), style=line.style_dashed, width=1, extend=extend.right)
+                                tpLineDrawing := line.new(x1=bar_index, y1=confirmedTP, x2=bar_index + 1, y2=confirmedTP, color=color.new(color.green, 0), style=line.style_dashed, width=1, extend=extend.right)
+                                entryLineDrawing := line.new(x1=bar_index, y1=confirmedEntry, x2=bar_index + 1, y2=confirmedEntry, color=color.new(color.white, 0), style=line.style_dashed, width=1, extend=extend.right)
+
+                            if showConfirmedAlerts
+                                // Create JSON alert message and fire alert
+                                ticker = syminfo.ticker
+                                tf = timeframe.period
+                                orderType = opp.isBullish ? "BUY" : "SELL"
+                                patternType = "OB+FVG Confluence"
+                                timestamp = time
+                                confirmedAlertMsg = '{"id":"' + confirmedAlertId + '","ticker":"' + ticker + '","orderType":"' + orderType + '","timeframe":"' + tf + '","pattern":"' + patternType + '","state":"Confirmed","reversalPattern":"' + patternName + '","originalAlertId":"' + opp.alertId + '","ltp":' + str.tostring(close, format.mintick) + ',"entry":' + str.tostring(confirmedEntry, format.mintick) + ',"stopLoss":' + str.tostring(confirmedSLAdjusted, format.mintick) + ',"takeProfit":' + str.tostring(confirmedTP, format.mintick) + ',"tradeRR":' + str.tostring(newTradeRR, "#.##") + ',"maScore":' + str.tostring(newMAScore) + ',"quantity":' + str.tostring(confirmedQty) + ',"timestamp":' + str.tostring(timestamp) + '}'
+
+                                if alertWillFire
+                                    alert(confirmedAlertMsg, alert.freq_once_per_bar)
+
+                                // Push Confirmed alert to active opportunities
+                                // Use confirmedMatchingPrice (midpoint) for structure matching in cleanup logic
+                                array.push(activeOpportunities, TradingOpportunity.new(confirmedLabel, confirmedArrow, "OB+FVG Confluence", confirmedMatchingPrice, bar_index, true, true, opp.isBullish, confirmedEntry, confirmedSLAdjusted, confirmedTP, close, confirmedAlertId, "Confirmed", true, opp.entryReachedBar, opp.alertId, reversalBox, patternName, slLineDrawing, tpLineDrawing, entryLineDrawing, false, false, 0.0, 0.0, alertWillFire))
+
+                            // Mark the potential alert as confirmed to prevent duplicate confirmations (even if Confirmed label hidden)
+                            opp.isValid := false
+                            opp.state := "Confirmed"
+
+                        else
+                            // INVALID CONFIRMATION - Reversal pattern detected but entry price outside valid range
+                            // Log rejection for debugging
+                            log.info("OB+FVG Confirmation REJECTED: " + (opp.isBullish ? "Bullish" : "Bearish") + " pattern '" + patternName + "' at " + str.tostring(confirmedEntry, format.mintick) + " exceeds valid range [" + str.tostring(validRangeLower, format.mintick) + ", " + str.tostring(validRangeUpper, format.mintick) + "]")
+
+                            // Update Potential label based on flags (hierarchical control)
+                            if not na(opp.labelDrawing)
+                                if showPotentialAlerts and showInvalidConfirmation
+                                    // Show orange invalid label
+                                    currentLabelText = label.get_text(opp.labelDrawing)
+                                    // Replace [POTENTIAL] with [INVALID CONFIRMATION]
+                                    updatedLabelText = str.replace(currentLabelText, "[POTENTIAL]", "[INVALID CONFIRMATION]")
+                                    label.set_text(opp.labelDrawing, updatedLabelText)
+
+                                    // Turn label and arrow orange to indicate invalid state
+                                    invalidColor = color.new(color.orange, 0)
+                                    label.set_color(opp.labelDrawing, invalidColor)
+                                    line.set_color(opp.arrowDrawing, invalidColor)
+                                else
+                                    // Delete label and arrow (clean chart)
+                                    label.delete(opp.labelDrawing)
+                                    if not na(opp.arrowDrawing)
+                                        line.delete(opp.arrowDrawing)
+
+                            // Mark as invalid and stop monitoring
+                            opp.isValid := false
+                            opp.state := "InvalidConfirmation"
+
+                            // Delete price level lines to prevent orphaned lines
+                            if not na(opp.slLine)
+                                line.delete(opp.slLine)
+                                opp.slLine := na
+                            if not na(opp.tpLine)
+                                line.delete(opp.tpLine)
+                                opp.tpLine := na
+                            if not na(opp.entryLine)
+                                line.delete(opp.entryLine)
+                                opp.entryLine := na
+
+// ═══════════════════════════════════════════════════════════════════════
+// MONITOR CONFIRMED ALERTS FOR SL/TP HITS (PnL Calculation)
+// ═══════════════════════════════════════════════════════════════════════
+
+if array.size(activeOpportunities) > 0
+    for i = 0 to array.size(activeOpportunities) - 1
+        opp = array.get(activeOpportunities, i)
+
+        if opp.state == "Confirmed" and opp.fired and not opp.slHit and not opp.tpHit
+            slHitNow = false
+            tpHitNow = false
+
+            if opp.isBullish
+                // Bullish: SL hit if close <= SL, TP hit if close >= TP
+                if close <= opp.stopLossPrice
+                    slHitNow := true
+                else if close >= opp.takeProfitPrice
+                    tpHitNow := true
+            else
+                // Bearish: SL hit if close >= SL, TP hit if close <= TP
+                if close >= opp.stopLossPrice
+                    slHitNow := true
+                else if close <= opp.takeProfitPrice
+                    tpHitNow := true
+
+            if slHitNow or tpHitNow
+                // Calculate PnL and R multiple
+                float pnlDollars = 0.0
+                float rMultiple = 0.0
+                float riskAmount = math.abs(opp.entryPrice - opp.stopLossPrice)
+
+                // Calculate bar duration for this trade
+                barDuration = bar_index - opp.detectionBar
+
+                if slHitNow
+                    // SL Hit - Calculate loss
+                    float priceDiff = math.abs(opp.entryPrice - opp.stopLossPrice)
+                    currentCapital = getCurrentCapital("Confirmed")
+                    pnlDollars := -1 * calculatePositionSize(opp.entryPrice, opp.stopLossPrice, currentCapital) * priceDiff * syminfo.pointvalue
+                    rMultiple := -1.0  // Always -1R when SL hit
+
+                    // Update statistics
+                    totalLossAmount := totalLossAmount + math.abs(pnlDollars)
+                    slHits := slHits + 1
+                    totalBarsInLosses := totalBarsInLosses + barDuration
+
+                else if tpHitNow
+                    // TP Hit - Calculate profit
+                    float priceDiff = math.abs(opp.takeProfitPrice - opp.entryPrice)
+                    currentCapital = getCurrentCapital("Confirmed")
+                    pnlDollars := calculatePositionSize(opp.entryPrice, opp.stopLossPrice, currentCapital) * priceDiff * syminfo.pointvalue
+                    rMultiple := priceDiff / riskAmount  // Calculate actual R multiple
+
+                    // Update statistics
+                    totalWinAmount := totalWinAmount + pnlDollars
+                    tpHits := tpHits + 1
+                    totalBarsInWins := totalBarsInWins + barDuration
+                    totalRMultipleTP := totalRMultipleTP + rMultiple
+
+                // Update global statistics
+                totalPnL := totalPnL + pnlDollars
+                totalTrades := totalTrades + 1
+                totalBarsInTrades := totalBarsInTrades + barDuration
+
+                // Track timestamps for duration calculation
+                if na(firstTradeTime)
+                    firstTradeTime := time
+                lastTradeTime := time
+
+                // Store PnL in opportunity
+                opp.pnlAmount := pnlDollars
+                opp.rMultiple := rMultiple
+
+                // CRITICAL FIX: Set flags immediately to prevent re-counting on next bar
+                // Flags MUST be set before label operations (which could fail or be skipped)
+                if slHitNow
+                    opp.slHit := true
+                else if tpHitNow
+                    opp.tpHit := true
+
+                // Delete lines
+                if not na(opp.slLine)
+                    line.delete(opp.slLine)
+                    opp.slLine := na
+                if not na(opp.tpLine)
+                    line.delete(opp.tpLine)
+                    opp.tpLine := na
+                if not na(opp.entryLine)
+                    line.delete(opp.entryLine)
+                    opp.entryLine := na
+
+                // Update label with PnL
+                if not na(opp.labelDrawing)
+                    currentText = label.get_text(opp.labelDrawing)
+                    pnlSign = pnlDollars >= 0 ? "+" : ""
+                    pnlText = pnlSign + "$" + str.tostring(math.abs(pnlDollars), "#,###.00")
+                    rSign = rMultiple >= 0 ? "+" : ""
+                    rText = rSign + str.tostring(rMultiple, "#.##") + "R"
+
+                    string updatedText = ""
+
+                    if slHitNow
+                        updatedText := str.replace(currentText, "[CONFIRMED]", "[CONFIRMED, SL_HIT]\nPnL: " + pnlText + " (" + rText + ")")
+                    else
+                        updatedText := str.replace(currentText, "[CONFIRMED]", "[CONFIRMED, TP_HIT]\nPnL: " + pnlText + " (" + rText + ")")
+
+                    label.set_text(opp.labelDrawing, updatedText)
+
+// ═══════════════════════════════════════════════════════════════════════
+// MONITOR POTENTIAL ALERTS FOR SL/TP HITS (PnL Calculation)
+// ═══════════════════════════════════════════════════════════════════════
+
+if array.size(activeOpportunities) > 0
+    for i = 0 to array.size(activeOpportunities) - 1
+        opp = array.get(activeOpportunities, i)
+
+        // Only monitor POTENTIAL OB+FVG alerts that haven't hit SL/TP and were fired
+        if opp.patternType == "OB+FVG Confluence" and opp.state == "Potential" and opp.fired and not opp.slHit and not opp.tpHit
+
+            // STEP 1: Monitor TP/SL hits FIRST (regardless of entry status)
+            // This ensures lines are always deleted when TP/SL is hit
+            slHitNow = false
+            tpHitNow = false
+
+            if opp.isBullish
+                // Bullish: SL hit if close <= SL, TP hit if close >= TP
+                if close <= opp.stopLossPrice
+                    slHitNow := true
+                else if close >= opp.takeProfitPrice
+                    tpHitNow := true
+            else
+                // Bearish: SL hit if close >= SL, TP hit if close <= TP
+                if close >= opp.stopLossPrice
+                    slHitNow := true
+                else if close <= opp.takeProfitPrice
+                    tpHitNow := true
+
+            if slHitNow or tpHitNow
+                // CRITICAL: Check if entry reached on THIS bar (for single-candle scenarios)
+                // This handles cases where entry AND TP/SL hit in the same candle
+                // Uses range-based detection to handle price gaps correctly
+                if not opp.entryReached
+                    // Check if entry price falls within current candle's range [low, high]
+                    // This ensures entry was actually touched, automatically handling gaps
+                    if opp.entryPrice >= low and opp.entryPrice <= high
+                        opp.entryReached := true
+                        opp.entryReachedBar := bar_index
+
+                // Calculate PnL and update statistics ONLY if entry was reached
+                if opp.entryReached
+                    float pnlDollars = 0.0
+                    float rMultiple = 0.0
+                    float riskAmount = math.abs(opp.entryPrice - opp.stopLossPrice)
+                    barDuration = bar_index - opp.detectionBar
+
+                    if slHitNow
+                        // SL Hit - Calculate loss
+                        float priceDiff = math.abs(opp.entryPrice - opp.stopLossPrice)
+                        currentCapital = getCurrentCapital("Potential")
+                        pnlDollars := -1 * calculatePositionSize(opp.entryPrice, opp.stopLossPrice, currentCapital) * priceDiff * syminfo.pointvalue
+                        rMultiple := -1.0  // Always -1R when SL hit
+
+                        // Update POTENTIAL statistics
+                        totalPotentialLossAmount := totalPotentialLossAmount + math.abs(pnlDollars)
+                        potentialSLHits := potentialSLHits + 1
+                        totalBarsInPotentialLosses := totalBarsInPotentialLosses + barDuration
+
+                    else if tpHitNow
+                        // TP Hit - Calculate profit
+                        float priceDiff = math.abs(opp.takeProfitPrice - opp.entryPrice)
+                        currentCapital = getCurrentCapital("Potential")
+                        pnlDollars := calculatePositionSize(opp.entryPrice, opp.stopLossPrice, currentCapital) * priceDiff * syminfo.pointvalue
+                        rMultiple := priceDiff / riskAmount  // Calculate actual R multiple
+
+                        // Update POTENTIAL statistics
+                        totalPotentialWinAmount := totalPotentialWinAmount + pnlDollars
+                        potentialTPHits := potentialTPHits + 1
+                        totalBarsInPotentialWins := totalBarsInPotentialWins + barDuration
+                        totalRMultiplePotentialTP := totalRMultiplePotentialTP + rMultiple
+
+                    // Update global POTENTIAL statistics
+                    totalPotentialPnL := totalPotentialPnL + pnlDollars
+                    totalPotentialTrades := totalPotentialTrades + 1
+                    totalBarsInPotentialTrades := totalBarsInPotentialTrades + barDuration
+
+                    // Track timestamps for duration calculation
+                    if na(firstPotentialTradeTime)
+                        firstPotentialTradeTime := time
+                    lastPotentialTradeTime := time
+
+                    // Store PnL in opportunity
+                    opp.pnlAmount := pnlDollars
+                    opp.rMultiple := rMultiple
+
+                // If entry was NOT reached, increment discarded counter
+                else
+                    potentialDiscarded := potentialDiscarded + 1
+
+                // CRITICAL: Set flags immediately to prevent re-counting on next bar
+                if slHitNow
+                    opp.slHit := true
+                else if tpHitNow
+                    opp.tpHit := true
+
+                // Delete price level lines (ALWAYS, regardless of entry status)
+                if not na(opp.slLine)
+                    line.delete(opp.slLine)
+                    opp.slLine := na
+                if not na(opp.tpLine)
+                    line.delete(opp.tpLine)
+                    opp.tpLine := na
+                if not na(opp.entryLine)
+                    line.delete(opp.entryLine)
+                    opp.entryLine := na
+
+                // Update label based on whether entry was reached
+                if not na(opp.labelDrawing)
+                    currentText = label.get_text(opp.labelDrawing)
+                    string updatedText = ""
+
+                    if opp.entryReached
+                        // Entry reached - show PnL
+                        pnlSign = opp.pnlAmount >= 0 ? "+" : ""
+                        pnlText = pnlSign + "$" + str.tostring(math.abs(opp.pnlAmount), "#,###.00")
+                        rSign = opp.rMultiple >= 0 ? "+" : ""
+                        rText = rSign + str.tostring(opp.rMultiple, "#.##") + "R"
+
+                        if slHitNow
+                            updatedText := str.replace(currentText, "[POTENTIAL]", "[POTENTIAL, SL_HIT]\nPnL: " + pnlText + " (" + rText + ")")
+                        else
+                            updatedText := str.replace(currentText, "[POTENTIAL]", "[POTENTIAL, TP_HIT]\nPnL: " + pnlText + " (" + rText + ")")
+                    else
+                        // Entry NOT reached - no PnL, mark as "NO ENTRY"
+                        if slHitNow
+                            updatedText := str.replace(currentText, "[POTENTIAL]", "[POTENTIAL, SL_HIT - NO ENTRY]")
+                        else
+                            updatedText := str.replace(currentText, "[POTENTIAL]", "[POTENTIAL, TP_HIT - NO ENTRY]")
+
+                    label.set_text(opp.labelDrawing, updatedText)
+
+            // STEP 2: Track entry status (informational only, doesn't control monitoring)
+            // Uses range-based detection to handle price gaps correctly
+            if not opp.entryReached
+                // Check if entry price falls within current candle's range [low, high]
+                // This ensures entry was actually touched, automatically handling gaps
+                if opp.entryPrice >= low and opp.entryPrice <= high
+                    opp.entryReached := true
+                    opp.entryReachedBar := bar_index
+
+// Clean up and update alert labels based on underlying structure status
+if array.size(activeOpportunities) > 0
+    for i = array.size(activeOpportunities) - 1 to 0
+        opp = array.get(activeOpportunities, i)
+
+        shouldRemove = false
+        shouldMakeYellow = false
+        shouldMakeGray = false
+
+        // Check OB+FVG Confluence - yellow if either mitigated, gray if both mitigated, remove if any filled
+        // Skip alerts that already hit TP/SL (handled by PnL monitoring)
+        if opp.patternType == "OB+FVG Confluence" and not opp.slHit and not opp.tpHit
+            anyMitigated = false
+            allMitigated = true
+            anyFilled = false
+
+            // Check OBs
+            if array.size(activeOBs) > 0
+                for obIdx = 0 to array.size(activeOBs) - 1
+                    ob = array.get(activeOBs, obIdx)
+                    if math.abs((ob.top + ob.bottom) / 2 - opp.price) < (ob.top - ob.bottom) * 0.5
+                        if ob.filled
+                            anyFilled := true
+                        if ob.mitigated
+                            anyMitigated := true
+                        if not ob.mitigated and not ob.filled
+                            allMitigated := false
+                        break
+
+            // Check FVGs
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            anyFilled := true
+                        if fvg.mitigated
+                            anyMitigated := true
+                        if not fvg.mitigated and not fvg.filled
+                            allMitigated := false
+                        break
+
+            if anyFilled
+                shouldRemove := true  // Remove if any structure filled
+            else if allMitigated
+                shouldMakeGray := true  // Gray if both mitigated
+            else if anyMitigated
+                shouldMakeYellow := true  // Yellow if either mitigated
+
+        // Check FVG Sweep - yellow when sweeping FVG is mitigated, remove if filled
+        else if opp.patternType == "FVG Sweep"
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            shouldRemove := true  // Remove if filled
+                        else if fvg.mitigated
+                            shouldMakeYellow := true  // Yellow if mitigated
+                        break
+
+        // Check Liquidity Run FVG - yellow when FVG is mitigated, remove if filled
+        else if opp.patternType == "Liquidity Run FVG"
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if fvg.isLiquidityRun and math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            shouldRemove := true  // Remove if filled
+                        else if fvg.mitigated
+                            shouldMakeYellow := true  // Yellow if mitigated
+                        break
+
+        // Apply state changes
+        if shouldRemove
+            label.delete(opp.labelDrawing)
+            line.delete(opp.arrowDrawing)
+            if not na(opp.reversalBox)
+                box.delete(opp.reversalBox)
+            // Delete price level lines if present
+            if not na(opp.slLine)
+                line.delete(opp.slLine)
+                opp.slLine := na
+            if not na(opp.tpLine)
+                line.delete(opp.tpLine)
+                opp.tpLine := na
+            if not na(opp.entryLine)
+                line.delete(opp.entryLine)
+                opp.entryLine := na
+            array.remove(activeOpportunities, i)
+        else if shouldMakeGray and opp.isValid
+            // Turn gray (both structures mitigated for confluence)
+            label.set_color(opp.labelDrawing, filledColor)
+            line.set_color(opp.arrowDrawing, filledColor)
+            opp.isValid := false
+        else if shouldMakeYellow and opp.isValid
+            // Turn yellow (at least one structure mitigated)
+            label.set_color(opp.labelDrawing, mitigatedColor)
+            line.set_color(opp.arrowDrawing, mitigatedColor)
+
+// 1. OB+FVG Confluence
+if showOBFVGConfluence and array.size(activeOBs) > 0 and array.size(activeFVGs) > 0 and isSupported
+    for obIdx = array.size(activeOBs) - 1 to 0
+        ob = array.get(activeOBs, obIdx)
+        if not ob.mitigated and not ob.filled and not ob.broken and not ob.confluenceMarked
+            // Define setup direction first
+            isBullishSetup = ob.isBullish
+
+            // Pre-calculate wave boundary: Find first opposing candle after OB
+            // This ensures we only consider FVGs within the continuous wave
+            waveEndBar = bar_index  // Default to current bar if no break found
+
+            // Safety: Limit lookback to available history (prevents replay mode buffer errors)
+            maxLookback = 5000
+            startCheck = math.max(ob.startBar + 1, bar_index - maxLookback)
+
+            for barCheck = startCheck to bar_index
+                lookbackOffset = bar_index - barCheck
+                if isBullishSetup
+                    // Bullish wave breaks on first red candle
+                    if close[lookbackOffset] < open[lookbackOffset]
+                        waveEndBar := barCheck
+                        break
+                else
+                    // Bearish wave breaks on first green candle
+                    if close[lookbackOffset] > open[lookbackOffset]
+                        waveEndBar := barCheck
+                        break
+
+            // Iterate FVGs from OLDEST to NEWEST (closest first)
+            for fvgIdx = 0 to array.size(activeFVGs) - 1
+                fvg = array.get(activeFVGs, fvgIdx)
+                // Filter: same direction, not filled, within wave boundary, after OB
+                if not fvg.filled and ob.isBullish == fvg.isBullish and fvg.startBar > ob.startBar and fvg.startBar < waveEndBar
+
+                    // Check confluence condition:
+                    // Position Requirements:
+                    //    Bullish: FVG is above OB (fvg.top > ob.top AND fvg.bottom > ob.bottom)
+                    //    Bearish: FVG is below OB (fvg.bottom < ob.bottom AND fvg.top < ob.top)
+                    // Note: Sequential order and wave continuity already enforced by filter above
+                    positionValid = isBullishSetup ? (fvg.top > ob.top and fvg.bottom > ob.bottom) : (fvg.bottom < ob.bottom and fvg.top < ob.top)
+
+                    if positionValid
+                        // Calculate EN, SL, TP
+                        // PASSIVE ENTRY: Use FVG boundaries for entry and SL
+                        // This waits for retracement into FVG zone
+                        // Bullish: Entry = FVG top (wait for retracement up), SL = FVG bottom (tight)
+                        // Bearish: Entry = FVG bottom (wait for retracement down), SL = FVG top (tight)
+                        entryPrice = isBullishSetup ? fvg.top : fvg.bottom  // Passive entry at FVG edge
+                        calculatedSL = isBullishSetup ? fvg.bottom : fvg.top  // Tighter SL using FVG range
+
+                        // Apply ATR minimum SL
+                        [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                        // Use enhanced TP finder for OB+FVG (minimum RR = 1.0)
+                        [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                        // Calculate Risk-Reward ratio
+                        riskAmount = math.abs(entryPrice - slPrice)
+                        rewardAmount = math.abs(tpPrice - entryPrice)
+                        tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                        // Calculate MA Score
+                        maScore = calculateMAScore(isBullishSetup, close)
+
+                        // Calculate position size based on risk management
+                        // OB+FVG POTENTIAL uses "Potential" strategy type (POTENTIAL PnL pool)
+                        currentCapital = getCurrentCapital("Potential")
+                        qty = calculatePositionSize(entryPrice, slPrice, currentCapital)
+
+                        // Generate unique alert ID
+                        alertId = generateAlertId(bar_index, entryPrice)
+
+                        // Determine if alert will be fired and reason if not
+                        withinTimeWindow = isWithinAlertTimeWindow()
+                        meetsMAScore = maScore >= minMAScoreForAlert
+                        alertWillFire = withinTimeWindow and meetsMAScore
+
+                        firedStatus = alertWillFire ? "True" : "False"
+                        firedReason = ""
+                        if not alertWillFire
+                            if not withinTimeWindow and not meetsMAScore
+                                firedReason := " (OTW, Low MAS)"
+                            else if not withinTimeWindow
+                                firedReason := " (OTW)"
+                            else if not meetsMAScore
+                                firedReason := " (Low MAS)"
+
+                        // Calculate matching price for cleanup logic (midpoint - required for structure matching)
+                        matchingPrice = (entryPrice + slPrice) / 2
+
+                        // Calculate label Y-position for visual display (entry price - shows trade initiation)
+                        labelYPosition = entryPrice
+
+                        // Create label, arrow, and price lines only if showPotentialAlerts is enabled
+                        label oppLabel = na
+                        line oppArrow = na
+                        line potentialSlLine = na
+                        line potentialTpLine = na
+                        line potentialEntryLine = na
+
+                        if showPotentialAlerts
+                            // Create label with conditional prices (multi-line)
+                            labelText = ob.isBullish ? "Bullish OB+FVG\nConfluence\n[POTENTIAL]" : "Bearish OB+FVG\nConfluence\n[POTENTIAL]"
+                            if showAlertPrices
+                                slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                                tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                                labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                                labelText := labelText + "\nSL=" + slText
+                                labelText := labelText + "\nTP=" + tpText
+                                labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                                labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                                labelText := labelText + "\nQuantity:" + str.tostring(qty)
+                                labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                            labelColor = ob.isBullish ? color.new(color.green, 0) : color.new(color.red, 0)
+                            oppLabel := label.new(x=bar_index + opportunityLabelOffset, y=labelYPosition, text=labelText, style=label.style_label_left, color=labelColor, textcolor=color.white, size=size.normal)
+                            oppArrow := createArrowToLabel(bar_index, bar_index + opportunityLabelOffset, labelYPosition, labelColor)
+
+                            // Create price level lines ONLY for fired alerts (trade execution parameters)
+                            // Unfired alerts show labels for visibility but not execution lines
+                            if showPotentialPriceLevels and showPotentialAlerts and alertWillFire
+                                // Delete previous Potential lines if showAllPotentialLines is OFF
+                                if not showAllPotentialLines and array.size(activeOpportunities) > 0
+                                    for j = 0 to array.size(activeOpportunities) - 1
+                                        prevOpp = array.get(activeOpportunities, j)
+                                        if prevOpp.state == "Potential" and not prevOpp.slHit and not prevOpp.tpHit
+                                            if not na(prevOpp.slLine)
+                                                line.delete(prevOpp.slLine)
+                                                prevOpp.slLine := na
+                                            if not na(prevOpp.tpLine)
+                                                line.delete(prevOpp.tpLine)
+                                                prevOpp.tpLine := na
+                                            if not na(prevOpp.entryLine)
+                                                line.delete(prevOpp.entryLine)
+                                                prevOpp.entryLine := na
+
+                                // Create horizontal dashed lines extending right
+                                potentialSlLine := line.new(x1=bar_index, y1=slPrice, x2=bar_index + 1, y2=slPrice, color=color.new(color.red, 0), style=line.style_dashed, width=1, extend=extend.right)
+                                potentialTpLine := line.new(x1=bar_index, y1=tpPrice, x2=bar_index + 1, y2=tpPrice, color=color.new(color.green, 0), style=line.style_dashed, width=1, extend=extend.right)
+                                potentialEntryLine := line.new(x1=bar_index, y1=entryPrice, x2=bar_index + 1, y2=entryPrice, color=color.new(color.white, 0), style=line.style_dashed, width=1, extend=extend.right)
+
+                            // Create JSON alert message and fire alert
+                            ticker = syminfo.ticker
+                            tf = timeframe.period
+                            orderType = isBullishSetup ? "BUY" : "SELL"
+                            patternName = "OB+FVG Confluence"
+                            timestamp = time
+                            alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"' + orderType + '","timeframe":"' + tf + '","pattern":"' + patternName + '","state":"Potential","ltp":' + str.tostring(close, format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"quantity":' + str.tostring(qty) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                            if alertWillFire
+                                alert(alertMsg, alert.freq_once_per_bar)
+
+                        // Push to active opportunities (even if label hidden, needed for monitoring)
+                        // Use matchingPrice (midpoint) for structure matching in cleanup logic
+                        array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "OB+FVG Confluence", matchingPrice, bar_index, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close, alertId, "Potential", false, na, "", na, "", potentialSlLine, potentialTpLine, potentialEntryLine, false, false, 0.0, 0.0, alertWillFire))
+
+                        ob.confluenceMarked := true
+                        // FVG NOT marked - allows reuse with other OBs (institutional zones are reusable)
+                        break  // Move to next OB (one FVG per OB)
+
+// 2. FVG Sweep
+if showFVGSweep and array.size(activeFVGs) > 1 and (bullishFVG or bearishFVG) and isSupported
+    currentFVG = array.get(activeFVGs, array.size(activeFVGs) - 1)
+
+    if true
+        for i = array.size(activeFVGs) - 2 to 0
+            oldFVG = array.get(activeFVGs, i)
+            if currentFVG.isBullish != oldFVG.isBullish
+                if bar_index - oldFVG.startBar <= 10
+                    hasOverlap = false
+
+                    if currentFVG.isBullish and not oldFVG.isBullish
+                        if currentFVG.top >= oldFVG.bottom
+                            hasOverlap := true
+                    else if not currentFVG.isBullish and oldFVG.isBullish
+                        if currentFVG.bottom <= oldFVG.top
+                            hasOverlap := true
+
+                    if hasOverlap
+                        alreadyAlerted = false
+                        if array.size(activeOpportunities) > 0
+                            for k = 0 to array.size(activeOpportunities) - 1
+                                opp = array.get(activeOpportunities, k)
+                                if opp.patternType == "FVG Sweep" and bar_index - opp.detectionBar <= 5
+                                    alreadyAlerted := true
+                                    break
+
+                        if not alreadyAlerted
+                            // Calculate EN, SL, TP
+                            // Bullish FVG Sweep: Bullish FVG (currentFVG) sweeps bearish FVG (oldFVG) = BUY setup
+                            //   - Entry = Sweeping FVG top (bullish FVG top)
+                            //   - SL = Sweeping FVG bottom (bullish FVG bottom)
+                            //   - TP = Next bearish element above (resistance)
+                            // Bearish FVG Sweep: Bearish FVG (currentFVG) sweeps bullish FVG (oldFVG) = SELL setup
+                            //   - Entry = Sweeping FVG bottom (bearish FVG bottom)
+                            //   - SL = Sweeping FVG top (bearish FVG top)
+                            //   - TP = Next bullish element below (support)
+                            isBullishSetup = currentFVG.isBullish
+                            entryPrice = isBullishSetup ? currentFVG.top : currentFVG.bottom
+                            calculatedSL = isBullishSetup ? currentFVG.bottom : currentFVG.top
+
+                            // Apply ATR minimum SL
+                            [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                            [tpPrice, tpCriteria] = findTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                            // Calculate Risk-Reward ratio
+                            riskAmount = math.abs(entryPrice - slPrice)
+                            rewardAmount = math.abs(tpPrice - entryPrice)
+                            tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                            // Calculate MA Score
+                            maScore = calculateMAScore(isBullishSetup, close)
+
+                            // Calculate position size based on risk management
+                            // FVG Sweep is a standalone pattern, uses "Other" strategy type (CONFIRMED PnL pool)
+                            currentCapital = getCurrentCapital("Other")
+                            qty = calculatePositionSize(entryPrice, slPrice, currentCapital)
+
+                            // Generate unique alert ID
+                            alertId = generateAlertId(bar_index, entryPrice)
+
+                            // Determine if alert will be fired and reason if not
+                            withinTimeWindow = isWithinAlertTimeWindow()
+                            meetsMAScore = maScore >= minMAScoreForAlert
+                            alertWillFire = withinTimeWindow and meetsMAScore
+
+                            firedStatus = alertWillFire ? "True" : "False"
+                            firedReason = ""
+                            if not alertWillFire
+                                if not withinTimeWindow and not meetsMAScore
+                                    firedReason := " (OTW, Low MAS)"
+                                else if not withinTimeWindow
+                                    firedReason := " (OTW)"
+                                else if not meetsMAScore
+                                    firedReason := " (Low MAS)"
+
+                            // Calculate sweep price for label position
+                            sweepPrice = (currentFVG.top + currentFVG.bottom) / 2
+
+                            // Create label with conditional prices (multi-line)
+                            // Label describes the SWEEPING FVG (the one doing the sweeping)
+                            labelText = currentFVG.isBullish ? "Bullish FVG Sweep" : "Bearish FVG Sweep"
+                            if showAlertPrices
+                                slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                                tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                                labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                                labelText := labelText + "\nSL=" + slText
+                                labelText := labelText + "\nTP=" + tpText
+                                labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                                labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                                labelText := labelText + "\nQuantity:" + str.tostring(qty)
+                                labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                            // Color matches the setup direction
+                            labelColor = currentFVG.isBullish ? color.new(color.green, 0) : color.new(color.red, 0)
+                            oppLabel = label.new(x=bar_index + opportunityLabelOffset, y=sweepPrice, text=labelText, style=label.style_label_left, color=labelColor, textcolor=color.white, size=size.normal)
+                            oppArrow = createArrowToLabel(bar_index, bar_index + opportunityLabelOffset, sweepPrice, labelColor)
+
+                            // Create JSON alert message
+                            ticker = syminfo.ticker
+                            tf = timeframe.period
+                            orderType = isBullishSetup ? "BUY" : "SELL"
+                            patternName = currentFVG.isBullish ? "Bullish FVG Sweep" : "Bearish FVG Sweep"
+                            timestamp = time
+                            alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"' + orderType + '","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close, format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"quantity":' + str.tostring(qty) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                            if alertWillFire
+                                alert(alertMsg, alert.freq_once_per_bar)
+
+                            // Push to active opportunities with all trading parameters
+                            array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "FVG Sweep", sweepPrice, bar_index, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close, alertId, "N/A", false, na, "", na, "", na, na, na, false, false, 0.0, 0.0, alertWillFire))
+                            break

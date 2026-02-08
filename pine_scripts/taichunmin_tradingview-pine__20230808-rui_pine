@@ -1,0 +1,70 @@
+//@version=5
+// 建議在LTC/USDT 的15分鐘運行
+//
+// 震盪區間策略，策略基於移動平均線、布林帶、MACD和ATR等指標來判斷進出場點。
+//
+// 進場條件：當快速EMA上穿慢速EMA，且價格在布林帶中間，同時MACD為正值，則生成多單進場信號。同樣，當快速EMA下穿慢速EMA，且價格在布林帶中間，同時MACD為負值，則生成空單進場信號。
+//
+// 出場條件：當快速EMA下穿慢速EMA，或價格觸及布林帶的上軌道或下軌道時，生成多單和空單的出場信號。
+strategy(title='震盪區間策略', overlay=true)
+
+// 輸入參數
+fast_length = input.int(7, title='快速EMA長度', minval=1)
+slow_length = input.int(20, title='慢速EMA長度', minval=1)
+dev = input.int(2, title='標準差倍數', minval=1)
+atr_length = input.int(20, title='ATR長度', minval=1)
+stop_loss_atr = input.float(0.50, title='止損ATR倍數')
+take_profit_atr = input.float(3.0, title='止盈ATR倍數')
+
+// 計算移動平均線
+fast_ema = ta.ema(close, fast_length)
+slow_ema = ta.ema(close, slow_length)
+
+// 計算布林帶指標
+basis = ta.sma(close, 20)
+upper_band = basis + dev * ta.stdev(close, 20)
+lower_band = basis - dev * ta.stdev(close, 20)
+
+// 計算MACD
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+
+// 計算ATR
+atr_value = ta.atr(atr_length)
+
+// 判斷進場條件：快速EMA上穿慢速EMA並且價格在布林帶中間，同時MACD為正值
+enter_long = ta.crossover(fast_ema, slow_ema) and close > lower_band and close < upper_band and macdLine > 0
+
+// 判斷進場條件：快速EMA下穿慢速EMA並且價格在布林帶中間，同時MACD為負值
+enter_short = ta.crossunder(fast_ema, slow_ema) and close > lower_band and close < upper_band and macdLine < 0
+
+// 判斷出場條件：快速EMA下穿慢速EMA或價格觸及布林帶上軌道或下軌道
+exit_long = ta.crossunder(fast_ema, slow_ema) or close >= upper_band or close <= lower_band
+exit_short = ta.crossover(fast_ema, slow_ema) or close >= upper_band or close <= lower_band
+
+// 策略邏輯
+if (enter_long)
+    strategy.entry("多單", strategy.long)
+    strategy.exit("多單出場", from_entry="多單", loss=close - atr_value * stop_loss_atr, profit=close + atr_value * take_profit_atr)
+
+if (enter_short)
+    strategy.entry("空單", strategy.short)
+    strategy.exit("空單出場", from_entry="空單", loss=close + atr_value * stop_loss_atr, profit=close - atr_value * take_profit_atr)
+
+// 出場條件
+if (exit_long)
+    strategy.close("多單")
+
+if (exit_short)
+    strategy.close("空單")
+
+// 繪製移動平均線
+plot(fast_ema, title='快速EMA', color=color.blue)
+plot(slow_ema, title='慢速EMA', color=color.red)
+
+// 繪製布林帶
+plot(upper_band, title='上軌道', color=color.green)
+plot(lower_band, title='下軌道', color=color.red)
+
+// 繪製MACD
+plot(macdLine, title='MACD', color=color.orange)
+plot(signalLine, title='Signal Line', color=color.purple)

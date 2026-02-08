@@ -1,0 +1,639 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International  
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © Modified Order Block Strategy with TRUE MTF & Consecutive Candle Confirmation
+
+//@version=5
+indicator("Order Blocks MTF + Alerts", overlay=true, max_boxes_count=500, max_bars_back=5000, max_labels_count=500)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS - MTF TIMEFRAME SELECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+grpMTF = "═══ TIMEFRAME SELECTION ═══"
+bool show1minOB  = input.bool(true, "Show 1 Min Order Blocks", group = grpMTF)
+bool show3minOB  = input.bool(true, "Show 3 Min Order Blocks", group = grpMTF)
+bool show5minOB  = input.bool(true, "Show 5 Min Order Blocks", group = grpMTF)
+bool show15minOB = input.bool(true, "Show 15 Min Order Blocks", group = grpMTF)
+bool show30minOB = input.bool(true, "Show 30 Min Order Blocks", group = grpMTF)
+bool show1hrOB   = input.bool(true, "Show 1 Hour Order Blocks", group = grpMTF)
+
+grpOB = "═══ ORDER BLOCK SETTINGS ═══"
+string obDetection = input.string("Close", "OB Detection Method", options=["Close", "HL"], group = grpOB,
+     tooltip = "Close: Fractal break on close. HL: Fractal break on high/low")
+string obHeight = input.string("Body", "OB Height", options=["Body", "Wick"], group = grpOB)
+bool deleteOnMitigation = input.bool(true, "Delete OB when mitigated", group = grpOB)
+int maxOBPerTF = input.int(5, "Max OBs per Timeframe", minval=2, maxval=10, group = grpOB,
+     tooltip = "Lower = faster performance")
+
+grpColors = "═══ OB COLORS ═══"
+color bullOBColor = input.color(color.rgb(0, 137, 123, 70), "Bullish OB Color", group = grpColors)
+color bearOBColor = input.color(color.rgb(255, 82, 82, 70), "Bearish OB Color", group = grpColors)
+color bullOBBorder = input.color(color.rgb(0, 137, 123, 0), "Bullish OB Border", group = grpColors)
+color bearOBBorder = input.color(color.rgb(255, 82, 82, 0), "Bearish OB Border", group = grpColors)
+
+grpSignal = "═══ SIGNAL SETTINGS ═══"
+string signalTF = input.string("5", "Signal TF", options=["1", "3", "5", "15", "30", "60"], group = grpSignal,
+     tooltip = "Which timeframe OB to watch for tap signals")
+int consecutiveCandles = input.int(3, "Consecutive Candles Required", minval=2, maxval=5, group = grpSignal,
+     tooltip = "Number of consecutive bullish/bearish candles required after OB tap")
+string ltfTimeframe = input.timeframe("1", "LTF for Candle Confirmation", group = grpSignal,
+     tooltip = "Lower timeframe to check for consecutive candles")
+int maxBarsAfterTap = input.int(30, "Max Bars After Tap for Signal", minval=5, maxval=100, group = grpSignal)
+
+bool showSignals = input.bool(true, "Show Buy/Sell Signals", group = grpSignal)
+bool enableAlerts = input.bool(true, "Enable Alerts", group = grpSignal)
+color buySignalColor = input.color(color.rgb(0, 230, 118), "Buy Signal Color", group = grpSignal)
+color sellSignalColor = input.color(color.rgb(255, 82, 82), "Sell Signal Color", group = grpSignal)
+
+grpFractal = "═══ FRACTAL SETTINGS ═══"
+string fractalType = input.string("3", "Fractal Type (3 or 5 bar)", options=["3", "5"], group = grpFractal)
+bool showFractals = input.bool(false, "Show Fractal Points", group = grpFractal)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type OrderBlock
+    box   body
+    label lbl
+    float top
+    float bottom
+    bool  isBull
+    string tf
+    bool  tapped
+    int   tappedBar
+    bool  signalTriggered
+    int   createTime
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GLOBAL VARIABLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var array<OrderBlock> orderBlocks = array.new<OrderBlock>()
+var array<int> obToRemove = array.new<int>()
+
+// Track tap states
+var bool bullOBTapped = false
+var bool bearOBTapped = false
+var int lastBullTapBar = 0
+var int lastBearTapBar = 0
+
+// Signal variables
+bool buySignal = false
+bool sellSignal = false
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRACTAL FUNCTIONS (for current TF)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// 3-bar fractal
+isRegularFractalHigh() => high[0] < high[1] and (high[2] < high[1] or (high[2] == high[1] and high[3] < high[2]))
+isRegularFractalLow() => low[0] > low[1] and (low[2] > low[1] or (low[2] == low[1] and low[3] > low[2]))
+
+// 5-bar (Bill Williams) fractal
+isBWFractalHigh() => high[0] < high[2] and high[1] < high[2] and high[3] < high[2] and high[4] < high[2]
+isBWFractalLow() => low[0] > low[2] and low[1] > low[2] and low[3] > low[2] and low[4] > low[2]
+
+// Get fractal based on setting
+isFractalHigh() => fractalType == "3" ? isRegularFractalHigh() : isBWFractalHigh()
+isFractalLow() => fractalType == "3" ? isRegularFractalLow() : isBWFractalLow()
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MTF ORDER BLOCK DETECTION FUNCTION (Nephew Sam Style)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Nephew Sam OB Detection Method:
+// 1. Identify swing highs/lows (pivot points)
+// 2. Bullish OB: When price breaks above swing high (BOS), last bearish candle = OB
+// 3. Bearish OB: When price breaks below swing low (BOS), last bullish candle = OB
+
+detectOB(float _open, float _high, float _low, float _close, float _open1, float _high1, float _low1, float _close1, 
+         float _open2, float _high2, float _low2, float _close2, float _open3, float _high3, float _low3, float _close3,
+         float _open4, float _high4, float _low4, float _close4, int _time) =>
+    
+    float bullTop = na
+    float bullBot = na
+    float bearTop = na
+    float bearBot = na
+    int bullTime = na
+    int bearTime = na
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // SWING POINT DETECTION (Pivot Points)
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    // Swing High at bar[2]: Higher than neighbors (3-bar fractal)
+    bool swingHigh2 = _high2 > _high1 and _high2 > _high3
+    // Swing High at bar[3]: Higher than neighbors
+    bool swingHigh3 = _high3 > _high2 and _high3 > _high4
+    
+    // Swing Low at bar[2]: Lower than neighbors (3-bar fractal)  
+    bool swingLow2 = _low2 < _low1 and _low2 < _low3
+    // Swing Low at bar[3]: Lower than neighbors
+    bool swingLow3 = _low3 < _low2 and _low3 < _low4
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // BULLISH ORDER BLOCK (Break of Structure to upside)
+    // When current candle breaks above a swing high = Bullish BOS
+    // The OB is the last bearish candle before the break
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    // Check for bullish break of structure
+    float swingHighLevel = swingHigh2 ? _high2 : swingHigh3 ? _high3 : na
+    
+    // Bullish BOS: Current close breaks above the swing high
+    bool bullishBOS = not na(swingHighLevel) and _close > swingHighLevel
+    
+    if bullishBOS
+        // Find the last bearish candle (this becomes the OB)
+        if _close1 < _open1  // Bar[1] is bearish
+            bullTop := obHeight == "Body" ? math.max(_open1, _close1) : _high1
+            bullBot := obHeight == "Body" ? math.min(_open1, _close1) : _low1
+            bullTime := _time
+        else if _close2 < _open2  // Bar[2] is bearish
+            bullTop := obHeight == "Body" ? math.max(_open2, _close2) : _high2
+            bullBot := obHeight == "Body" ? math.min(_open2, _close2) : _low2
+            bullTime := _time
+        else if _close3 < _open3  // Bar[3] is bearish
+            bullTop := obHeight == "Body" ? math.max(_open3, _close3) : _high3
+            bullBot := obHeight == "Body" ? math.min(_open3, _close3) : _low3
+            bullTime := _time
+        else if _close4 < _open4  // Bar[4] is bearish
+            bullTop := obHeight == "Body" ? math.max(_open4, _close4) : _high4
+            bullBot := obHeight == "Body" ? math.min(_open4, _close4) : _low4
+            bullTime := _time
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // BEARISH ORDER BLOCK (Break of Structure to downside)
+    // When current candle breaks below a swing low = Bearish BOS
+    // The OB is the last bullish candle before the break
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    // Check for bearish break of structure
+    float swingLowLevel = swingLow2 ? _low2 : swingLow3 ? _low3 : na
+    
+    // Bearish BOS: Current close breaks below the swing low
+    bool bearishBOS = not na(swingLowLevel) and _close < swingLowLevel
+    
+    if bearishBOS
+        // Find the last bullish candle (this becomes the OB)
+        if _close1 > _open1  // Bar[1] is bullish
+            bearTop := obHeight == "Body" ? math.max(_open1, _close1) : _high1
+            bearBot := obHeight == "Body" ? math.min(_open1, _close1) : _low1
+            bearTime := _time
+        else if _close2 > _open2  // Bar[2] is bullish
+            bearTop := obHeight == "Body" ? math.max(_open2, _close2) : _high2
+            bearBot := obHeight == "Body" ? math.min(_open2, _close2) : _low2
+            bearTime := _time
+        else if _close3 > _open3  // Bar[3] is bullish
+            bearTop := obHeight == "Body" ? math.max(_open3, _close3) : _high3
+            bearBot := obHeight == "Body" ? math.min(_open3, _close3) : _low3
+            bearTime := _time
+        else if _close4 > _open4  // Bar[4] is bullish
+            bearTop := obHeight == "Body" ? math.max(_open4, _close4) : _high4
+            bearBot := obHeight == "Body" ? math.min(_open4, _close4) : _low4
+            bearTime := _time
+    
+    [bullTop, bullBot, bearTop, bearBot, bullTime, bearTime]
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REQUEST MTF DATA
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Function to get OHLC data from a timeframe
+getOBData(string tf) =>
+    request.security(syminfo.tickerid, tf, 
+         [open, high, low, close, open[1], high[1], low[1], close[1], 
+          open[2], high[2], low[2], close[2], open[3], high[3], low[3], close[3],
+          open[4], high[4], low[4], close[4], time], lookahead=barmerge.lookahead_off)
+
+// Get data for each timeframe
+[o1m, h1m, l1m, c1m, o1m_1, h1m_1, l1m_1, c1m_1, o1m_2, h1m_2, l1m_2, c1m_2, o1m_3, h1m_3, l1m_3, c1m_3, o1m_4, h1m_4, l1m_4, c1m_4, t1m] = getOBData("1")
+[o3m, h3m, l3m, c3m, o3m_1, h3m_1, l3m_1, c3m_1, o3m_2, h3m_2, l3m_2, c3m_2, o3m_3, h3m_3, l3m_3, c3m_3, o3m_4, h3m_4, l3m_4, c3m_4, t3m] = getOBData("3")
+[o5m, h5m, l5m, c5m, o5m_1, h5m_1, l5m_1, c5m_1, o5m_2, h5m_2, l5m_2, c5m_2, o5m_3, h5m_3, l5m_3, c5m_3, o5m_4, h5m_4, l5m_4, c5m_4, t5m] = getOBData("5")
+[o15m, h15m, l15m, c15m, o15m_1, h15m_1, l15m_1, c15m_1, o15m_2, h15m_2, l15m_2, c15m_2, o15m_3, h15m_3, l15m_3, c15m_3, o15m_4, h15m_4, l15m_4, c15m_4, t15m] = getOBData("15")
+[o30m, h30m, l30m, c30m, o30m_1, h30m_1, l30m_1, c30m_1, o30m_2, h30m_2, l30m_2, c30m_2, o30m_3, h30m_3, l30m_3, c30m_3, o30m_4, h30m_4, l30m_4, c30m_4, t30m] = getOBData("30")
+[o1h, h1h, l1h, c1h, o1h_1, h1h_1, l1h_1, c1h_1, o1h_2, h1h_2, l1h_2, c1h_2, o1h_3, h1h_3, l1h_3, c1h_3, o1h_4, h1h_4, l1h_4, c1h_4, t1h] = getOBData("60")
+
+// Detect OBs on each timeframe
+[bull1m_top, bull1m_bot, bear1m_top, bear1m_bot, bull1m_t, bear1m_t] = detectOB(o1m, h1m, l1m, c1m, o1m_1, h1m_1, l1m_1, c1m_1, o1m_2, h1m_2, l1m_2, c1m_2, o1m_3, h1m_3, l1m_3, c1m_3, o1m_4, h1m_4, l1m_4, c1m_4, t1m)
+[bull3m_top, bull3m_bot, bear3m_top, bear3m_bot, bull3m_t, bear3m_t] = detectOB(o3m, h3m, l3m, c3m, o3m_1, h3m_1, l3m_1, c3m_1, o3m_2, h3m_2, l3m_2, c3m_2, o3m_3, h3m_3, l3m_3, c3m_3, o3m_4, h3m_4, l3m_4, c3m_4, t3m)
+[bull5m_top, bull5m_bot, bear5m_top, bear5m_bot, bull5m_t, bear5m_t] = detectOB(o5m, h5m, l5m, c5m, o5m_1, h5m_1, l5m_1, c5m_1, o5m_2, h5m_2, l5m_2, c5m_2, o5m_3, h5m_3, l5m_3, c5m_3, o5m_4, h5m_4, l5m_4, c5m_4, t5m)
+[bull15m_top, bull15m_bot, bear15m_top, bear15m_bot, bull15m_t, bear15m_t] = detectOB(o15m, h15m, l15m, c15m, o15m_1, h15m_1, l15m_1, c15m_1, o15m_2, h15m_2, l15m_2, c15m_2, o15m_3, h15m_3, l15m_3, c15m_3, o15m_4, h15m_4, l15m_4, c15m_4, t15m)
+[bull30m_top, bull30m_bot, bear30m_top, bear30m_bot, bull30m_t, bear30m_t] = detectOB(o30m, h30m, l30m, c30m, o30m_1, h30m_1, l30m_1, c30m_1, o30m_2, h30m_2, l30m_2, c30m_2, o30m_3, h30m_3, l30m_3, c30m_3, o30m_4, h30m_4, l30m_4, c30m_4, t30m)
+[bull1h_top, bull1h_bot, bear1h_top, bear1h_bot, bull1h_t, bear1h_t] = detectOB(o1h, h1h, l1h, c1h, o1h_1, h1h_1, l1h_1, c1h_1, o1h_2, h1h_2, l1h_2, c1h_2, o1h_3, h1h_3, l1h_3, c1h_3, o1h_4, h1h_4, l1h_4, c1h_4, t1h)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONSECUTIVE CANDLE DETECTION ON LTF
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Only fetch LTF data when we have a tapped OB waiting for confirmation
+bool needLTFData = bullOBTapped or bearOBTapped
+
+array<float> ltfCloses = needLTFData ? request.security_lower_tf(syminfo.tickerid, ltfTimeframe, close) : array.new<float>()
+array<float> ltfOpens = needLTFData ? request.security_lower_tf(syminfo.tickerid, ltfTimeframe, open) : array.new<float>()
+
+bool hasConsecBullish = false
+bool hasConsecBearish = false
+
+if needLTFData
+    int closesSize = ltfCloses.size()
+    int opensSize = ltfOpens.size()
+    
+    if closesSize >= consecutiveCandles and opensSize >= consecutiveCandles
+        int startIdx = closesSize - consecutiveCandles
+        
+        if bullOBTapped
+            bool allBullish = true
+            for i = startIdx to closesSize - 1
+                if ltfCloses.get(i) <= ltfOpens.get(i)
+                    allBullish := false
+                    break
+            hasConsecBullish := allBullish
+        
+        if bearOBTapped
+            bool allBearish = true
+            for i = startIdx to closesSize - 1
+                if ltfCloses.get(i) >= ltfOpens.get(i)
+                    allBearish := false
+                    break
+            hasConsecBearish := allBearish
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CREATE ORDER BLOCKS FUNCTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+createOB(float obTop, float obBottom, bool isBull, string tfLabel, color bgColor, color borderColor, int obTime) =>
+    box obBox = box.new(bar_index, obTop, bar_index + 100, obBottom, 
+         bgcolor=bgColor, border_color=borderColor, border_width=1)
+    label obLbl = label.new(bar_index, isBull ? obBottom : obTop, tfLabel,
+         style=isBull ? label.style_label_up : label.style_label_down,
+         color=color.new(bgColor, 50), textcolor=chart.fg_color, size=size.tiny)
+    OrderBlock.new(obBox, obLbl, obTop, obBottom, isBull, tfLabel, false, 0, false, obTime)
+
+
+// Count OBs per timeframe
+countOBsForTF(string tf) =>
+    int count = 0
+    for ob in orderBlocks
+        if str.contains(ob.tf, tf)
+            count += 1
+    count
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN LOGIC - CREATE MTF ORDER BLOCKS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if bar_index > 50
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CREATE OBs FROM EACH TIMEFRAME
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    // 1 MIN OBs
+    if show1minOB
+        if not na(bull1m_top) and not na(bull1m_bot) and countOBsForTF("1m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "1m") and math.abs(ob.top - bull1m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull1m_top, bull1m_bot, true, "1m Bull", bullOBColor, bullOBBorder, bull1m_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear1m_top) and not na(bear1m_bot) and countOBsForTF("1m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "1m") and math.abs(ob.top - bear1m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear1m_top, bear1m_bot, false, "1m Bear", bearOBColor, bearOBBorder, bear1m_t)
+                orderBlocks.push(newOB)
+    
+    // 3 MIN OBs
+    if show3minOB
+        if not na(bull3m_top) and not na(bull3m_bot) and countOBsForTF("3m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "3m") and math.abs(ob.top - bull3m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull3m_top, bull3m_bot, true, "3m Bull", bullOBColor, bullOBBorder, bull3m_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear3m_top) and not na(bear3m_bot) and countOBsForTF("3m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "3m") and math.abs(ob.top - bear3m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear3m_top, bear3m_bot, false, "3m Bear", bearOBColor, bearOBBorder, bear3m_t)
+                orderBlocks.push(newOB)
+    
+    // 5 MIN OBs
+    if show5minOB
+        if not na(bull5m_top) and not na(bull5m_bot) and countOBsForTF("5m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "5m") and math.abs(ob.top - bull5m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull5m_top, bull5m_bot, true, "5m Bull", bullOBColor, bullOBBorder, bull5m_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear5m_top) and not na(bear5m_bot) and countOBsForTF("5m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "5m") and math.abs(ob.top - bear5m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear5m_top, bear5m_bot, false, "5m Bear", bearOBColor, bearOBBorder, bear5m_t)
+                orderBlocks.push(newOB)
+    
+    // 15 MIN OBs
+    if show15minOB
+        if not na(bull15m_top) and not na(bull15m_bot) and countOBsForTF("15m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "15m") and math.abs(ob.top - bull15m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull15m_top, bull15m_bot, true, "15m Bull", bullOBColor, bullOBBorder, bull15m_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear15m_top) and not na(bear15m_bot) and countOBsForTF("15m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "15m") and math.abs(ob.top - bear15m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear15m_top, bear15m_bot, false, "15m Bear", bearOBColor, bearOBBorder, bear15m_t)
+                orderBlocks.push(newOB)
+    
+    // 30 MIN OBs
+    if show30minOB
+        if not na(bull30m_top) and not na(bull30m_bot) and countOBsForTF("30m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "30m") and math.abs(ob.top - bull30m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull30m_top, bull30m_bot, true, "30m Bull", bullOBColor, bullOBBorder, bull30m_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear30m_top) and not na(bear30m_bot) and countOBsForTF("30m") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "30m") and math.abs(ob.top - bear30m_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear30m_top, bear30m_bot, false, "30m Bear", bearOBColor, bearOBBorder, bear30m_t)
+                orderBlocks.push(newOB)
+    
+    // 1 HOUR OBs
+    if show1hrOB
+        if not na(bull1h_top) and not na(bull1h_bot) and countOBsForTF("1H") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if ob.isBull and str.contains(ob.tf, "1H") and math.abs(ob.top - bull1h_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bull1h_top, bull1h_bot, true, "1H Bull", bullOBColor, bullOBBorder, bull1h_t)
+                orderBlocks.push(newOB)
+        
+        if not na(bear1h_top) and not na(bear1h_bot) and countOBsForTF("1H") < maxOBPerTF
+            bool exists = false
+            for ob in orderBlocks
+                if not ob.isBull and str.contains(ob.tf, "1H") and math.abs(ob.top - bear1h_top) < syminfo.mintick * 10
+                    exists := true
+                    break
+            if not exists
+                newOB = createOB(bear1h_top, bear1h_bot, false, "1H Bear", bearOBColor, bearOBBorder, bear1h_t)
+                orderBlocks.push(newOB)
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TAP DETECTION & SIGNAL GENERATION
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    obToRemove.clear()
+    int obSize = orderBlocks.size()
+    bool shouldExtend = bar_index % 5 == 0
+    
+    // Map signalTF to label format
+    string sigTFLabel = signalTF == "1" ? "1m" : signalTF == "3" ? "3m" : signalTF == "5" ? "5m" : signalTF == "15" ? "15m" : signalTF == "30" ? "30m" : "1H"
+    
+    if obSize > 0
+        for i = 0 to obSize - 1
+            ob = orderBlocks.get(i)
+            
+            float obTop = ob.top
+            float obBot = ob.bottom
+            bool isBull = ob.isBull
+            bool alreadyTapped = ob.tapped
+            bool alreadyTriggered = ob.signalTriggered
+            
+            // Check if this OB is from the signal timeframe
+            bool isSignalOB = str.contains(ob.tf, sigTFLabel)
+            
+            if isBull
+                bool tapCondition = low <= obTop and close > obBot
+                
+                if not alreadyTapped and tapCondition
+                    ob.tapped := true
+                    ob.tappedBar := bar_index
+                    if isSignalOB
+                        bullOBTapped := true
+                        lastBullTapBar := bar_index
+                    ob.body.set_bgcolor(color.new(bullOBColor, 40))
+                    alreadyTapped := true
+                
+                if alreadyTapped and not alreadyTriggered and isSignalOB and hasConsecBullish
+                    if (bar_index - ob.tappedBar) <= maxBarsAfterTap
+                        buySignal := true
+                        ob.signalTriggered := true
+                        bullOBTapped := false
+                
+                if close < obBot and deleteOnMitigation
+                    ob.body.delete()
+                    ob.lbl.delete()
+                    obToRemove.push(i)
+                    if alreadyTapped and not alreadyTriggered
+                        bullOBTapped := false
+            
+            else
+                bool tapCondition = high >= obBot and close < obTop
+                
+                if not alreadyTapped and tapCondition
+                    ob.tapped := true
+                    ob.tappedBar := bar_index
+                    if isSignalOB
+                        bearOBTapped := true
+                        lastBearTapBar := bar_index
+                    ob.body.set_bgcolor(color.new(bearOBColor, 40))
+                    alreadyTapped := true
+                
+                if alreadyTapped and not alreadyTriggered and isSignalOB and hasConsecBearish
+                    if (bar_index - ob.tappedBar) <= maxBarsAfterTap
+                        sellSignal := true
+                        ob.signalTriggered := true
+                        bearOBTapped := false
+                
+                if close > obTop and deleteOnMitigation
+                    ob.body.delete()
+                    ob.lbl.delete()
+                    obToRemove.push(i)
+                    if alreadyTapped and not alreadyTriggered
+                        bearOBTapped := false
+            
+            if shouldExtend and not array.includes(obToRemove, i)
+                ob.body.set_right(bar_index + 50)
+        
+        int removeCount = obToRemove.size()
+        if removeCount > 0
+            obToRemove.sort(order.descending)
+            for j = 0 to removeCount - 1
+                int idx = obToRemove.get(j)
+                if idx < orderBlocks.size()
+                    orderBlocks.remove(idx)
+    
+    if bullOBTapped and (bar_index - lastBullTapBar) > maxBarsAfterTap
+        bullOBTapped := false
+    if bearOBTapped and (bar_index - lastBearTapBar) > maxBarsAfterTap
+        bearOBTapped := false
+    
+    // Limit total OBs
+    while orderBlocks.size() > maxOBPerTF * 6
+        OrderBlock oldOB = orderBlocks.shift()
+        oldOB.body.delete()
+        oldOB.lbl.delete()
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var table dash = table.new(position.top_right, 3, 8, chart.bg_color, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    int count1m = 0, count3m = 0, count5m = 0, count15m = 0, count30m = 0, count1h = 0
+    int tappedCount = 0
+    
+    for ob in orderBlocks
+        if str.contains(ob.tf, "1m")
+            count1m += 1
+        else if str.contains(ob.tf, "3m")
+            count3m += 1
+        else if str.contains(ob.tf, "5m")
+            count5m += 1
+        else if str.contains(ob.tf, "15m")
+            count15m += 1
+        else if str.contains(ob.tf, "30m")
+            count30m += 1
+        else if str.contains(ob.tf, "1H")
+            count1h += 1
+        if ob.tapped
+            tappedCount += 1
+    
+    string waitStatus = bullOBTapped ? "BULL" : bearOBTapped ? "BEAR" : "---"
+    color waitColor = bullOBTapped ? color.lime : bearOBTapped ? color.red : color.gray
+    
+    dash.cell(0, 0, "TF", text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(1, 0, "OBs", text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 0, "Sig", text_color=chart.fg_color, text_size=size.tiny)
+    
+    dash.cell(0, 1, "1m", text_color=show1minOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 1, str.tostring(count1m), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 1, signalTF == "1" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 2, "3m", text_color=show3minOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 2, str.tostring(count3m), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 2, signalTF == "3" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 3, "5m", text_color=show5minOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 3, str.tostring(count5m), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 3, signalTF == "5" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 4, "15m", text_color=show15minOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 4, str.tostring(count15m), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 4, signalTF == "15" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 5, "30m", text_color=show30minOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 5, str.tostring(count30m), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 5, signalTF == "30" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 6, "1H", text_color=show1hrOB ? color.lime : color.gray, text_size=size.tiny)
+    dash.cell(1, 6, str.tostring(count1h), text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(2, 6, signalTF == "60" ? "✓" : "", text_color=color.yellow, text_size=size.tiny)
+    
+    dash.cell(0, 7, "Wait", text_color=chart.fg_color, text_size=size.tiny)
+    dash.cell(1, 7, waitStatus, text_color=waitColor, text_size=size.tiny)
+    dash.cell(2, 7, str.tostring(tappedCount) + " tap", text_color=color.yellow, text_size=size.tiny)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLOT SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Buy Signal
+plotshape(showSignals and buySignal, title="BUY Signal",
+     style=shape.labelup, location=location.belowbar,
+     color=buySignalColor, text="BUY", textcolor=color.white, size=size.normal)
+
+// Sell Signal
+plotshape(showSignals and sellSignal, title="SELL Signal",
+     style=shape.labeldown, location=location.abovebar,
+     color=sellSignalColor, text="SELL", textcolor=color.white, size=size.normal)
+
+// Plot fractals (optional)
+plotshape(showFractals and isFractalHigh(), title="Fractal High",
+     style=shape.triangledown, location=location.abovebar,
+     color=color.red, offset=fractalType == "3" ? -1 : -2, size=size.tiny)
+plotshape(showFractals and isFractalLow(), title="Fractal Low",
+     style=shape.triangleup, location=location.belowbar,
+     color=color.blue, offset=fractalType == "3" ? -1 : -2, size=size.tiny)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enableAlerts and buySignal,
+     title="🟢 BUY Signal - OB Tap + Consecutive Candles",
+     message="🚀 BUY SIGNAL on {{ticker}} ({{interval}})\nBullish Order Block tapped with consecutive bullish candles!\nConsider LONG entry.")
+
+alertcondition(enableAlerts and sellSignal,
+     title="🔴 SELL Signal - OB Tap + Consecutive Candles",
+     message="🔻 SELL SIGNAL on {{ticker}} ({{interval}})\nBearish Order Block tapped with consecutive bearish candles!\nConsider SHORT entry.")
+
+alertcondition(buySignal or sellSignal,
+     title="⚡ Any OB Signal",
+     message="Order Block Signal on {{ticker}} ({{interval}}) - Check chart!")
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BACKGROUND COLOR FOR WAITING STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+bgcolor(bullOBTapped ? color.new(bullOBColor, 95) : na, title="Waiting for Bull Confirmation")
+bgcolor(bearOBTapped ? color.new(bearOBColor, 95) : na, title="Waiting for Bear Confirmation")

@@ -1,0 +1,37 @@
+//@version=5
+strategy("WTTSMAL", overlay=true,  pyramiding=1, default_qty_type=strategy.percent_of_equity, default_qty_value=10,commission_value=0.025,initial_capital=1000)
+
+startYear = input(2023, "Start Year")
+startMonth = input(3, "Start Month")
+startDay = input(15, "Start Day")//50
+endYear = year(timenow)
+endMonth = month(timenow)
+endDay = dayofmonth(timenow)
+startTime = timestamp(startYear, startMonth, startDay, 00, 00)
+endTime = timestamp(endYear, endMonth, endDay, 23, 59)
+timelock = input(bool(1) ,"Time lock")
+
+// 判斷當前條是否在指定的時間範圍內
+inDateRange = time >= startTime and time <= endTime or (not timelock) 
+
+bullish_sma=input.source(open,"Vol Trend [Morty]: Bullish Volume Trend")
+bearish_sma=input.source(open,"Vol Trend [Morty]: Bearish Volume Trend")
+
+
+bullish_Condition =  bullish_sma > bearish_sma and volume > bullish_sma
+closeLong_Condition =  bullish_sma < bearish_sma
+
+
+// 使用调整后的仓位大小进行交易
+if bullish_Condition and (inDateRange) 
+    strategy.entry("Long", strategy.long)
+
+if closeLong_Condition and (inDateRange)
+    strategy.close("Long")
+
+
+// if bearish_Condition
+//     strategy.entry("Short", strategy.short, qty=short_Qty_adjusted)
+
+// if closeShort_Condition
+//     strategy.close("Short")

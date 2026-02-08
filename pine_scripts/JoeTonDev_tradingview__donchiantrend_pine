@@ -1,0 +1,123 @@
+//@version=5
+// 1. Define strategy settings
+strategy(title="Donchian Trend", overlay=true,
+     pyramiding=0, initial_capital=100000,
+     commission_type=strategy.commission.cash_per_order,
+     commission_value=4, slippage=2)
+
+// Donchian Channel inputs
+hiLenEntry = input.int(20, title="High Length (Entry)")
+loLenEntry = input.int(20, title="Low Length (Entry)")
+hiLenExit  = input.int(10, title="High Length (Exit)")
+loLenExit  = input.int(10, title="Low Length (Exit)")
+
+// EMA trend filter input
+fastMALen = input.int(25, title="Fast EMA Length")
+slowMALen = input.int(350, title="Slow EMA Length")
+
+// ATR stop inputs
+atrLen     = input.int(20, title="ATR Length")
+stopOffset = input.float(2.0, title="Stop Offset", step=0.25)
+
+// Position sizing inputs
+usePosSize = input.bool(true, title="Use Position Sizing?")
+riskPerc   = input.float(0.5, title="Risk %", step=0.25)
+
+// 2. Calculate strategy values
+// Calculate highest highs and lowest lows
+highsEntry = ta.highest(high, hiLenEntry)[1]
+lowsEntry  = ta.lowest(low, loLenEntry)[1]
+
+highsExit = ta.highest(high, hiLenExit)[1]
+lowsExit  = ta.lowest(low, loLenExit)[1]
+
+// Get EMA and ATR values
+fastMA = ta.ema(close, fastMALen)
+slowMA = ta.ema(close, slowMALen)
+
+atrValue = ta.atr(atrLen)
+
+// Calculate position size
+riskEquity  = (riskPerc / 100) * strategy.equity
+atrCurrency = atrValue * syminfo.pointvalue
+posSize     = usePosSize ? math.floor(riskEquity / atrCurrency) : 1
+
+// Determine ATR stops
+atrLongEntry = strategy.position_size == 0 ?
+     close - (atrValue * stopOffset) :
+     na
+longStop = fixnan(atrLongEntry)
+
+atrShortEntry = strategy.position_size == 0 ?
+     close + (atrValue * stopOffset) :
+     na
+shortStop = fixnan(atrShortEntry)
+
+// Determine trend according to moving averages
+upTrend   = fastMA > slowMA
+downTrend = fastMA < slowMA
+
+// 3. Output strategy data
+// Plot 20-bar high and low breakouts for entries
+plot(upTrend ? highsEntry : na, style=plot.style_linebr,
+     color=color.green, linewidth=2, title="Highs Entry")
+
+plot(downTrend ? lowsEntry : na, style=plot.style_linebr,
+     color=color.red, linewidth=2, title="Lows Entry")
+
+// Plot 25-bar EMA
+plot(fastMA, linewidth=2, color=upTrend ? color.green : color.red, 
+     title="Fast MA")
+
+// Plot 10-bar high and low for breakout exits
+plot(downTrend ? highsExit : na, style=plot.style_circles,
+     title="Highs Exit", color=color.fuchsia, linewidth=3)
+
+plot(upTrend ? lowsExit : na, style=plot.style_circles,
+     title="Lows Exit", color=color.fuchsia, linewidth=3)
+
+// Plot ATR stop levels
+stopPrice = if strategy.position_size > 0
+    longStop
+else if strategy.position_size < 0
+    shortStop
+
+plot(stopPrice, style=plot.style_linebr, title="ATR Stop", 
+     color=color.blue, linewidth=2)
+
+// 4. Determine long trading conditions
+enterLong = upTrend and 
+     close > highsEntry and 
+     barstate.ishistory
+
+exitLong = close < lowsExit
+
+// 5. Code short trading conditions
+enterShort = downTrend and 
+     close < lowsEntry and 
+     barstate.ishistory
+
+exitShort = close > highsExit
+
+// 6. Submit entry orders
+if enterLong
+    strategy.entry("EL", strategy.long, qty=posSize)
+
+if enterShort
+    strategy.entry("ES", strategy.short, qty=posSize)
+
+// 7. Submit exit orders
+if exitLong
+    strategy.close("EL")
+
+if exitShort
+    strategy.close("ES")
+
+if strategy.position_size > 0
+    strategy.exit("XL", from_entry="EL", stop=longStop)
+
+if strategy.position_size < 0
+    strategy.exit("XS", from_entry="ES", stop=shortStop)
+
+if barstate.islastconfirmedhistory
+    strategy.close_all()

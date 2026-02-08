@@ -1,0 +1,73 @@
+//@version=5
+indicator("Madrimov Smart Money Signals)", overlay=true, max_labels_count=500)
+
+//===== Inputs =====//
+length   = input.int(25, "Volume Spike Sensitivity")
+swingLen = input.int(5, "Swing Strength (Structure)")
+
+//===== ATR Offset (Clean Label Position) =====//
+atr = ta.atr(14)
+yOffsetLong = atr * 0.5
+yOffsetShort = atr * 0.5
+
+//===== Volume Spike =====//
+highestVol = ta.highest(volume[1], length)
+volBuy  = close > open and volume > highestVol
+volSell = close < open and volume > highestVol
+
+//===== Swing Structure Detection =====//
+swingHigh = ta.pivothigh(high, swingLen, swingLen)
+swingLow  = ta.pivotlow(low, swingLen, swingLen)
+
+var float lastHigh = na
+var float lastLow  = na
+
+if not na(swingHigh)
+    lastHigh := swingHigh
+if not na(swingLow)
+    lastLow := swingLow
+
+//===== Smart Money State =====//
+var int trend = 0  // 1 bullish, -1 bearish
+var float chochBullLevel = na
+var float chochBearLevel = na
+
+//===== CHOCH =====//
+chochBull = (trend == -1 or trend == 0) and close > lastHigh
+chochBear = (trend == 1 or trend == 0) and close < lastLow
+
+//===== Save CHOCH Levels =====//
+if chochBull
+    chochBullLevel := lastHigh
+
+if chochBear
+    chochBearLevel := lastLow
+
+//===== Filtered BOS (Only after CHOCH, no spam) =====//
+bosBull = trend == 1 and chochBullLevel and close > chochBullLevel and not chochBull
+bosBear = trend == -1 and chochBearLevel and close < chochBearLevel and not chochBear
+
+//===== CHOCH + Volume = Final Signals =====//
+buyCH  = chochBull and volBuy
+sellCH = chochBear and volSell
+buyBOS = bosBull and volBuy
+sellBOS = bosBear and volSell
+
+//===== Update Trend =====//
+if buyCH
+    trend := 1
+if sellCH
+    trend := -1
+
+//===== Plot Clean Labels (No sky-floating) =====//
+if buyCH
+    label.new(bar_index, low - yOffsetLong, "BUY", style=label.style_label_up, color=color.green, textcolor=color.white)
+
+if sellCH
+    label.new(bar_index, high + yOffsetShort, "SELL", style=label.style_label_down, color=color.red, textcolor=color.white)
+
+if buyBOS
+    label.new(bar_index, low - yOffsetLong, "BOS", style=label.style_none, color=color.new(color.teal, 0), textcolor=color.white, size=size.tiny)
+
+if sellBOS
+    label.new(bar_index, high + yOffsetShort, "BOS", style=label.style_none, color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)

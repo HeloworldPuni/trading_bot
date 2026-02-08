@@ -1,0 +1,140 @@
+//@version=5
+indicator(shorttitle="Whale Trader", title="Whale Trader", overlay=true)
+
+length = input.int(20, title="Length")
+src = close
+mult = input.float(2, title="StdDev")
+basis = ta.sma(src, length)
+dev = mult * ta.stdev(src, length)
+upper = basis + dev
+lower = basis - dev
+volMultiplier = input.float(1.5, title="Volume Multiplier for Stopping Volume")
+
+vwapLength = input.int(20, title="VWAP Length")
+maLength = input.int(20, title="Moving Average Length")
+
+// Enable/Disable Line Types
+showStoppingVolLines = input.bool(true, title="Show Stopping Volume Lines")
+showSRLines = input.bool(true, title="Show Support and Resistance Lines")
+showFibLines = input.bool(true, title="Show Fib Lines")
+//showBollingerBand = input.bool(true, title="Show Bollinger Band")
+showStoppingVolumeIntersections = input.bool(true, title="Show Intersections between stopping volume candles to the upside and the downside")
+
+// Calculate VWAP and MA
+vwap = ta.vwap(vwapLength)
+ma = ta.sma(src, maLength)
+
+// RSI Parameters
+rsiLength = input.int(14, title="RSI Length")
+rsiOverBought = input.int(70, title="RSI Overbought Level")
+rsiOverSold = input.int(30, title="RSI Oversold Level")
+
+// MACD Parameters
+macdShortLength = input.int(12, title="MACD Short Period Length")
+macdLongLength = input.int(26, title="MACD Long Period Length")
+macdSignalSmoothing = input.int(9, title="MACD Signal Smoothing Period")
+
+// ATR Parameters
+atrLength = input.int(14, title="ATR Length")
+
+// Calculate RSI, MACD, and ATR
+rsi = ta.rsi(close, rsiLength)
+[macdLine, signalLine, _] = ta.macd(close, macdShortLength, macdLongLength, macdSignalSmoothing)
+atr = ta.atr(atrLength)
+
+// Define conditions for the MACD
+bullishMACD = ta.crossover(macdLine, signalLine)
+bearishMACD = ta.crossunder(macdLine, signalLine)
+
+// Define conditions for the RSI
+overSold = rsi < rsiOverSold
+overBought = rsi > rsiOverBought
+
+// Stopping volume
+volSma = ta.sma(volume, length)
+stoppingVol = volume > volSma * volMultiplier
+
+// Direction of stopping volume
+upVolStop = stoppingVol and close > open
+downVolStop = stoppingVol and close < open
+
+// Initialize the variables for the previous stopping volumes
+var float prevUpVolStopPrice = na
+var int prevUpVolStopBar = na
+var float prevDownVolStopPrice = na
+var int prevDownVolStopBar = na
+
+// Partial stopping volume
+partialUpVolStop = ta.change(upVolStop) == 1
+partialDownVolStop = ta.change(downVolStop) == 1
+
+// When there's a partial upwards stopping volume, plot the stopping volume candle
+plotcandle(showStoppingVolLines and partialUpVolStop ? high : na, showStoppingVolLines and partialUpVolStop ? high : na, showStoppingVolLines and partialUpVolStop ? low : na, showStoppingVolLines and partialUpVolStop ? close : na, color=color.green, title="Partial Stopping Volume Up")
+
+// When there's a partial downwards stopping volume, plot the stopping volume candle
+plotcandle(showStoppingVolLines and partialDownVolStop ? high : na, showStoppingVolLines and partialDownVolStop ? high : na, showStoppingVolLines and partialDownVolStop ? low : na, showStoppingVolLines and partialDownVolStop ? close : na, color=color.red, title="Partial Stopping Volume Down")
+
+// When there's an upwards stopping volume, draw an extended line from the previous one (if it exists)
+if showStoppingVolLines and upVolStop
+    if not na(prevUpVolStopPrice) and not na(prevUpVolStopBar)
+        line.new(x1=prevUpVolStopBar, y1=prevUpVolStopPrice, x2=bar_index, y2=prevUpVolStopPrice, color=color.red, width=2, extend=extend.left)
+        line.new(x1=prevUpVolStopBar, y1=prevUpVolStopPrice, x2=bar_index, y2=prevUpVolStopPrice, color=color.red, width=2, extend=extend.right)
+    // Update the previous upwards stopping volume
+    prevUpVolStopPrice := close
+    prevUpVolStopBar := bar_index
+
+// Do the same for downwards stopping volumes
+if showStoppingVolLines and downVolStop
+    if not na(prevDownVolStopPrice) and not na(prevDownVolStopBar)
+        line.new(x1=prevDownVolStopBar, y1=prevDownVolStopPrice, x2=bar_index, y2=prevDownVolStopPrice, color=color.green, width=2, extend=extend.left)
+        line.new(x1=prevDownVolStopBar, y1=prevDownVolStopPrice, x2=bar_index, y2=prevDownVolStopPrice, color=color.green, width=2, extend=extend.right)
+    // Update the previous downwards stopping volume
+    prevDownVolStopPrice := close
+    prevDownVolStopBar := bar_index
+
+plotshape(series=showStoppingVolLines and upVolStop, location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, title="Stopping Volume Up")
+plotshape(series=showStoppingVolLines and downVolStop, location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, title="Stopping Volume Down")
+
+// Fibonacci Levels and S/R Levels
+highLevel = ta.highest(high, length)
+lowLevel = ta.lowest(low, length)
+fib382 = highLevel - 0.382 * (highLevel - lowLevel)
+fib618 = highLevel - 0.618 * (highLevel - lowLevel)
+
+// Extended lines across the chart with increased width and distinct color
+if showFibLines
+    line.new(x1=bar_index[length], y1=fib382, x2=bar_index, y2=fib382, color=color.blue, width = 1)
+    line.new(x1=bar_index[length], y1=fib618, x2=bar_index, y2=fib618, color=color.olive, width = 1)
+if showSRLines
+    line.new(x1=bar_index[length], y1=highLevel, x2=bar_index, y2=highLevel, color=color.purple, width=1, extend=extend.right)
+    line.new(x1=bar_index[length], y1=lowLevel, x2=bar_index, y2=lowLevel, color=color.orange, width=1, extend=extend.right)
+
+// Define the buy and sell conditions incorporating RSI, MACD, and ATR
+//buyCondition = overSold or bullishMACD
+//sellCondition = overBought or bearishMACD
+buyCondition = bullishMACD
+sellCondition = bearishMACD
+
+plotshape(series=buyCondition, location=location.belowbar, color=color.green, style=shape.circle, title="Buy Signal")
+plotshape(series=sellCondition, location=location.abovebar, color=color.red, style=shape.circle, title="Sell Signal")
+
+// Initialize the variables for the latest stopping volumes
+var float lastUpVolStopPrice = na
+var float lastDownVolStopPrice = na
+
+// Update the latest upwards and downwards stopping volume prices
+if upVolStop
+    lastUpVolStopPrice := high
+if downVolStop
+    lastDownVolStopPrice := low
+
+// Check for intersections
+intersectionUp = na(lastDownVolStopPrice) ? na : (lastUpVolStopPrice >= lastDownVolStopPrice ? lastUpVolStopPrice : na)
+intersectionDown = na(lastUpVolStopPrice) ? na : (lastDownVolStopPrice <= lastUpVolStopPrice ? lastDownVolStopPrice : na)
+
+// When there's an intersection of upwards and downwards stopping volumes, draw a line
+if showStoppingVolumeIntersections and not na(intersectionUp)
+    line.new(x1=bar_index - 1, y1=intersectionUp, x2=bar_index, y2=intersectionUp, color=color.blue, width=2, extend=extend.right)
+if showStoppingVolumeIntersections and not na(intersectionDown)
+    line.new(x1=bar_index - 1, y1=intersectionDown, x2=bar_index, y2=intersectionDown, color=color.blue, width=2, extend=extend.right)
+

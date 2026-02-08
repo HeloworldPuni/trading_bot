@@ -1,0 +1,66 @@
+//@version=6
+strategy("Lastkiss Wyckoff-Sequence [v6]", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+// --- INPUTS ---
+volMult = input.float(2.0, "Volume Spike Multiplier", tooltip="reveals institutional intent")
+riskThreshold = input.float(15.0, "Position SL %", tooltip="Max loss on the 5% position")
+harvestProfit = input.float(17.0, "First Harvest %", tooltip="House Money protocol level")
+
+// --- VOLUME & CVD ENGINE ---
+avgVol = ta.sma(volume, 20)
+isHighVol = volume > (avgVol * volMult)
+var float cvd = 0.0
+cvd := cvd + (close > open ? volume : -volume)
+cvdMA = ta.sma(cvd, 10)
+// Spotting "Shenanigans" (Price up, Volume down)
+bearishDivergence = ta.rising(close, 3) and ta.falling(cvd, 3) 
+
+// --- LEDGER LOGIC ---
+var float bearLedger = na // Resistance
+var float bullLedger = na // Support
+
+if isHighVol
+    if close < open
+        bearLedger := high
+    else
+        bullLedger := low
+
+// --- SEQUENCE DETECTION ---
+
+// 1. SPRING (The Bear Trap/Liquidity Hunt) [3, 5]
+isSpring = (low < bullLedger) and (close > bullLedger) and isHighVol
+
+// 2. SOS - Sign of Strength (The Ledger Reclaim) [6, 8]
+var bool sosDetected = false
+var float retraceTarget = na
+isSOS = ta.crossover(close, bearLedger) and isHighVol
+
+if isSOS
+    sosDetected := true
+    retraceTarget := bearLedger
+
+// 3. BUY (Wait & Strike Retracement) [9, 10]
+// Entry when price touches the SOS level after the breakout
+validBuy = sosDetected and ta.crossunder(low, retraceTarget * 1.01) and close > retraceTarget
+
+// --- EXECUTION ---
+if validBuy and not bearishDivergence
+    strategy.entry("Buy", strategy.long, comment="STRIKE")
+    sosDetected := false
+
+// Invalidation Rule [11, 12]
+if strategy.position_size > 0 and ta.crossunder(close, bullLedger)
+    strategy.close("Buy", comment="Thesis Void")
+
+// --- PLOTTING SEQUENCE ---
+plot(bearLedger, "Bearish Ledger", color=color.new(color.red, 50), style=plot.style_circles)
+plot(bullLedger, "Bullish Ledger", color=color.new(color.green, 50), style=plot.style_circles)
+
+// Labeling the Sequence [1]
+plotshape(isSpring, "SPRING", shape.labelup, location.belowbar, color.orange, text="SPRING", textcolor=color.white)
+plotshape(isSOS, "SOS", shape.labelup, location.abovebar, color.blue, text="SOS", textcolor=color.white)
+plotshape(validBuy, "BUY", shape.labelup, location.belowbar, color.green, size=size.normal, text="BUY!!", textcolor=color.white)
+
+// Risk Management Plots [13, 14]
+slPrice = strategy.position_avg_price * (1 - riskThreshold/100)
+strategy.exit("Harvest", "Buy", qty_percent=50, limit=strategy.position_avg_price * (1 + harvestProfit/100), stop=slPrice, comment_profit="House Money", comment_loss="Fatal Damage")

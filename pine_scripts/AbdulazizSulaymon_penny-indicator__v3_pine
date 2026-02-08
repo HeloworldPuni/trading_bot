@@ -1,0 +1,367 @@
+//@version=5
+indicator("🎯 Ultra-Sensitive Penny Stock Scanner", overlay=true, max_labels_count=500)
+
+//═══════════════════════════════════════════════════════════
+//  HYPER-AGGRESSIVE PENNY STOCK SETTINGS
+//═══════════════════════════════════════════════════════════
+
+// Volume Settings (CRITICAL)
+volMultiplier = input.float(2.0, "Volume Surge Min", minval=1.2, maxval=5.0, step=0.1, 
+     tooltip="2x+ volume = harakat boshlanmoqda")
+volLength = input.int(20, "Volume MA Period", minval=10, maxval=30)
+extremeVolMultiplier = input.float(5.0, "Extreme Volume Multiplier", minval=3.0, maxval=10.0)
+
+// Price Momentum (Ultra Sensitive)
+momentumBars = input.int(3, "Momentum Detection Bars", minval=2, maxval=5,
+     tooltip="Qancha bar ichida momentum tekshiriladi")
+minPriceMove = input.float(2.0, "Min Price Move %", minval=0.5, maxval=5.0, step=0.5)
+
+// Consolidation (Tighter = earlier signal)
+consolidationBars = input.int(8, "Consolidation Bars", minval=5, maxval=15)
+maxConsolidationRange = input.float(8.0, "Max Consolidation Range %", minval=3.0, maxval=15.0)
+
+// RSI Settings
+rsiPeriod = input.int(9, "RSI Period (Faster)", minval=5, maxval=14)
+rsiOversold = input.int(35, "RSI Oversold Level", minval=20, maxval=45)
+
+// HTF Trend Override
+ignoreHTFBear = input.bool(true, "Ignore HTF Bear Trend", 
+     tooltip="Penny stocklarda intraday move'lar HTF'ga qaramaydi")
+useHTFFilter = input.bool(false, "Use HTF Filter (Conservative)", 
+     tooltip="Agar Conservative bo'lsangiz, TRUE qiling")
+
+// Signal Mode
+signalMode = input.string("Aggressive", "Signal Mode", 
+     options=["Ultra Aggressive", "Aggressive", "Balanced"],
+     tooltip="Ultra Aggressive = eng erta signal, Balanced = kam false signal")
+
+//═══════════════════════════════════════════════════════════
+//  CORE CALCULATIONS - OPTIMIZED
+//═══════════════════════════════════════════════════════════
+
+// Volume Analysis (Multi-level)
+avgVol = ta.sma(volume, volLength)
+volRatio = volume / avgVol
+volSurge = volume >= avgVol * volMultiplier
+extremeVolume = volume >= avgVol * extremeVolMultiplier
+
+// Volume Acceleration (Volume o'sib bormoqdami?)
+volMA5 = ta.sma(volume, 5)
+volAccelerating = volMA5 > volMA5[1] and volMA5[1] > volMA5[2]
+
+// Price Momentum Detection
+priceChange1 = (close - close[1]) / close[1] * 100
+priceChange3 = (close - close[3]) / close[3] * 100
+momentum1Bar = priceChange1 > minPriceMove and close > open
+momentum3Bar = priceChange3 > minPriceMove * 1.5
+
+// Consecutive Green Candles (Strength building)
+greenCandle = close > open
+consecutiveGreen = greenCandle and greenCandle[1] and (greenCandle[2] or true)
+strongGreen = close > open and (close - open) > (high - low) * 0.6
+
+// Consolidation Detection (Tighter)
+highestHigh = ta.highest(high, consolidationBars)
+lowestLow = ta.lowest(low, consolidationBars)
+consolidationRange = highestHigh - lowestLow
+avgPrice = (highestHigh + lowestLow) / 2
+consolidationPercent = avgPrice > 0 ? (consolidationRange / avgPrice * 100) : 0
+
+// Tight base forming
+tightBase = consolidationPercent < maxConsolidationRange and consolidationPercent > 0
+breakingOut = close > highestHigh[1] * 1.005 // 0.5% yuqoriroq
+
+// RSI Analysis (Faster response)
+rsi = ta.rsi(close, rsiPeriod)
+rsiLow = rsi < rsiOversold
+rsiTurning = rsi > rsi[1] and rsi[1] < rsi[2] // RSI bottom dan qaytmoqda
+rsiMomentum = rsi > rsi[1] and rsi > 40 and rsi < 70 // Momentum building zone
+
+// Price Position vs MAs
+ema5 = ta.ema(close, 5)
+ema10 = ta.ema(close, 10)
+sma20 = ta.sma(close, 20)
+vwap = ta.vwap(close)
+
+crossAboveEMA5 = ta.crossover(close, ema5)
+priceAboveEMA10 = close > ema10
+emaCrossing = ta.crossover(ema5, ema10)
+
+// Higher Timeframe (Optional)
+htfClose = request.security(syminfo.tickerid, "60", close, barmerge.gaps_off, barmerge.lookahead_on)
+htfSma20 = request.security(syminfo.tickerid, "60", ta.sma(close, 20), barmerge.gaps_off, barmerge.lookahead_on)
+htfBullish = htfClose > htfSma20
+
+// HTF Override logic
+htfCondition = ignoreHTFBear ? true : (useHTFFilter ? htfBullish : true)
+
+// Gap Detection (Open vs previous close)
+prevDayClose = request.security(syminfo.tickerid, "D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+gapUp = open > prevDayClose * 1.02 // 2%+ gap
+gapPercent = gapUp ? (open - prevDayClose) / prevDayClose * 100 : 0
+
+// Smart Money Accumulation
+priceRange3 = ta.highest(high, 3) - ta.lowest(low, 3)
+lowVolatility = priceRange3 / close < 0.05 // 5% dan kam range
+accumulation = lowVolatility and volAccelerating and volSurge
+
+//═══════════════════════════════════════════════════════════
+//  EXPLOSIVE MOVE PREDICTION
+//═══════════════════════════════════════════════════════════
+
+// Pre-Breakout Conditions (KEY SIGNALS)
+preBreakout1 = tightBase and volSurge and consecutiveGreen and rsiTurning
+preBreakout2 = accumulation and rsiLow and close > ema5
+preBreakout3 = volAccelerating and momentum1Bar and close > ema10 and htfCondition
+
+// Breakout Confirmation
+breakout1 = breakingOut and volSurge and strongGreen and htfCondition
+breakout2 = extremeVolume and momentum3Bar and priceAboveEMA10
+breakout3 = emaCrossing and volSurge and consecutiveGreen and htfCondition
+
+// Early Warning (Volume building + consolidation)
+earlyWarning = (volAccelerating or volRatio > 1.5) and tightBase and close > vwap
+
+//═══════════════════════════════════════════════════════════
+//  SIGNAL PRIORITY SYSTEM
+//═══════════════════════════════════════════════════════════
+
+// Signal Scoring (0-100)
+scoreVolume = extremeVolume ? 30.0 : volSurge ? 20.0 : volRatio > 1.5 ? 10.0 : 0.0
+scoreMomentum = momentum3Bar ? 25.0 : momentum1Bar ? 15.0 : consecutiveGreen ? 10.0 : 0.0
+scoreBreakout = breakingOut ? 20.0 : close > highestHigh[2] ? 10.0 : 0.0
+scoreRSI = rsiTurning ? 15.0 : rsiLow ? 10.0 : rsiMomentum ? 8.0 : 0.0
+scoreBase = tightBase ? 10.0 : accumulation ? 8.0 : 0.0
+
+totalScore = scoreVolume + scoreMomentum + scoreBreakout + scoreRSI + scoreBase
+
+// Signal Thresholds
+thresholdUltra = 40.0
+thresholdAggressive = 50.0
+thresholdBalanced = 60.0
+
+scoreThreshold = signalMode == "Ultra Aggressive" ? thresholdUltra :
+                 signalMode == "Aggressive" ? thresholdAggressive : thresholdBalanced
+
+//═══════════════════════════════════════════════════════════
+//  ANTI-SPAM FILTERS (CRITICAL)
+//═══════════════════════════════════════════════════════════
+
+// Signal Cooldown System
+var int lastBuyBar = 0
+var float lastBuyPrice = 0.0
+var int lastSetupBar = 0
+
+barsSinceLastBuy = bar_index - lastBuyBar
+barsSinceLastSetup = bar_index - lastSetupBar
+
+cooldownPeriod = input.int(8, "Signal Cooldown Bars", minval=3, maxval=20,
+     tooltip="Signallar orasida minimal masofa")
+
+// Minimum price move since last signal
+minMoveForNewSignal = input.float(4.0, "Min Move for New Signal %", minval=2.0, maxval=10.0,
+     tooltip="Yangi signal uchun minimal price o'sish")
+
+priceMoveSinceLastBuy = lastBuyPrice > 0 ? (close - lastBuyPrice) / lastBuyPrice * 100 : 999
+
+// Cooldown checks
+cooldownActive = barsSinceLastBuy < cooldownPeriod
+setupCooldownActive = barsSinceLastSetup < (cooldownPeriod / 2)
+significantMove = priceMoveSinceLastBuy > minMoveForNewSignal or priceMoveSinceLastBuy == 999
+
+// Volume Quality (not just quantity)
+volQuality = extremeVolume or (volSurge and volAccelerating)
+
+// Prevent signal during pullback/correction
+notPullback = close > close[2] and low > low[3]
+
+//═══════════════════════════════════════════════════════════
+//  FINAL SIGNALS WITH FILTERS
+//═══════════════════════════════════════════════════════════
+
+// Raw signals
+rawStrongBuy = (breakout1 or breakout2 or breakout3) and totalScore >= scoreThreshold
+rawSetupBuy = (preBreakout1 or preBreakout2 or preBreakout3) and totalScore >= (scoreThreshold * 0.8)
+rawWatch = earlyWarning and totalScore >= (scoreThreshold * 0.6)
+
+// FILTERED STRONG BUY (with anti-spam)
+strongBuy = rawStrongBuy and volQuality and notPullback and 
+            (not cooldownActive or significantMove)
+
+// FILTERED SETUP 
+setupBuy = rawSetupBuy and not strongBuy and not setupCooldownActive and volQuality
+
+// WATCH (only if no other signals)
+watchSignal = rawWatch and not strongBuy and not setupBuy and barsSinceLastSetup > 5
+
+// Update last signal bars
+if strongBuy
+    lastBuyBar := bar_index
+    lastBuyPrice := close
+if setupBuy
+    lastSetupBar := bar_index
+
+//═══════════════════════════════════════════════════════════
+//  VISUALIZATION
+//═══════════════════════════════════════════════════════════
+
+atr = ta.atr(10)
+labelOffset = atr * 1.5
+
+// STRONG BUY Signal
+if strongBuy
+    labelText = "🚀 BUY NOW!\n" + str.tostring(math.round(totalScore)) + "%\nVol: " + str.tostring(math.round(volRatio, 1)) + "x"
+    if significantMove and barsSinceLastBuy > 0
+        labelText += "\n+NEW WAVE"
+    
+    label.new(bar_index, low - labelOffset, 
+         text=labelText, 
+         style=label.style_label_up, 
+         color=color.new(#00ff00, 0), 
+         textcolor=color.black, 
+         size=size.large,
+         tooltip="EXPLOSIVE BREAKOUT!\nCooldown: " + str.tostring(barsSinceLastBuy) + " bars")
+    
+    alert("🚀🚀🚀 URGENT BUY: " + syminfo.ticker + 
+          "\n💰 Price: $" + str.tostring(close, "#.####") +
+          "\n📊 Score: " + str.tostring(math.round(totalScore)) + "%" +
+          "\n📈 Volume: " + str.tostring(math.round(volRatio, 1)) + "x average" +
+          "\n⚡ RSI: " + str.tostring(math.round(rsi, 1)) +
+          "\n🔥 Bars since last: " + str.tostring(barsSinceLastBuy) +
+          "\n🎯 ACTION: BUY IMMEDIATELY", alert.freq_once_per_bar)
+
+// SETUP Signal (with spacing)
+if setupBuy
+    label.new(bar_index, low - labelOffset * 0.8, 
+         text="⚡ SETUP\n" + str.tostring(math.round(totalScore)) + "%", 
+         style=label.style_label_up, 
+         color=color.new(#0088ff, 0), 
+         textcolor=color.white, 
+         size=size.normal,
+         tooltip="Breakout building\nWatch for entry!")
+
+// WATCH Signal (minimal)
+if watchSignal
+    label.new(bar_index, low - labelOffset * 0.5, 
+         text="👀", 
+         style=label.style_label_up, 
+         color=color.new(#ff9900, 0), 
+         textcolor=color.white, 
+         size=size.tiny,
+         tooltip="Volume building\nScore: " + str.tostring(math.round(totalScore)) + "%")
+
+//═══════════════════════════════════════════════════════════
+//  ENHANCED BACKGROUND ALERTS
+//═══════════════════════════════════════════════════════════
+
+bgcolor(strongBuy ? color.new(#00ff00, 85) : na, title="Strong Buy Zone")
+bgcolor(setupBuy ? color.new(#0088ff, 92) : na, title="Setup Zone")
+bgcolor(watchSignal ? color.new(#ff9900, 95) : na, title="Watch Zone")
+
+// Volume bars color
+barcolor(extremeVolume ? color.new(color.yellow, 0) : 
+         volSurge ? color.new(color.orange, 30) : na, title="Volume Alert")
+
+// Key levels
+plot(tightBase ? highestHigh : na, color=color.new(#ff00ff, 50), linewidth=2, 
+     style=plot.style_line, title="Breakout Level")
+plot(ema5, color=color.new(color.yellow, 0), linewidth=1, title="EMA 5")
+plot(ema10, color=color.new(color.orange, 0), linewidth=1, title="EMA 10")
+
+//═══════════════════════════════════════════════════════════
+//  ADVANCED DASHBOARD
+//═══════════════════════════════════════════════════════════
+
+var table dash = table.new(position.top_right, 2, 12, 
+     bgcolor=color.new(#000000, 10), 
+     frame_color=color.new(#ffffff, 50), 
+     frame_width=2,
+     border_color=color.new(#ffffff, 70),
+     border_width=1)
+
+if barstate.islast
+    // Header
+    table.cell(dash, 0, 0, "🎯 METRIC", text_color=color.white, 
+         bgcolor=color.new(#1e1e1e, 0), text_size=size.small)
+    table.cell(dash, 1, 0, "VALUE", text_color=color.white, 
+         bgcolor=color.new(#1e1e1e, 0), text_size=size.small)
+    
+    // Signal Status with Cooldown Info
+    signalText = strongBuy ? "🚀 BUY NOW!" : 
+                 setupBuy ? "⚡ SETUP READY" : 
+                 watchSignal ? "👀 WATCH" : 
+                 cooldownActive ? "⏸ COOLDOWN" : "⏸ WAIT"
+    signalColor = strongBuy ? #00ff00 : 
+                  setupBuy ? #0088ff : 
+                  watchSignal ? #ff9900 : 
+                  cooldownActive ? color.orange : color.gray
+    
+    table.cell(dash, 0, 1, "Status", text_color=color.white)
+    table.cell(dash, 1, 1, signalText, text_color=signalColor, text_size=size.normal)
+    
+    // Cooldown Counter (if active)
+    if cooldownActive
+        table.cell(dash, 0, 2, "Cooldown", text_color=color.white)
+        table.cell(dash, 1, 2, str.tostring(cooldownPeriod - barsSinceLastBuy) + " bars", 
+             text_color=color.orange, text_size=size.tiny)
+    
+    // Score (row adjusted)
+    scoreRow = cooldownActive ? 3 : 2
+    table.cell(dash, 0, scoreRow, "Score", text_color=color.white)
+    scoreColor = totalScore >= scoreThreshold ? #00ff00 : 
+                 totalScore >= scoreThreshold * 0.8 ? #ffaa00 : color.gray
+    table.cell(dash, 1, scoreRow, str.tostring(math.round(totalScore)) + "%", 
+         text_color=scoreColor)
+    
+    // Volume (row adjusted)
+    volRow = cooldownActive ? 4 : 3
+    table.cell(dash, 0, volRow, "Volume", text_color=color.white)
+    volColor = extremeVolume ? #00ff00 : volSurge ? #ffaa00 : color.white
+    table.cell(dash, 1, volRow, str.tostring(math.round(volRatio, 1)) + "x", 
+         text_color=volColor)
+    
+    // RSI (row adjusted)
+    rsiRow = cooldownActive ? 5 : 4
+    table.cell(dash, 0, rsiRow, "RSI", text_color=color.white)
+    rsiColor = rsiTurning ? #00ff00 : rsiLow ? #ffaa00 : color.white
+    table.cell(dash, 1, rsiRow, str.tostring(math.round(rsi, 1)), text_color=rsiColor)
+    
+    // Momentum (row adjusted)
+    momRow = cooldownActive ? 6 : 5
+    table.cell(dash, 0, momRow, "Momentum", text_color=color.white)
+    momStatus = momentum3Bar ? "STRONG ✓" : momentum1Bar ? "BUILDING ⚡" : "WEAK"
+    momColor = momentum3Bar ? #00ff00 : momentum1Bar ? #ffaa00 : color.gray
+    table.cell(dash, 1, momRow, momStatus, text_color=momColor, text_size=size.tiny)
+    
+    // Base (row adjusted)
+    baseRow = cooldownActive ? 7 : 6
+    table.cell(dash, 0, baseRow, "Base", text_color=color.white)
+    table.cell(dash, 1, baseRow, tightBase ? "TIGHT ✓" : "LOOSE", 
+         text_color=tightBase ? #00ff00 : color.gray, text_size=size.tiny)
+    
+    // Price vs EMA (row adjusted)
+    emaRow = cooldownActive ? 8 : 7
+    table.cell(dash, 0, emaRow, "Price/EMA10", text_color=color.white)
+    priceVsEma = (close / ema10 - 1) * 100
+    emaColor = priceVsEma > 2 ? #00ff00 : priceVsEma > 0 ? #ffaa00 : color.red
+    table.cell(dash, 1, emaRow, str.tostring(math.round(priceVsEma, 1)) + "%", 
+         text_color=emaColor, text_size=size.tiny)
+    
+    // HTF Trend (row adjusted)
+    htfRow = cooldownActive ? 9 : 8
+    table.cell(dash, 0, htfRow, "HTF Trend", text_color=color.white)
+    htfText = ignoreHTFBear ? "IGNORED" : (htfBullish ? "BULL ✓" : "BEAR ✗")
+    htfColor = ignoreHTFBear ? color.orange : (htfBullish ? #00ff00 : color.red)
+    table.cell(dash, 1, htfRow, htfText, text_color=htfColor, text_size=size.tiny)
+    
+    // Gap (row adjusted)
+    gapRow = cooldownActive ? 10 : 9
+    table.cell(dash, 0, gapRow, "Gap", text_color=color.white)
+    gapText = gapUp ? str.tostring(math.round(gapPercent, 1)) + "% ✓" : "None"
+    table.cell(dash, 1, gapRow, gapText, 
+         text_color=gapUp ? #00ff00 : color.gray, text_size=size.tiny)
+    
+    // Mode (row adjusted)
+    modeRow = cooldownActive ? 11 : 10
+    table.cell(dash, 0, modeRow, "Mode", text_color=color.white)
+    table.cell(dash, 1, modeRow, signalMode, text_color=#0088ff, text_size=size.tiny)

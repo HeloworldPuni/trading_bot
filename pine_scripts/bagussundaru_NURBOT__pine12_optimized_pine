@@ -1,0 +1,144 @@
+//@version=5
+strategy("ACSS Auto-Adapt Scalper + Wunder DCA (Optimized)", overlay=true, margin_long=100, margin_short=100, initial_capital=500,
+     commission_type=strategy.commission.percent, commission_value=0.06, calc_on_every_tick=true, calc_on_order_fills=true, pyramiding=0, process_orders_on_close=true)
+
+// ================= INPUTS (OPTIMIZED FOR MORE SIGNALS) =================
+use_htf_flag  = input.bool(false, "Aktifkan HTF Trend Filter (EMA)", inline="htf")  // DISABLED for more signals
+htf_tf        = input.timeframe("15", "", inline="htf")
+atrLen        = input.int(14, "ATR Length", minval=1)
+atrMinPct     = input.float(0.01, "ATR% min (filter volatilitas)", step=0.01, minval=0.01)  // LOWERED from 0.05
+atrMaxPct     = input.float(3.00, "ATR% max (filter volatilitas)", step=0.01, minval=0.01)  // INCREASED from 1.50
+
+tpPerc        = input.float(0.15, "Target Profit % (fallback ATR)", step=0.05, minval=0.01)  // LOWERED from 0.25
+slATRmult     = input.float(1.0,  "Stop ATR x (fallback)", step=0.1, minval=0.1)  // LOWERED from 1.2
+
+moveToBE      = input.bool(true,  "Pindah ke Break-Even saat +0.05%")
+beTrigger     = input.float(0.05, "Trigger BE %", step=0.05, minval=0.01)  // LOWERED from 0.10
+
+useTrail      = input.bool(true,  "Aktifkan Trailing saat profit")
+trailPct      = input.float(0.15, "Trail % setelah profit", step=0.05, minval=0.01)  // LOWERED from 0.20
+
+riskPct       = input.float(8.0,  "Risk per trade % equity", step=0.5, minval=1.0, maxval=20.0)  // INCREASED from 5.0
+
+showEarly     = input.bool(true,  "Tampilkan Early Signals")
+showConfirmed = input.bool(true,  "Tampilkan Confirmed Signals")
+
+// ========= Advanced SR TP/SL =========
+use_sr_tpsl       = input.bool(false, "Gunakan TP/SL Otomatis dari S/R (Advanced)")  // DISABLED for simplicity
+sr_len            = input.int(10, "Pivot Length per TF", minval=2, maxval=50)
+sr_bars_lookback  = input.int(300, "Scan Bars (per TF)", minval=50, maxval=2000)
+sr_max_levels     = input.int(30, "Max Levels per jenis", minval=5, maxval=100)
+sr_cluster_tol_pc = input.float(0.20, "Cluster Tolerance %", step=0.05, minval=0.01, maxval=5.0, tooltip="Gabungkan level-level yang berdekatan (persen dari harga level)")
+sr_use_tfs        = input.string("5,15,60", "TF S/R (menit, comma-separated)", tooltip="Contoh: 5,15,60 (menit)")
+
+sl_buffer_pc      = input.float(0.05, "Stop Buffer % dari level S/R", step=0.01, minval=0.01, maxval=1.0)
+tp_buffer_pc      = input.float(0.05, "TP Buffer % dari level S/R", step=0.01, minval=0.01, maxval=1.0)
+
+enforce_min_rr    = input.bool(false, "Wajibkan minimal Risk/Reward saat pakai S/R?")
+min_rr            = input.float(1.2, "Minimal RR", step=0.1, minval=0.5, maxval=10.0)
+
+// WunderTrading: BINANCE FUTURES ETHUSDT CONFIGURATION
+enterLongCode = input.string(defval = "ENTER-LONG_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Enter Long Signal Code", group="WunderTrading")
+enterShortCode = input.string(defval = "ENTER-SHORT_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Enter Short Signal Code", group="WunderTrading")
+exitAllCode = input.string(defval = "EXIT-ALL_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Exit All Signal Code", group="WunderTrading")
+
+// BINANCE FUTURES ETHUSDT SPECIFIC REQUIREMENTS
+wunder_amount_type = input.string(defval = "quote", title="Amount type", options=["quote", "percentage", "portfolio_percent"], group="WunderTrading")
+wunder_amount = input.float(defval = 50.0, title="Amount per trade (USDT)", step=1.0, minval=5.0, group="WunderTrading")  // INCREASED from 20.0
+wunder_min_usdt = input.float(defval = 6.0, title="Min USDT per order (Futures)", step=0.1, minval=5.0, group="WunderTrading")  
+wunder_min_eth = input.float(defval = 0.001, title="Min ETH qty (Futures)", step=0.001, minval=0.001, group="WunderTrading")
+wunder_dca_min_usdt = input.float(defval = 12.0, title="Min USDT per DCA order", step=1.0, minval=6.0, group="WunderTrading") 
+wunder_leverage = input.int(defval = 5, title="Leverage (1-20x)", minval=1, maxval=20, group="WunderTrading")
+wunder_force_min = input.bool(defval = true, title="Force minimum order sizes", group="WunderTrading")
+
+// ================= TF detection & indicators =================
+tf_sec  = timeframe.in_seconds(timeframe.period)
+is1m    = tf_sec == 60
+is3m    = tf_sec == 180
+is5m    = tf_sec == 300
+tf_name = is1m ? "1m" : is3m ? "3m" : is5m ? "5m" : "other"
+
+// ========= Indikator inti per TF =========
+ema13   = ta.ema(close, 13)
+ema26   = ta.ema(close, 26)
+stK     = ta.sma(ta.stoch(close, high, low, 5), 3)
+stD     = ta.sma(stK, 3)
+
+emaFast3 = ta.ema(close, 12)
+emaSlow3 = ta.ema(close, 24)
+rsi3     = ta.rsi(close, 14)
+roc3     = ta.roc(close, 9)
+
+ema10  = ta.ema(close, 10)
+ema21  = ta.ema(close, 21)
+ema50  = ta.ema(close, 50)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+
+// ========= ATR% filter (RELAXED) =========
+atr     = ta.atr(atrLen)
+atrPct  = math.abs(atr / close) * 100.0
+vol_ok  = (atrPct >= atrMinPct) and (atrPct <= atrMaxPct)  // Much more permissive now
+
+// ========= HTF trend filter (DISABLED by default) =========
+ht_emaF  = request.security(syminfo.tickerid, htf_tf, ta.ema(close, 9),  lookahead=barmerge.lookahead_off)
+ht_emaS  = request.security(syminfo.tickerid, htf_tf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+ht_bull  = ht_emaF > ht_emaS
+ht_bear  = ht_emaF < ht_emaS
+ok_long_htf  = use_htf_flag ? ht_bull : true
+ok_short_htf = use_htf_flag ? ht_bear : true
+
+// ========= RELAXED RULES per timeframe =========
+// More permissive conditions for 1m scalping
+long_1m  = (ema13 > ema26) and (stK > stD) and (stK < 70)  // RELAXED: removed crossover requirement
+short_1m = (ema13 < ema26) and (stK < stD) and (stK > 30)  // RELAXED: removed crossunder requirement
+
+long_3m  = (emaFast3 > emaSlow3) and (rsi3 > 45) and (roc3 > -0.5)  // RELAXED conditions
+short_3m = (emaFast3 < emaSlow3) and (rsi3 < 55) and (roc3 < 0.5)   // RELAXED conditions
+
+long_5m  = (close > ema50) and (ema10 > ema21) and (macdHist > -0.1)  // RELAXED MACD condition
+short_5m = (close < ema50) and (ema10 < ema21) and (macdHist < 0.1)   // RELAXED MACD condition
+
+base_long  = is1m ? long_1m  : is3m ? long_3m  : is5m ? long_5m  : false
+base_short = is1m ? short_1m : is3m ? short_3m : is5m ? short_5m : false
+
+// USE EARLY SIGNALS for more frequency
+long_early  = vol_ok and ok_long_htf  and base_long
+short_early = vol_ok and ok_short_htf and base_short
+
+// Use early signals as main signals for more trades
+long_conf   = long_early  // CHANGED: use early instead of confirmed
+short_conf  = short_early // CHANGED: use early instead of confirmed
+
+// Simple fallback TP/SL (no complex S/R)
+max_exposure_per_pair = 200.0  // INCREASED from 25.0
+
+// Simple entry logic
+if long_conf and strategy.position_size == 0
+    qty = wunder_amount / close
+    if qty >= wunder_min_eth and (qty * close) >= wunder_min_usdt
+        strategy.entry("Long", strategy.long, qty=qty)
+        alert('{"secret": "your_secret", "message": "' + enterLongCode + '", "side": "buy", "orderType": "market", "amountPerTrade": ' + str.tostring(wunder_amount) + ', "leverage": ' + str.tostring(wunder_leverage) + '}', alert.freq_once_per_bar)
+
+if short_conf and strategy.position_size == 0
+    qty = wunder_amount / close
+    if qty >= wunder_min_eth and (qty * close) >= wunder_min_usdt
+        strategy.entry("Short", strategy.short, qty=qty)
+        alert('{"secret": "your_secret", "message": "' + enterShortCode + '", "side": "sell", "orderType": "market", "amountPerTrade": ' + str.tostring(wunder_amount) + ', "leverage": ' + str.tostring(wunder_leverage) + '}', alert.freq_once_per_bar)
+
+// Simple exit conditions
+if strategy.position_size > 0 and (close <= strategy.position_avg_price * (1 - slATRmult * atrPct / 100) or close >= strategy.position_avg_price * (1 + tpPerc / 100))
+    strategy.close("Long")
+    alert('{"secret": "your_secret", "message": "' + exitAllCode + '"}', alert.freq_once_per_bar)
+
+if strategy.position_size < 0 and (close >= strategy.position_avg_price * (1 + slATRmult * atrPct / 100) or close <= strategy.position_avg_price * (1 - tpPerc / 100))
+    strategy.close("Short")
+    alert('{"secret": "your_secret", "message": "' + exitAllCode + '"}', alert.freq_once_per_bar)
+
+// Plotting
+plotshape(long_early and showEarly, "Long Early", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_early and showEarly, "Short Early", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(long_conf and showConfirmed, "Long Confirmed", shape.triangleup, location.belowbar, color.lime, size=size.normal)
+plotshape(short_conf and showConfirmed, "Short Confirmed", shape.triangledown, location.abovebar, color.orange, size=size.normal)
+
+plot(ema13, "EMA13", color.blue)
+plot(ema26, "EMA26", color.red)

@@ -1,0 +1,72 @@
+
+//@version=5
+strategy("Optimized Scalping Strategy v2", overlay=true, margin_long=100, margin_short=100)
+
+// Input parameters - Optimized for frequent signals
+ema_fast = input.int(8, "EMA Fast", minval=1)
+ema_slow = input.int(21, "EMA Slow", minval=1)
+rsi_period = input.int(14, "RSI Period", minval=1)
+rsi_overbought = input.int(65, "RSI Overbought", minval=50, maxval=100)
+rsi_oversold = input.int(35, "RSI Oversold", minval=0, maxval=50)
+bb_length = input.int(20, "BB Length", minval=1)
+bb_mult = input.float(1.8, "BB Multiplier", minval=0.1, step=0.1)
+volume_threshold = input.float(1.2, "Volume Threshold", minval=0.1, step=0.1)
+
+// Technical indicators
+ema_fast_val = ta.ema(close, ema_fast)
+ema_slow_val = ta.ema(close, ema_slow)
+rsi = ta.rsi(close, rsi_period)
+[bb_upper, bb_middle, bb_lower] = ta.bb(close, bb_length, bb_mult)
+volume_avg = ta.sma(volume, 20)
+volume_spike = volume > volume_avg * volume_threshold
+
+// Trend conditions
+bull_trend = ema_fast_val > ema_slow_val
+bear_trend = ema_fast_val < ema_slow_val
+
+// Entry conditions - Relaxed for more signals
+long_condition = bull_trend and rsi < rsi_overbought and close > bb_lower and volume_spike
+short_condition = bear_trend and rsi > rsi_oversold and close < bb_upper and volume_spike
+
+// Exit conditions
+long_exit = rsi > rsi_overbought or close < ema_fast_val
+short_exit = rsi < rsi_oversold or close > ema_fast_val
+
+// Alert message template
+alert_msg_enter_long = '{"action": "ENTER", "symbol": "' + syminfo.ticker + '", "side": "LONG", "timeframe": "' + timeframe.period + '", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(time) + '"}'
+alert_msg_enter_short = '{"action": "ENTER", "symbol": "' + syminfo.ticker + '", "side": "SHORT", "timeframe": "' + timeframe.period + '", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(time) + '"}'
+alert_msg_exit_long = '{"action": "EXIT", "symbol": "' + syminfo.ticker + '", "side": "LONG", "timeframe": "' + timeframe.period + '", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(time) + '"}'
+alert_msg_exit_short = '{"action": "EXIT", "symbol": "' + syminfo.ticker + '", "side": "SHORT", "timeframe": "' + timeframe.period + '", "price": ' + str.tostring(close) + ', "timestamp": "' + str.tostring(time) + '"}'
+
+// Strategy execution with alerts
+if long_condition
+    strategy.entry("Long", strategy.long)
+    alert(alert_msg_enter_long, alert.freq_once_per_bar)
+
+if short_condition
+    strategy.entry("Short", strategy.short)
+    alert(alert_msg_enter_short, alert.freq_once_per_bar)
+
+if long_exit
+    strategy.close("Long")
+    alert(alert_msg_exit_long, alert.freq_once_per_bar)
+
+if short_exit
+    strategy.close("Short")
+    alert(alert_msg_exit_short, alert.freq_once_per_bar)
+
+// Plot indicators
+plot(ema_fast_val, "EMA Fast", color.blue, linewidth=2)
+plot(ema_slow_val, "EMA Slow", color.red, linewidth=2)
+plot(bb_upper, "BB Upper", color.gray)
+plot(bb_middle, "BB Middle", color.yellow)
+plot(bb_lower, "BB Lower", color.gray)
+
+// Background colors for trend
+bgcolor(bull_trend ? color.new(color.green, 95) : bear_trend ? color.new(color.red, 95) : na)
+
+// Plot entry/exit signals
+plotshape(long_condition, "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_condition, "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(long_exit, "Long Exit", shape.xcross, location.abovebar, color.orange, size=size.small)
+plotshape(short_exit, "Short Exit", shape.xcross, location.belowbar, color.orange, size=size.small)

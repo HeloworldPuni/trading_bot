@@ -1,0 +1,77 @@
+//@version=5
+// =============================================================================
+// INDICATOR: reversal
+// FILENAME: reversal_v1.0.0.pine
+// Version: v1.0.0
+// DATE:     2026-01-09
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.0 - Initial version
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+strategy("Reversal Confidence Strategy [v5]", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Inputs ---
+emaLen    = input.int(20, "EMA Length")
+rsiLen    = input.int(14, "RSI Length")
+bbLen     = input.int(20, "BB Length")
+bbMult    = input.float(2.0, "BB Multiplier")
+confLevel = input.int(60, "Min Confidence %", minval=0, maxval=100)
+
+// --- Date Range for 2-Year Backtest ---
+// This ensures the strategy focuses on the last 2 years
+startDate = time >= timestamp(2024, 01, 01, 00, 00)
+
+// --- Calculations ---
+ema20   = ta.ema(close, emaLen)
+vwapVal = ta.vwap(close)
+rsiVal  = ta.rsi(close, rsiLen)
+[bbUpper, bbBasis, bbLower] = ta.bb(close, bbLen, bbMult)
+
+// --- Probability Logic (Confidence Score) ---
+// 1. Overextension (40 pts)
+bool isOverbought = close > bbUpper
+bool isOversold   = close < bbLower
+float extScore    = isOverbought or isOversold ? 40.0 : 0.0
+
+// 2. RSI Exhaustion (40 pts)
+// High RSI (>70) for shorts, Low RSI (<30) for longs
+bool rsiExhausted = rsiVal > 70 or rsiVal < 30
+float rsiScore    = rsiExhausted ? 40.0 : 0.0
+
+// 3. Trend Distance (20 pts)
+// Distance from the EMA20 as a %
+float distScore = math.min((math.abs(close - ema20) / ema20) * 1000, 20.0)
+
+// Total Score
+float totalConf = extScore + rsiScore + distScore
+
+// --- Signals ---
+// More aggressive Long Condition: Buy when price crosses back ABOVE the lower band
+bool longCondition = ta.crossover(close, bbLower) and rsiVal < 45 and totalConf >= (confLevel - 10)
+bool shortCondition = close > bbUpper and rsiVal > 65 and totalConf >= confLevel
+
+// --- Execution ---
+if (longCondition and startDate)
+    strategy.entry("Long", strategy.long)
+    label.new(bar_index, low, "BUY: " + str.tostring(totalConf, "#.#") + "%", color=color.green, style=label.style_label_up, textcolor=color.white)
+
+if (shortCondition and startDate)
+    strategy.entry("Short", strategy.short)
+    label.new(bar_index, high, "SELL: " + str.tostring(totalConf, "#.#") + "%", color=color.red, style=label.style_label_down, textcolor=color.white)
+
+// --- Exit Strategy (Mean Reversion to VWAP) ---
+if (strategy.position_size > 0 and ta.crossover(close, vwapVal))
+    strategy.close("Long", comment="TP VWAP")
+
+if (strategy.position_size < 0 and ta.crossunder(close, vwapVal))
+    strategy.close("Short", comment="TP VWAP")
+
+// --- Visuals ---
+plot(vwapVal, "VWAP", color=color.orange, linewidth=2)
+plot(ema20, "EMA 20", color=color.blue, transp=50)
+p1 = plot(bbUpper, color=color.new(color.gray, 50))
+p2 = plot(bbLower, color=color.new(color.gray, 50))
+fill(p1, p2, color=color.new(color.blue, 95))

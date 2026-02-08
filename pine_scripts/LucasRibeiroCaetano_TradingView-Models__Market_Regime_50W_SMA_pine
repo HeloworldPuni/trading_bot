@@ -1,0 +1,35 @@
+//@version=5
+indicator("Market Regime - 50W SMA", overlay=true)
+
+// Function to calculate regime on weekly timeframe
+calc_regime() =>
+    sma50 = ta.sma(close, 50)
+    var int wBelow = 0
+    var int wAbove = 0
+    var bool bear = false
+    
+    if close < sma50
+        wBelow += 1
+        wAbove := 0
+    else
+        wAbove += 1
+        wBelow := 0
+    
+    if wBelow >= 10
+        bear := true
+    
+    if bear and wAbove >= 4
+        bear := false
+    
+    [close, sma50, wBelow, wAbove, bear]
+
+// Request weekly data
+[weeklyClose, sma50w, weeksBelow, weeksAbove, inBearMarket] = request.security(syminfo.tickerid, "W", calc_regime())
+
+// Determine regime color & text
+regimeColor = inBearMarket ? color.red : weeklyClose < sma50w ? color.orange : color.green
+regimeText  = inBearMarket ? "Bear Market" : weeklyClose < sma50w ? "Correction" : "Bull Market"
+
+
+// Background color
+bgcolor(inBearMarket ? color.new(color.red, 95) : (weeklyClose < sma50w ? color.new(color.yellow, 95) : color.new(color.green, 95)))

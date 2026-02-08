@@ -1,0 +1,427 @@
+//@version=5
+strategy("Quad Rotation Stochastics Strategy", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+/// Configurable Inputs for K Length & Smoothing
+kLen1 = input.int(9, title="%K Length 1", minval=1)
+smoothK1 = input.int(1, title="%K Smoothing 1", minval=1)
+dLen1 = input.int(3, title="%D Length 1", minval=1)
+
+kLen2 = input.int(14, title="%K Length 2", minval=1)
+smoothK2 = input.int(1, title="%K Smoothing 2", minval=1)
+dLen2 = input.int(3, title="%D Length 2", minval=1)
+
+kLen3 = input.int(40, title="%K Length 3", minval=1)
+smoothK3 = input.int(1, title="%K Smoothing 3", minval=1)
+dLen3 = input.int(4, title="%D Length 3", minval=1)
+
+kLen4 = input.int(60, title="%K Length 4", minval=1)
+smoothK4 = input.int(1, title="%K Smoothing 4", minval=1)
+dLen4 = input.int(10, title="%D Length 4", minval=1)
+
+// Calculate Stochastic %D values
+k1 = ta.sma(ta.stoch(close, high, low, kLen1), smoothK1)
+d1 = ta.sma(k1, dLen1)
+
+k2 = ta.sma(ta.stoch(close, high, low, kLen2), smoothK2)
+d2 = ta.sma(k2, dLen2)
+
+k3 = ta.sma(ta.stoch(close, high, low, kLen3), smoothK3)
+d3 = ta.sma(k3, dLen3)
+
+k4 = ta.sma(ta.stoch(close, high, low, kLen4), smoothK4)
+d4 = ta.sma(k4, dLen4)
+
+// Offsets for stacking
+offset1 = d1 + 300
+offset2 = d2 + 200
+offset3 = d3 + 100
+offset4 = d4
+
+// Plot %D lines with corresponding colors
+plot(offset1, title="D 9", color=color.white, linewidth=2)
+plot(offset2, title="D 14", color=color.green, linewidth=2)
+plot(offset3, title="D 40", color=color.red, linewidth=2)
+plot(offset4, title="D 60", color=color.yellow, linewidth=2)
+
+// Stochastic levels
+hline(10, "Extreme Oversold (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(20, "Oversold (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(80, "Overbought (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(90, "Extreme Overbought (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(110, "Extreme Oversold (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(120, "Oversold (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(180, "Overbought (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(190, "Extreme Overbought (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(210, "Extreme Oversold (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(220, "Oversold (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(280, "Overbought (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(290, "Extreme Overbought (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(310, "Extreme Oversold (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(320, "Oversold (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(380, "Overbought (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(390, "Extreme Overbought (D9)", color=color.white, linestyle=hline.style_dotted)
+
+// Sequence States
+var string currentState = "LOOKING_FOR_LOW1"  // States: LOOKING_FOR_LOW1, LOOKING_FOR_LOW2, LOOKING_FOR_LOW3
+
+// LOW1 Tracking Variables
+var bool isTrackingLow1 = false
+var int low1TrackingStartBar = na
+var float lowestPrice = na
+var int lowestPriceBar = na
+
+// LOW1 Candle Variables
+var float low1Low = na
+var float low1High = na
+var float low1BodyLow = na
+var float low1BodyHigh = na
+var float low1Middle = na
+
+var float low1Offset1 = na
+var float low1Offset2 = na
+var float low1Offset3 = na
+var float low1Offset4 = na
+
+var int low1FoundBar = na
+
+// LOW2 Tracking Variables
+var bool isTrackingLow2 = false
+var int low2TrackingStartBar = na
+
+// NEW: Offset1 peak tracking variables
+var bool isTrackingOffset1Peak = false
+var float highestOffset1 = na
+var int highestOffset1Bar = na
+
+// LOW2 Candle Variables
+var float low2Low = na
+var float low2High = na
+var float low2BodyLow = na
+var float low2BodyHigh = na
+var float low2Middle = na
+
+var float low2Offset1 = na
+var float low2Offset2 = na
+var float low2Offset3 = na
+var float low2Offset4 = na
+
+var int low2FoundBar = na
+
+// LOW3 Tracking Variables
+var bool isTrackingLow3 = false
+var int low3TrackingStartBar = na
+
+// LOW3 Candle Variables
+var float low3Low = na
+var float low3High = na
+var float low3BodyLow = na
+var float low3BodyHigh = na
+var float low3Middle = na
+
+var float low3Offset1 = na
+var float low3Offset2 = na
+var float low3Offset3 = na
+var float low3Offset4 = na
+
+var int low3FoundBar = na
+
+//////// WAVE TREND CONFLUENCE ////////////
+
+n1 = input.int(9 , "Channel Length")
+n2 = input.int(12, "Average Length")
+obLevel1 = input.int(60, "Over Bought Level 1")
+obLevel2 = input.int(53, "Over Bought Level 2")
+osLevel1 = input.int(-60, "Over Sold Level 1")
+osLevel2 = input.int(-53, "Over Sold Level 2")
+
+ap = hlc3
+esa = ta.ema(ap, n1)
+d = ta.ema(math.abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, n2)
+
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+
+// Wave Trend signals
+bullish_cross = ta.crossover(wt1, wt2) and wt1 < -10
+bearish_cross = ta.crossunder(wt1, wt2) and wt1 > 25
+
+// Plot Wave Trend on separate panel for visibility
+//plot(wt1 + 500, title="WT1", color=color.blue, linewidth=1)
+//plot(wt2 + 500, title="WT2", color=color.orange, linewidth=1)
+//hline(480, "WT -20 Line", color=color.blue, linestyle=hline.style_dashed)
+//hline(500, "WT Zero Line", color=color.gray, linestyle=hline.style_solid)
+
+///////////////////////////////////////////
+
+// Check for offset1 invalidation (crosses below 320 after LOW1 is found)
+if currentState != "LOOKING_FOR_LOW1" and offset1 < 320 and offset1[1] >= 320
+    currentState := "LOOKING_FOR_LOW1"
+    isTrackingLow1 := false
+    isTrackingLow2 := false
+    isTrackingLow3 := false
+    isTrackingOffset1Peak := false  // Reset peak tracking
+    low1TrackingStartBar := na
+    low2TrackingStartBar := na
+    low3TrackingStartBar := na
+    lowestPrice := na
+    lowestPriceBar := na
+    highestOffset1 := na  // Reset peak tracking
+    highestOffset1Bar := na
+    low1FoundBar := na
+    low2FoundBar := na
+    low3FoundBar := na
+
+// LOW1 LOGIC
+if currentState == "LOOKING_FOR_LOW1"
+    // Start LOW1 tracking 
+    startLow1Tracking = not isTrackingLow1 and offset1 <= 312 and offset1[1] >= 312 and offset2 <= 220 //and offset3 <= 130 //and offset4 <= 50
+    stopLow1Tracking = isTrackingLow1 and offset1 >= 328 and offset1[1] <= 328 
+    
+    if startLow1Tracking
+        isTrackingLow1 := true
+        low1TrackingStartBar := bar_index
+        lowestPrice := low
+        lowestPriceBar := bar_index
+    
+    // Update lowest price during tracking
+    if isTrackingLow1
+        if low < lowestPrice
+            lowestPrice := low
+            lowestPriceBar := bar_index
+    
+    // Stop LOW1 tracking
+    if stopLow1Tracking
+        trackingDuration = bar_index - low1TrackingStartBar
+        if trackingDuration <= 25
+            // Get bars back offset
+            barsBack = bar_index - lowestPriceBar
+            
+            // Register LOW1 variables
+            low1Low := low[barsBack]
+            low1High := high[barsBack]
+            low1BodyLow := math.min(open[barsBack], close[barsBack])
+            low1BodyHigh := math.max(open[barsBack], close[barsBack])
+            low1Middle := (low1High + low1Low) / 2
+            
+            low1Offset1 := offset1[barsBack]
+            low1Offset2 := offset2[barsBack]
+            low1Offset3 := offset3[barsBack]
+            low1Offset4 := offset4[barsBack]
+
+            low1FoundBar := lowestPriceBar
+            
+            // Place LOW1 label (RED)
+            label.new(x=lowestPriceBar, y=-20, text="Low1: " + str.tostring(lowestPrice, "#.####"), style=label.style_label_up, color=color.red, textcolor=color.white, size=size.small)
+            
+            // Move to LOW2 state and start tracking offset1 peak
+            currentState := "LOOKING_FOR_LOW2"
+            isTrackingLow2 := true
+            low2TrackingStartBar := lowestPriceBar  // Start counting from LOW1 bar
+            
+            // START tracking offset1 peak from LOW1 confirmation
+            isTrackingOffset1Peak := true
+            highestOffset1 := offset1  // Initialize with current offset1
+            highestOffset1Bar := bar_index
+        
+        // Reset LOW1 tracking
+        isTrackingLow1 := false
+        low1TrackingStartBar := na
+        lowestPrice := na
+        lowestPriceBar := na
+    
+    // Invalidate LOW1 if takes too long
+    if isTrackingLow1 and (bar_index - low1TrackingStartBar) > 25
+        currentState := "LOOKING_FOR_LOW1"
+        isTrackingLow1 := false
+        isTrackingLow2 := false
+        isTrackingLow3 := false
+        isTrackingOffset1Peak := false
+        low1TrackingStartBar := na
+        low2TrackingStartBar := na
+        low3TrackingStartBar := na
+        lowestPrice := na
+        lowestPriceBar := na
+        highestOffset1 := na
+        highestOffset1Bar := na
+        low1FoundBar := na
+        low2FoundBar := na
+        low3FoundBar := na
+
+// Track highest offset1 value while looking for LOW2
+if isTrackingOffset1Peak
+    if offset1 > highestOffset1
+        highestOffset1 := offset1
+        highestOffset1Bar := bar_index
+
+// LOW2 LOGIC
+if currentState == "LOOKING_FOR_LOW2"
+    if isTrackingLow2
+        candlesSinceLow1 = bar_index - low2TrackingStartBar
+        
+        // LOW2 must be found in candles 2-7 after LOW1
+        if candlesSinceLow1 >= 3 and candlesSinceLow1 <= 12
+            // Check if price touches low1High AND offset1 stays above 320 AND offset1 is lower than peak by at least 5 points
+            if low <= low1High and offset1 >= 320 and offset1 <= 350 and offset1 < highestOffset1 and (highestOffset1 - offset1) >= 2
+                // Register LOW2 variables
+                low2Low := low
+                low2High := high
+                low2BodyLow := math.min(open, close)
+                low2BodyHigh := math.max(open, close)
+                low2Middle := (low2High + low2Low) / 2
+
+                low2Offset1 := offset1
+                low2Offset2 := offset2
+                low2Offset3 := offset3
+                low2Offset4 := offset4
+                
+                low2FoundBar := bar_index
+                
+                // Place LOW2 label (YELLOW) with peak info and distance
+                label.new(x=bar_index, y=-60, text="Low2: " + str.tostring(low, "#.####") + "\nPeak: " + str.tostring(highestOffset1, "#.##") + "\nCurrent: " + str.tostring(offset1, "#.##") + "\nDistance: " + str.tostring(highestOffset1 - offset1, "#.##"), style=label.style_label_up, color=color.yellow, textcolor=color.black, size=size.small)
+                
+                // Stop tracking offset1 peak
+                isTrackingOffset1Peak := false
+                
+                // Move to LOW3 state
+                currentState := "LOOKING_FOR_LOW3"
+                isTrackingLow2 := false
+                isTrackingLow3 := true
+                low3TrackingStartBar := bar_index  // Start counting from LOW2 bar
+        else if candlesSinceLow1 > 12
+            // LOW2 not found within candles 2-7, reset and start over
+            currentState := "LOOKING_FOR_LOW1"
+            isTrackingLow1 := false
+            isTrackingLow2 := false
+            isTrackingLow3 := false
+            isTrackingOffset1Peak := false
+            low1TrackingStartBar := na
+            low2TrackingStartBar := na
+            low3TrackingStartBar := na
+            lowestPrice := na
+            lowestPriceBar := na
+            highestOffset1 := na
+            highestOffset1Bar := na
+            low1FoundBar := na
+            low2FoundBar := na
+            low3FoundBar := na
+
+var bool entrySignal = false
+var bool inPosition = false
+var float stoploss = na
+
+// LOW3 LOGIC - Modified to use Wave Trend bullish cross confirmation
+if currentState == "LOOKING_FOR_LOW3"
+    if isTrackingLow3 and offset1 > 320
+        candlesSinceLow2 = bar_index - low3TrackingStartBar
+        
+        // LOW3 must be found in candles 1-4 after LOW2
+        if candlesSinceLow2 >= 1 and candlesSinceLow2 <= 5
+            // Check if close is above low2High, offset1 > low2Offset1, AND we get bullish cross on Wave Trend
+            if close > low2High and bullish_cross and offset1 > low2Offset1 * 1 
+                // Register LOW3 variables
+                low3Low := low
+                low3High := high
+                low3BodyLow := math.min(open, close)
+                low3BodyHigh := math.max(open, close)
+                low3Middle := (low3High + low3Low) / 2
+
+                low3Offset1 := offset1
+                low3Offset2 := offset2
+                low3Offset3 := offset3
+                low3Offset4 := offset4
+
+                low3FoundBar := bar_index
+                entrySignal := true
+                
+                // Place LOW3 label (GREEN) with Wave Trend confirmation
+                label.new(x=bar_index, y=-100, text="Low3: " + str.tostring(close, "#.####") + "\nWT Bullish Cross", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+                
+                // Complete sequence found - reset to start over
+                currentState := "LOOKING_FOR_LOW1"
+                isTrackingLow1 := false
+                isTrackingLow2 := false
+                isTrackingLow3 := false
+                isTrackingOffset1Peak := false
+                low1TrackingStartBar := na
+                low2TrackingStartBar := na
+                low3TrackingStartBar := na
+                lowestPrice := na
+                lowestPriceBar := na
+                highestOffset1 := na
+                highestOffset1Bar := na
+                low1FoundBar := na
+                low2FoundBar := na
+                low3FoundBar := na
+        else if candlesSinceLow2 > 5
+            // LOW3 not found within candles 1-4, reset and start over
+            currentState := "LOOKING_FOR_LOW1"
+            isTrackingLow1 := false
+            isTrackingLow2 := false
+            isTrackingLow3 := false
+            isTrackingOffset1Peak := false
+            low1TrackingStartBar := na
+            low2TrackingStartBar := na
+            low3TrackingStartBar := na
+            lowestPrice := na
+            lowestPriceBar := na
+            highestOffset1 := na
+            highestOffset1Bar := na
+            low1FoundBar := na
+            low2FoundBar := na
+            low3FoundBar := na
+
+// Original signal conditions
+signalOverbought = offset1 > 380 and offset2 > 280 and offset3 > 180 and offset4 > 80
+signalSold = offset1 < 320 and offset2 < 220 and offset3 < 120 and offset4 < 20
+
+// Plot dots for buy and sell signals
+plot(signalOverbought ? 410 : na, title="Sell Signal", color=color.rgb(5, 247, 13), style=plot.style_circles, linewidth=3)
+plot(signalSold ? -10 : na, title="Buy Signal", color=color.rgb(252, 6, 6), style=plot.style_circles, linewidth=3)
+
+// Wave Trend signal plots
+plot(bullish_cross ? 460 : na, title="WT Bullish Cross", color=color.blue, style=plot.style_cross, linewidth=3)
+plot(bearish_cross ? 470 : na, title="WT Bearish Cross", color=color.red, style=plot.style_cross, linewidth=3)
+
+// Notifications
+alertcondition(signalOverbought, title="Overbought Alert", message="Quad Stochastic Overbought!")
+alertcondition(signalSold, title="Oversold Alert", message="Quad Stochastic Oversold!")
+alertcondition(bullish_cross, title="WT Bullish Cross", message="Wave Trend Bullish Cross!")
+alertcondition(bearish_cross, title="WT Bearish Cross", message="Wave Trend Bearish Cross!")
+
+// Debug plots
+plot(isTrackingLow1 ? 420 : na, title="Looking for LOW1", color=color.red, style=plot.style_cross, linewidth=2)
+plot(isTrackingLow2 ? 430 : na, title="Looking for LOW2", color=color.yellow, style=plot.style_cross, linewidth=2)
+plot(isTrackingLow3 ? 440 : na, title="Looking for LOW3", color=color.green, style=plot.style_cross, linewidth=2)
+
+// NEW: Debug plot for offset1 peak tracking
+plot(isTrackingOffset1Peak ? 450 : na, title="Tracking Offset1 Peak", color=color.purple, style=plot.style_cross, linewidth=2)
+
+var float percentDevi = na
+var float stoploss_NOT_break_even = na
+
+// Strategy entry and exit logic
+if entrySignal 
+    strategy.entry("Long", strategy.long)
+    inPosition := true
+    entrySignal := false  // reset after entry
+    
+    /// Perfect lower than the low.. for example low is 100 this puts stop loss at 99.9 
+    percentDevi := 0.998
+    if low1Low < low2Low and low1Low < low3Low
+        stoploss := low1Low * percentDevi
+    if low2Low < low1Low and low2Low < low3Low
+        stoploss := low2Low * percentDevi
+    if low3Low < low1Low and low3Low < low2Low
+        stoploss := low3Low * percentDevi
+    
+    label.new(x=bar_index, y=-140, text="stoploss: " + str.tostring(stoploss, "#.####"), style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+
+// Exit on Wave Trend bearish cross above 0 line OR stop loss hit
+if inPosition and (bearish_cross or low <= stoploss)
+    strategy.close("Long")
+    inPosition := false
+    // Place exit label
+    exitReason = bearish_cross ? "WT Bearish Cross" : "Stop Loss Hit"
+    label.new(x=bar_index, y=-180, text="Exit: " + exitReason, style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)

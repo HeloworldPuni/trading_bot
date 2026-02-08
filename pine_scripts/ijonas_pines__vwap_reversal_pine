@@ -1,0 +1,259 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP Reversal Strategy
+// ══════════════════════════════════════════════════════════════════════════════
+// Description: Mean reversion strategy using VWAP with standard deviation bands
+// Strategy: Enter when price touches outer bands, exit at VWAP
+// Best for: Index futures and large-cap stocks
+// Author: Pine Script Collection
+// Version: 1.0
+// ══════════════════════════════════════════════════════════════════════════════
+
+strategy("VWAP Reversal Strategy",
+         overlay=true,
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=100,
+         commission_type=strategy.commission.percent,
+         commission_value=0.1,
+         slippage=2,
+         calc_on_every_tick=false)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === VWAP Settings ===
+vwapSource = input.source(hlc3, "VWAP Source", group="VWAP Settings", tooltip="Default: HLC3 (High+Low+Close)/3")
+vwapAnchor = input.string("Session", "VWAP Anchor", options=["Session", "Week", "Month"], group="VWAP Settings")
+
+// === Standard Deviation Bands ===
+stdDev1Mult = input.float(1.0, "1st Std Dev Multiplier", minval=0.1, step=0.1, group="Std Dev Bands")
+stdDev2Mult = input.float(2.0, "2nd Std Dev Multiplier", minval=0.1, step=0.1, group="Std Dev Bands")
+stdDev3Mult = input.float(3.0, "3rd Std Dev Multiplier", minval=0.1, step=0.1, group="Std Dev Bands")
+entryBandLevel = input.int(2, "Entry at Std Dev Band", options=[1, 2, 3], group="Std Dev Bands", tooltip="Which band to use for entries")
+
+// === Entry Filters ===
+useVolumeFilter = input.bool(true, "Use Volume Filter", group="Entry Filters")
+volumeMALength = input.int(20, "Volume MA Length", minval=5, group="Entry Filters")
+volumeMultiplier = input.float(1.2, "Min Volume Multiplier", minval=0.5, step=0.1, group="Entry Filters")
+
+useRSIFilter = input.bool(true, "Use RSI Filter", group="Entry Filters")
+rsiLength = input.int(14, "RSI Length", minval=5, group="Entry Filters")
+rsiOverbought = input.int(70, "RSI Overbought", minval=50, group="Entry Filters")
+rsiOversold = input.int(30, "RSI Oversold", maxval=50, group="Entry Filters")
+
+// === Risk Management ===
+atrLength = input.int(14, "ATR Length", minval=5, group="Risk Management")
+stopLossATRMult = input.float(2.0, "Stop Loss (ATR Multiplier)", minval=0.5, step=0.1, group="Risk Management")
+takeProfitTarget = input.string("VWAP", "Take Profit Target", options=["VWAP", "Opposite Band", "Fixed R:R"], group="Risk Management")
+fixedRR = input.float(2.0, "Fixed Risk:Reward Ratio", minval=1.0, step=0.1, group="Risk Management")
+partialTakeProfit = input.bool(true, "Enable Partial TP at VWAP", group="Risk Management")
+partialTPPercent = input.int(50, "Partial TP % of Position", minval=10, maxval=90, group="Risk Management")
+
+// === Visual Settings ===
+showBands = input.bool(true, "Show VWAP Bands", group="Visual")
+showEntryLabels = input.bool(true, "Show Entry Labels", group="Visual")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP CALCULATION WITH SESSION RESET
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Determine session reset
+isNewPeriod = switch vwapAnchor
+    "Session" => ta.change(time("D"))
+    "Week" => ta.change(time("W"))
+    "Month" => ta.change(time("M"))
+
+// VWAP calculation
+var float sumPV = 0.0
+var float sumV = 0.0
+
+if isNewPeriod
+    sumPV := 0.0
+    sumV := 0.0
+
+sumPV += vwapSource * volume
+sumV += volume
+vwap = sumPV / sumV
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STANDARD DEVIATION BANDS
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float sumSquaredDev = 0.0
+
+if isNewPeriod
+    sumSquaredDev := 0.0
+
+deviation = vwapSource - vwap
+sumSquaredDev += math.pow(deviation, 2)
+variance = sumSquaredDev / sumV
+stdDev = math.sqrt(variance)
+
+// Band calculations
+upperBand1 = vwap + (stdDev * stdDev1Mult)
+upperBand2 = vwap + (stdDev * stdDev2Mult)
+upperBand3 = vwap + (stdDev * stdDev3Mult)
+
+lowerBand1 = vwap - (stdDev * stdDev1Mult)
+lowerBand2 = vwap - (stdDev * stdDev2Mult)
+lowerBand3 = vwap - (stdDev * stdDev3Mult)
+
+// Select entry bands based on user input
+entryUpperBand = switch entryBandLevel
+    1 => upperBand1
+    2 => upperBand2
+    3 => upperBand3
+
+entryLowerBand = switch entryBandLevel
+    1 => lowerBand1
+    2 => lowerBand2
+    3 => lowerBand3
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INDICATOR CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Volume Filter ===
+volumeMA = ta.sma(volume, volumeMALength)
+volumeOK = useVolumeFilter ? volume > (volumeMA * volumeMultiplier) : true
+
+// === RSI Filter ===
+rsi = ta.rsi(close, rsiLength)
+rsiOversoldCondition = useRSIFilter ? rsi < rsiOversold : true
+rsiOverboughtCondition = useRSIFilter ? rsi > rsiOverbought : true
+
+// === ATR for Stop Loss ===
+atr = ta.atr(atrLength)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Long Entry: Price touches lower band (oversold) ===
+priceTouchesLowerBand = low <= entryLowerBand and close > entryLowerBand
+longCondition = priceTouchesLowerBand and volumeOK and rsiOversoldCondition and strategy.position_size == 0
+
+// === Short Entry: Price touches upper band (overbought) ===
+priceTouchesUpperBand = high >= entryUpperBand and close < entryUpperBand
+shortCondition = priceTouchesUpperBand and volumeOK and rsiOverboughtCondition and strategy.position_size == 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POSITION MANAGEMENT
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float longEntry = na
+var float shortEntry = na
+var float longSL = na
+var float shortSL = na
+var float longTP = na
+var float shortTP = na
+
+// === Long Entry ===
+if longCondition
+    longEntry := close
+    longSL := close - (atr * stopLossATRMult)
+
+    // Determine take profit target
+    longTP := switch takeProfitTarget
+        "VWAP" => vwap
+        "Opposite Band" => entryUpperBand
+        "Fixed R:R" => close + ((close - longSL) * fixedRR)
+
+    strategy.entry("Long", strategy.long)
+
+    if showEntryLabels
+        label.new(bar_index, low, "🟢 LONG\nVWAP Reversal\nEntry: " + str.tostring(longEntry, format.mintick),
+                 color=color.new(color.green, 0), textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+
+// === Short Entry ===
+if shortCondition
+    shortEntry := close
+    shortSL := close + (atr * stopLossATRMult)
+
+    // Determine take profit target
+    shortTP := switch takeProfitTarget
+        "VWAP" => vwap
+        "Opposite Band" => entryLowerBand
+        "Fixed R:R" => close - ((shortSL - close) * fixedRR)
+
+    strategy.entry("Short", strategy.short)
+
+    if showEntryLabels
+        label.new(bar_index, high, "🔴 SHORT\nVWAP Reversal\nEntry: " + str.tostring(shortEntry, format.mintick),
+                 color=color.new(color.red, 0), textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+
+// === Exit Management ===
+if strategy.position_size > 0  // Long position
+    if partialTakeProfit and takeProfitTarget == "VWAP"
+        // Partial TP at VWAP, full exit at opposite band or fixed R:R
+        if partialTPPercent < 100
+            strategy.exit("Long Partial TP", "Long", limit=vwap, qty_percent=partialTPPercent)
+            finalTP = entryBandLevel == 1 ? upperBand1 : entryBandLevel == 2 ? upperBand2 : upperBand3
+            strategy.exit("Long Final Exit", "Long", stop=longSL, limit=finalTP)
+        else
+            strategy.exit("Long Exit", "Long", stop=longSL, limit=longTP)
+    else
+        strategy.exit("Long Exit", "Long", stop=longSL, limit=longTP)
+
+if strategy.position_size < 0  // Short position
+    if partialTakeProfit and takeProfitTarget == "VWAP"
+        // Partial TP at VWAP, full exit at opposite band or fixed R:R
+        if partialTPPercent < 100
+            strategy.exit("Short Partial TP", "Short", limit=vwap, qty_percent=partialTPPercent)
+            finalTP = entryBandLevel == 1 ? lowerBand1 : entryBandLevel == 2 ? lowerBand2 : lowerBand3
+            strategy.exit("Short Final Exit", "Short", stop=shortSL, limit=finalTP)
+        else
+            strategy.exit("Short Exit", "Short", stop=shortSL, limit=shortTP)
+    else
+        strategy.exit("Short Exit", "Short", stop=shortSL, limit=shortTP)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === VWAP ===
+plot(vwap, "VWAP", color=color.new(color.blue, 0), linewidth=2)
+
+// === Standard Deviation Bands ===
+plot(showBands ? upperBand1 : na, "Upper Band 1", color=color.new(color.green, 70), linewidth=1)
+plot(showBands ? upperBand2 : na, "Upper Band 2", color=color.new(color.green, 50), linewidth=1)
+plot(showBands ? upperBand3 : na, "Upper Band 3", color=color.new(color.green, 30), linewidth=2)
+
+plot(showBands ? lowerBand1 : na, "Lower Band 1", color=color.new(color.red, 70), linewidth=1)
+plot(showBands ? lowerBand2 : na, "Lower Band 2", color=color.new(color.red, 50), linewidth=1)
+plot(showBands ? lowerBand3 : na, "Lower Band 3", color=color.new(color.red, 30), linewidth=2)
+
+// === Band Fills ===
+fill(plot(vwap, display=display.none), plot(upperBand1, display=display.none), color=color.new(color.green, 95))
+fill(plot(vwap, display=display.none), plot(lowerBand1, display=display.none), color=color.new(color.red, 95))
+
+// === Active Position Lines ===
+longActive = strategy.position_size > 0
+shortActive = strategy.position_size < 0
+
+plot(longActive ? longSL : na, "Long SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(longActive ? longTP : na, "Long TP", color=color.green, linewidth=2, style=plot.style_circles)
+plot(shortActive ? shortSL : na, "Short SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(shortActive ? shortTP : na, "Short TP", color=color.green, linewidth=2, style=plot.style_circles)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(longCondition, "Long Entry", "VWAP Reversal - LONG Entry at Lower Band")
+alertcondition(shortCondition, "Short Entry", "VWAP Reversal - SHORT Entry at Upper Band")
+alertcondition(priceTouchesLowerBand, "Price at Lower Band", "Price touched VWAP lower band - potential long")
+alertcondition(priceTouchesUpperBand, "Price at Upper Band", "Price touched VWAP upper band - potential short")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PERFORMANCE NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+// Best for: Index futures (ES, NQ), large-cap stocks
+// Optimal timeframes: 5m, 15m, 1h
+// Mean reversion strategy - works best in ranging/choppy markets
+// Reduce position size during strong trending conditions
+// ══════════════════════════════════════════════════════════════════════════════

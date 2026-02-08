@@ -1,0 +1,127 @@
+// ─────────────────────────────────────────────────────────────
+// ACCESS ALGO – Multi Indicator Suite (RSI/MACD + MAs)
+// © Hc_Sunt_Lucrum | access-algo.com
+// This script is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+//
+// Description:
+// Toggle between RSI and MACD display, with up to 8 customizable MAs.
+// Designed to help identify trend + momentum confluence in a single overlay.
+//
+// Usage:
+// TradingView-compatible | Free Invite-Only Script via access-algo.com
+//
+// Version:         v1.0
+// Last Updated:    2025-04-16
+// Author:          Hc_Sunt_Lucrum
+// Contact:         access-algo.com | TradingView: @Hc_Sunt_Lucrum
+// ─────────────────────────────────────────────────────────────
+
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Hc_Sunt_Lucrum - Access Algo 
+
+//@version=6
+indicator("ACCESS ALGO - Multi Indicator", overlay=false)
+
+var const string GROUP_OPTION = "=====CHOOSE MAIN INDICATOR====="
+indicatorChoice = input.string("RSI", "Show RSI or MACD?", options=["RSI", "MACD"], group=GROUP_OPTION)
+
+var const string GROUP_RSI = "=====RSI SETTINGS====="
+rsiLength = input.int(14, "RSI Length", minval=2, group=GROUP_RSI)
+rsiOverbought = input.int(70, "RSI Overbought", group=GROUP_RSI)
+rsiOversold = input.int(30, "RSI Oversold", group=GROUP_RSI)
+
+rsi = ta.rsi(close, rsiLength)
+rsiColor = rsi > rsiOverbought ? color.red : rsi < rsiOversold ? color.green : color.gray
+
+var const string GROUP_MACD = "=====MACD SETTINGS====="
+macdFastLength = input(12, "MACD Fast", group=GROUP_MACD)
+macdSlowLength = input(26, "MACD Slow", group=GROUP_MACD)
+macdSignalLength = input(9, "MACD Smoothing", group=GROUP_MACD)
+
+macdFast = ta.ema(close, macdFastLength)
+macdSlow = ta.ema(close, macdSlowLength)
+macdLine = macdFast - macdSlow
+macdSignal = ta.ema(macdLine, macdSignalLength)
+macdHist = macdLine - macdSignal
+
+plot(indicatorChoice == "RSI" ? rsi : na, title="RSI", color=rsiColor, linewidth=2)
+plot(indicatorChoice == "MACD" ? macdLine : na, title="MACD Line", color=color.blue, linewidth=2)
+plot(indicatorChoice == "MACD" ? macdSignal : na, title="Signal Line", color=color.orange, linewidth=2)
+plot(indicatorChoice == "MACD" ? macdHist : na, title="Histogram", style=plot.style_columns, color=macdHist >= 0 ? color.green : color.red)
+
+hline(50, "Mid Level (RSI)", color=indicatorChoice == "RSI" ? color.gray : na, linestyle=hline.style_dotted)
+hline(rsiOverbought, "Overbought", color=indicatorChoice == "RSI" ? color.red : na, linestyle=hline.style_dotted)
+hline(rsiOversold, "Oversold", color=indicatorChoice == "RSI" ? color.green : na, linestyle=hline.style_dotted)
+hline(0, "Zero Line", color=indicatorChoice == "MACD" ? color.gray : na, linestyle=hline.style_dotted)
+
+getMA(maType, maLength) =>
+    switch maType
+        "EMA" => ta.ema(close, maLength)
+        "SMA" => ta.sma(close, maLength)
+        "RMA" => ta.rma(close, maLength)
+        "WMA" => ta.wma(close, maLength)
+        "HMA" => ta.hma(close, maLength)
+        "VWAP" => ta.vwap(close)
+        => na
+
+var const string GROUP_MA = "======Moving Averages======"
+
+showMa1 = input.bool(true, "Show MA 1", group=GROUP_MA)
+maType1 = input.string("EMA", "MA 1 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="1")
+maLength1 = input.int(20, "MA 1 Length", minval=2, group=GROUP_MA, inline="1")
+
+showMa2 = input.bool(true, "Show MA 2", group=GROUP_MA)
+maType2 = input.string("SMA", "MA 2 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="2")
+maLength2 = input.int(50, "MA 2 Length", minval=2, group=GROUP_MA, inline="2")
+
+showMa3 = input.bool(true, "Show MA 3", group=GROUP_MA)
+maType3 = input.string("RMA", "MA 3 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="3")
+maLength3 = input.int(100, "MA 3 Length", minval=2, group=GROUP_MA, inline="3")
+
+showMa4 = input.bool(true, "Show MA 4", group=GROUP_MA)
+maType4 = input.string("WMA", "MA 4 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="4")
+maLength4 = input.int(150, "MA 4 Length", minval=2, group=GROUP_MA, inline="4")
+
+showMa5 = input.bool(true, "Show MA 5", group=GROUP_MA)
+maType5 = input.string("HMA", "MA 5 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="5")
+maLength5 = input.int(200, "MA 5 Length", minval=2, group=GROUP_MA, inline="5")
+
+showMa6 = input.bool(true, "Show MA 6", group=GROUP_MA)
+maType6 = input.string("VWAP", "MA 6 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="6")
+maLength6 = input.int(50, "MA 6 Length (VWAP Ignores)", minval=2, group=GROUP_MA, inline="6")
+
+showMa7 = input.bool(true, "Show MA 7", group=GROUP_MA)
+maType7 = input.string("EMA", "MA 7 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="7")
+maLength7 = input.int(75, "MA 7 Length", minval=2, group=GROUP_MA, inline="7")
+
+showMa8 = input.bool(true, "Show MA 8", group=GROUP_MA)
+maType8 = input.string("SMA", "MA 8 Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"], group=GROUP_MA, inline="8")
+maLength8 = input.int(125, "MA 8 Length", minval=2, group=GROUP_MA, inline="8")
+
+ma1 = showMa1 ? getMA(maType1, maLength1) : na
+ma2 = showMa2 ? getMA(maType2, maLength2) : na
+ma3 = showMa3 ? getMA(maType3, maLength3) : na
+ma4 = showMa4 ? getMA(maType4, maLength4) : na
+ma5 = showMa5 ? getMA(maType5, maLength5) : na
+ma6 = showMa6 ? getMA(maType6, maLength6) : na
+ma7 = showMa7 ? getMA(maType7, maLength7) : na
+ma8 = showMa8 ? getMA(maType8, maLength8) : na
+
+color1 = color.white
+color2 = color.gray
+color3 = color.yellow
+color4 = color.green
+color5 = color.red
+color6 = color.blue
+color7 = color.fuchsia
+color8 = color.orange
+
+plot(ma1, title="MA 1", color=color1, linewidth=1, display=showMa1 ? display.all : display.none, force_overlay=true)
+plot(ma2, title="MA 2", color=color2, linewidth=1, display=showMa2 ? display.all : display.none, force_overlay=true)
+plot(ma3, title="MA 3", color=color3, linewidth=1, display=showMa3 ? display.all : display.none, force_overlay=true)
+plot(ma4, title="MA 4", color=color4, linewidth=1, display=showMa4 ? display.all : display.none, force_overlay=true)
+plot(ma5, title="MA 5", color=color5, linewidth=1, display=showMa5 ? display.all : display.none, force_overlay=true)
+plot(ma6, title="MA 6", color=color6, linewidth=1, display=showMa6 ? display.all : display.none, force_overlay=true)
+plot(ma7, title="MA 7", color=color7, linewidth=1, display=showMa7 ? display.all : display.none, force_overlay=true)
+plot(ma8, title="MA 8", color=color8, linewidth=1, display=showMa8 ? display.all : display.none, force_overlay=true)

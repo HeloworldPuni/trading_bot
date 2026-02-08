@@ -1,0 +1,809 @@
+//@version=6
+indicator(title="Super All-in-One [AC]", shorttitle='Super', overlay=true, max_bars_back=5000, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// a - EMA
+a=input.bool(true,title='EMA'), plot(a?ta.ema(close,21):na,color=#ff0000), plot(a?ta.ema(close,50):na,color=#ffff00), plot(a?ta.ema(close,200):na,color=#ffffff)
+
+// b - EMA Extra
+b=input.bool(false,title='EMA Extra'), plot(b?ta.ema(close,7):na,color=#00ff40), plot(b?ta.ema(close,100):na,color=#ffff88)
+
+// c - Bollinger Band (BB)
+c=input.bool(false,title='Bollinger Bands'), c0=0.0, c1=0.0, if c
+    c0:=ta.sma(close,7), c1:=2.0*ta.stdev(close,7)
+plot(c?c0+c1:na,color=#cccccc), plot(c?c0-c1:na,color=#cccccc)
+
+// d - Parabolic SAR
+plot(input.bool(false,title='Parabolic SAR')?ta.sar(0.01,0.01,0.3):na, style=plot.style_cross, color=#cccccc)
+
+// e - Pivot Points
+e=input.bool(false,title='Pivot'), e0=ta.pivothigh(10,10), e1=ta.pivotlow(10,10), if not na(e0)and e
+    label.new(bar_index[10],e0,str.tostring(e0),style=label.style_label_down)
+if not na(e1)and e
+    label.new(bar_index[10],e1,str.tostring(e1),style=label.style_label_up)
+
+// f - DeMark Sequential
+f=input.bool(false,title='DeMark'), crossover=false, crossunder=false, if f
+    int uc=0, dc=0, for i=0 to 8
+        uc+=(nz(close[i])>nz(close[i+4])?1:0), dc+=(nz(close[i])<nz(close[i+4])?1:0)
+    drp=dc==9?1:uc==9?-1:0, crossover:=ta.crossover(drp,0), crossunder:=ta.crossunder(drp,0)
+plotshape(f and crossover,'',shape.labelup,location.belowbar,#00ff00), plotshape(f and crossunder,'',shape.labeldown,location.abovebar,#ff0000)
+
+// g - Ichimoku Cloud
+g = input.bool(false,title='Ichimoku Cloud'), g0=0.0, g1=0.0, g2=0.0, g3=0.0, if g
+    g0:=(ta.highest(9)+ta.lowest(9))/2, g1:=(ta.highest(26)+ta.lowest(26))/2, g2:=(g0+g1)/2,g3:=(ta.highest(52)+ta.lowest(52))/2
+plot(g?g0:na,color=#2962FF),plot(g?g1:na,color=#b71c1c), plot(g?close:na,offset=-25,color=#43a047), fill(plot(g?g2:na,offset=25,color=#a5d6a7), plot(g?g3:na,offset=25,color=#ef9a9a),color=g2>g3?#43a0471a:#f443361a)
+
+// h - Volume Profile 
+H0(_a, _b)=>math.round(_a/float(_b/200*5))
+if input.bool(true,title="Volume Profile")
+    var line h0=na, var line h1=na, var line h2=na, var array<line> h3=array.new_line(), var array<float> h4=array.new_float(200,0), float h5=ta.lowest(low,200), h6=(ta.highest(high,200)-h5)/199
+    if barstate.isfirst
+        for _i = 0 to 199
+            array.push(h3,line.new(x1=bar_index,y1=close,x2=bar_index,y2=close))
+        h0:=line.new(x1=bar_index,y1=close,x2=bar_index,y2=close,color=#ff0000), h1:=line.new(x1=bar_index,y1=close,x2=bar_index,y2=close,color=#2962FF), h2:=line.new(x1=bar_index,y1=close,x2=bar_index,y2=close,color=#2962FF)
+    if barstate.islast
+        array.fill(h4,0), for _i = 0 to 199
+            for _j=0 to 199
+                float _a=h5+h6*_j, if (_a>=low[_i] and _a<high[_i])
+                    array.set(h4,_j,h4.get(_j)+volume[_i])
+        float h7=h4.max(), int h8=h4.indexof(h7), h9=bar_index+70, for _i=0 to 199
+            _a=h3.get(_i), float _b=h5+h6*_i, line.set_xy1(_a,h9 - H0(h4.get(_i),h7),_b),line.set_xy2(_a,h9,_b),line.set_color(_a,h8==_i?#ff0000:#cccccc)
+        float ha=h5+h6*h8,hb=h7, int hc=h8,hd=h8, line.set_xy1(h0,bar_index-200,ha), line.set_xy2(h0,h9-H0(h7,h7)-10,ha), while hb<h4.sum()*0.68
+            float _a=(hc<199)?h4.get(hc+1):0.0, _b=(hd>0)?h4.get(hd-1):0.0, if _a==0 and _b==0
+                break
+            if _a>=_b
+                hb+=_a, hc+=1
+            else
+                hb+=_b, hd-=1
+        for _i=hd to hc
+            if _i!=h8
+                line.set_color(h3.get(_i),#2962FF)
+        int he=bar_index-200, float hf=h5+h6*hc, hg=h5+h6*hd, hh=h9-H0(h4.get(hc),h7)-10, line.set_xy1(h1,he,hf), line.set_xy1(h2,he,hg), line.set_xy2(h1,hh,hf), line.set_xy2(h2,hh,hg)
+
+// l - Supertrend
+l=input.bool(false,title="Supertrend"), [l0,l1]=ta.supertrend(3.0,10), l2=barstate.isfirst?na:l0,l3=plot(l?barstate.isfirst?na:(open+close)/2:na), fill(l3,plot(l1<0 and l?l2:na,color=#00ff00,style=plot.style_linebr),color=#00ff001a), fill(l3,plot(l1>=0 and l?l2:na,color=#ff0000,style=plot.style_linebr),color=#ff00001a)
+
+// m - VWAP Period
+plot(input.bool(false,title="VWAP Period")?math.sum((high+low+close)/3*volume,14)/math.sum(volume,14):na)
+
+// n = Volume
+plot(input.bool(false,title='Volume')?volume:na,style=plot.style_columns,color=open>close?#b03838:#008060)
+
+// o - Liqudity Swing
+o4=bar_index
+O0(_a,_b,_c)=>
+    var _e=0, var _d=0., if _a>0
+        _e := 0, _d := 0.
+    else
+        _d += low[14] < _b and high[14] > _c ? volume[14] : 0, _e += low[14] < _b and high[14] > _c ? 1 : 0
+    [_e, _d]
+O1(_g, _a, _b, _c, _d, _e)=>
+    var label _f = na, if ta.crossover(_g, 0)
+        _f := label.new(_b, _c, str.tostring(_a, format.volume), style=_e, size=size.tiny, color=#00000000, textcolor=_d)
+    if _g > 0
+        label.set_text(_f, str.tostring(_a, format.volume))
+O2(_a, _b, _c, _d, _e)=>
+    var line _f = na, if _a > 0
+        if _d[1] < 0
+            line.delete(_f[1])
+        else if not _b[1]
+            line.set_x2(_f, o4 - 14)
+        _f := line.new(o4 - 14, _c, o4, _c, color = na)
+    if not _b[1]
+        line.set_x2(_f, o4+3)
+    if _b and not _b[1]
+        line.set_x2(_f, o4), line.set_style(_f, line.style_dashed)
+    if _d > 0
+        line.set_color(_f, _e)
+O3(_a, _b, _c, _d, _e)=>
+    var box bx = na, if ta.crossover(_d, 0)
+        bx := box.new(_a, _b, _a + _d, _c, border_color = na, bgcolor = _e)
+    if _d > 0
+        box.set_right(bx, _a + _d)
+if input.bool(true, title="Liqudity Swing")
+    var float o5=na, var float o6=na, var float o7=na, var float o8=na, var bool o9=false, var bool oa=false, var ob=0,var oc=0,of=ta.pivothigh(14,14), [og,oh]=O0(of,o5,o6), var box oe=box.new(na,na,na,na,bgcolor=#ff000033), var box ol=box.new(na,na,na,na,bgcolor=#00897b33), if of>0
+        o5:=high[14], o6:=math.max(close[14],open[14]), ob:=o4-14, o9:=false, box.set_lefttop(oe,ob,o5), box.set_rightbottom(oe,ob,o6)
+    else
+        o9 := close > o5 ? true : o9
+        if o9
+            box.set_right(oe, ob)
+        else
+            box.set_right(oe, o4+3)
+    O3(ob,o5,o6,og,#ff0000), O2(of,o9,o5,og,#ff0000), O1(og,oh,ob,o5,#ff0000,label.style_label_down), oi=ta.pivotlow(14,14), [oj,ok]=O0(oi,o7,o8), if oi>0
+        o7 := math.min(close[14],open[14]), o8:=low[14], oc:=o4-14, oa:=false, box.set_lefttop(ol,oc,o7), box.set_rightbottom(ol,oc,o8)
+    else
+        oa:=close<o8?true:oa, if oa
+            box.set_right(ol, oc)
+        else
+            box.set_right(ol, o4+3)
+    O3(oc, o7, o8, oj, #00897b), O2(oi, oa, o8, oj, #00897b), O1(oj, ok, oc, o8, #00897b, label.style_label_up)
+
+// p - Money Flow Profile
+type bar
+    float o = open
+    float h = high
+    float l = low
+    float c = close
+    float v = volume
+    int i = bar_index
+p0 = last_bar_index > 200 ? 199 : last_bar_index, bar p1 = bar.new(), p2 = array.new_float(25, 0.), p3 = array.new_float(25, 0.), p4 = array.new_float(25, 0.)
+var p5 = array.new_box(), var p6 = array.new<chart.point>(), var color p7 = na, var color p8 = na, p9 = p1.c > p1.o, pa  = nz(p1.v), var float pb = na, var float pc = na
+if p1.i == last_bar_index - p0
+    pb := p1.l, pc := p1.h
+else if p1.i > last_bar_index - p0
+    pb := math.min(p1.l, pb), pc := math.max(p1.h, pc)
+pd = (pc - pb) / 25
+if input.bool(false, title="Money Flow Profile") and barstate.islast and not na(pa) and not timeframe.isseconds and p0 > 0 and pd > 0 and pa > 0
+    if p5.size() > 0
+        for i = 0 to p5.size() - 1
+            box.delete(p5.shift())
+    if p6.size() > 0
+        p6.clear()
+    for j = p0 to 0
+        i = 0
+        for k = pb to pc - pd by pd
+            if (p1[j]).h >= k and (p1[j]).l < k + pd
+                vPOR = if (p1[j]).l >= k and (p1[j]).h > k + pd
+                    (k + pd - (p1[j]).l) / ((p1[j]).h - (p1[j]).l)
+                else if (p1[j]).h <= k + pd and (p1[j]).l < k
+                    ((p1[j]).h - k) / ((p1[j]).h - (p1[j]).l)
+                else if ((p1[j]).l >= k and (p1[j]).h <= k + pd)
+                    1
+                else
+                    pd / ((p1[j]).h - (p1[j]).l)
+                p2.set(i, p2.get(i) + pa[j] * vPOR )
+                if p9[j]
+                    p3.set(i, p3.get(i) + pa[j] * vPOR )
+            i += 1
+        p6.push(chart.point.from_index((p1[j]).i, pb + (p2.indexof(p2.max()) + .5) * pd))
+    for i = 0 to 25 - 1
+        _e = 2*p3.get(i)-p2.get(i), p4.set(i, p4.get(i)+_e*(_e>0?1:-1) ), _f=p1.i+p0*13/100+int(p0*13/100/3), p5.push(box.new(_f-1+13,pb+(i+.1)*pd, _f-int(p0*13/100/3)+14, 
+         pb+(i+.9)*pd,#2962ff80,bgcolor=#2962ff10,text=str.tostring(pb+(i+.5)*pd,format.mintick),text_color=chart.fg_color,text_size=size.auto))
+    for i = 0 to 25 - 1
+        if p5.size() < 500
+            _a=p2.get(i), _b=p2.max(), _c =_a/_b, _d=p4.get(i)/p4.max()
+            p7 := _c>53/100?color.from_gradient(_c,53/100,1,#2962ff80,#ffeb3b80):color.from_gradient(_c,0,37/100,#f2364580,#2962ff80)
+            _e = 2*p3.get(i)-_a
+            p8 := _e>0?color.from_gradient(_d,0,.7,color.new(#26a69a80,70+int(73/4)),color.new(#26a69a80,30+int(73/4))) : 
+             color.from_gradient(_d,0,.7,color.new(#ef535080,70+int(73/4)),color.new(#ef535080,30+int(73/4)))
+            if _c == 1
+                p5.push(box.new((p1[p0]).i,pb+(p2.indexof(_b)+.0)*pd,p1.i,pb+(p2.indexof(_b)+1.)*pd,#ffeb3b80,bgcolor=#ffeb3b45))
+            _f = p1.i+p0*13/100+int(p0*13/100/3), p5.push(box.new(_f+13,pb+(i+.1)*pd,_f+int(_c*p0*13/100)+13,pb+(i+.9)*pd,p7,bgcolor=p7, 
+             text=str.tostring(array.get(p2,i)*(pb+(i+.5)*pd),format.volume)+' ('+str.tostring(math.abs(_a/p2.sum()*100),'#.##')+'%)',text_halign=text.align_left,text_color=chart.fg_color,text_size=size.auto))
+            _f := p1.i+p0*13/100, p5.push(box.new(_f+13,pb+(i+.1)*pd,_f-int(_d*p0*13/100)+13,pb+(i+.9)*pd,p8,bgcolor=p8,
+             text=str.tostring(_e,format.volume)+' ('+str.tostring(math.abs(_e/_a*100),'#.##')+'%)',text_halign=text.align_right,text_color=chart.fg_color,text_size=size.auto))
+
+// q - Breaker Blocks
+q0=last_bar_index-bar_index<=2000, q1=math.max(close,open), q2=math.min(close,open), q3=bar_index, q4=high, q5=low
+type Q0 
+    int[] d
+    int[] x 
+    float[] y
+    bool[] b
+type Q1 
+    int a
+type Q2
+    int a
+    bool b
+    bool c
+    box d
+    box e
+    line f
+    line g
+    line h
+    bool i
+    bool j
+    box k
+    line l
+    label m
+    box n
+    line o    
+    label p
+    bool q
+    bool r
+    bool s
+    label t
+    label[] u
+var Q0 q6 = Q0.new(array.new<int>(50,0), array.new<int>(50,0), array.new<float>(50,na), array.new<bool>(50,false)), var Q1 q8 = Q1.new(0)
+var Q2 q7=Q2.new(d=box.new(na,na,na,na,border_color=na), e=box.new(na,na,na,na,border_color=na,text_size=size.small,text_halign=text.align_right)
+ , f=line.new(na,na,na,na,style=line.style_dashed,color=#b2b5be), l=line.new(na,na,na,na,color=#b2b5be), m=label.new(na,na,color=na)
+ , n=box.new(na,na,na,na,border_color=na), o=line.new(na,na,na,na,color=#b2b5be), p=label.new(na,na,color=na), g=line.new(na,na,na,na,color=#b2b5be)
+ , h=line.new(na,na,na,na,color=#b2b5be), t=label.new(na,na,color=na,textcolor=#b2b5be,yloc=yloc.price), u=array.new<label>(1,label(na)))
+method Q3(Q0 a, int b, int c, float d, bool e) => a.d.unshift(b), a.x.unshift(c), a.y.unshift(d), a.b.unshift(e), a.d.pop(), a.x.pop(), a.y.pop(), a.b.pop()
+method Q4(color a) => color.rgb(color.r(a), color.g(a), color.b(a))
+Q5(string a, float b, color c, string d, string e = size.small) =>      
+    label.new(q3, b, style=a == 'c' ? label.style_label_center : a == 'u' ? label.style_label_up : label.style_label_down, textcolor=c, color=na, size=e, text=d)
+if input.bool(true, title="Breaker Blocks")
+    max_bars_back(time, 1000), var float q9=na, var float qa=na, var int qb=q6.d.size(), qc=bar_index-1, qd=ta.pivothigh(q4,5,1), qe=ta.pivotlow(q5,5,1)
+    if qd > 0   
+        i=q6.d.get(0), q9:=q6.y.get(0), qa:=nz(q4[1])
+        if i < 1 
+            q6.Q3(1, qc, qa, true)
+        else
+            if i ==  1 and qd > q9 
+                q6.x.set(0, qc), q6.y.set(0, qa)     
+    if qe > 0 
+        i=q6.d.get(0), q9:=q6.y.get(0), qa:=nz(q5[1])
+        if i > -1
+            q6.Q3(-1, qc, qa, true)
+        else
+            if i == -1 and qe < q9 
+                q6.x.set(0, qc), q6.y.set(0, qa)
+    qf = q6.d.get(2) == 1 ? 2 : 1, qg = q6.d.get(2) == -1 ? 2 : 1
+    switch
+        close > q6.y.get(qf) and q6.d.get(qf) == 1 and q8.a < 1 and q0 =>
+            qh=q6.x.get(qf-1), qi=q6.y.get(qf-1), qj=q6.x.get(qf), qk=q6.x.get(qf+1), ql=q6.y.get(qf+1)
+            if qi < ql and qk != qj 
+                for i = q3 - qj to q3 - qk
+                    if close[i] > open[i]
+                        q7.k.set_lefttop(na,na),q7.l.set_xy1(na,na),q7.m.set_xy(na,na), q7.n.set_lefttop(na,na),q7.o.set_xy1(na,na),q7.p.set_xy(na,na)
+                        while q7.u.size() > 0
+                            q7.u.pop().delete()
+                        q7.a:=1, q7.d.set_left(q3-i), q7.d.set_top(q1[i]), q7.d.set_right(q3), q7.d.set_bottom(q2[i]), q7.d.set_bgcolor(#0cb51a12)
+                        q7.e.set_left(q3), q7.e.set_top(q1[i]), q7.e.set_right(q3+8), q7.e.set_bottom(q2[i]), q7.e.set_bgcolor(#0cb51a26)
+                        q7.e.set_text('+BB'), q7.e.set_text_color(#0cb51a26.Q4()), q7.e.set_text_valign(text.align_bottom), _0=math.avg(q2[i], q1[i])
+                        q7.f.set_xy1(q3,_0), q7.f.set_xy2(q3,_0), q7.g.set_xy1(qk, ql), q7.g.set_xy2(q3,ql), q7.h.set_xy1(qh,qi), q7.h.set_xy2(q3,qi)
+                        q7.i:=false, q7.j:=false, q7.t.set_xy(qh, qi), q7.t.set_style(label.style_label_up), q7.t.set_text('LL')
+                        q7.b:=false, q7.c:=false, q7.s:=false, q7.q:=false, q7.r:=false, _1=0, _2=high
+                        for c = 0 to qb -2
+                            _3=q6.x.get(c), _4=q6.y.get(c)
+                            if _4>_2 and q6.d.get(c)==1
+                                _5=(high[q3-_3]-q2[q3-_3])/4
+                                switch _1
+                                    0 =>
+                                        q7.k.set_lefttop(_3,_4), q7.l.set_xy1(_3,_4), q7.k.set_rightbottom(q3,_4-_5), q7.l.set_xy2(q3,_4)
+                                        q7.k.set_bgcolor(#0cb51a26), q7.m.set_xy(_3,_4), q7.m.set_size(size.small), q7.m.set_textcolor(#b2b5be)
+                                        q7.m.set_text('Premium PDA'), q7.m.set_style(label.style_label_lower_left), _1:=1, _2:=_4
+                                    1 =>
+                                        if _4-_5>_2
+                                            q7.n.set_lefttop(_3,_4), q7.o.set_xy1(_3,_4), q7.n.set_rightbottom(q3,_4-_5), q7.o.set_xy2(q3,_4)
+                                            q7.n.set_bgcolor(#0cb51a26), q7.p.set_xy(_3,_4), q7.p.set_size(size.small), q7.p.set_textcolor(#b2b5be)
+                                            q7.p.set_text('Premium PDA'), q7.p.set_style(label.style_label_lower_left), _1:=2
+                            if _1 == 2
+                                break
+                        q7.u.unshift(Q5('u', low, #0cb51a26.Q4(), '▲', size.large)), break
+            q8.a :=  1
+        close < q6.y.get(qg) and q6.d.get(qg) == -1 and q8.a > -1 and q0 =>
+            qh=q6.x.get(qg-1), qi=q6.y.get(qg-1), qj=q6.x.get(qg), qk=q6.x.get(qg+1), ql=q6.y.get(qg+1)
+            if qi > ql and qk != qj
+                for i = q3 - qj to q3 - qk
+                    if close[i] < open[i]
+                        q7.k.set_lefttop(na,na),q7.l.set_xy1(na,na),q7.m.set_xy(na,na), q7.n.set_lefttop(na,na),q7.o.set_xy1(na,na),q7.p.set_xy(na,na)
+                        while q7.u.size() > 0
+                            q7.u.pop().delete()
+                        q7.a:=-1, q7.d.set_left(q3-i), q7.d.set_top(q1[i]), q7.d.set_right(q3), q7.d.set_bottom(q2[i]), q7.d.set_bgcolor(#ff11000d)
+                        q7.e.set_left(q3), q7.e.set_top(q1[i]), q7.e.set_right(q3+8), q7.e.set_bottom(q2[i]), q7.e.set_bgcolor(#ff110026)
+                        q7.e.set_text('-BB'), q7.e.set_text_color(#ff110026.Q4()), q7.e.set_text_valign(text.align_top), _0=math.avg(q2[i],q1[i])
+                        q7.f.set_xy1(q3,_0), q7.f.set_xy2(q3,_0), q7.g.set_xy1(qk,ql), q7.g.set_xy2(q3,ql), q7.h.set_xy1(qh, qi), q7.h.set_xy2(q3,qi)
+                        q7.j:=false, q7.t.set_xy(qh, qi), q7.t.set_style(label.style_label_down), q7.t.set_text('HH'), q7.t.set_textcolor(#b2b5be)   
+                        q7.i:=false, q7.b:=false, q7.c:=false, q7.s:=false, q7.q:=false, q7.r:=false, _1=0, _2=low
+                        for c = 0 to qb -2
+                            _3=q6.x.get(c), _4=q6.y.get(c)
+                            if _4<_2 and q6.d.get(c)==-1
+                                _5=(q1[q3-_3]-low[q3-_3])/4
+                                switch _1 
+                                    0 =>
+                                        q7.k.set_lefttop(_3,_4+_5), q7.l.set_xy1(_3,_4), q7.k.set_rightbottom(q3,_4), q7.l.set_xy2(q3,_4)
+                                        q7.k.set_bgcolor(#00897b26), q7.m.set_xy(_3,_4), q7.m.set_size(size.small), q7.m.set_textcolor(#b2b5be)
+                                        q7.m.set_text('Discount PDA'), q7.m.set_style(label.style_label_upper_left), _1:=1, _2:=_4
+                                    1 => 
+                                        if _4 + _5 < _2
+                                            q7.n.set_lefttop(_3,_4+_5), q7.o.set_xy1(_3,_4), q7.n.set_rightbottom(q3,_4), q7.o.set_xy2(q3,_4)
+                                            q7.n.set_bgcolor(#00897b26), q7.p.set_xy(_3,_4), q7.p.set_size(size.small), q7.p.set_textcolor(#b2b5be)
+                                            q7.p.set_text('Discount PDA'), q7.p.set_style(label.style_label_upper_left), _1:=2
+                            if _1 == 2
+                                break                    
+                        q7.u.unshift(Q5('d', high, #ff110026.Q4(), '▼', size.large)), break       
+            q8.a := -1 
+    qm=q7.e.get_top(), qn=q7.e.get_bottom(), qo=q7.f.get_y2(), qp=q7.g.get_y2(), qq=q7.h.get_y2()
+    switch q7.a
+        1  => 
+            if not q7.c
+                if close < qn
+                    q7.c:=true, q7.u.unshift(Q5('u',low,#ffeb3b,'●')), q7.e.set_right(q3), q7.f.set_x2(q3)
+                else
+                    q7.e.set_right(q3+8), q7.f.set_x2(q3+8)
+                if q3 > q7.e.get_left()
+                    if not q7.b
+                        switch
+                            open > qo and open < qm and close > qm => 
+                                q7.s:=true, q7.u.unshift(Q5('u',low,#00e676,'▲',size.normal))
+                            close < qo and close > qn => 
+                                q7.b:=true, q7.s:=false, q7.u.unshift(Q5('u',low,#ff9800,'❌'))
+            if not q7.i
+                q7.g.set_x2(q3)
+                if close < qp
+                    q7.i := true                     
+            if not q7.j 
+                q7.h.set_x2(q3)
+                if close < qq
+                    q7.j := true                    
+            if not q7.q
+                q7.k.set_right(q3), q7.l.set_x2(q3)
+                if close > q7.k.get_top() and q3 > q7.k.get_left()
+                    q7.q := true
+            if not q7.r
+                q7.n.set_right(q3), q7.o.set_x2(q3)
+                if close > q7.n.get_top() and q3 > q7.n.get_left()
+                    q7.r := true
+        -1 =>
+            if not q7.c
+                if close > qm
+                    q7.c:=true, q7.e.set_right(q3), q7.f.set_x2(q3)
+                else
+                    q7.e.set_right(q3+8), q7.f.set_x2(q3+8)
+                if q3 > q7.e.get_left()
+                    if not q7.b
+                        switch
+                            open < qo and open > qn and close < qn => 
+                                q7.s:=true, q7.u.unshift(Q5('d',high,#ff9800,'▼',size.normal))
+                            close > qo and close < qm => 
+                                q7.b:=true, q7.s:=false, q7.u.unshift(Q5('d',high,#ff5252,'❌'))
+            if not q7.i             
+                q7.g.set_x2(q3)
+                if close > qp                 
+                    q7.i := true
+            if not q7.j             
+                q7.h.set_x2(q3)
+                if close > qq
+                    q7.j := true
+            if not q7.q
+                q7.k.set_right(q3), q7.l.set_x2(q3)
+                if close < q7.k.get_bottom() and q3 > q7.k.get_left()
+                    q7.q := true
+            if not q7.r
+                q7.n.set_right(q3), q7.o.set_x2(q3)
+                if close < q7.n.get_bottom() and q3 > q7.n.get_left()
+                    q7.r := true
+
+// r - Harmonics
+import reees/TA/85 as t
+import reees/Draw/27 as draw
+import reees/Utilities/5 as u
+import reees/Pattern/1 as p
+import reees/Obj_XABCD_Harmonic/10 as h
+var int[] r0=array.new_int(), var r1="% of distance to target 1, beyond entry", var h.harmonic_params r2=h.init_params(15.0,255.0,r0,4.0,2.0,3.0)
+var h.xabcd_harmonic[] r3=array.new<h.xabcd_harmonic>(), var h.xabcd_harmonic[] r4=array.new<h.xabcd_harmonic>(), if barstate.isfirst
+    array.push(r0,1), array.push(r0,2), array.push(r0,3), array.push(r0,4), array.push(r0,5), array.push(r0,6)
+R0(_a,_b) => array.new<h.xabcd_harmonic>()
+R1(tp) => switch tp
+    6 => ".618 CD"
+    5 => ".382 AD"
+    4 => ".618 AD"
+    3 => ".618 AD"
+    2 => ".618 AD"
+    => ".618 AD"
+R2(tp) => switch tp
+    6 => "1.618 XA"
+    5 => "C"
+    4 => "1.618 AD"
+    3 => "1.272 AD"
+    2 => "1.272 AD"
+    => "1.272 AD"
+R3(h.xabcd_harmonic _a) => not na(_a.d.x) ? _a.score < 0.9 : _a.score < .9
+R4(_a) => h.erase_pattern(_a), h.erase_label(_a)
+R5(_a,_b=0) => if _a >= _b
+    v = low[_b], for i=_b to _a
+        if low[i] < v
+            v := low[i]
+    v
+R6(_a,_b=0) => if _a >= _b
+    v = high[_b], for i=_b to _a
+        if high[i] > v
+            v:=high[i]
+    v
+R7(_a) => h.draw_pattern(_a, _a.bull?#4caf50cc:#ff5252cc), if _a.invalid_d
+    line.set_style(array.get(_a.pLines,3),line.style_dashed)
+R8(_a) => h.set_target(_a,1,calc_target=R1(_a.tp)), h.set_target(_a,2,calc_target=R2(_a.tp))
+R9(_a, _b=false) => if R3(_a) == false
+    array.push(R0(_a.bull, _a.tp), _a), if _b == false
+        _c=str.tostring(_a.tp)+"_"+str.tostring(_a.x.x)+"_"+str.tostring(_a.a.x)+"_"+str.tostring(_a.b.x)+"_"+str.tostring(_a.c.x), n=array.size(r4), if not na(_c) and n > 0
+            for j=0 to n-1
+                _p = array.get(r4,j), if _c == _p.pid
+                    array.remove(r4,j), R4(_p), break
+        _a.invalid_d := false
+    R8(_a), R7(_a), [_d,_e]=t.harmonic_xabcd_przRange(_a.prz_bN,_a.prz_bF,_a.prz_xN,_a.prz_xF), _a.stop:=t.harmonic_xabcd_stop(r1,75,_a.bull,_a.x.y,_a.d.y,_d,_e,_a.t1,_a.e.y), if R3(_a)==false
+        array.push(r3, _a)
+RA(_a,_b,_c) => if _b <= (int((_a.c.x-_a.x.x)/3*3.55) + _a.c.x)
+    if t.pat_xabcd_testSym(_a.a.x-_a.x.x, _a.b.x-_a.a.x, _a.c.x-_a.b.x, _a.d.x-_a.c.x, 255.0)
+        _d=R6(bar_index-_a.c.x,1), _e=R5(bar_index-_a.c.x,1), if ((_a.bull and _c<=_e)or(_a.bull==false and _c>=_d))and((_a.bull and _a.c.y>=_d)or(_a.bull==false and _a.c.y<=_e))
+            _f = switch _a.tp
+                1 => array.from(true,false,false,false,false,false)
+                2 => array.from(false,true,false,false,false,false)
+                3 => array.from(false,false,true,false,false,false)
+                4 => array.from(false,false,false,true,false,false)
+                5 => array.from(false,false,false,false,true,false)
+                6 => array.from(false,false,false,false,false,true)
+            [_g,_h,_i,_j,_k,_l] = t.test_cd(math.abs(_a.c.y-_c),math.abs(_a.b.y-_a.c.y),math.abs(_a.x.y-_a.a.y),math.abs(_a.x.y-_a.c.y),math.abs(_a.a.y-_c),15.0,_f), _g or _h or _i or _j or _k or _l
+        else
+            false
+    else
+        false
+else
+    false
+RB(_a,_b=true) => [_c,_d,_e,_f,_g,_h,_i,_j,_k]=t.pat_xabcdIncomplete(_b,_a), if _c and bar_index>=last_bar_index-100 
+    [_l,_m,_n,_o,_p,_q,_r]=t.harmonic_xabcd_validateIncomplete(_d,_e,_f,_g,_h,_i,_j,_k,15.0,255.0,true,true,true,true,true,true), if _l
+        _s=false, _t=array.size(r4), _u=array.size(r3), if _t>0
+            for i=0 to _t-1
+                _v=array.get(r4,_t-1-i), if _v.x.x==_d and _v.a.x==_f and _v.b.x==_h
+                    if _v.c.x == _j
+                        _s := true
+                    else
+                        array.remove(r4,_t-1-i), R4(_v)
+                    break
+        if _s==false and _u > 0
+            for i=0 to _u-1
+                _v=array.get(r3,_u-1-i), if _v.x.x==_d and _v.a.x==_f and _v.b.x==_h and _v.c.x==_j
+                    _s:=true, break
+        if _s==false
+            _w=R5(bar_index-_j), _x=R6(bar_index-_j), int _y=na, float _z=na, for _A in u.boolToIntArr(array.from(_m,_n,_o,_p,_q,_r))
+                if _s == false
+                    _C=h.init(_d,_e,_f,_g,_h,_i,_j,_k,_y,_z,r2,na), if not na(_C)
+                        [_,_D,_] = if R3(_C)
+                            [na,na,na]
+                        else
+                            t.harmonic_xabcd_entry(_C.bull,_C.tp,_C.x.y,_C.a.y,_C.b.y,_C.c.y,_C.d.y,true,"PRZ",true,1.0)
+                        if na(_D) or (not na(_D) and ((_b and _D < _w) or (_b==false and _D > _x)))
+                            _E=R0(_C.bull,_C.tp), h.xabcd_harmonic _F=array.size(_E)==0?na:array.get(_E,array.size(_E)-1), if na(_F)?true:_F.x.x!=_C.x.x or _F.a.x!=_C.a.x or _F.b.x!=_C.b.x
+                                array.push(r4,_C), if not na(_D)
+                                    R7(_C)
+RC(bull=true) => RB(3,bull),RB(4,bull),RB(5,bull),RB(6,bull),RB(7,bull),RB(8,bull),RB(9,bull),RB(10,bull),RB(11,bull),RB(12,bull),RB(13,bull),RB(14,bull),RB(15,bull),RB(16,bull),RB(17,bull),RB(18,bull),RB(19,bull),RB(20,bull)
+if input.bool(true, title="Harmonics")
+    h.xabcd_harmonic[] _a=array.new<h.xabcd_harmonic>(), if array.size(r4)>0
+        for _b in r4
+            [_c,_d]=t.harmonic_xabcd_przRange(_b.prz_bN,_b.prz_bF,_b.prz_xN,_b.prz_xF), if bar_index==(_b.c.x+int((_b.c.x-_b.x.x)/3*3.55)+1)or(_b.bull and(high>_b.c.y or low<_d))or(_b.bull==false and(low<_b.c.y or high>_c))
+                R4(_b)
+            else
+                array.push(_a, _b)
+    r4:=_a, RC(), RC(false), r5=bar_index[1], bool r6=true, bool r7=true, r8=low, r9=high, if r8[0] < r8[1]
+        r6 := false
+    if r6
+        for ra=2 to 4
+            if r8[ra] < r8[1]
+                r6 := false
+                break
+    if r9[0] > r9[1]
+        r7 := false
+    if r7
+        for ra=2 to 4
+            if r9[ra] > r9[1]
+                r7 := false
+                break
+    if r6 or r7
+        h.xabcd_harmonic[] rb = array.new<h.xabcd_harmonic>(), for rc in r4
+            if r6 and rc.bull
+                if RA(rc,r5,r8[1])
+                    array.push(rb,h.init(rc.x.x,rc.x.y,rc.a.x,rc.a.y,rc.b.x,rc.b.y,rc.c.x,rc.c.y,r5,r8[1],r2,rc.tp))
+            if r7 and rc.bull==false
+                if RA(rc,r5,r9[1])
+                    array.push(rb,h.init(rc.x.x,rc.x.y,rc.a.x,rc.a.y,rc.b.x,rc.b.y,rc.c.x,rc.c.y,r5,r9[1],r2,rc.tp))
+        for rc in r3
+            if r6 and rc.bull
+                if RA(rc,r5,r8[1])
+                    array.push(rb,h.init(rc.x.x,rc.x.y,rc.a.x,rc.a.y,rc.b.x,rc.b.y,rc.c.x,rc.c.y,r5,r8[1],r2,rc.tp))
+            if r7 and rc.bull==false
+                if RA(rc,r5,r9[1])
+                    array.push(rb,h.init(rc.x.x,rc.x.y,rc.a.x,rc.a.y,rc.b.x,rc.b.y,rc.c.x,rc.c.y,r5,r9[1],r2,rc.tp))
+        for rc in rb
+            if not na(rc)
+                bool rd=false, h.xabcd_harmonic re=na, rf=R0(rc.bull,rc.tp), if array.size(rf) > 0
+                    rg=array.get(rf,array.size(rf)-1), if rc.a.x!=rg.a.x or rc.b.x!=rg.b.x or rc.c.x!=rg.c.x
+                        R9(rc), re:=rc
+                    else if (rc.bull and rc.d.y < rg.d.y) or (rc.bull==false and rc.d.y > rg.d.y)
+                        if (rg.score <= rc.score) or rg.invalid_d
+                            if rg.eHit
+                                rd := true, R7(rg), R8(rg), re := rg, h.init(rg.x.x,rg.x.y,rg.a.x,rg.a.y,rg.b.x,rg.b.y,rg.c.x,rg.c.y,rc.d.x,rc.d.y,r2,rg.tp,rg)
+                                [rh,ri] = t.harmonic_xabcd_przRange(rg.prz_bN,rg.prz_bF,rg.prz_xN,rg.prz_xF), rg.stop := t.harmonic_xabcd_stop(r1,75.0,rg.bull,rg.x.y,rg.d.y,rh,ri,rg.t1,rg.e.y)                                
+                            else
+                                R4(array.pop(rf)), R9(rc), re := rc
+                else
+                    R9(rc), re := rc
+                if not na(re)
+                    if rd
+                        draw.eHitLbl(re.e.x,re.e.y,re.d.x,re.d.y,rc.bull,true)
+
+// s - Candle
+s0=ta.sma(close,200), s1=ta.sma(close,50), s2=close<s1 and s1<s0, s3=close>s1 and s1>s0, s4=math.max(close,open), s5=math.min(close,open), s6=s4-s5, s7=ta.ema(s6,14), s8=s6<s7, s9=s6>s7, sa=high-s4, sb=s5-low, sc=sa>.05*s6, sd=sb>.05*s6, se=open<close
+sf=open>close, sg=high-low, sh=s6/2+s5, si=sg>0 and s6<=sg*.05, sj=si and(sa==sb or(math.abs(sa-sb)/sb*100)<100 and(math.abs(sb-sa)/sa*100)<100), sk=low-(ta.atr(30)*0.6), sl=high+(ta.atr(30)*0.6), sn=sg*.05>sa, so=sg*.05>sb, sp=s9 and sa<=.05*s6 and sb<=.05*s6
+S0(_a, _b)=>label.new(bar_index, sl, text=_a, style=label.style_label_down, color=#ff5252, tooltip=_b)
+S1(_a, _b)=>label.new(bar_index, sk, text=_a, style=label.style_label_up, color=#2196f3, tooltip=_b)
+if input.bool(true, title="Candle")
+    if s2 and sf[1] and s9[1] and se and open < close[1] and s8 and sg!=0 and math.abs(close-low[1])<=s7*.05
+        S0("ON", "On Neck")
+    if s3[1] and (sg!=0 and sg[1]!=0) and low > high[1]
+        S1("RW", "Rising Window")
+    if s2[1] and (sg!=0 and sg[1]!=0) and high < low[1]
+        S0("FW", "Falling Window")
+    if s2[4] and (s9[4] and sf[4]) and (s8[3] and se[3] and open[3]>low[4] and close[3]<high[4]) and (s8[2] and se[2] and open[2]>low[4] and close[2]<high[4]) and (s8[1] and se[1] and open[1]>low[4] and close[1]<high[4]) and (s9 and sf and close<close[4])
+        S0("F3", "Falling 3 Methods")
+    if s3[4] and (s9[4] and se[4]) and (s8[3] and sf[3] and open[3]<high[4] and close[3]>low[4]) and (s8[2] and sf[2] and open[2]<high[4] and close[2]>low[4]) and (s8[1] and sf[1] and open[1]<high[4] and close[1]>low[4]) and (s9 and se and close>close[4])
+        label.new(bar_index, sk, text="R3", style=label.style_label_up, color = #2196f3, tooltip = "Rising Three Methods")
+        S1("R3", "Rising Window")
+    if s3[1] and (not si or (sc and sd)) and math.abs(high-high[1]) <= s7*.05 and se[1] and sf and s9[1]
+        S0("TT", "Tweezer Top")
+    if s2[1] and (not si or (sc and sd)) and math.abs(low-low[1]) <= s7*.05 and sf[1] and se and s9[1]
+        S1("TB", "Tweexer Bottom")
+    if (s3[1] and se[1] and s9[1]) and (sf and open >= high[1] and  close < sh[1] and close > open[1])
+        S0("DC", "Dark Cloud Cover")
+    if s9[2] and s8[1] and s2 and sf[2] and s4[1] < s5[2] and sf[1] and se and s4 <= s5[2] and s4 >= s4[1]
+        S0("TG", "Tasuji Gap")
+    if s9[2] and s8[1] and s3 and se[2] and s5[1] > s4[2] and se[1] and sf and s5 >= s4[2] and s5 <= s5[1]
+        S1("TG", "Tasuki Gap")
+    if s9[2] and si[1] and s9 and s3 and se[2] and s5[1] > s4[2] and sf and s5 <= sh[2] and s5 > s5[2] and s5[1] > s4
+        S0("DS", "Evening Doji Star")
+    if s3 and se[1] and s9[1] and si and s5 > s4[1]
+        S0("DS", "Doji Star")
+    if s2 and sf[1] and s9[1] and si and s4 < s5[1]
+        S1("DS", "Doji Star")
+    if s9[2] and si[1] and s9 and s2 and sf[2] and s4[1] < s5[2] and se and s4 >= sh[2] and s4 < s4[2] and s4[1] < s5
+        S1("DS", "Morning Doji Star")
+    if (s2[1] and sf[1] and s9[1]) and (se and open <= low[1] and close > sh[1] and close < open[1])
+        S1("PR", "Piercing")
+    if (s8 and s6 > 0 and s5 > hl2 and sb >= 2 * s6 and not sc) and s2
+        S1("HA", "Hammer")
+    if (s8 and s6 > 0 and s5 > hl2 and sb >= 2 * s6 and not sc) and s3
+        S0("HM", "Hanging Man")
+    if (s8 and s6 > 0 and s4 < hl2 and sa >= 2 * s6 and not sd) and s3
+        S0("SS", "Shooting Star")
+    if (s8 and s6 > 0 and s4 < hl2 and sa >= 2 * s6 and not sd) and s2
+        S1("IH", "Inverted Hammer")
+    if s9[2] and s8[1] and s9
+        if s2 and sf[2] and s4[1] < s5[2] and se and s4 >= sh[2] and s4 < s4[2] and s4[1] < s5
+            S1("MS", "Morning Star")
+        else if s3 and se[2] and s5[1] > s4[2] and sf and s5 <= sh[2] and s5 > s5[2] and s5[1] > s4
+            S0("ES", "Evening Star")
+    if s9 and sa <= .05*s6 and sb <= .05*s6
+        if se
+            S1("MW", "Marubozu White")
+        else if sf
+            S0("MW", "Marubozu Black")
+    if sj and not (si and sa <= s6) and not (si and sb <= s6) 
+        S1("DJ", "Doji")
+    if si and sb <= s6
+        S0("GD", "Gravestone Doji")
+    if si and sa <= s6
+        S1("DD", "Dragofly Doji")
+    if s9[1] and sf[1] and s2[1] and si and high <= s4[1] and low >= s5[1]
+        S1("HC", "Harami Cross")
+    if s9[1] and se[1] and s3[1] and si and high <= s4[1] and low >= s5[1]
+        S0("HC", "Harami Cross")
+    if s9[1] and sf[1] and s2[1] and se and s8 and high <= s4[1] and low >= s5[1]
+        S1("HA", "Harami")
+    if s9[1] and se[1] and s3[1] and sf and s8 and high <= s4[1] and low >= s5[1]
+        S0("HA", "Harami")
+    if sb > sg/100*75
+        S1("LS", "Long Lower Shadow")
+    if sa > sg/100*75
+        S0("US", "Long Upper Shadow")
+    if sb >= sg / 100 * 34 and sa >= sg / 100 * 34 and not si
+        if se
+            S1("ST", "Spinning Top White")
+        else if sf
+            S1("ST", "Spinning Top Black")
+    if(s9 and s9[1]and s9[2])
+        if (se and se[1]and se[2])and(close>close[1]and close[1]>close[2]and open<close[1]and open>open[1]and open[1]<close[2]and open[1]>open[2]and sn and sn[1]and sn[2])
+            S1("3W", "3 White Soldiers")
+        else if (sf and sf[1]and sf[2])and(close<close[1]and close[1]<close[2]and open>close[1]and open<open[1]and open[1]>close[2]and open[1]<open[2]and so and so[1]and so[2])
+            S0("3W", "3 Black Crows")
+    if s2 and se and s9 and sf[1] and s8[1] and close >= open[1] and open <= close[1] and ( close > open[1] or open < close[1])
+        S1("EN", "Bullish Engulfing")
+    if s3 and sf and s9 and se[1] and s8[1] and close <= open[1] and open >= close[1] and ( close < open[1] or open > close[1])
+        S0("EN", "Bearish Engulfing")
+    if s2[2] and sf[2] and si[1] and low[2] > high[1] and se and high[1] < low
+        S1("AB", "Abandoned Baby")
+    if s3[2] and se[2] and si[1] and high[2] < low[1] and sf and low[1] > high
+        S0("AB", "Abandoned Baby")
+    if (sj[2] and sj[1] and sj) and s2[2] and (s4[1] < s5)[1] and s5[1] > s4
+        S1("TS", "Tri-Star")
+    if (sj[2] and sj[1] and sj) and s3[2] and (s4[1] < s5)[1] and s5[1] > s4
+        S0("TS", "Tri-Star")
+    if (sp and sf)[1] and sp and se and high[1] < low
+        S1("KI", "Kicking")
+    if (sp and se)[1] and sp and sf and low[1] > high
+        S0("KI", "Kicking")
+
+// t - Elliott Wave
+type t0 
+    int[] d
+    int[] x 
+    float[] y 
+    line[] l
+type t1
+    line a
+    line b
+    line c  
+    line d
+    line e
+    label f
+    label g
+    label h
+    label b4
+    label i
+    bool j
+    bool k
+    int l
+    line m
+    line n
+    line lC
+    label p
+    label q
+    label r
+    bool s=false
+    label t
+    box u
+type t2
+    line a 
+    line b 
+    line c 
+    line d 
+    line e 
+    linefill f 
+    bool g
+T0(_a,_b,_c,_d) => _a.d.unshift(_b), _a.x.unshift(_c), _a.y.unshift(_d), _a.d.pop(), _a.x.pop(), _a.y.pop()
+method T1(t1 _a,_b,_c,_d,_e) => _b==_a.a.get_x1()and _c==_a.b.get_x1()and _d==_a.c.get_x1()and _e==_a.d.get_x1()
+method T2(t1 _a,_b,_c,_d) => _b ==_a.c.get_x2() and _c ==_a.d.get_x2() and _d ==_a.e.get_x2() 
+method T3(t1 _a) => _a.a.set_style(line.style_dotted), _a.b.set_style(line.style_dotted), _a.c.set_style(line.style_dotted), _a.d.set_style(line.style_dotted), _a.e.set_style(line.style_dotted), _a.f.set_textcolor(color(na)), _a.g.set_textcolor(color(na)), _a.h.set_textcolor(color(na)), _a.b4.set_textcolor(color(na)), _a.i.set_textcolor(color(na)), _a.j:=false
+method T4(t1 _a) => _a.m.set_style(line.style_dashed), _a.n.set_style(line.style_dashed), _a.lC.set_style(line.style_dashed), _a.p.set_textcolor(color(na)), _a.q.set_textcolor(color(na)), _a.r.set_textcolor(color(na)), _a.u.set_bgcolor(color(na)), _a.u.set_border_color(color(na))
+method T5(t2 _a,_b,_c) => style=_b, _a.a.set_style(style), _a.b.set_style(style), _a.c.set_style(style), _a.d.set_style(style), _a.f.set_color(_c)
+draw(left, col, n) =>
+    max_bars_back(time, 2000), var int _d=na, var float _e=na, var int _f=na, var float _g=na, var t1 _h=na, var float _i=na, var int _j=na, var float _k=na, var t2 t3=t2.new(a=line.new(na,na,na,na,color=color.new(col,50),style=line.style_solid),b=line.new(na,na,na,na,color=color.new(col,38),style=line.style_solid), c=line.new(na,na,na,na,color=color.new(col,24),style=line.style_solid), d=line.new(na,na,na,na,color=color.new(col,15),style=line.style_solid), e=line.new(na,na,na,na,color=color.new(col,50),style=line.style_dashed), f=linefill.new(line.new(na,na,na,na,color=color(na)),line.new(na,na,na,na,color=color(na)),color=color(na)), g=false), var t0 t4=t0.new(array.new< int>(),array.new< int>(),array.new< float>(),array.new<line>()), var t1[] t5=array.new<t1>(), if barstate.isfirst
+        t5.unshift(t1.new()), for i=0 to 10
+            t4.d.unshift(0), t4.x.unshift(0), t4.y.unshift(0), t4.l.unshift(na)
+    _f:=bar_index-1, ph=ta.pivothigh(high,left,1), pl=ta.pivotlow (low,left,1), t=n==2?'\n\n':n==1?'\n':'', if not na(ph) 
+        _h:=t5.get(0), _d:=t4.d.get (0), _e:=t4.y.get (0), _g:=nz(high[1]), if _d <  1
+            T0(t4,  1, _f, _g)
+        else
+            if _d ==  1 and ph > _e  
+                t4.x.set(0, _f), t4.y.set(0, _g)
+        _l=_f, _m=_g, _n=t4.x.get(1), _o=t4.y.get(1), _p=t4.x.get(2), _q=t4.y.get(2), _r=t4.x.get(3), _s=t4.y.get(3), _t=t4.x.get(4), _u=t4.y.get(4), _v=t4.x.get(5), _w=t4.y.get(5), _x=_m-_o, _y=_q-_s, _z=_u-_w, _0=_h.T1(_v, _t, _r, _p), if _y!=math.min(_z,_y,_x) and _m>_q and _s>_w and _o>_u
+            if _0
+                _h.e.set_xy2(_l,_m), _h.i.set_xy (_l,_m)
+            else
+                tx='', if _t == t5.get(0).i.get_x() 
+                    tx:='(5) (1)', t5.get(0).i.set_text('')
+                else
+                    tx := '(1)'          
+                t5.unshift(t1.new(a=line.new(_v,_w,_t,_u,color=col,style=line.style_solid),b=line.new(_t,_u,_r,_s,color=col,style=line.style_solid),c=line.new(_r,_s,_p,_q,color=col,style=line.style_solid),d=line.new(_p,_q,_n,_o,color=col,style=line.style_solid),e=line.new(_n,_o,_l,_m,color=col,style=line.style_solid),f=label.new(_t,_u,text=tx+t,textcolor=col,color=color(na),style=label.style_label_down),g=label.new(_r,_s,text=t+'(2)',textcolor=col,color=color(na),style=label.style_label_up),h=label.new(_p,_q,text='(3)'+t,textcolor=col,color=color(na),style=label.style_label_down),b4=label.new(_n,_o,text=t+'(4)',textcolor=col,color=color(na),style=label.style_label_up),i=label.new(_l,_m,text='(5)'+t,textcolor=col,color=color(na),style=label.style_label_down),j=true,k=false,l=1)), t3.g:=false
+        else
+            if _0 and _h.j == true
+                _h.T3()                                                                                      
+        _1=t5.get(0), _i:=_1.a.get_y1(), _j:=_1.e.get_x2(), _k:=_1.e.get_y2(), _2=math.abs(_k-_i), if _1.l==-1 
+            _3=_1.e.get_y2() , T2=_1.T2(_v,_t,_r), if _r==_1.e.get_x2()and _m<_3+(_2*.854)and _q<_3+(_2*.854)and _o>_3
+                _4=_l-_t, if T2 and _1.p.get_x()>_r
+                    _1.lC.set_xy1(_n,_o), _1.lC.set_xy2(_l,_m), _1.r.set_xy(_l,_m), _1.u.set_lefttop(_l,_m), _1.u.set_right(_l+_4)
+                else
+                    _1.m:=line.new(_r,_s,_p,_q,color=col), _1.p:=label.new(_p,_q,text='(a)'+t,textcolor=col,color=color(na),style=label.style_label_down), _1.n:=line.new(_p,_q,_n,_o,color=col), _1.q:=label.new(_n,_o,text=t+'(b)',textcolor=col,color=color(na),style=label.style_label_up), _1.lC:=line.new(_n,_o,_l,_m,color=col), _1.r:=label.new(_l,_m,text='(c)'+t,textcolor=col,color=color(na),style=label.style_label_down), _1.u:=box.new(_l,_m,_l+_4,_q,bgcolor=color.new(col,93),border_color=color.new(col,65))
+            else
+                if T2 and _1.p.get_x() > _r
+                    _1.T4()
+        if _1.l==1 and _n==_1.r.get_x() and _m>_1.i.get_y() and _1.s==false
+            _1.s:=true, _1.t:=label.new(_l,_m,style=label.style_circle,color=color.new(col,65),yloc=yloc.abovebar,size=size.tiny)
+    if not na(pl) 
+        _h:=t5.get(0), _d:=t4.d.get(0), _e:=t4.y.get(0), _g:=nz(low[1]), if _d>-1
+            T0(t4, -1, _f, _g)
+        else
+            if _d == -1 and pl < _e 
+                t4.x.set(0, _f), t4.y.set(0, _g)
+        _l=_f, _m=_g, _n=t4.x.get(1), _o=t4.y.get(1), _p=t4.x.get(2), _q=t4.y.get(2), _r=t4.x.get(3), _s=t4.y.get(3), _t=t4.x.get(4), _u=t4.y.get(4), _v=t4.x.get(5), _w=t4.y.get(5), _x=_o-_m, _y=_s-_q, _z=_w-_u, _0=T1(_h,_v,_t,_r,_p), if _y!=math.min(_z,_y,_x) and _q>_m and _w>_s and _u>_o
+            if _0
+                _h.e.set_xy2(_l,_m), _h.i.set_xy (_l,_m)
+            else
+                tx='', if _t==t5.get(0).i.get_x() 
+                    tx:='(5) (1)', t5.get(0).i.set_text('')
+                else
+                    tx := '(1)'
+                t5.unshift(t1.new(a=line.new(_v,_w,_t,_u,color=col,style=line.style_solid),b=line.new(_t,_u,_r,_s,color=col,style=line.style_solid),c=line.new(_r,_s,_p,_q,color=col,style=line.style_solid),d=line.new(_p,_q,_n,_o,color=col,style=line.style_solid),e=line.new(_n,_o,_l,_m,color=col,style=line.style_solid),f=label.new(_t,_u,text=t+tx,textcolor=col,color=color(na),style=label.style_label_up),g=label.new(_r,_s,text='(2)'+t,textcolor=col,color=color(na),style=label.style_label_down),h=label.new(_p,_q,text=t+'(3)',textcolor=col,color=color(na),style=label.style_label_up),b4=label.new(_n,_o,text='(4)'+t,textcolor=col,color=color(na),style=label.style_label_down),i=label.new(_l,_m,text=t+'(5)',textcolor=col,color=color(na),style=label.style_label_up),j=true,k=false,l=-1)), t3.g:=false
+        else
+            if _0 and _h.j==true
+                _h.T3()
+        _1= t5.get(0), _i:=_1.a.get_y1(), _j:=_1.e.get_x2(), _k:=_1.e.get_y2(), _2=math.abs(_k-_i), if _1.l==1 
+            _3=_1.e.get_y2(), T2=_1.T2(_v,_t,_r), if _r==_1.e.get_x2()and _m>_3-(_2*.854)and _q>_3-(_2*.854)and _o<_3
+                _4=_l-_t, if T2 and _1.p.get_x() > _r
+                    _1.lC.set_xy1(_n,_o), _1.lC.set_xy2(_l,_m), _1.r.set_xy(_l,_m), _1.u.set_lefttop(_l,_m), _1.u.set_right(_l+_4)
+                else
+                    _1.m:=line.new(_r,_s,_p,_q,color=col), _1.p:=label.new(_p,_q,text=t+'(a)',textcolor=col,color=color(na),style=label.style_label_up), _1.n:=line.new(_p,_q,_n,_o,color=col), _1.q:=label.new(_n,_o,text='(b)'+t,textcolor=col,color=color(na),style=label.style_label_down), _1.lC:=line.new(_n,_o,_l,_m,color=col), _1.r:=label.new(_l,_m,text=t+'(c)',textcolor=col,color=color(na),style=label.style_label_up), _1.u:=box.new(_l,_m,_l+_4,_q,bgcolor=color.new(col,93),border_color=color.new(col,65))
+            else
+                if T2 and _1.p.get_x() > _r
+                    _1.T4()
+        if _1.l == -1 
+            if _n==_1.r.get_x()and _m<_1.i.get_y()and _1.s==false
+                _1.s:=true, _1.t:=label.new(_l,_m,style=label.style_circle,color=color.new(col,65),yloc=yloc.belowbar,size=size.tiny)
+    if t5.size() > 0
+        _h:=t5.get(0), if _h.l==1 
+            if ta.crossunder(low , _h.u.get_bottom()) and bar_index <= _h.u.get_right()
+                label.new(bar_index,low,yloc=yloc.belowbar,style=label.style_xcross,color=#ff5252,size=size.tiny)
+        else
+            if ta.crossover(high, _h.u.get_top()) and bar_index <= _h.u.get_right()
+                label.new(bar_index,high,yloc=yloc.abovebar,style=label.style_xcross,color=#ff5252,size=size.tiny)
+    if barstate.islast
+        _1=t5.get(0), if t5.size()>1
+            _5=t5.get(1), _i:=_1.a.get_y1(), _j:=_1.e.get_x2(), _k:=_1.e.get_y2(), _2=math.abs(_k-_i), _6=_1.l==1, if _1.j==false or _1.r.get_x()>_1.i.get_x()
+                t3.a.set_xy1(na,na), t3.a.set_xy2(na,na), t3.b.set_xy1(na,na), t3.b.set_xy2(na,na), t3.c.set_xy1(na,na), t3.c.set_xy2(na,na), t3.d.set_xy1(na,na), t3.d.set_xy2(na,na), t3.e.set_xy1(na,na), t3.e.set_xy2(na,na), t3.f.set_color(color(na))
+            else
+                _C=bar_index+10, _D=_k+((_6?-1:1)*_2*.5), _E=_k+((_6?-1:1)*_2*.618), _F=_k+((_6?-1:1)*_2*.764), _G=_k+((_6?-1:1)*_2*.854), t3.a.set_xy1(_j,_D), t3.a.set_xy2(_C,_D), t3.b.set_xy1(_j,_E), t3.b.set_xy2(_C,_E), t3.c.set_xy1(_j,_F), t3.c.set_xy2(_C,_F), t3.d.set_xy1(_j,_G), t3.d.set_xy2(_C,_G), t3.e.set_xy1(_j,_k), t3.e.set_xy2(_j,_G), t3.f.get_line1().set_xy1(_j,_F), t3.f.get_line1().set_xy2(_C,_F), t3.f.get_line2().set_xy1(_j,_G), t3.f.get_line2().set_xy2(_C,_G)
+            if _1.g.get_x()==_5.r.get_x()
+                _1.f.set_textcolor(color(na)), _1.g.set_textcolor(color(na)), _5.q.set_text(str.replace(_5.q.get_text(),"(b)","(b)(1)",0)), _5.r.set_text(str.replace(_5.r.get_text(),"(c)","(c)(2)",0))
+        _7=t3.d.get_y1(), for i=0 to bar_index-t3.d.get_x1()
+            if _1.l == -1
+                if high[i] > _7
+                    t3.g:=true, break
+            else
+                if low [i] < _7
+                    t3.g:=true, break  
+        switch t3.g
+            true=>T5(t3,line.style_dotted,#ff52520d)
+            false=>T5(t3,line.style_solid,#00e6760d)
+            =>t3.a.set_xy1(na,na), t3.a.set_xy2(na,na), t3.b.set_xy1(na,na), t3.b.set_xy2(na,na), t3.c.set_xy1(na,na), t3.c.set_xy2(na,na), t3.d.set_xy1(na,na), t3.d.set_xy2(na,na), t3.e.set_xy1(na,na), t3.e.set_xy2(na,na), t3.f.set_color(color(na))
+    if t5.size() > 15 
+        pop=t5.pop(), pop.a.delete(), pop.f.delete(), pop.b.delete(), pop.g.delete(), pop.c.delete(), pop.h.delete(), pop.d.delete(), pop.b4.delete(), pop.e.delete(), pop.i.delete(), pop.m.delete(), pop.p.delete(), pop.n.delete(), pop.q.delete(), pop.lC.delete(), pop.r.delete(), pop.t.delete(), pop.u.delete()
+if input.bool(true, title="Elliott Wave")
+    draw(4,#ff5252,0), draw(8,#2196f3,1), draw(12,#ffffff,2)
+
+// u - SMC
+type u0
+    float a
+    float b
+    int c
+    int d
+    int e
+    int f
+type u1
+    int a
+type u2
+    line a=na
+    label b=na 
+type u3
+    float a
+    float b
+    bool c
+    int d=time
+    int e=bar_index
+type u4
+    float b
+    float c
+    int a
+    int d
+var u0 u5=u0.new(), var u3 u6=u3.new(na,na,false), var u3 u7=u3.new(na,na,false), var u3 u8=u3.new(na,na,false), var u3 u9=u3.new(na,na,false), var u3 ua=u3.new(na,na,false), var u3 ub=u3.new(na,na,false), var u1 uc=u1.new(0), var u1 ud=u1.new(0), var u2 ue=u2.new(), var u2 uf=u2.new(), var array<float> ug=array.new<float>(), var array<float> uh=array.new<float>(), var array<float> ui=array.new<float>(), var array<int> uj=array.new<int>(), var array<u4> uk=array.new<u4>(), var array<u4> ul=array.new<u4>(), var array<box> um=array.new<box>(), uo=ta.atr(200), up=(high-low)>=(2*uo), ug.push(up?low:high), uh.push(up?high:low), ui.push(high), uj.push(time), if barstate.isfirst
+    for _a = 1 to 5
+        um.push(box.new(na,na,na,na,xloc=xloc.bar_time,extend=extend.right))
+U0(u3 _0,float _1,int _2,bool _3) =>
+    u2 _a=_3?ue:uf, string _b='EQL', color _c=#089981, string _d=label.style_label_up, if _3
+        _b:='EQH', _c:=#F23645, _d:=label.style_label_down
+    _a.a:=line.new(chart.point.new(_0.d,na,_0.a),chart.point.new(time[_2],na,_1),xloc=xloc.bar_time,color=_c,style=line.style_dotted), _a.b:=label.new(chart.point.new(na,math.round(0.5*(_0.e+bar_index-_2)),_1),_b,xloc.bar_index,color=color(na),textcolor=_c,style=_d,size=size.tiny)
+U1(int _0,bool _1=false,bool _2=false) =>        
+    _a=low[_0]<ta.lowest(_0)?1:0, _c=ta.change(_a)==+1, if ta.change(_a)!=0
+        if _c
+            u3 _d=_1?ub:_2?u9:u7, if _1 and math.abs(_d.a-low[_0])<0.1*uo
+                U0(_d, low[_0], _0, false)
+            _d.b:=_d.a, _d.a:=low[_0], _d.c:=false, _d.d:=time[_0], _d.e:=bar_index[_0], if not _1 and not _2
+                u5.b:=_d.a, u5.c:=_d.d, u5.d:=_d.e, u5.f:=_d.d         
+        else
+            u3 _d=_1?ua:_2?u8:u6, if _1 and math.abs(_d.a - high[_0]) < 0.1 * uo
+                U0(_d,high[_0],_0,true)                
+            _d.b:=_d.a, _d.a:=high[_0], _d.c:=false, _d.d:=time[_0], _d.e:=bar_index[_0], if not _1 and not _2
+                u5.a:=_d.a, u5.c:=_d.d, u5.d:=_d.e, u5.e:=_d.d
+U2(u3 _0,string _1,color _2,string _3,string _4,string _5) => var line _a=line.new(na,na,na,na,xloc=xloc.bar_time), var label _b=label.new(na,na), _a:=line.new(chart.point.new(_0.d,na,_0.a),chart.point.new(time,na,_0.a),xloc.bar_time,color=_2,style=_3), _b:=label.new(chart.point.new(na,math.round(0.5*(_0.e+bar_index)),_0.a),_1,xloc.bar_index,color=color(na),textcolor=_2,style=_4,size=_5)
+U3(u3 _0,bool _1=false,int _2) =>
+    array<float> _a=na, int _b=na, if _2==-1
+        _a:=ug.slice(_0.e,bar_index), _b:=_0.e+_a.indexof(_a.max())  
+    else
+        _a:=uh.slice(_0.e,bar_index), _b:=_0.e+_a.indexof(_a.min())                        
+    u4 _c=u4.new(ug.get(_b),uh.get(_b),_2,uj.get(_b)), array<u4>_d=_1?ul:uk, if _d.size()>=100
+        _d.pop()
+    _d.unshift(_c)
+U4(bool _0=false) =>
+    u3 _a=_0?u8:u6, u1 _b=_0?ud:uc, _c=_0?line.style_dashed:line.style_solid, _d=_0?size.tiny:size.small, _e=_0?u8.a!=u6.a:true, if ta.crossover(close,_a.a) and not _a.c and _e
+        _a.c:=true, _b.a:=+1, U2(_a,_b.a==-1?'CHoCH':'BOS',#089981,_c,label.style_label_down,_d),U3(_a,_0,+1)
+    _a:=_0?u9:u7, _e:=_0?u9.a!=u7.a:true, if ta.crossunder(close,_a.a) and not _a.c and _e
+        _a.c:=true, _b.a:=-1, U2(_a,_b.a==+1?'CHoCH':'BOS',#F23645,_c,label.style_label_up,_d), U3(_a,_0,-1)
+U5(float _0,int _1,float _2,float _3,string _4,color _5,string _6) => var label _a=label.new(na,na,text=_4,color=color(na),textcolor=_5,style=_6,size=size.small), var box _b=box.new(na,na,na,na,bgcolor=color.new(_5,80),border_color=color(na),xloc=xloc.bar_time), _b.set_top_left_point(chart.point.new(u5.c,na,_2)), _b.set_bottom_right_point(chart.point.new(last_bar_time,na,_3)), _a.set_point(chart.point.new(na,_1,_0))
+if input.bool(true, title="SMC")
+    u5.a:=math.max(high,u5.a), u5.e:=u5.a==high?time:u5.e, u5.b:=math.min(low,u5.b), u5.f:=u5.b==low?time:u5.f
+    var line uq=line.new(na,na,na,na,color=#F23645,xloc=xloc.bar_time), var line ur=line.new(na,na,na,na,color=#089981,xloc=xloc.bar_time), var label us=label.new(na,na,color=color(na),textcolor=#F23645,xloc=xloc.bar_time,style=label.style_label_down,size=size.tiny), var label ut=label.new(na,na,color=color(na),textcolor=#089981,xloc=xloc.bar_time,style=label.style_label_up,size=size.tiny), uu=last_bar_time+20*(time-time[1]), uq.set_first_point(chart.point.new(u5.e,na,u5.a)), uq.set_second_point(chart.point.new(uu,na,u5.a)), us.set_point(chart.point.new(uu,na,u5.a)), us.set_text(uc.a==-1?'StrongHigh':'WeakHigh'), ur.set_first_point(chart.point.new(u5.f,na,u5.b)), ur.set_second_point(chart.point.new(uu,na,u5.b)), ut.set_point(chart.point.new(uu,na,u5.b)), ut.set_text(uc.a==+1?'StrongLow':'WeakLow')
+    U5(u5.a,math.round(0.5*(u5.d+last_bar_index)),u5.a,0.95*u5.a+0.05*u5.b,'Premium',#F23645,label.style_label_down), U5(math.avg(u5.a,u5.b),last_bar_index,0.525*u5.a+0.475*u5.b,0.525*u5.b+0.475*u5.a,'Equilibrium',#878b94,label.style_label_left), U5(u5.b,math.round(0.5*(u5.d+last_bar_index)),0.95*u5.b+0.05*u5.a,u5.b,'Discount',#089981,label.style_label_up), U1(50,false), U1(5,false,true), U1(3,true), U4(true), U4(), for [_b,_c] in uk
+        if (high>_c.b and _c.a==-1)or(low<_c.c and _c.a==+1)
+            uk.remove(_b)
+    if barstate.islastconfirmedhistory or barstate.islast
+        array<u4> _a=ul, _b=_a.size(), if _b>0
+            for [_c,_d] in _a.slice(0, math.min(5,_b))
+                box _e=um.get(_c), _e.set_top_left_point(chart.point.new(_d.d,na,_d.b)), _e.set_bottom_right_point(chart.point.new(last_bar_time,na,_d.c)), _e.set_border_color(na), _e.set_bgcolor(_d.a==-1?#f77c8033:#3179f533)

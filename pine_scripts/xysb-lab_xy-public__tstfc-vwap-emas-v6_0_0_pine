@@ -1,0 +1,126 @@
+//@version=5
+indicator(title="TStfc-VWAP+EMAs 6.0 指標 (優化版)", shorttitle="VWAP+EMAs 6.0", overlay=true, timeframe="", timeframe_gaps=true)
+
+// TOPSTEP 中文學習網
+// 這個6.0版本在於時間格局的調整更接近日內交易者的操盤格局四倍數
+
+// --- 均線 (EMA) 設定與繪製 ---
+emaGroup = "均線設定"
+ema5 = ta.ema(close, 5)
+ema15 = ta.ema(close, 15)
+ema60 = ta.ema(close, 60)
+ema120 = ta.ema(close, 120)
+ema240 = ta.ema(close, 240)
+
+plot(ema5, color = #ffffff, linewidth = 1, title="EMA 5") // 為每條EMA線增加可辨識的標題
+plot(ema15, color = #ffffff, linewidth = 2, title="EMA 15")
+plot(ema60, color = #ffffff50, linewidth = 3, title="EMA 60")
+plot(ema240, color = #ffffff, linewidth = 3, title="EMA 240")
+plot(ema120, color = #ffffff67, linewidth = 3, title="EMA 120")
+
+// --- 成交量加權平均價格 (VWAP) 設定 ---
+vwapGroup = "成交量加權平均價格 (VWAP) 設定"
+hideonDWM = input(false, title="隱藏日線或以上時間框架的VWAP", group=vwapGroup, tooltip="在日線、週線、月線等時間框架上隱藏VWAP")
+var anchor = input.string(defval = "Session", title="錨定週期",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group=vwapGroup, tooltip="選擇VWAP的錨定週期，例如：Session (每日重置)")
+src = input(title = "價格來源", defval = hlc3, group=vwapGroup, tooltip="用於VWAP計算的價格，預設為 (最高價+最低價+收盤價)/3")
+offset = input(0, title="偏移量", group=vwapGroup, tooltip="將VWAP及標準差帶向右或向左偏移的K棒數量")
+
+// 標準差帶設定
+bandsGroup = "標準差帶設定"
+showBand_1 = input(true, title="顯示標準差帶 #1", group=bandsGroup, inline="band_1", tooltip="開啟/關閉第一組標準差帶")
+stdevMult_1 = input(1.0, title="標準差倍數 #1", group=bandsGroup, inline="band_1", tooltip="第一組標準差帶的倍數")
+showBand_2 = input(false, title="顯示標準差帶 #2", group=bandsGroup, inline="band_2", tooltip="開啟/關閉第二組標準差帶")
+stdevMult_2 = input(2.0, title="標準差倍數 #2", group=bandsGroup, inline="band_2", tooltip="第二組標準差帶的倍數")
+showBand_3 = input(false, title="顯示標準差帶 #3", group=bandsGroup, inline="band_3", tooltip="開啟/關閉第三組標準差帶")
+stdevMult_3 = input(3.0, title="標準差倍數 #3", group=bandsGroup, inline="band_3", tooltip="第三組標準差帶的倍數")
+
+// --- VWAP 計算邏輯 ---
+if barstate.islast and ta.cum(volume) == 0
+    runtime.error("未從數據供應商獲取到成交量數據。")
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+	"Earnings"  => not na(new_earnings)
+	"Dividends" => not na(new_dividends)
+	"Splits"    => not na(new_split)
+	"Session"   => timeframe.change("D")
+	"Week"      => timeframe.change("W")
+	"Month"     => timeframe.change("M")
+	"Quarter"   => timeframe.change("3M")
+	"Year"      => timeframe.change("12M")
+	"Decade"    => timeframe.change("12M") and year % 10 == 0
+	"Century"   => timeframe.change("12M") and year % 100 == 0
+	=> false
+
+isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+if na(src[1]) and not isEsdAnchor
+	isNewPeriod := true
+
+float vwapValue = na
+float upperBandValue1 = na
+float lowerBandValue1 = na
+float upperBandValue2 = na
+float lowerBandValue2 = na
+float upperBandValue3 = na
+float lowerBandValue3 = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, _stdevUpper, _] = ta.vwap(src, isNewPeriod, 1)
+	vwapValue := _vwap
+    stdevAbs = _stdevUpper - _vwap // 計算標準差的絕對值
+	upperBandValue1 := _vwap + stdevAbs * stdevMult_1
+	lowerBandValue1 := _vwap - stdevAbs * stdevMult_1
+	upperBandValue2 := _vwap + stdevAbs * stdevMult_2
+	lowerBandValue2 := _vwap - stdevAbs * stdevMult_2
+	upperBandValue3 := _vwap + stdevAbs * stdevMult_3
+	lowerBandValue3 := _vwap - stdevAbs * stdevMult_3
+
+// 繪製 VWAP 主線
+plot(vwapValue, title="VWAP 主線", color=#ffff00, linewidth = 3, offset=offset) // 增加標題
+
+// 繪製標準差帶及填充
+upperBand_1 = plot(upperBandValue1, title="上標準差帶 #1", color=color.green, offset=offset, display = showBand_1 ? display.all : display.none)
+lowerBand_1 = plot(lowerBandValue1, title="下標準差帶 #1", color=color.green, offset=offset, display = showBand_1 ? display.all : display.none)
+fill(upperBand_1, lowerBand_1, title="標準差帶填充 #1", color= color.new(color.green, 95), display = showBand_1 ? display.all : display.none)
+
+upperBand_2 = plot(upperBandValue2, title="上標準差帶 #2", color=color.olive, offset=offset, display = showBand_2 ? display.all : display.none)
+lowerBand_2 = plot(lowerBandValue2, title="下標準差帶 #2", color=color.olive, offset=offset, display = showBand_2 ? display.all : display.none)
+fill(upperBand_2, lowerBand_2, title="標準差帶填充 #2", color= color.new(color.olive, 95), display = showBand_2 ? display.all : display.none)
+
+upperBand_3 = plot(upperBandValue3, title="上標準差帶 #3", color=color.teal, offset=offset, display = showBand_3 ? display.all : display.none)
+lowerBand_3 = plot(lowerBandValue3, title="下標準差帶 #3", color=color.teal, offset=offset, display = showBand_3 ? display.all : display.none)
+fill(upperBand_3, lowerBand_3, title="標準差帶填充 #3", color= color.new(color.teal, 95), display = showBand_3 ? display.all : display.none)
+
+
+// --- 黃金交叉與死亡交叉設定與標記 ---
+crossGroup = "均線交叉設定 (5 EMA & 15 EMA)"
+showGoldenCross = input(true, title="顯示黃金交叉 (5上穿15)", group=crossGroup, tooltip="當5EMA向上穿越15EMA時顯示標記")
+goldenCrossColor = input(color.yellow, title="黃金交叉顏色", group=crossGroup, tooltip="黃金交叉標記的顏色", inline="gc_color") // 預設為黃色
+showDeathCross = input(true, title="顯示死亡交叉 (5下穿15)", group=crossGroup, tooltip="當5EMA向下穿越15EMA時顯示標記")
+deathCrossColor = input(color.blue, title="死亡交叉顏色", group=crossGroup, tooltip="死亡交叉標記的顏色", inline="dc_color") // 預設為藍色
+
+// 判斷黃金交叉：5 EMA 向上穿越 15 EMA
+isGoldenCross = ta.crossover(ema5, ema15)
+
+// 判斷死亡交叉：5 EMA 向下穿越 15 EMA
+isDeathCross = ta.crossunder(ema5, ema15)
+
+// 繪製黃金交叉標記
+plotshape(series=isGoldenCross and showGoldenCross, 
+          style=shape.triangleup, 
+          location=location.belowbar, // 標記顯示在K線下方
+          color=goldenCrossColor, 
+          size=size.small, 
+          title="黃金交叉標記")
+
+// 繪製死亡交叉標記
+plotshape(series=isDeathCross and showDeathCross, 
+          style=shape.triangledown, 
+          location=location.abovebar, // 標記顯示在K線上方
+          color=deathCrossColor, 
+          size=size.small, 
+          title="死亡交叉標記")

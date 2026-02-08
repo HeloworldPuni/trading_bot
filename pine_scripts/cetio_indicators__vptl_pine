@@ -1,0 +1,18 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © cetios
+
+//@version=5
+indicator("Bull/Bear Power", overlay=true)
+import TradingView/ta/7
+
+// Parameters
+length = input.int(24, title="EMA Length")
+
+ema = ta.ema(close, length)
+vel = ta.wma(high - ema, length * 2)
+
+squeeze = ta.change(ta.ao(close, 5, 34)) - ta.change(close, 5)
+
+fill(plot(close, color=#00000000), plot(vel + close, color = vel > 0 ? color.green : color.red, title="Bull-Bear Power"), color = vel > 0 ? #4caf4f20 : #ff525220)
+plot(ta.change(close, 5) + close)
+plot(ta.change(ta.ao(close, 5, 34)) + close, color = color.fuchsia)

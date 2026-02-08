@@ -1,0 +1,248 @@
+//@version=4
+// Written by Adler from the Market Cipher Discord
+// This is meant to overlay Market Cipher B by WVC: https://www.tradingview.com/script/KOnEVsCJ-MarketCipher-B/
+// Divergence detection is based off yatrader2's script here and used with his permission (huge thanks to him!): https://www.tradingview.com/script/sxZRzQzQ-Divergence-Indicator-any-oscillator/
+study(title="MCB - Blue Wave Markers", format=format.price, overlay=true)
+
+// === How to use this ===
+// 1) Add this indicator to your charts TWICE. Move one of them into the same pane as Market Cipher B, and leave the other in the window with your candles.
+// 2) In both of the indicators, click "Settings" and set the indicator input dropdown to MC-B's Blue Wave.
+// 3) In the indicator overlaying your candles, check the "Check this box if this indicator is overlaying your candles" box.
+// 4) In both of the indicators, click "..." for this tool -> "Visual Order" -> "Bring to Front" so they're easier to see.
+
+// ============================================
+// INPUTS
+// ============================================
+
+// source inputs
+blueWave = input(hlc3, title="Set this to MC-B Blue Wave")
+isOverlayingCandles = input(false, title="Check this box if this indicator is overlaying your candles")
+
+// config options
+trendBasedMarkersOnly = input(true, title="Trend-Based Markers Only?")
+showMarkers = input(true, title='Show Markers')
+showRunawayTrainBg = input(true, title='Show Runaway Train BG Colors')
+bullColorOne = input(color.teal, title="bullColorOne")
+bullColorTwo = input(color.white, title="bullColorTwo")
+bearColorOne = input(color.maroon, title="bearColorOne")
+bearColorTwo = input(color.white, title="bearColorTwo")
+anchorLabel = 'A'
+triggerLabel = 'T'
+anchorTriggerLabel = 'AT'
+triggerMarkerTransparency = input(0, 'triggerMarkerTransparency', minval=0, maxval=100)
+anchorMarkerTransparency = input(70, 'anchorMarkerTransparency', minval=0, maxval=100)
+blueWaveMarkerLocation = input(location.bottom, 'blueWaveMarkerLocation', options=['AboveBar', 'BelowBar', 'Absolute', 'Top', 'Bottom'])
+
+markerOffset = input(-1, title="Marker Offset")
+anchorWaveCriteria = input(53, title="Consider waves beyond +/- __ to be Anchor waves")
+bearTriggerWaveCriteria = input(-20, title="Bearish Trigger waves can appear if red dot above __")
+bullTriggerWaveCriteria = input(20, title="Bullish Trigger waves can appear if green dot below __")
+
+// ============================================
+// VARIABLES
+// ============================================
+
+ema55 = ema(close, 55)
+ema21 = ema(close, 21)
+isUptrend = ema21 > ema55
+isDowntrend = ema55 > ema21
+
+risingNodesOfBlueWave = blueWave > blueWave[1] ? blueWave : na
+fallingNodesOfBlueWave = blueWave < blueWave[1] ? blueWave : na
+hasBlueWaveRedDot = na(risingNodesOfBlueWave) and risingNodesOfBlueWave[1] > blueWave
+hasBlueWaveGreenDot = na(fallingNodesOfBlueWave) and fallingNodesOfBlueWave[1] < blueWave
+
+isBearishAnchorWave = hasBlueWaveRedDot and blueWave > anchorWaveCriteria
+isBullishAnchorWave = hasBlueWaveGreenDot and blueWave < -anchorWaveCriteria
+isBearishTriggerWave = hasBlueWaveRedDot and blueWave > bearTriggerWaveCriteria and valuewhen(isBearishAnchorWave, blueWave, 1) > blueWave // and inRange? <- put a range limitation in?
+isBullishTriggerWave = hasBlueWaveGreenDot and blueWave < bullTriggerWaveCriteria and valuewhen(isBullishAnchorWave, blueWave, 1) < blueWave // and inRange? <- put a range limitation in?
+isBearishAnchorAndTriggerWave = isBearishAnchorWave and isBearishTriggerWave
+isBullishAnchorAndTriggerWave = isBullishAnchorWave and isBullishTriggerWave
+isBearishTriggerWaveOnly = isBearishTriggerWave and not isBearishAnchorWave
+isBullishTriggerWaveOnly = isBullishTriggerWave and not isBullishAnchorWave
+
+blueWaveOverBought = blueWave > 60
+blueWaveOverSold = blueWave < -60
+bgColor = showRunawayTrainBg ? (blueWaveOverBought ? bullColorOne : blueWaveOverSold ? bearColorOne : na) : na
+bgcolor(bgColor, transp=90)
+
+// ============================================
+// BLUE WAVE ALERTS
+// ============================================
+
+alertcondition(isBearishAnchorWave, "Bearish Anchor Wave", "Bearish Anchor Wave")
+alertcondition(isBullishAnchorWave, "Bullish Anchor Wave", "Bullish Anchor Wave")
+alertcondition(isBearishTriggerWave, "All Bearish Trigger Waves", "All Bearish Trigger Waves")
+alertcondition(isBullishTriggerWave, "All Bullish Trigger Waves", "All Bullish Trigger Waves")
+alertcondition(isBearishTriggerWaveOnly, "Bearish 'T' Wave Only", "Bearish 'T' Wave Only")
+alertcondition(isBullishTriggerWaveOnly, "Bullish 'T' Wave Only", "Bullish 'T' Wave Only")
+alertcondition(isBearishAnchorAndTriggerWave, "Bearish A+T Wave", "Bearish A+T Wave")
+alertcondition(isBullishAnchorAndTriggerWave, "Bullish A+T Wave", "Bullish A+T Wave")
+
+// ============================================
+// BLUE WAVE MARKERS
+// ============================================
+
+bearA = not showMarkers or isBearishAnchorAndTriggerWave ? na : isBearishAnchorWave ? isOverlayingCandles ? high : blueWave : na
+bullA = not showMarkers or isBullishAnchorAndTriggerWave ? na : isBullishAnchorWave ? isOverlayingCandles ? low : blueWave : na
+bearT = not showMarkers or isBearishAnchorAndTriggerWave ? na : isBearishTriggerWave ? isOverlayingCandles ? high : blueWave : na
+bullT = not showMarkers or isBullishAnchorAndTriggerWave ? na : isBullishTriggerWave ? isOverlayingCandles ? low : blueWave : na
+bearAT = showMarkers ? (isBearishAnchorAndTriggerWave ? isOverlayingCandles ? high : blueWave : na) : na
+bullAT = showMarkers ? (isBullishAnchorAndTriggerWave ? isOverlayingCandles ? low : blueWave : na) : na
+
+bearTrendBasedA = trendBasedMarkersOnly and isDowntrend ? bearA : na
+bullTrendBasedA = trendBasedMarkersOnly and isUptrend ? bullA : na
+bearTrendBasedT = trendBasedMarkersOnly and isDowntrend ? bearT : na
+bullTrendBasedT = trendBasedMarkersOnly and isUptrend ? bullT : na
+bearTrendBasedAT = trendBasedMarkersOnly and isDowntrend ? bearAT : na
+bullTrendBasedAT = trendBasedMarkersOnly and isUptrend ? bullAT : na
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bearA,
+	 title="Bearish Anchor Label",
+	 text=anchorLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bullA,
+	 title="Bullish Anchor Label",
+	 text=anchorLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bearT,
+	 title="Bearish Trigger Label",
+	 text=triggerLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=triggerMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bullT,
+	 title="Bullish Trigger Label",
+	 text=triggerLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=triggerMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bearAT,
+	 title="Bearish A+T Label",
+	 text=anchorTriggerLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 trendBasedMarkersOnly ? na : bullAT,
+	 title="Bullish A+T Label",
+	 text=anchorTriggerLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+// -------------
+// TREND BASED
+// -------------
+
+plotshape(
+	 bearTrendBasedA,
+	 title="Bearish Anchor Label",
+	 text=anchorLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 bullTrendBasedA,
+	 title="Bullish Anchor Label",
+	 text=anchorLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+
+plotshape(
+	 bearTrendBasedT,
+	 title="Bearish Trigger Label",
+	 text=triggerLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=triggerMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 bullTrendBasedT,
+	 title="Bullish Trigger Label",
+	 text=triggerLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=triggerMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+
+plotshape(
+	 bearTrendBasedAT,
+	 title="Bearish A+T Label",
+	 text=anchorTriggerLabel,
+	 style=shape.labeldown,
+	 location=blueWaveMarkerLocation,
+	 color=bearColorOne,
+	 textcolor=bearColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )
+
+plotshape(
+	 bullTrendBasedAT,
+	 title="Bullish A+T Label",
+	 text=anchorTriggerLabel,
+	 style=shape.labelup,
+	 location=blueWaveMarkerLocation,
+	 color=bullColorOne,
+	 textcolor=bullColorTwo,
+	 transp=anchorMarkerTransparency,
+	 offset=markerOffset
+	 )

@@ -1,0 +1,33 @@
+//@version=5
+indicator("Simple S/R on 4H", overlay=true)
+
+// This indicator plots support and resistance as the highest high and lowest low from the start of each trading day
+// Apply on 4H timeframe for best results
+
+var float resistance = na
+var float support = na
+
+// Reset S/R at the start of each trading day
+if session.regular == "regular" and session.regular != session.regular[1]
+    resistance := na
+    support := na
+
+// Update resistance and support
+if na(resistance)
+    resistance := high
+else if high > resistance
+    resistance := high
+
+if na(support)
+    support := low
+else if low < support
+    support := low
+
+// Plot resistance and support
+plot(resistance, color=color.red, title="Resistance", linewidth=2)
+plot(support, color=color.green, title="Support", linewidth=2)
+
+// Display current levels as labels
+if barstate.islast
+    label.new(bar_index, high, text="Resistance: " + str.tostring(resistance), color=color.red, style=label.style_label_down, yloc=yloc.abovebar)
+    label.new(bar_index, low, text="Support: " + str.tostring(support), color=color.green, style=label.style_label_up, yloc=yloc.belowbar)

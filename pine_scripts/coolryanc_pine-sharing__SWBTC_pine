@@ -1,0 +1,99 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Rytotw
+
+//@version=5
+indicator('Multi Time Frame Current to BTC [Ryto]')
+
+s2 = input.symbol(title='BTC Symbol', defval='BINANCE:BTCUSDTPERP')
+
+resMultiplier = input(defval=4, title='Multiplier')
+
+getSuffix() =>
+    timeframe.isseconds ? 'S' : timeframe.isminutes ? 'X' : timeframe.isdaily ? 'D' : timeframe.isweekly ? 'W' : timeframe.ismonthly ? 'M' : 'Wrong resolution'
+
+TM = timeframe.multiplier
+SUFFIX = getSuffix()
+X = TM * resMultiplier
+
+calcRes() =>
+    customResolution = ''
+
+    if SUFFIX == 'M' or SUFFIX == 'W' or SUFFIX == 'D'
+        customResolution := str.tostring(TM * resMultiplier) + SUFFIX
+        customResolution
+    else
+        if SUFFIX == 'X'
+            if X <= 1440
+                customResolution := str.tostring(X)
+                customResolution
+            else
+                if math.floor(X / 60) < 24
+                    customResolution := str.tostring(math.floor(X / 60)) + 'H'
+                    customResolution
+                else
+                    customResolution := str.tostring(math.floor(X / 1440)) + 'D'
+                    customResolution
+        else
+            if SUFFIX == 'S'
+                if math.floor(X / 60) > 0
+                    customResolution := str.tostring(math.floor(X / 60))
+                    customResolution
+                else
+                    customResolution := str.tostring(X) + 'S'
+                    customResolution
+
+
+// Donchian Channels
+length = input.int(50, 'Donchian Channel Length', minval=1)
+mid_ma_length = input.int(5, 'Midline moving avarage length', minval=1)
+
+
+f() =>
+    [open, high, low, close]
+
+[O1, H1, L1, C1] = request.security(syminfo.tickerid, timeframe.period, f())
+[O2, H2, L2, C2] = request.security(s2, timeframe.period, f())
+c = O1 / O2 < C1 / C2 ? #E2DED0 : #4E4F50
+plotcandle(O1 / O2, H1 / H2, L1 / L2, C1 / C2, color=c, wickcolor=c, bordercolor=c)
+
+getBias(_timeframe, color1, color2, multiplier) =>
+    [o1, h1, l1, c1] = request.security(syminfo.tickerid, _timeframe, f())
+    [o2, h2, l2, c2] = request.security(s2, _timeframe, f())
+    lower = ta.lowest(l1 / l2, length * multiplier)
+    upper = ta.highest(h1 / h2, length * multiplier)
+    basis = math.avg(upper, lower)
+    isUpper = ta.ema(c1 / c2, mid_ma_length * multiplier) > basis
+    color = isUpper ? color1 : color2
+    [basis, color]
+
+
+
+[basis1, color1] = getBias(timeframe.period, #76B947, #F83839, 1)
+plot(basis1, 'Basis', color=color1, linewidth=2)
+
+[basis2, color2] = getBias(calcRes(), #3dc4db, #4E4F50, resMultiplier)
+plot(basis2, 'Basis Long frame', color=color2, linewidth=2)
+
+
+if barstate.islast
+    labelCurrentRes = label.new(
+         bar_index,
+         basis1,
+         'Current resolution: ' + timeframe.period,
+         color=color.blue,
+         textcolor=color.white,
+         style=label.style_label_down)
+    label.set_style(id=labelCurrentRes, style=label.style_label_upper_left)
+    label.delete(labelCurrentRes[1])
+
+    labelCustomRes = label.new(bar_index,
+         basis2,
+         'Long Period resolution: ' + calcRes(),
+         color=color.red,
+         textcolor=color.white,
+         style=label.style_label_down)
+    label.set_style(id=labelCustomRes, style=label.style_label_upper_left)
+    label.delete(labelCustomRes[1])
+
+
+

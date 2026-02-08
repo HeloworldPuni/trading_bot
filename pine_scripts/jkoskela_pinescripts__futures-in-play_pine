@@ -1,0 +1,319 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator("Futures In Play", overlay = true)
+
+// Description:
+// This indicator analyzes futures markets to identify which ones are "in play" based on various volatility and activity metrics.
+// It calculates a composite score for each market and analyzes how well different features predict intraday volatility.
+//
+// Features:
+// 1. Cumulative Volume (CumVol) - Current day's volume relative to average
+// 2. Range Percentage (RangePct) - Current day's range relative to ATR
+// 3. True Range Rank (TrRank) - Previous day's true range percentile
+// 4. Open Interest Rank (OiRank) - Previous day's open interest percentile
+// 5. Implied Volatility Rank (IvRank) - Previous day's IV percentile (where available)
+//
+// Correlation Analysis:
+// - Calculates how well each feature predicts intraday volatility
+// - Uses either Pearson or Spearman correlation
+// - Shows correlation strength through color gradients
+// - Can display actual correlation values
+//
+// Parameters:
+// lookbackDays: Number of days used for ranking calculations
+// w_rvol: Weight for cumulative volume in total score
+// w_tr: Weight for previous day's true range rank
+// w_oi: Weight for open interest rank
+// w_iv: Weight for implied volatility rank
+// corrType: Type of correlation to calculate (Pearson or Spearman)
+// showCorr: Whether to display correlation values in the table
+//
+// Markets:
+// - Equity Indices: ES1!, NQ1!, YM1!, RTY1!
+// - Energy: CL1!, NG1!
+// - Metals: GC1!, SI1!
+// - FX: 6E1!
+// - Copper: HG1!
+//
+// Output:
+// - Table showing current scores and feature values
+// - Color-coded cells indicating correlation strength
+// - Optional correlation values displayed
+
+import TradingView/RelativeValue/1 as rv
+
+//--- User Parameters ---------------------------------------------------------
+int      lookbackDays   = input.int(10,   "Lookback Day", tooltip = 'Used for ranking.')
+float    w_rvol    = input.float(0.30, "RVOL Weight")
+float    w_tr     = input.float(0.15, "Prev Day TR Rank Weight")
+float    w_oi     = input.float(0.20, "OI Rank Weight")
+float    w_iv     = input.float(0.20, "IV Rank Weight")
+string   corrType  = input.string('Pearson', 'Correlation Type', options = ['Pearson', 'Spearman'])
+bool     showCorr  = input.bool(false, 'Show Correlation Values')
+
+//--- Futures Symbols --------------------------
+var string[] syms = array.from(
+     "ES1!", "NQ1!", "YM1!", "RTY1!",   // equity indices
+     "CL1!", "NG1!",                    // energy
+     "GC1!", "SI1!",                    // metals
+     "6E1!",                            // FX
+     "HG1!" )                           // copper
+
+var map<string,string> ivMap = map.new<string,string>()
+ivMap.put("CME_MINI:ES1!", "VIX")
+ivMap.put("CME_MINI:NQ1!", "VXN")
+ivMap.put("CBOT_MINI:YM1!", "VXD")
+ivMap.put("CME_MINI:RTY1!", "RVX")
+ivMap.put("NYMEX:CL1!", "OVX")
+ivMap.put("NYMEX:NG1!", "")
+ivMap.put("COMEX:GC1!", "GVZ")
+ivMap.put("COMEX:SI1!", "VXSLV")
+ivMap.put("CME:6E1!", "EUVIX")
+ivMap.put("COMEX:HG1!", "")
+
+//--- Helpers -----------------------------------------------------------------
+getSessRange() =>
+    var float sessHigh = na
+    var float sessLow = na
+    if ta.change(time_tradingday) != 0
+        sessHigh := high
+        sessLow := low
+    else
+        sessHigh := math.max(sessHigh, high)
+        sessLow := math.min(sessLow, low)
+    sessHigh - sessLow
+
+getRegSessRange() =>
+    var float sessLow = na
+    var float sessHigh = na
+    
+    if not na(time(timeframe.period, '0930-0930', 'America/New_York'))
+        sessLow := low
+        sessHigh := high
+    else if timeframe.change('D')
+        sessLow := na
+        sessHigh := na
+    else
+        sessLow := math.min(low, sessLow)
+        sessHigh := math.max(high, sessHigh)
+    sessHigh-sessLow
+
+maxCumVolRatio = 2.5
+
+getCumRVOL() =>
+    bool anchor           = timeframe.change('D')  // start of session
+    float cumVol          = rv.calcCumulativeSeries(volume, anchor)
+    float avgCumVol       = rv.averageAtTime(volume, lookbackDays, anchor, true)
+    float rel             = cumVol / math.max(avgCumVol, 1)
+    math.min(rel, maxCumVolRatio) / maxCumVolRatio  // 0–1 clamp at 2.5×
+
+trRank() => ta.percentrank(ta.tr, lookbackDays)
+
+getRepainting() =>
+    _cumVol = getCumRVOL()
+    _sessRange = getSessRange()
+    _regSessRange = getRegSessRange()
+    [_cumVol, _sessRange, _regSessRange]
+
+type Score
+    string sym
+    float cumVol    // current day
+    float rangePct  // current day
+    float trRank    // prev day
+    float oiRank    // prev day
+    float ivRank    // prev day
+    float total
+    // These are for signal testing
+    float atr          // prev day 
+    float tr           // current full day
+    float tr0          // current day since open
+    float cumVolOpen   // at open
+    float rangePctOpen // at open
+    float totalOpen    // at open
+
+method valid(Score self) =>
+    if na(array.from(self.cumVol, self.rangePct, self.trRank, self.oiRank, self.atr, self.tr, self.tr0, self.cumVolOpen, self.rangePctOpen, self.totalOpen).sum())
+        false
+    else if array.from(self.atr, self.tr, self.tr0).sum() == 0
+        false
+    else
+        true
+
+var int openIdx = na
+if not na(time(timeframe.period, '0930-0930', 'America/New_York'))
+    openIdx := bar_index
+if timeframe.change('D')
+    openIdx := na
+openOffset = bar_index-openIdx
+
+getScores(sym) =>
+    _ivSym = ivMap.get(sym)
+    [_cumVol, _sessRange, _regSessRange] = request.security(sym, timeframe.period, getRepainting())
+    _ivRank = request.security(ivMap.get(sym), 'D', ta.percentrank(close, lookbackDays)[1], lookahead = barmerge.lookahead_on)
+    _oiRank = request.security(sym+'_OI', 'D', ta.percentrank(close, lookbackDays)[1], lookahead = barmerge.lookahead_on)
+    [_dAtr, _dTrRank, _tr] = request.security(sym, 'D', [ta.atr(lookbackDays)[1], trRank()[1], ta.tr], lookahead = barmerge.lookahead_on)
+    _rangePct = _sessRange/_dAtr
+
+    float _total = _cumVol*w_rvol*100 + _dTrRank*w_tr
+    float _totalWeight = w_rvol + w_tr
+    if _ivSym != '' and not na(_ivRank)
+        _total += w_iv*_ivRank
+        _totalWeight += w_iv
+    if not na(_oiRank)
+        _total += w_oi*_oiRank
+        _totalWeight += w_oi
+    _total := _total / _totalWeight
+    
+    float _cumVolOpen = na
+    float _rangePctOpen = na
+    float _totalOpen = na
+    if not na(openOffset)
+        _cumVolOpen := _cumVol[openOffset]
+        _rangePctOpen := _rangePct[openOffset]
+        _totalOpen := _total[openOffset]
+
+    Score.new(sym, _cumVol, _rangePct, _dTrRank, _oiRank, _ivSym == '' ? na : _ivRank, _total, _dAtr, _tr, _regSessRange, _cumVolOpen, _rangePctOpen, _totalOpen)
+
+//--- Per-symbol stats --------------------------------------------------------
+initialized = false
+scores = array.new<Score>()
+scores.push(getScores(ivMap.keys().get(0)))
+scores.push(getScores(ivMap.keys().get(1)))
+scores.push(getScores(ivMap.keys().get(2)))
+scores.push(getScores(ivMap.keys().get(3)))
+scores.push(getScores(ivMap.keys().get(4)))
+scores.push(getScores(ivMap.keys().get(5)))
+scores.push(getScores(ivMap.keys().get(6)))
+scores.push(getScores(ivMap.keys().get(7)))
+scores.push(getScores(ivMap.keys().get(8)))
+scores.push(getScores(ivMap.keys().get(9)))
+
+type DailyData
+    // Each row is features for a single market on one day
+    array<Score> dayScores
+var data = array.new<DailyData>()
+
+if session.islastbar
+    a = array.new<Score>()
+    completeData = true
+    for r = 0 to scores.size()-1
+        score = scores.get(r)
+        if not score.valid()
+            completeData := false
+            break
+        a.push(score)
+    if completeData
+        data.push(DailyData.new(a))
+
+//--- correlation calculation functions ----------------------------------------
+getPearsonCorrelation(array<float> x, array<float> y) =>
+    if array.size(x) != array.size(y) or array.size(x) < 2
+        na
+    else
+        cov = array.covariance(x, y)
+        stdX = math.sqrt(array.covariance(x, x))
+        stdY = math.sqrt(array.covariance(y, y))
+        cov / (stdX * stdY)
+
+getSpearmanCorrelation(array<float> x, array<float> y) =>
+    if array.size(x) != array.size(y) or array.size(x) < 2
+        na
+    else
+        xRanks = array.new_float(array.size(x), 0.0)
+        yRanks = array.new_float(array.size(y), 0.0)
+        for i = 0 to array.size(x) - 1
+            xRanks.set(i, x.percentrank(i))
+            yRanks.set(i, y.percentrank(i))
+        getPearsonCorrelation(xRanks, yRanks)
+
+getColorGradient(float value) =>
+    if na(value)
+        color.gray
+    else if value < 0
+        color.from_gradient(value, -1, 0, color.red, color.white)
+    else
+        color.from_gradient(value, 0, 1, color.white, color.green)
+
+//--- Table Cell Formatting ----------------------------------------
+method setCell(table tbl, int col, int row, float value, float corr) =>
+    string txt = ''
+    if showCorr
+        txt := str.tostring(corr, "#.##")
+    else
+        txt := str.tostring(value, "#.##")
+    table.cell(tbl, col, row, txt, text_color = getColorGradient(corr))
+
+//--- Generate Stats Table ----------------------------------------
+var table tbl = table.new(position.bottom_right, 7, 11, frame_color = color.new(color.gray, 60), frame_width = 10)
+
+if barstate.islastconfirmedhistory
+    // Calculate correlations for each feature
+    featureNames = array.from("CumVol", "AtrRank", "OiRank", "IvRank")
+    correlations = array.new<float>(5, 0.0)
+    
+    // Find correlation
+    featureValues = array.new<float>()
+    targetValues = array.new<float>()
+    corrMatrix = matrix.new<float>(scores.size(),6, na)
+
+    for m = 0 to scores.size()-1   // For each market
+        for f = 0 to 5             // For each feature
+            featureValues.clear()
+            targetValues.clear()
+            for d in data          // For each day
+                score = d.dayScores.get(m)
+                if score.valid()
+                    switch f
+                        0 => array.push(featureValues, score.totalOpen)
+                        1 => array.push(featureValues, score.cumVolOpen)
+                        2 => array.push(featureValues, score.rangePctOpen)
+                        3 => array.push(featureValues, score.trRank)
+                        4 => array.push(featureValues, score.oiRank)
+                        5 => array.push(featureValues, score.ivRank)
+                    if f < 3
+                        array.push(targetValues, score.tr0/score.atr)    
+                    else              
+                        array.push(targetValues, score.tr/score.atr)
+
+            corr = switch corrType
+                "Pearson" => getPearsonCorrelation(featureValues, targetValues)
+                "Spearman" => getSpearmanCorrelation(featureValues, targetValues)
+            corrMatrix.set(m, f, corr)
+    
+    // Sort scores and create table
+    totalScores = array.new<float>()
+    for score in scores
+        totalScores.push(score.total)
+    sorted_idx = array.sort_indices(totalScores, order.descending)
+    sorted = array.new<Score>()
+    sortedCorr = matrix.new<float>(0, 6)
+    for [i, j] in sorted_idx
+        sorted.push(scores.get(j))
+        sortedCorr.add_row(i, corrMatrix.row(j))
+    
+    // header
+    text_color = color.white
+    table.cell(tbl, 0,0,"Symbol", text_color = text_color)
+    table.cell(tbl, 1,0,"Score", text_color = text_color)
+    table.cell(tbl, 2,0,"CumVol", text_color = text_color)
+    table.cell(tbl, 3,0,"RangePct", text_color = text_color)
+    table.cell(tbl, 4,0,"TrRank", text_color = text_color)
+    table.cell(tbl, 5,0,"OiRank", text_color = text_color)
+    table.cell(tbl, 6,0,"IvRank", text_color = text_color)
+
+    // rows
+    for r = 0 to sorted.size()-1
+        score = sorted.get(r)
+        shortSym = str.split(score.sym, ':').get(1)
+        table.cell(tbl, 0,r+1, shortSym, text_color = text_color)
+
+        tbl.setCell(1, r+1, score.total, sortedCorr.get(r, 0))
+        tbl.setCell(2, r+1, score.cumVol*maxCumVolRatio, sortedCorr.get(r, 1))
+        tbl.setCell(3, r+1, score.rangePct, sortedCorr.get(r, 2))
+        tbl.setCell(4, r+1, score.trRank, sortedCorr.get(r, 3))
+        tbl.setCell(5, r+1, score.oiRank, sortedCorr.get(r, 4))
+        tbl.setCell(6, r+1, score.ivRank, sortedCorr.get(r, 5))
+
+plot(data.size(), 'data.size()', display = display.data_window, editable = false)
+plot(ta.sma(session.islastbar ? bar_index % 10 : na, lookbackDays), 'test sma', display = display.data_window, editable = false)

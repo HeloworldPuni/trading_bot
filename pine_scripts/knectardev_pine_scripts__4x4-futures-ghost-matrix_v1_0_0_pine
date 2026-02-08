@@ -1,0 +1,82 @@
+//@version=5
+// =============================================================================
+// INDICATOR: 4x4 Futures Ghost Matrix
+// FILENAME: 4x4-futures-ghost-matrix_v1.0.0.pine
+// Version: v1.0.0
+// DATE:     2026-01-12
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.0 - Initial version
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+indicator("4x4 Futures Ghost Matrix - High Conviction", overlay=true)
+
+// --- 1. INPUTS ---
+sessionTime = input.session("0930-1600", "Trading Window")
+stdPeriod   = input.int(20, "Lookback Period")
+innerMult   = input.float(1.0, "Inner Sigma")
+outerMult   = input.float(2.5, "Outer Sigma")
+
+// --- 2. CALCULATIONS ---
+inSession = not na(time(timeframe.period, sessionTime, "America/New_York"))
+basis = ta.vwap
+dev   = ta.stdev(close, stdPeriod)
+
+// Define Price Levels
+eUpper = basis + (dev * outerMult)
+iUpper = basis + (dev * innerMult)
+iLower = basis - (dev * innerMult)
+eLower = basis - (dev * outerMult)
+
+// --- 3. HEIKIN ASHI VECTOR LOGIC ---
+// Fetching HA data to confirm momentum
+haTicker = ticker.heikinashi(syminfo.tickerid)
+haOpen   = request.security(haTicker, timeframe.period, open)
+haLow    = request.security(haTicker, timeframe.period, low)
+haHigh   = request.security(haTicker, timeframe.period, high)
+
+// Shaved candle check: Longs need no lower wick; Shorts need no upper wick
+haLongVector  = haOpen == haLow
+haShortVector = haOpen == haHigh
+
+// --- 4. GHOST CONFLUENCE & SIGNALS ---
+// Measuring if the last 4 bars (Ghosts) stayed above/below our levels
+longConfluence  = (close > iLower[1] ? 1 : 0) + (close > iLower[2] ? 1 : 0) + (close > iLower[3] ? 1 : 0) + (close > iLower[4] ? 1 : 0) >= 3
+shortConfluence = (close < eUpper[1] ? 1 : 0) + (close < eUpper[2] ? 1 : 0) + (close < eUpper[3] ? 1 : 0) + (close < eUpper[4] ? 1 : 0) >= 3
+
+// High-Conviction Signal: Geometric Cross + Matrix Confluence + HA Vector
+longSignal  = ta.crossover(close, iLower) and longConfluence and haLongVector
+shortSignal = ta.crossunder(close, eUpper) and shortConfluence and haShortVector
+
+// --- 5. PLOTTING CANDLE LABELS ---
+plotshape(longSignal,  title="High-Conviction Long",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 20), text="L", textcolor=color.white, size=size.small)
+plotshape(shortSignal, title="High-Conviction Short", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 20),   text="S", textcolor=color.white, size=size.small)
+
+// --- 6. MATRIX TABLE VISUALIZATION ---
+var table matrixDots = table.new(position.top_right, 5, 5, bgcolor=color.new(color.black, 100))
+
+if barstate.islast and inSession
+    // Header Labels
+    for lb = 1 to 4
+        table.cell(matrixDots, lb, 0, str.tostring(lb) + "m", text_color=color.gray, text_size=size.small)
+    
+    float[] levels = array.from(eUpper, iUpper, iLower, eLower)
+    for row = 0 to 3
+        current_lvl = array.get(levels, row)
+        for col = 1 to 4
+            bool win = close > current_lvl[col]
+            color dotColor = win ? color.new(color.green, 20) : color.new(color.red, 20)
+            table.cell(matrixDots, col, row + 1, "●", text_color=dotColor, text_size=size.large)
+
+// Plotting bands for visual context
+plot(eUpper, color=color.new(color.red, 60))
+plot(iUpper, color=color.new(color.red, 90))
+plot(iLower, color=color.new(color.green, 90))
+plot(eLower, color=color.new(color.green, 60))
+
+// --- Matrix Heatmap Glow ---
+matrixScore = (close > eUpper ? 1 : 0) + (close > iUpper ? 1 : 0) + (close > iLower ? 1 : 0) + (close > eLower ? 1 : 0)
+highTrendGlow = longConfluence ? color.new(color.green, 90) : shortConfluence ? color.new(color.red, 90) : na
+bgcolor(highTrendGlow, title="Matrix Confidence Glow")

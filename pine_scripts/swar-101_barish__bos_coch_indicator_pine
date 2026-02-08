@@ -1,0 +1,148 @@
+//@version=5
+indicator("BoS/CoCH TL+HL (trendlines visible, fixed)", shorttitle="BoS/CoCH TL+", overlay=true)
+
+// ---------- INPUTS ----------
+left        = input.int(2, "Swing Left (bars)", minval=1)
+right       = input.int(2, "Swing Right (bars)", minval=1)
+retrace     = input.int(2, "Retrace Candles (before breakout)", minval=1)
+max_trend_segments = input.int(6, "Max Trend Segments", minval=1)
+max_hlines = input.int(6, "Max Horizontal Levels", minval=1)
+show_labels = input.bool(true, "Show labels")
+show_trend  = input.bool(true, "Show trendlines")
+show_hlines = input.bool(true, "Show BoS/CoCH levels")
+show_pivots = input.bool(false, "Show pivot markers (debug)")
+alert_on    = input.bool(true, "Enable alerts")
+
+// ---------- PIVOTS ----------
+ph = ta.pivothigh(high, left, right)
+pl = ta.pivotlow(low, left, right)
+
+// store recent confirmed swings as arrays
+var swing_bars   = array.new_int()
+var swing_prices = array.new_float()
+var swing_type   = array.new_int()   // 1 => high, -1 => low
+
+if not na(ph)
+    array.push(swing_bars, bar_index - right)
+    array.push(swing_prices, ph)
+    array.push(swing_type, 1)
+
+if not na(pl)
+    array.push(swing_bars, bar_index - right)
+    array.push(swing_prices, pl)
+    array.push(swing_type, -1)
+
+// trim swings
+max_swings_keep = max_trend_segments + 6
+while array.size(swing_bars) > max_swings_keep
+    array.shift(swing_bars)
+    array.shift(swing_prices)
+    array.shift(swing_type)
+
+// ---------- RETRACE CHECK ----------
+is_bearish(i) => close[i] < open[i]
+is_bullish(i)  => close[i] > open[i]
+
+retrace_bearish() =>
+    ok = true
+    for k = 1 to retrace
+        ok := ok and is_bearish(k)
+    ok
+
+retrace_bullish() =>
+    ok = true
+    for k = 1 to retrace
+        ok := ok and is_bullish(k)
+    ok
+
+// ---------- LAST CONFIRMED SWING PRICES ----------
+var float lastSwingHighPrice = na
+var int   lastSwingHighBar   = na
+var float lastSwingLowPrice  = na
+var int   lastSwingLowBar    = na
+
+if not na(ph)
+    lastSwingHighPrice := ph
+    lastSwingHighBar   := bar_index - right
+
+if not na(pl)
+    lastSwingLowPrice := pl
+    lastSwingLowBar   := bar_index - right
+
+// ---------- BOS / COCH ----------
+var int trend = 0
+bull_bos_series = not na(lastSwingHighPrice) and close > lastSwingHighPrice and retrace_bearish()
+bear_bos_series = not na(lastSwingLowPrice) and close < lastSwingLowPrice and retrace_bullish()
+
+coch_bull_series = false
+coch_bear_series = false
+
+if bull_bos_series
+    if trend == -1
+        coch_bull_series := true
+    trend := 1
+else
+    coch_bull_series := false
+
+if bear_bos_series
+    if trend == 1
+        coch_bear_series := true
+    trend := -1
+else
+    coch_bear_series := false
+
+// ---------- MANAGE TREND LINES: rebuild recent segments each bar (clean) ----------
+var line[] trend_lines = array.new_line()
+if show_trend
+    // clear previous trend lines
+    for i = 0 to array.size(trend_lines) - 1
+        line.delete(array.get(trend_lines, i))
+    array.clear(trend_lines)
+
+    // draw up to max_trend_segments segments from the swings array
+    cnt = array.size(swing_bars)
+    start_idx = math.max(1, cnt - max_trend_segments)
+    for i = start_idx to cnt - 1
+        b1 = array.get(swing_bars, i - 1)
+        p1 = array.get(swing_prices, i - 1)
+        b2 = array.get(swing_bars, i)
+        p2 = array.get(swing_prices, i)
+        col = p2 > p1 ? color.green : color.red
+        l = line.new(x1 = b1, y1 = p1, x2 = b2, y2 = p2, xloc = xloc.bar_index, extend = extend.none, color = col, width = 2)
+        array.push(trend_lines, l)
+
+// ---------- HORIZONTAL LINES ----------
+var line[] h_lines = array.new_line()
+if show_hlines
+    if bull_bos_series
+        h = line.new(x1 = bar_index - 5, y1 = lastSwingHighPrice, x2 = bar_index + 50, y2 = lastSwingHighPrice, xloc = xloc.bar_index, extend = extend.right, color = color.green, width = 1)
+        array.push(h_lines, h)
+    if bear_bos_series
+        h = line.new(x1 = bar_index - 5, y1 = lastSwingLowPrice, x2 = bar_index + 50, y2 = lastSwingLowPrice, xloc = xloc.bar_index, extend = extend.right, color = color.red, width = 1)
+        array.push(h_lines, h)
+    if coch_bull_series
+        h = line.new(x1 = bar_index - 5, y1 = lastSwingHighPrice, x2 = bar_index + 50, y2 = lastSwingHighPrice, xloc = xloc.bar_index, extend = extend.right, color = color.orange, width = 2, style=line.style_dashed)
+        array.push(h_lines, h)
+    if coch_bear_series
+        h = line.new(x1 = bar_index - 5, y1 = lastSwingLowPrice, x2 = bar_index + 50, y2 = lastSwingLowPrice, xloc = xloc.bar_index, extend = extend.right, color = color.orange, width = 2, style=line.style_dashed)
+        array.push(h_lines, h)
+
+    while array.size(h_lines) > max_hlines
+        line.delete(array.shift(h_lines))
+
+// ---------- PIVOT MARKERS (global scope, boolean series) ----------
+plotshape(show_pivots and not na(ph), title="pivot high", style=shape.triangleup, location=location.abovebar, color=color.teal, size=size.tiny)
+plotshape(show_pivots and not na(pl), title="pivot low",  style=shape.triangledown, location=location.belowbar, color=color.fuchsia, size=size.tiny)
+
+// ---------- LABELS / INFO ----------
+if show_labels and barstate.islast
+    lbltxt = "BoS/CoCH | Retrace: " + str.tostring(retrace) + " | Swing L/R: " + str.tostring(left) + "/" + str.tostring(right)
+    var info = label.new(bar_index, high, lbltxt, yloc=yloc.abovebar, style=label.style_label_left, color=color.new(color.blue,85), textcolor=color.white)
+    label.set_xy(info, bar_index, high)
+    label.set_text(info, lbltxt)
+
+// ---------- ALERTS ----------
+alertcondition(bull_bos_series and alert_on, title="BoS Up (Retrace)", message="{{ticker}} BoS ↑ at {{time}} | Price: {{close}}")
+alertcondition(bear_bos_series and alert_on, title="BoS Down (Retrace)", message="{{ticker}} BoS ↓ at {{time}} | Price: {{close}}")
+alertcondition(coch_bull_series and alert_on, title="CoCH Bull", message="{{ticker}} CoCH → Bull at {{time}} | Price: {{close}}")
+alertcondition(coch_bear_series and alert_on, title="CoCH Bear", message="{{ticker}} CoCH → Bear at {{time}} | Price: {{close}}")

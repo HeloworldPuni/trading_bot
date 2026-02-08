@@ -1,0 +1,141 @@
+//@version=5
+strategy("5m Opening Range Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// ─── INPUTS ─────────────────────────
+r_dollars = input.float(30, "Risk per trade ($)")
+r_multiple = input.float(1.0, "Reward Multiple", minval=0.1, step=0.1)
+high_proximity_buffer = input.float(0.005, "High Proximity Threshold (e.g., 0.005 = 0.5%)")
+show_first_candle = input.bool(true, "Show First Candle")
+show_second_candle = input.bool(true, "Show Second Candle")
+show_third_candle = input.bool(true, "Show Third Candle")
+
+// ─── MA + VWAP + ATR SETUP ─────────
+ma20 = ta.sma(close, 20)
+ma200 = ta.sma(close, 200)
+vwap = ta.vwap
+daily_atr = request.security(syminfo.tickerid, "D", ta.atr(14))
+prev_close = request.security(syminfo.tickerid, "D", close)
+yest_low = request.security(syminfo.tickerid, "D", low)
+yest_high = request.security(syminfo.tickerid, "D", high)
+ticker_ema28 = request.security(syminfo.tickerid, "D", ta.ema(close, 28))
+
+// ─── TODAY'S LOW BASED ON 5M CHART ─
+is_new_day = ta.change(time("D")) != 0
+var float today_low_5m = na
+today_low_5m := is_new_day ? low : math.min(today_low_5m, low)
+
+// ─── PRICE RANGE LOGIC ─────────────
+price_range_base = math.min(prev_close, today_low_5m)
+max_price_up = price_range_base + daily_atr
+
+// ─── TIME FILTER: FIRST 15 MINUTES ─
+candle_number = (hour == 9 and minute >= 30 and minute < 35 ? 1 : hour == 9 and minute >= 35 and minute < 40 ? 2 : hour == 9 and minute >= 40 and minute < 45 ? 3 : na)
+
+// ─── TRACK HIGHS FOR CANDLES 1 & 2 ─
+var float high_c1 = na
+var float high_c2 = na
+high_c1 := is_new_day or candle_number == 1 ? high : high_c1
+high_c2 := is_new_day or candle_number == 2 ? high : high_c2
+
+// ─── MARKET TREND FILTER (QQQ) ─────
+qqq_close = request.security("QQQ", "D", close)
+qqq_ema21 = request.security("QQQ", "D", ta.ema(close, 21))
+bool_market_trend_ok = qqq_close > qqq_ema21
+bool_ticker_trend_ok = close > ticker_ema28
+
+// ─── ENTRY CONDITION COMPONENTS ────
+near_yest_high_and_not_breaking = (yest_high - close) / close <= high_proximity_buffer and close <= yest_high
+bool_cond_open_close = close > open
+bool_cond_tail_ok = (high - close) <= (high - low) * 0.25
+bool_ma_order = close > ma20 and ma20 > ma200
+bool_above_prev_close = close > prev_close
+bool_candle_progression = (candle_number == 1) or (candle_number == 2 and close > high_c1) or (candle_number == 3 and close > high_c1 and close > high_c2)
+bool_time_valid = (hour == 9 and minute >= 30 and minute < 45)
+bool_within_atr_target = (close - price_range_base + r_multiple * (close - price_range_base)) <= daily_atr
+bool_within_r_dollars = (close - price_range_base) <= r_dollars
+bool_not_near_yhigh = not near_yest_high_and_not_breaking
+bool_vwap_trend = close > vwap
+
+// ─── STOP LOSS WITH BUFFER ─────────
+use_yest_low = (close - yest_low) / close <= 0.01
+stop_buffer = daily_atr * 0.1
+raw_stop = use_yest_low ? yest_low : math.min(prev_close, today_low_5m)
+initial_stop_loss = raw_stop - stop_buffer
+
+// ─── RISK & REWARD ─────────────────
+risk_per_share = close - initial_stop_loss
+position_size = r_dollars / risk_per_share
+position_size_rounded = math.floor(position_size)
+initial_take_profit = math.min(close + r_multiple * risk_per_share, max_price_up)
+
+// ─── ENTRY ─────────────────────────
+enter_long = bool_cond_open_close and bool_cond_tail_ok and bool_ma_order and bool_above_prev_close and bool_candle_progression and bool_time_valid and bool_within_atr_target and bool_within_r_dollars and bool_not_near_yhigh and bool_vwap_trend and bool_market_trend_ok and bool_ticker_trend_ok and position_size_rounded > 0
+
+// ─── TP/SL DYNAMIC ADJUSTMENT ──────
+var float dynamic_tp = na
+var float dynamic_sl = na
+var int last_adjustment_bar = na
+if enter_long
+    strategy.entry("Long", strategy.long, qty=position_size_rounded)
+    dynamic_tp := initial_take_profit
+    dynamic_sl := initial_stop_loss
+
+// ─── POSITION STATE & ENTRY BAR ────
+in_trade = strategy.position_size > 0
+var int entry_bar_index = na
+if na(entry_bar_index) and in_trade
+    entry_bar_index := bar_index
+if not in_trade
+    entry_bar_index := na
+
+bars_since_entry = not na(entry_bar_index) ? bar_index - entry_bar_index : na
+should_adjust = in_trade and not na(bars_since_entry) and bars_since_entry >= 24 and (na(last_adjustment_bar) or bar_index - last_adjustment_bar >= 12)
+
+last_hour_high = ta.highest(high, 12)
+last_hour_low = ta.lowest(low, 12)
+
+if should_adjust
+    dynamic_tp := last_hour_high
+    dynamic_sl := last_hour_low
+    last_adjustment_bar := bar_index
+
+// ─── EXIT ──────────────────────────
+current_tp = not na(dynamic_tp) ? dynamic_tp : initial_take_profit
+current_sl = not na(dynamic_sl) ? dynamic_sl : initial_stop_loss
+if in_trade
+    strategy.exit("Dynamic TP/SL", from_entry="Long", limit=current_tp, stop=current_sl)
+
+// ─── R/R RATIO CALCULATION ─────────
+rr_ratio = math.abs((current_tp - close) / (close - current_sl))
+
+// ─── PLOTS ─────────────────────────
+plot(ma20, color=color.orange, title="MA 20")
+plot(ma200, color=color.blue, title="MA 200")
+plot(vwap, color=color.fuchsia, title="VWAP", linewidth=1)
+plotshape(enter_long, title="Entry", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plot(prev_close, "Previous Close", color=color.white, linewidth=1)
+plot(yest_low, "Yesterday Low", color=color.red, linewidth=1)
+plot(yest_high, "Yesterday High", color=color.green, linewidth=1)
+plot(max_price_up, "Expected Max Up (ATR)", color=color.aqua, linewidth=1)
+plotshape(in_trade ? current_tp : na, title="Adjusted TP", location=location.absolute, color=color.lime, style=shape.circle, size=size.tiny)
+plotshape(in_trade ? current_sl : na, title="Adjusted SL", location=location.absolute, color=color.red, style=shape.circle, size=size.tiny)
+
+// ─── DEBUG LABELS PER CANDLE ───────
+label_text = "\nBullish candle: " + (bool_cond_open_close ? "✅" : "❌") +
+             "\nUpper tail OK: " + (bool_cond_tail_ok ? "✅" : "❌") +
+             "\nMA alignment (20 > 200): " + (bool_ma_order ? "✅" : "❌") +
+             "\nAbove previous close: " + (bool_above_prev_close ? "✅" : "❌") +
+             "\nCandle breakout logic: " + (bool_candle_progression ? "✅" : "❌") +
+             "\nWithin ATR target: " + (bool_within_atr_target ? "✅" : "❌") +
+             "\nRisk within $" + str.tostring(r_dollars) + ": " + (bool_within_r_dollars ? "✅" : "❌") +
+             "\nNot near yesterday's high: " + (bool_not_near_yhigh ? "✅" : "❌") +
+             "\nAbove VWAP: " + (bool_vwap_trend ? "✅" : "❌") +
+             "\nQQQ > 21EMA: " + (bool_market_trend_ok ? "✅" : "❌") +
+             "\nTicker > 28EMA: " + (bool_ticker_trend_ok ? "✅" : "❌") +
+             "\n📦 Position size: " + str.tostring(position_size_rounded) +
+             "\n🎯 Take Profit: " + str.tostring(initial_take_profit, "#.##") +
+             "\n🧯 Stop Loss: " + str.tostring(initial_stop_loss, "#.##") +
+             "\n📈 R/R Ratio: " + (not na(rr_ratio) ? str.tostring(rr_ratio, "#.##") : "N/A")
+
+if (candle_number == 1 and show_first_candle) or (candle_number == 2 and show_second_candle) or (candle_number == 3 and show_third_candle)
+    label.new(bar_index, low, "Candle: " + str.tostring(candle_number) + label_text, yloc=yloc.belowbar, style=label.style_label_down, color=color.new(color.gray, 0), textcolor=color.white)

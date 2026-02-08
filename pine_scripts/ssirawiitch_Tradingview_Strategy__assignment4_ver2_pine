@@ -1,0 +1,64 @@
+//@version=4
+strategy("Moon Phases with EMA Strategy", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1, margin_long=0, commission_type=strategy.commission.cash_per_contract, commission_value=43.1, slippage=2)
+
+// === INPUT ===
+newMoonRef = input(title="New Moon Reference Date", type=input.time, defval=timestamp("2021-01-13 05:00 +0000"))
+shortlen   = input(14, "Short EMA Length")
+longlen    = input(50, "Long EMA Length")
+longcol    = input(color.new(color.blue, 80), "Buy BG Color")
+shortcol   = input(color.new(color.red, 80), "Sell BG Color")
+
+// === CALCULATE MOON PHASE ===
+cycle = 2551442876.8992
+day = 8.64e+7
+diff = (newMoonRef + time + day * 2) % cycle / cycle
+
+newmoon  = crossover(diff, 0.5)
+fullmoon = crossunder(diff, 0.5)
+
+// === PHASE STATE ===
+var int phase = na    // 1 = buy mode (waxing), -1 = sell mode (waning)
+var int last_phase = na
+
+if newmoon
+    phase := -1
+if fullmoon
+    phase := 1
+
+phase_change = phase != last_phase and not na(phase)
+if phase_change
+    if strategy.position_size > 0
+        strategy.close("Long" , comment = "Change Phase")
+    else if strategy.position_size < 0
+        strategy.close("Short" , comment = "Change Phase")
+last_phase := phase
+
+// === EMA CONDITIONS ===
+price = security(syminfo.tickerid, "15", close)
+shortEMA = ema(price, shortlen)
+longEMA  = ema(price, longlen)
+
+ema_cross_up   = crossover(shortEMA, longEMA)
+ema_cross_down = crossunder(shortEMA, longEMA)
+
+// === ENTRY & EXIT LOGIC ===
+// BUY MODE
+if phase == 1
+    if ema_cross_up
+        strategy.entry("Long", strategy.long)
+    if ema_cross_down and strategy.position_size > 0
+        strategy.close("Long", comment="Exit Buy (EMA Down)")
+
+// SELL MODE
+if phase == -1
+    if ema_cross_down
+        strategy.entry("Short", strategy.short)
+    if ema_cross_up and strategy.position_size < 0
+        strategy.close("Short", comment="Exit Sell (EMA Up)")
+
+// === PLOTS ===
+plotshape(newmoon, title="New Moon", location=location.abovebar, text="🌑", color=color.gray, size=size.tiny)
+plotshape(fullmoon, title="Full Moon", location=location.belowbar, text="🌕", color=color.yellow, size=size.tiny)
+plot(shortEMA, title="Short EMA", color=color.yellow)
+plot(longEMA, title="Long EMA", color=color.orange)
+bgcolor(phase == 1 ? longcol : phase == -1 ? shortcol : na)

@@ -1,0 +1,150 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Based on script of © LonesomeTheBlue
+// Trend Lines for RSI, CCI, Momentum, OBV and MACD
+// By ezPappi
+//@version=6
+indicator("Dynamic Anchored VWAP", shorttitle="DAVWAP", overlay=true)
+
+// Automatic anchor time options
+anchor_type = input.string("Chart Start", title="Anchor Type", 
+                          options=["Chart Start", "Daily Start", "Weekly Start", "Monthly Start", "Manual"])
+manual_anchor = input.time(timestamp("2017-12-18 00:00"), title="Manual Anchor Time")
+
+// Get the first bar time of the chart
+var first_bar_time = time
+
+// Function to get automatic anchor time
+get_anchor_time() =>
+    switch anchor_type
+        "Chart Start" => 
+            // Use the first bar of the chart
+            first_bar_time
+        "Daily Start" => 
+            // Start of current day
+            timestamp(year(time), month(time), dayofmonth(time), 0, 0)
+        "Weekly Start" => 
+            // Start of current week (Monday)
+            week_start = time - (dayofweek(time) - 2) * 24 * 60 * 60 * 1000
+            timestamp(year(week_start), month(week_start), dayofmonth(week_start), 0, 0)
+        "Monthly Start" => 
+            // Start of current month
+            timestamp(year(time), month(time), 1, 0, 0)
+        => manual_anchor
+
+anchor_time = get_anchor_time()
+
+// Display options
+show_labels = input.bool(true, title="Show Labels")
+show_bands = input.bool(true, title="Show Standard Deviation Bands")
+
+// Standard deviation multipliers
+sd1_mult = input.float(1.0, title="1st SD Multiplier", minval=0.1, step=0.1)
+sd2_mult = input.float(2.0, title="2nd SD Multiplier", minval=0.1, step=0.1)
+sd3_mult = input.float(3.0, title="3rd SD Multiplier", minval=0.1, step=0.1)
+
+// Colors
+vwap_color = input.color(color.rgb(155, 139, 0), title="VWAP Color")
+upper_color = input.color(color.lime, title="Upper Bands Color")
+lower_color = input.color(color.red, title="Lower Bands Color")
+
+// Check if we're at or after anchor time
+is_anchor_start = time >= anchor_time and time[1] < anchor_time
+is_after_anchor = time >= anchor_time
+
+// Initialize variables
+var float sum_pv = 0.0
+var float sum_v = 0.0
+var int bar_count = 0
+var float sum_price = 0.0
+var float sum_squared_diff = 0.0
+
+// Calculate VWAP and standard deviation
+if is_anchor_start
+    // Reset at anchor start
+    sum_pv := hlc3 * volume
+    sum_v := volume
+    bar_count := 1
+    sum_price := hlc3
+    sum_squared_diff := 0.0
+else if is_after_anchor
+    // Accumulate values
+    sum_pv += hlc3 * volume
+    sum_v += volume
+    bar_count += 1
+    sum_price += hlc3
+
+// Calculate VWAP
+vwap = is_after_anchor ? sum_pv / sum_v : na
+
+// Calculate standard deviation
+mean_price = is_after_anchor ? sum_price / bar_count : na
+
+// Initialize band variables
+var float sd1_upper = na
+var float sd1_lower = na
+var float sd2_upper = na
+var float sd2_lower = na
+var float sd3_upper = na
+var float sd3_lower = na
+
+if is_after_anchor and bar_count > 1
+    sum_squared_diff += math.pow(hlc3 - mean_price, 2)
+    variance = sum_squared_diff / (bar_count - 1)
+    std_dev = math.sqrt(variance)
+    
+    // Calculate bands
+    sd1_upper := vwap + (std_dev * sd1_mult)
+    sd1_lower := vwap - (std_dev * sd1_mult)
+    sd2_upper := vwap + (std_dev * sd2_mult)
+    sd2_lower := vwap - (std_dev * sd2_mult)
+    sd3_upper := vwap + (std_dev * sd3_mult)
+    sd3_lower := vwap - (std_dev * sd3_mult)
+
+// Plot bands (in global scope)
+plot(show_bands and is_after_anchor ? sd1_upper : na, color=upper_color, linewidth=1, title="1st SD Upper")
+plot(show_bands and is_after_anchor ? sd1_lower : na, color=lower_color, linewidth=1, title="1st SD Lower")
+plot(show_bands and is_after_anchor ? sd2_upper : na, color=upper_color, linewidth=1, title="2nd SD Upper")
+plot(show_bands and is_after_anchor ? sd2_lower : na, color=lower_color, linewidth=1, title="2nd SD Lower")
+plot(show_bands and is_after_anchor ? sd3_upper : na, color=upper_color, linewidth=1, title="3rd SD Upper")
+plot(show_bands and is_after_anchor ? sd3_lower : na, color=lower_color, linewidth=1, title="3rd SD Lower")
+
+// Plot VWAP
+plot(vwap, color=vwap_color, linewidth=2, title="Anchored VWAP")
+
+// Add labels with price values
+if show_labels and is_after_anchor and barstate.islast
+    // VWAP label with price
+    label.new(bar_index, vwap, "AVWAP: " + str.tostring(vwap, "#.##"), 
+              color=vwap_color, 
+              textcolor=color.white, 
+              style=label.style_label_left,
+              size=size.small)
+    
+    // Standard deviation band labels with prices
+    if show_bands and not na(sd1_upper)
+        label.new(bar_index, sd1_upper, "+" + str.tostring(sd1_mult) + "σ: " + str.tostring(sd1_upper, "#.##"), 
+                  color=upper_color, 
+                  textcolor=color.white, 
+                  style=label.style_label_left,
+                  size=size.small)
+        
+        label.new(bar_index, sd1_lower, "-" + str.tostring(sd1_mult) + "σ: " + str.tostring(sd1_lower, "#.##"), 
+                  color=lower_color, 
+                  textcolor=color.white, 
+                  style=label.style_label_left,
+                  size=size.small)
+        
+        label.new(bar_index, sd2_upper, "+" + str.tostring(sd2_mult) + "σ: " + str.tostring(sd2_upper, "#.##"), 
+                  color=upper_color, 
+                  textcolor=color.white, 
+                  style=label.style_label_left,
+                  size=size.small)
+        
+        label.new(bar_index, sd2_lower, "-" + str.tostring(sd2_mult) + "σ: " + str.tostring(sd2_lower, "#.##"), 
+                  color=lower_color, 
+                  textcolor=color.white, 
+                  style=label.style_label_left,
+                  size=size.small)
+
+// Background highlight for anchor bar
+bgcolor(is_anchor_start ? color.new(color.blue, 90) : na, title="Anchor Start")

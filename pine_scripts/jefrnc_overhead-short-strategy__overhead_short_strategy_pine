@@ -1,0 +1,237 @@
+//@version=5
+strategy("Overhead Short Strategy - 2min", 
+         overlay=true, 
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=10,
+         commission_type=strategy.commission.percent,
+         commission_value=0.01,
+         pyramiding=3,
+         max_bars_back=5000)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INPUTS & CONFIGURATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Strategy Parameters
+extVwapThreshold = input.float(15.0, "VWAP Extension Threshold %", minval=5, maxval=50, group="Entry Conditions")
+extOpenThreshold = input.float(10.0, "Open Extension Threshold %", minval=5, maxval=30, group="Entry Conditions")
+rsiOverbought = input.int(75, "RSI Overbought Level", minval=60, maxval=90, group="Entry Conditions")
+volDeclineRatio = input.float(0.7, "Volume Decline Ratio", minval=0.3, maxval=1.0, group="Entry Conditions")
+
+// Risk Management
+stopLossPercent = input.float(3.0, "Stop Loss %", minval=1, maxval=10, group="Risk Management")
+targetPercent = input.float(6.0, "Target %", minval=2, maxval=20, group="Risk Management")
+trailATRMultiplier = input.float(1.5, "Trail ATR Multiplier", minval=0.5, maxval=3, group="Risk Management")
+maxHoldBars = input.int(150, "Max Hold Bars (2min)", minval=30, maxval=300, group="Risk Management")
+
+// Webhook Settings
+enableWebhook = input.bool(false, "Enable Webhook Alerts", group="Webhook")
+webhookUrl = input.string("", "Webhook URL", group="Webhook")
+
+// Display Settings
+showVwapBands = input.bool(true, "Show VWAP Bands", group="Display")
+showResistance = input.bool(true, "Show Overhead Resistance", group="Display")
+showSignals = input.bool(true, "Show Entry/Exit Signals", group="Display")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INDICATORS CALCULATION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// VWAP with Standard Deviation Bands
+vwapValue = ta.vwap(hlc3)
+vwapStd = ta.stdev(hlc3 - vwapValue, 20)
+vwapUpper = vwapValue + (2 * vwapStd)
+vwapLower = vwapValue - (2 * vwapStd)
+
+// Extensions from VWAP and Open
+extensionFromVwap = ((close - vwapValue) / vwapValue) * 100
+extensionFromOpen = ((high - open) / open) * 100
+
+// Overextension Signal
+overextended = extensionFromVwap > extVwapThreshold and extensionFromOpen > extOpenThreshold
+
+// RSI for exhaustion (faster period for 2min)
+rsi2min = ta.rsi(close, 7)
+
+// Volume Analysis
+volumeMA = ta.sma(volume, 20)
+volumeSpike = volume > volumeMA * 1.5
+volumeDecline = volume < volume[1] * volDeclineRatio and volume[1] < volume[2] * volDeclineRatio
+
+// Bearish Divergence
+bearishDivergence = (high > high[1]) and (rsi2min < rsi2min[1]) and rsi2min > rsiOverbought
+
+// Momentum Exhaustion
+exhaustionSignal = rsi2min > rsiOverbought and volumeDecline and bearishDivergence
+
+// ATR for dynamic stops
+atr2min = ta.atr(14)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// OVERHEAD RESISTANCE DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Find High Volume Nodes (HVN) - Simplified version
+lookbackDays = 252
+barsPerDay = 195  // ~195 2-min bars in a trading day
+lookbackBars = math.min(lookbackDays * barsPerDay, 5000)
+
+// Calculate volume profile levels
+var float[] resistanceLevels = array.new_float(0)
+var float currentResistance = na
+
+// Update resistance levels daily
+if ta.change(time("D"))
+    array.clear(resistanceLevels)
+    
+    // Find significant price levels with high volume
+    for i = 1 to lookbackBars by 50
+        if i < bar_index
+            priceLevel = high[i]
+            volAtLevel = volume[i]
+            
+            // If volume > 2x average, it's a resistance level
+            if volAtLevel > volumeMA[i] * 2
+                array.push(resistanceLevels, priceLevel)
+
+// Find nearest overhead resistance
+if array.size(resistanceLevels) > 0
+    for i = 0 to array.size(resistanceLevels) - 1
+        level = array.get(resistanceLevels, i)
+        if level > close and (na(currentResistance) or level < currentResistance)
+            currentResistance := level
+
+nearResistance = not na(currentResistance) and 
+                 close >= currentResistance * 0.98 and 
+                 close <= currentResistance * 1.02
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SETUP DETECTION
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Setup 1: First Red Day + Overhead Resistance
+vwapRejection = high >= vwapUpper and close < vwapUpper and volumeSpike
+resistanceRejection = nearResistance and high >= currentResistance and close < currentResistance
+setup1 = resistanceRejection and vwapRejection and exhaustionSignal
+
+// Setup 2: Gap & Crap Pattern (for intraday)
+gapUp = (open - close[1]) / close[1] * 100 > 30
+failedSpike = high < ta.highest(high, 10)[1] and volumeDecline
+greenToRed = open > close[1] and close < open
+setup2 = gapUp and failedSpike and greenToRed and barssince(ta.change(time("D"))) < 10
+
+// Setup 3: VWAP Rejection Intraday
+nearVwapResistance = high >= vwapUpper and close < vwapUpper
+rejectionConfirmed = nearVwapResistance and volumeSpike and close < open
+setup3 = rejectionConfirmed and not setup1 and not setup2
+
+// Combined Entry Signal
+entrySignal = (setup1 or setup2 or setup3) and strategy.position_size == 0
+
+// ════════════════════════════════════════════════════════════════════════════════
+// POSITION MANAGEMENT
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Entry Logic
+if entrySignal
+    entryPrice = close
+    stopPrice = high * (1 + stopLossPercent / 100)
+    targetPrice = close * (1 - targetPercent / 100)
+    
+    // Dynamic position sizing based on volatility
+    riskAmount = strategy.equity * 0.01  // 1% risk per trade
+    positionSize = riskAmount / (atr2min * 2)
+    
+    strategy.entry("Short", strategy.short, qty=positionSize)
+    strategy.exit("Exit", "Short", 
+                  stop=stopPrice, 
+                  limit=targetPrice,
+                  trail_points=atr2min * 100,
+                  trail_offset=atr2min * trailATRMultiplier * 100)
+    
+    // Send webhook alert if enabled
+    if enableWebhook
+        alertMessage = '{"action":"SHORT","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + ',"stop":' + str.tostring(stopPrice) + ',"target":' + str.tostring(targetPrice) + '}'
+        alert(alertMessage, alert.freq_once_per_bar)
+
+// Time-based exit
+if strategy.position_size < 0 and barssince(strategy.position_size[1] == 0) > maxHoldBars
+    strategy.close("Short", comment="Time Exit")
+
+// Exit on strong bounce
+strongBounce = close > vwapValue and volume > volumeMA * 2 and rsi2min < 30
+if strategy.position_size < 0 and strongBounce
+    strategy.close("Short", comment="Bounce Exit")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// VISUAL ELEMENTS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// VWAP Bands
+plot(showVwapBands ? vwapValue : na, "VWAP", color=color.blue, linewidth=2)
+p1 = plot(showVwapBands ? vwapUpper : na, "VWAP Upper", color=color.red, linewidth=1, style=plot.style_line)
+p2 = plot(showVwapBands ? vwapLower : na, "VWAP Lower", color=color.green, linewidth=1, style=plot.style_line)
+fill(p1, p2, color=color.new(color.blue, 90))
+
+// Overhead Resistance
+plot(showResistance and not na(currentResistance) ? currentResistance : na, 
+     "Overhead Resistance", color=color.red, linewidth=2, style=plot.style_stepline)
+
+// Entry Signals
+plotshape(showSignals and setup1, "Setup 1: Resistance", 
+          style=shape.triangledown, location=location.abovebar, 
+          color=color.red, size=size.small, text="R")
+          
+plotshape(showSignals and setup2, "Setup 2: Gap&Crap", 
+          style=shape.triangledown, location=location.abovebar, 
+          color=color.orange, size=size.small, text="G")
+          
+plotshape(showSignals and setup3, "Setup 3: VWAP", 
+          style=shape.triangledown, location=location.abovebar, 
+          color=color.yellow, size=size.small, text="V")
+
+// Exhaustion Warning
+bgcolor(exhaustionSignal ? color.new(color.red, 90) : na, title="Exhaustion Zone")
+
+// ════════════════════════════════════════════════════════════════════════════════
+// INFO PANEL
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Create info table
+var table infoTable = table.new(position.top_right, 2, 6, 
+                                 bgcolor=color.new(color.black, 80),
+                                 border_width=1)
+
+// Update table
+if barstate.islast
+    table.cell(infoTable, 0, 0, "VWAP Ext:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, str.tostring(extensionFromVwap, "##.#") + "%", 
+               text_color=extensionFromVwap > extVwapThreshold ? color.red : color.white, 
+               text_size=size.small)
+    
+    table.cell(infoTable, 0, 1, "RSI:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(rsi2min, "##"), 
+               text_color=rsi2min > rsiOverbought ? color.red : color.white, 
+               text_size=size.small)
+    
+    table.cell(infoTable, 0, 2, "Vol Ratio:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(volume/volumeMA, "#.#") + "x", 
+               text_color=volumeDecline ? color.green : color.white, 
+               text_size=size.small)
+    
+    table.cell(infoTable, 0, 3, "Setup:", text_color=color.white, text_size=size.small)
+    setupText = setup1 ? "Resistance" : setup2 ? "Gap&Crap" : setup3 ? "VWAP" : "None"
+    table.cell(infoTable, 1, 3, setupText, 
+               text_color=entrySignal ? color.green : color.gray, 
+               text_size=size.small)
+    
+    table.cell(infoTable, 0, 4, "Overhead:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 4, na(currentResistance) ? "N/A" : "$" + str.tostring(currentResistance, "##.##"), 
+               text_color=nearResistance ? color.red : color.white, 
+               text_size=size.small)
+    
+    table.cell(infoTable, 0, 5, "Signal:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 5, exhaustionSignal ? "EXHAUSTION" : "NORMAL", 
+               text_color=exhaustionSignal ? color.red : color.green, 
+               text_size=size.small)

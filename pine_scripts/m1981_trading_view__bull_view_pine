@@ -1,0 +1,527 @@
+//@version=5 
+indicator('Bull View', overlay=true)
+    
+// ————— Inputs.
+bool show_5min_setup = input(false, 'Show 5min setup', group="Setup guides")
+bool show_1min_setup = input(false, 'Show 1min setup', group="Setup guides")
+
+bool show_whole_dollar_levels = input(true, 'Plot whole dollar lines', group='pivots')
+bool show_half_dollar_levels = input(false, 'Plot half dollar lines', group='pivots')
+bool show_pivots = input(true, 'Plot pivots (daily highs)', group='pivots')
+bool show_pivots_in_table = input.bool(true, 'Show pivot values', group='pivots')
+
+bool plot_vwap = input(true, 'VWAP', group='Plot lines')
+bool plot_ema9 = input(false, 'EMA9', group='Plot lines')
+bool plot_ema20 = input(true, 'EMA20', group='Plot lines')
+bool show_pre = input(true, 'PRE', tooltip='Show premarket high',  group='Plot lines')
+bool show_hod = input(true, 'HOD', tooltip='Show high of the day', group='Plot lines')
+
+bool show_warnings_in_table = input(true, 'Show warnings', group='Warnings list')
+
+bool show_stats_table = input(true, 'Show stats', group='Stats table')
+bool show_ema9_5m_label = input(false, 'Show EMA9 label', group='other')
+bool debug = input(false, 'Show debug info', group='other')
+
+// Volume Profile inputs
+show_vol_profile = input(true, "Show Volume Profile", group="Volume Profile")
+vol_profile_length = input.int(20, "Volume Profile Length", minval=1, group="Volume Profile")
+vol_profile_levels = input.int(100, "Volume Profile Levels", minval=10, maxval=200, group="Volume Profile")
+max_support_lines = input.int(5, "Max Support Lines", minval=1, maxval=10, group="Volume Profile")
+
+
+// ————— Globals
+var ICON_CRITICAL = '🥵 '
+var ICON_WORRIED = '😬 '
+var ICON_SMILE = '😊'
+var ICON_RISK = '⚠️'
+var ICON_RED = '🔴'
+var ICON_GREEN = '🟢'
+var ICON_ENTRY = '👁️‍🗨'
+var TAB = '            '
+
+var LOW_VOLUME = 200000
+var MAX_SHARES_FLOAT = 20
+
+
+// Colors
+var COLOR_RED = #FF4C4C
+var COLOR_GREEN = #006702
+var COLOR_RED_DEEP = #a60e0e
+var COLOR_PURPLE = #cc00ff
+var COLOR_GOLD = #e39115
+var COLOR_BROWN = #a76e18
+var COLOR_WHITE = #DDDDDD
+var COLOR_GREY_LIGHT = #999999
+var COLOR_GREY = #999999
+var COLOR_GREY_DARK = #333333
+var COLOR_BLACK = #222222
+var COLOR_BLUE = #184F67
+var COLOR_BLUE_DARK = #0F4F57
+var COLOR_BLUE_LIGHT = #00a0ff
+
+var default_label_color = COLOR_WHITE
+
+var entry_5m_text_color = default_label_color
+var entry_1m_text_color = default_label_color
+var dollar_line_color = #666666
+var pivot_line_color = COLOR_BLUE_LIGHT
+closed_green = barstate.isconfirmed and close > open
+closed_red = barstate.isconfirmed and close < open
+
+// ————— Series
+series1D(ohlc) =>
+    request.security(symbol=syminfo.tickerid, timeframe='D', expression=ohlc, lookahead=barmerge.lookahead_off)
+series5m(ohlc) =>
+    request.security(symbol=syminfo.tickerid, timeframe='5', expression=ohlc, lookahead=barmerge.lookahead_off)
+series1m(ohlc) =>
+    request.security(symbol=syminfo.tickerid, timeframe='1', expression=ohlc)
+
+// Daily vars
+sma200_daily = request.security(symbol=syminfo.tickerid, timeframe='D', expression=ta.sma(close, 200), lookahead=barmerge.lookahead_off)
+
+// 5 minutes vars
+ema9_5m = request.security(symbol=syminfo.tickerid, timeframe='5', expression=ta.ema(close[1], 100))
+ema20_5m = request.security(symbol=syminfo.tickerid, timeframe='5', expression=ta.ema(close[1], 20))
+atr9_5m = request.security(symbol=syminfo.tickerid, timeframe='5', expression=ta.atr(9))
+volume_sma9_5m = request.security(symbol=syminfo.tickerid, timeframe='5', expression=ta.sma(volume, 9))
+curr_5m_high = math.round(series5m(high), 2)
+prev_5m_high = math.round(series5m(high[1]), 2)
+prev_5m_low = math.round(series5m(low[1]), 2)
+
+// 1 minute vars
+atr14_1m = request.security(symbol=syminfo.tickerid, timeframe='1', expression=ta.atr(9)[1])
+ema20_1m = request.security(symbol=syminfo.tickerid, timeframe='1', expression=ta.ema(close[1], 20))
+rsi14_1m = request.security(symbol=syminfo.tickerid, timeframe='1', expression=ta.rsi(close[1], 14))
+prev_1m_high = math.round(series1m(high[1]), 2)
+prev_1m_low = math.round(series1m(low[1]), 2)
+bull_traps = request.security(symbol=syminfo.tickerid, timeframe='5', expression=math.round(ta.sma((high[1] - (close[1] > open[1] ? close[1] : open[1])) * 100, 9), 0), lookahead=barmerge.lookahead_off)
+
+// Current timeframe vars (avoid repainting)
+ema9 = ta.ema(close[barstate.isrealtime ? 1 : 0], 9)
+ema20 = ta.ema(close[barstate.isrealtime ? 1 : 0], 20)
+
+// Financial
+shares_float = 1
+
+// ————— Functions
+// VWAP caluclation
+MILLIS_IN_DAY = 86400000
+dwmBarTime = timeframe.isdwm ? time : time('D')
+// If it's a short day, then there could be no daily bar. Take a previous one.
+if na(dwmBarTime)
+    dwmBarTime := nz(dwmBarTime[1])
+    dwmBarTime
+var periodStart = time - time  // zero
+
+isMidnight(t) =>
+    hour(t) == 0 and minute(t) == 0
+
+isSameDay(t1, t2) =>
+    dayofmonth(t1) == dayofmonth(t2) and month(t1) == month(t2) and year(t1) == year(t2)
+
+isOvernight() =>
+    not(isMidnight(dwmBarTime) or request.security(syminfo.tickerid, 'D', isSameDay(time, time_close), lookahead=barmerge.lookahead_on))
+
+tradingDayStart(t) =>
+    y = year(t)
+    m = month(t)
+    d = dayofmonth(t)
+    timestamp(y, m, d, 0, 0)
+
+isRegularSession() =>
+    time(timeframe.period, '0930-1600:23456')
+isPreSession() =>
+    time(timeframe.period, '0400-0930:23456')
+
+// a symbol with overnight session starts at previos day
+// to get the trading day we should get the next day after the session's start
+tradingDay = isOvernight() ? tradingDayStart(dwmBarTime + MILLIS_IN_DAY) : tradingDayStart(dwmBarTime)
+
+isNewPeriod() =>
+    isNew = false
+    isNew := na(tradingDay[1]) or tradingDay > tradingDay[1]
+    isNew
+
+src = hlc3
+sumSrc = float(na)
+sumVol = float(na)
+
+sumSrc := nz(sumSrc[1], 0)
+sumVol := nz(sumVol[1], 0)
+
+if isNewPeriod()
+    periodStart := tradingDay
+    sumSrc := 0.0
+    sumVol := 0.0
+    sumVol
+
+if not na(src) and not na(volume)
+    sumSrc := sumSrc + src * volume
+    sumVol := sumVol + volume
+    sumVol
+
+vwapValue = sumSrc / sumVol
+//END VWAP caluclation
+
+line_x1 = bar_index[1]
+line_x2 = bar_index
+label_x = bar_index
+draw_level_line_ex(price, text_1, text_color, text_size, line_color, line_width, tooltip) =>
+    target_t1_line = line.new(line_x1, price, line_x2, price, color=line_color, extend=extend.right, width=line_width)
+    line.delete(target_t1_line[1])
+    label_t1 = label.new(label_x, price, text=text_1, style=label.style_none, size=text_size, color=COLOR_GREY, textcolor=text_color, textalign=text.align_left, tooltip=tooltip)
+    label.delete(label_t1[1])
+
+draw_level_line(price, text_2, text_color, text_size, tooltip) =>
+    draw_level_line_ex(price, text_2, text_color, text_size=text_size, line_color=COLOR_GREY_DARK, line_width=1, tooltip=tooltip)
+
+calcVolumeSupport(len, levels, max_lines) =>
+    var support_levels = array.new_float(0)
+    if barstate.islast
+        array.clear(support_levels)
+        high_price = ta.highest(high, len)
+        low_price = ta.lowest(low, len)
+        price_step = (high_price - low_price) / levels
+        
+        // Initialize volume arrays
+        var vol_array = array.new_float(levels, 0.0)
+        array.fill(vol_array, 0.0)
+        
+        // Calculate volume distribution
+        for i = 0 to len - 1
+            for j = 0 to levels - 1
+                price_level = low_price + j * price_step
+                if low[i] <= price_level and high[i] >= price_level
+                    array.set(vol_array, j, array.get(vol_array, j) + volume[i])
+        
+        // Find maximum volume
+        max_vol = array.max(vol_array)
+        
+        // Create array of volume-price pairs for sorting
+        var vol_price_pairs = array.new_float(0)
+        array.clear(vol_price_pairs)
+        
+        for i = 0 to levels - 1
+            vol = array.get(vol_array, i)
+            price_level = low_price + i * price_step
+            // Store volume and price as consecutive elements
+            array.push(vol_price_pairs, vol)
+            array.push(vol_price_pairs, price_level)
+        
+        // Sort by volume (simplified sorting)
+        n = array.size(vol_price_pairs)
+        for i = 0 to (n - 4) by 2
+            for j = 0 to (n - 4 - i) by 2
+                if array.get(vol_price_pairs, j) < array.get(vol_price_pairs, j + 2)
+                    // Swap volumes
+                    temp_vol = array.get(vol_price_pairs, j)
+                    array.set(vol_price_pairs, j, array.get(vol_price_pairs, j + 2))
+                    array.set(vol_price_pairs, j + 2, temp_vol)
+                    // Swap prices
+                    temp_price = array.get(vol_price_pairs, j + 1)
+                    array.set(vol_price_pairs, j + 1, array.get(vol_price_pairs, j + 3))
+                    array.set(vol_price_pairs, j + 3, temp_price)
+        
+        // Get top N levels
+        min_distance = (high_price - low_price) * 0.02  // 2% minimum distance between levels
+        
+        for i = 0 to math.min((max_lines * 2) - 2, array.size(vol_price_pairs) - 2) by 2
+            price_level = array.get(vol_price_pairs, i + 1)
+            vol = array.get(vol_price_pairs, i)
+            
+            // Check if this level is far enough from existing levels
+            can_add = true
+            if array.size(support_levels) > 0
+                for j = 0 to array.size(support_levels) - 1
+                    existing_level = array.get(support_levels, j)
+                    if math.abs(price_level - existing_level) < min_distance
+                        can_add := false
+                        break
+            
+            if can_add and vol > max_vol * 0.1  // Only add if volume is at least 10% of max
+                array.push(support_levels, price_level)
+                if array.size(support_levels) >= max_lines
+                    break
+    
+    support_levels
+
+// *********************************************************
+// MAIN 
+// *********************************************************
+// Todo list
+// Print HOD value on line
+// Show correct spread
+// Show china stock warning
+// Organize code in sections
+//    Constant initializations
+//    Inputs
+//    Functions
+//    Calculations
+//    Strategy calls (for strategies)
+//    Plots
+//    Alerts
+var pre_market_high = high
+var is_first_exec = true
+if isPreSession() and isSameDay(timenow, time) and (high > pre_market_high or is_first_exec)
+    pre_market_high := math.round(high, 2)
+    is_first_exec := false
+    is_first_exec
+
+var hod = high
+var is_first_hod_exec = true
+if isRegularSession() and isSameDay(timenow, time) and (high > hod or is_first_hod_exec)
+    hod := math.round(high, 2)
+    is_first_hod_exec := false
+    is_first_hod_exec
+
+
+// Calculate setup for 5min candle high
+is_5m_candle_half_elapsed = minute(timenow) % 5 * 60 + second(timenow) >= 150
+active_5m_high = is_5m_candle_half_elapsed ? curr_5m_high : prev_5m_high
+active_5m_low = is_5m_candle_half_elapsed ? prev_5m_low : prev_5m_low
+
+entry_5m_price = active_5m_high
+stop_5m_price = active_5m_low
+
+// Calculate setup for 1min candle high
+entry_1m_price = prev_1m_high
+stop_1m_price = prev_1m_low
+
+
+// Risk
+risk_5m_low = active_5m_high - active_5m_low
+risk_5m_percent = math.round(risk_5m_low / entry_5m_price * 100, 1)
+
+
+var entry_1m_text_prefix = '     '
+setup_5m_marker = timeframe.period != '5' and show_1min_setup ? ' V ' : ' '
+setup_1m_marker = show_1min_setup ? ' I ' : ' '
+entry_5m_text = TAB + TAB + TAB + TAB + TAB + TAB + str.tostring(entry_5m_price) + ' ' + ICON_ENTRY + setup_5m_marker
+entry_1m_text = TAB + TAB + TAB + entry_1m_text_prefix + str.tostring(entry_1m_price) + setup_1m_marker
+
+stop_5m_text = TAB + TAB + TAB + TAB + TAB + TAB + str.tostring(stop_5m_price) + ' ' + ICON_RED + setup_5m_marker
+stop_1m_text = TAB + TAB + TAB + TAB + TAB + TAB + str.tostring(stop_1m_price) + ' low' + setup_1m_marker
+
+
+// Check for any warnings sings
+// --------------------------------------------------------
+profit_score = math.round(atr9_5m * 100 / close[1], 1)
+extended_from_vwap = (close / vwapValue - 1) * 100
+extended_from_ema9_5m = (close / ema9_5m - 1) * 100
+
+is_low_volume = volume_sma9_5m < LOW_VOLUME
+max_shares_float_exceeded = shares_float / 1000000 > MAX_SHARES_FLOAT
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+length = input.int(9, minval=1)
+elder_force = ta.ema(ta.change(close) * volume, length)
+
+warnings = array.new_string()
+balloon_tips = array.new_string()
+array.clear(warnings)
+array.clear(balloon_tips)
+
+if barstate.islast
+
+
+    if close < sma200_daily
+        array.push(warnings, ICON_CRITICAL + 'Below 200D SMA')
+
+
+
+    if is_low_volume
+        array.push(warnings, ICON_CRITICAL + 'Low volume! < ' + str.tostring(LOW_VOLUME / 1000) + 'k')
+
+
+    if bull_traps > 5
+        array.push(warnings, ICON_WORRIED + 'Traps ' + str.tostring(bull_traps) + 'c')
+
+    if extended_from_vwap > 20
+        array.push(warnings, ICON_WORRIED + 'Over vwap ' + str.tostring(math.round(extended_from_vwap, 0)) + '%')
+
+    if extended_from_ema9_5m > 20
+        array.push(warnings, ICON_WORRIED + 'Over ema9 ' + str.tostring(math.round(extended_from_ema9_5m, 0)) + '%')
+
+    // When NOT to use 1min timeframe - SmallCap - Chapter 5.1
+    if timeframe.period == '1'
+        if extended_from_ema9_5m > 5
+            array.push(balloon_tips, ICON_WORRIED + 'Extended on 5min do NOT use 1min timeframe - Ross')
+
+        if close[1] > 10
+            array.push(balloon_tips, ICON_WORRIED + 'Price over $10 do NOT use 1min timeframe - Ross')
+
+        if close[1] < ema20_1m
+            array.push(balloon_tips, ICON_WORRIED + 'Below ema20 - Ross')
+            
+    if array.size(warnings) == 0
+        array.push(warnings, ICON_SMILE + "No warnings")
+
+// *********************************************************
+// Rendering 
+// *********************************************************
+plot_pre_high = show_pre and  barstate.islast ? pre_market_high : na
+plot_hod = show_hod and isRegularSession() and barstate.islast ? hod : na
+draw_level_line(plot_pre_high, TAB + 'pre', #ffcc33, size.large, 'Pre-market high')
+draw_level_line(plot_hod, TAB + 'hod', #ffcc33, size.large, 'High of the day')
+
+// Show 5m setup
+if show_5min_setup and (timeframe.isminutes or timeframe.isseconds)
+    draw_level_line(entry_5m_price, entry_5m_text, entry_5m_text_color, size.normal, 'Previous 5min candle high')
+    draw_level_line(stop_5m_price, stop_5m_text, COLOR_WHITE, size.normal, 'Previous 5min candle low')
+
+// Show 1m setup on seconds based charts
+if show_1min_setup and (timeframe.isminutes or timeframe.isseconds)
+    draw_level_line(math.abs(entry_1m_price - entry_5m_price) > 0.05 ? entry_1m_price : 0, entry_1m_text, entry_1m_text_color, size.normal, 'Previous 1min candle high')
+    draw_level_line(math.abs(stop_1m_price - stop_5m_price) > 0.05 ? stop_1m_price : 0, stop_1m_text, COLOR_BROWN, size.normal, 'Previous 1min cnaldle low')
+
+
+// Plot ema9
+plot(plot_ema9 ? ema9 : na, title='EMA 9', color=COLOR_GREY, linewidth=2)
+
+// Plot ema20
+plot(plot_ema20 ? ema20 : na, title='EMA 20', color=COLOR_BLUE_LIGHT, linewidth=1)
+
+// Plot sma200 daily
+plot(sma200_daily, color=COLOR_PURPLE, linewidth=1)
+
+// Plot VWAP
+plot(plot_vwap ? vwapValue : na, title='VWAP', color=COLOR_GOLD, linewidth=2)
+
+draw_level_line(show_ema9_5m_label and barstate.islast and (timeframe.isseconds or timeframe.period == '1') ? ema9_5m : na, TAB + TAB + TAB + TAB + 'ema9 V', COLOR_GOLD, size.normal, 'EMA9 level for 5min timeframe')
+
+// Show whole/half dollar levels
+if barstate.islast and (timeframe.isminutes or timeframe.isseconds)
+    var lines_whole = array.new_line()
+    var lines_half = array.new_line()
+    if array.size(lines_whole) > 0
+        for l = array.size(lines_whole) - 1 to 0 by 1
+            line.delete(array.get(lines_whole, l))
+    if array.size(lines_half) > 0
+        for l = array.size(lines_half) - 1 to 0 by 1
+            line.delete(array.get(lines_half, l))
+              
+    if show_whole_dollar_levels
+        for i = 0 to 1 by 1
+            lev = math.floor(close) + i
+            if show_half_dollar_levels
+                array.push(lines_half, line.new(line_x1-20, lev + 0.5, line_x1+2, lev + 0.5, color=dollar_line_color, style=line.style_solid, extend=extend.none, width=1))
+            array.push(lines_whole, line.new(line_x1-20, lev, line_x1+2, lev, color=dollar_line_color, style=line.style_solid, extend=extend.none, width=1))
+
+
+// Show daily pivot points 
+var pivots = array.new_string()
+if show_pivots or show_pivots_in_table
+    if not timeframe.isminutes
+        array.clear(warnings)
+        array.push(warnings, 'Switch to minutes timeframe to see pivots')
+    
+    day_highs = series1D(high)
+    day_highs_time = series1D(time)
+    
+    max_pivots = 3
+    start_max = hod > pre_market_high ? hod : pre_market_high
+    max_bars_back(day_highs, 5000)
+    var highs = array.new_float()
+    var times = array.new_string()
+    array.clear(pivots)
+    
+    if not timeframe.isseconds
+        if not isSameDay(day_highs_time, timenow) 
+            array.push(highs, day_highs)
+            array.push(times, str.format('{0,date,y.MM.dd}', day_highs_time))
+        
+    if barstate.islast
+        var line lines = na
+        var label labels = na
+    
+        if array.size(highs) > 0
+            for i = array.size(highs) - 1 to 0 by 1
+                day_high = array.get(highs, i)
+                if day_high > start_max
+                    if show_pivots
+                        ln = line.new(line_x1, day_high, line_x2, day_high, color=pivot_line_color, style=line.style_solid, extend=extend.left, width=1)
+                    array.push(pivots, str.tostring(math.round(day_high, 2)))
+                    start_max := day_high
+                    max_pivots := max_pivots - 1
+                    if not max_pivots
+                        break
+
+            
+
+// Render warnings table
+if (show_warnings_in_table or show_pivots_in_table) and barstate.islast
+    var table_cols = 4
+    var table_row = 3
+    table atrDisplay = table.new(position.top_right, table_cols, table_row, bgcolor=#000000, frame_width=0, frame_color=color.black)
+    warnings_details_str = array.size(warnings) > 0 ? '\n' + array.join(warnings, '\n') : ''
+
+    // Warnings
+    if show_warnings_in_table and warnings_details_str != ''
+        table.cell(atrDisplay, table_cols - 1, 1, warnings_details_str, text_halign=text.align_left, text_color=#999999)
+
+    if show_pivots_in_table
+        pivots_str = "Pivots\n"
+        pivots_str += array.size(pivots) > 0 ? array.join(pivots, '\n') : 'No pivots'
+        table.cell(atrDisplay, table_cols - 1, 2, pivots_str, text_halign=text.align_left, text_color=#999999, text_size=size.large)
+        
+
+// Render stats table
+if show_stats_table and barstate.islast 
+    var table_text_color = COLOR_GREY_LIGHT
+    var COLOR_WARN = COLOR_GOLD
+    var COLOR_OK = COLOR_BLACK
+
+    var table_cols = 5
+    var table_rows = 6
+
+    below_ema20 = low < ema20_5m
+    low_rsi = rsi14_1m < 55
+    below_vwap = low <  vwapValue
+    long_candle = risk_5m_low > 50
+    entry_point = str.tostring(entry_5m_price)
+    risk_in_cents = str.tostring(risk_5m_low * 100) + 'c'
+    
+    risk_bg = risk_5m_low > 0.9 ? COLOR_WARN : COLOR_OK
+    ema20_bg = below_ema20 ? COLOR_WARN : COLOR_OK
+    rsi14_bg = low_rsi ? COLOR_WARN : COLOR_OK
+    vwap_bg = below_vwap ? COLOR_WARN : COLOR_OK
+    elder_bar_1 = COLOR_BLACK
+    elder_bar_2 = COLOR_BLACK
+    elder_bar_3 = COLOR_BLACK
+        
+    if not(below_ema20 or low_rsi or below_vwap)
+        elder_bar_1 := elder_force > 500 ? COLOR_GREEN : elder_force > 0 ? COLOR_BLACK : COLOR_WARN
+        elder_bar_2 := elder_force[1] > 500 ? COLOR_GREEN : elder_force[1] > 0 ? COLOR_BLACK : COLOR_WARN
+        elder_bar_3 := elder_force[2] > 500 ? COLOR_GREEN : elder_force[2] > 0 ? COLOR_BLACK : COLOR_WARN
+    else
+        elder_bar_1 := COLOR_BLACK
+        elder_bar_2 := COLOR_BLACK
+        elder_bar_3 := COLOR_BLACK
+        
+    if entry_5m_price <= high
+        entry_point := '--.--' 
+    
+    table light_boxes = table.new(position.bottom_right, table_cols, table_rows,  frame_width=0, frame_color=color.black)
+    table.cell(light_boxes, 0, table_rows-3, entry_point, text_halign=text.align_left, text_size=size.large, text_color=COLOR_WHITE, bgcolor=COLOR_BLACK, tooltip='Prev 5min candle HIGH')
+    table.cell(light_boxes, 1, table_rows-3, ' ', text_halign=text.align_left, text_color=#ffffff, bgcolor=COLOR_BLACK, tooltip='')
+    table.cell(light_boxes, 2, table_rows-3, risk_in_cents, text_halign=text.align_left, text_size=size.large, text_color=COLOR_WHITE, bgcolor=risk_bg, tooltip='Prev 5min candle height')
+    
+    table.cell(light_boxes, 0, table_rows-2, str.tostring(math.round(elder_force[2]/1000, 0)), text_halign=text.align_left, text_color=#000000, bgcolor=elder_bar_1, tooltip='Elder Force Index (' + timeframe.period + ')')
+    table.cell(light_boxes, 1, table_rows-2, str.tostring(math.round(elder_force[1]/1000, 0)), text_halign=text.align_left, text_color=#000000, bgcolor=elder_bar_2, tooltip='Elder Force Index (' + timeframe.period + ')')
+    table.cell(light_boxes, 2, table_rows-2, str.tostring(math.round(elder_force/1000, 0)), text_halign=text.align_left, text_color=#000000, bgcolor=elder_bar_3, tooltip='Elder Force Index (' + timeframe.period + ')')
+    
+    table.cell(light_boxes, 0, table_rows-1, 'EMA ', text_halign=text.align_left, text_color=#000000, bgcolor=ema20_bg, tooltip='Warning if current low below EMA20 (5min)')
+    table.cell(light_boxes, 1, table_rows-1, 'RSI ', text_halign=text.align_left, text_color=#000000, bgcolor=rsi14_bg, tooltip='Warning if RSI14 < 55 (1min)')
+    table.cell(light_boxes, 2, table_rows-1, 'VWAP', text_halign=text.align_left, text_color=#000000, bgcolor=vwap_bg,  tooltip='Warning if current low below VWAP')
+
+
+
+    // Debug
+    debug_str = ''
+    if debug
+        debug_str := debug_str + 'pivots: ' + str.tostring(math.round(array.size(pivots)))
+        table.cell(light_boxes, 0, table_rows - 1, debug_str, text_halign=text.align_left, text_color=table_text_color)
+

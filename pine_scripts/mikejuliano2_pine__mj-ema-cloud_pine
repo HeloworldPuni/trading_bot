@@ -1,0 +1,18 @@
+//@version=4
+
+study("MJ - EMA Cloud", overlay=true)
+
+// light blue #3179f5
+// navy blue #090720
+
+ema50CloudColor = input(color.new(#090720, 70), 'Cloud Fill Color')
+ema50CloudBorderColor = input(color.new(#0097a7, 100), 'Cloud Border Color')
+ema50Color = input(color.teal, '50 EMA Color')
+
+plot(ema(close, 50), color=ema50Color, linewidth=1, title="EMA 50")
+
+ema50 = ema(close, 50)
+cloudSize = stdev(close, 50 * 2) / 4 // 50 because it's for the 50 EMA
+cloudUpperBorder = plot(ema50 + cloudSize, '50 EMA Cloud Upper Border', color=ema50CloudBorderColor, offset=0)
+cloudLowerBorder = plot(ema50 - cloudSize, '50 EMA Cloud Lower Border', color=ema50CloudBorderColor, offset=0)
+fill(cloudUpperBorder, cloudLowerBorder, title='50 EMA Cloud Fill', color=ema50CloudColor)

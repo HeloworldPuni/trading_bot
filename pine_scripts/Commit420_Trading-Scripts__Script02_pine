@@ -1,0 +1,30 @@
+//@version=5
+indicator("Buy/Sell Volume Tracker", overlay=true, shorttitle="Volume Tracker")
+
+// Volumendaten basierend auf Candle-Bewegung
+buyVolume = close > open ? volume : 0  // Volumen bei grüner Kerze
+sellVolume = close < open ? volume : 0 // Volumen bei roter Kerze
+
+// Berechnung des kumulierten Volumens über die letzten 20 Kerzen
+buyVolumeSum = ta.sma(buyVolume, 20) * 20
+sellVolumeSum = ta.sma(sellVolume, 20) * 20
+
+// Balken für Visualisierung
+plot(buyVolumeSum, color=color.green, style=plot.style_histogram, title="Buy Volume")
+plot(sellVolumeSum, color=color.red, style=plot.style_histogram, title="Sell Volume")
+
+// Labels auf dem Chart
+var label buyLabel = na
+var label sellLabel = na
+
+if na(buyLabel)
+    buyLabel := label.new(bar_index, high, " ", style=label.style_label_down, color=color.green)
+
+if na(sellLabel)
+    sellLabel := label.new(bar_index, low, " ", style=label.style_label_up, color=color.red)
+
+// Labels aktualisieren
+label.set_text(buyLabel, "Buy: " + str.tostring(buyVolumeSum, "0.0"))
+label.set_text(sellLabel, "Sell: " + str.tostring(sellVolumeSum, "0.0"))
+label.set_xy(buyLabel, bar_index, high)
+label.set_xy(sellLabel, bar_index, low)

@@ -1,0 +1,128 @@
+//@version=5
+indicator("Penny Stock Reversal", overlay=true, max_labels_count=500)
+
+// ========== SETTINGS ==========
+rsiLength = input.int(14, "RSI Length", minval=1)
+rsiOversold = input.int(30, "RSI Oversold Level", minval=1, maxval=50)
+volumeMultiplier = input.float(2.0, "Volume Spike Multiplier", minval=1.0, step=0.1)
+useEmaFilter = input.bool(false, "Use EMA Trend Filter")
+emaLength = input.int(200, "EMA Length", minval=1)
+stopLossPercent = input.float(2.5, "Stop Loss %", minval=0.5, maxval=10, step=0.1)
+takeProfitPercent = input.float(7.5, "Take Profit %", minval=1, maxval=20, step=0.5)
+
+// Time Filter
+useTimeFilter = input.bool(false, "Use Time Filter")
+startHour = input.int(9, "Start Hour", minval=0, maxval=23)
+startMinute = input.int(45, "Start Minute", minval=0, maxval=59)
+endHour = input.int(15, "End Hour", minval=0, maxval=23)
+endMinute = input.int(30, "End Minute", minval=0, maxval=59)
+
+// Debug mode
+showDebug = input.bool(true, "Show Debug Info")
+
+// ========== CALCULATIONS ==========
+rsi = ta.rsi(close, rsiLength)
+ema200 = ta.ema(close, emaLength)
+ema20 = ta.ema(close, 20)
+avgVolume = ta.sma(volume, 20)
+[macdLine, signalLine, macdHist] = ta.macd(close, 12, 26, 9)
+
+// Time filter
+inSession = true
+if useTimeFilter
+    h = hour(time)
+    m = minute(time)
+    startTime = startHour * 60 + startMinute
+    endTime = endHour * 60 + endMinute
+    currTime = h * 60 + m
+    inSession := currTime >= startTime and currTime <= endTime
+
+// ========== SIGNAL CONDITIONS ==========
+// 1. RSI was oversold in last 20 bars
+rsiWasOversold = ta.lowest(rsi, 20) < rsiOversold
+
+// 2. Volume spike (in last 20 bars)
+volumeWasHigh = ta.highest(volume, 20) > avgVolume * volumeMultiplier
+
+// 3. Price crosses above EMA 20
+emaCrossUp = ta.crossover(close, ema20)
+
+// 4. MACD bullish (MACD line > Signal line)
+macdBullish = macdLine > signalLine
+
+// 5. Price above EMA 200 (optional)
+trendCondition = useEmaFilter ? close > ema200 : true
+
+// Combined signal
+buySignal = rsiWasOversold and volumeWasHigh and emaCrossUp and macdBullish and trendCondition and inSession
+
+// ========== CALCULATIONS FOR LABELS ==========
+stopLoss = close * (1 - stopLossPercent / 100)
+takeProfit1 = close * (1 + takeProfitPercent / 100)
+takeProfit2 = close * (1 + takeProfitPercent * 1.5 / 100)
+riskReward = takeProfitPercent / stopLossPercent
+
+// ========== PLOTTING ==========
+plot(ema20, "EMA 20", color=color.new(color.blue, 30), linewidth=2)
+plot(useEmaFilter ? ema200 : na, "EMA 200", color=color.new(color.gray, 60), linewidth=1)
+
+// Buy Signal Label
+if buySignal
+    labelText = "BUY"
+    tooltipText = "Entry: " + str.tostring(close, "#.####") + 
+                  "\nStop Loss: " + str.tostring(stopLoss, "#.####") + " (-" + str.tostring(stopLossPercent) + "%)" +
+                  "\nTP1: " + str.tostring(takeProfit1, "#.####") + " (+" + str.tostring(takeProfitPercent) + "%)" +
+                  "\nTP2: " + str.tostring(takeProfit2, "#.####") + " (+" + str.tostring(takeProfitPercent * 1.5) + "%)" +
+                  "\nRSI: " + str.tostring(rsi, "#.##") +
+                  "\nVolume: " + str.tostring(volume / avgVolume, "#.##") + "x avg" +
+                  "\nR:R = 1:" + str.tostring(riskReward, "#.##")
+    
+    label.new(bar_index, low * 0.998, 
+              text=labelText, 
+              style=label.style_label_up, 
+              color=color.new(#00ff88, 20),
+              textcolor=color.white,
+              size=size.small,
+              tooltip=tooltipText)
+    
+    // Draw Stop Loss and Take Profit lines
+    line.new(bar_index, stopLoss, bar_index + 10, stopLoss, 
+             color=color.new(color.red, 70), width=1, style=line.style_dashed)
+    
+    line.new(bar_index, takeProfit1, bar_index + 10, takeProfit1, 
+             color=color.new(color.green, 70), width=1, style=line.style_dashed)
+    
+    line.new(bar_index, takeProfit2, bar_index + 10, takeProfit2, 
+             color=color.new(color.blue, 70), width=1, style=line.style_dashed)
+
+// ========== DEBUG INFO ==========
+if showDebug
+    var table debugTable = table.new(position.top_right, 2, 7, border_width=1)
+    
+    if barstate.islast
+        table.cell(debugTable, 0, 0, "RSI", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 0, str.tostring(rsi, "#.##"), text_color=color.white)
+        
+        table.cell(debugTable, 0, 1, "RSI < 30 (20 bar)", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 1, rsiWasOversold ? "✓" : "✗", text_color=rsiWasOversold ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 2, "Volume Spike", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 2, str.tostring(volume / avgVolume, "#.##") + "x", text_color=volumeWasHigh ? color.lime : color.white)
+        
+        table.cell(debugTable, 0, 3, "Vol > " + str.tostring(volumeMultiplier) + "x (20 bar)", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 3, volumeWasHigh ? "✓" : "✗", text_color=volumeWasHigh ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 4, "EMA 20 Cross Up", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 4, emaCrossUp ? "✓" : "✗", text_color=emaCrossUp ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 5, "MACD > Signal", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debugTable, 1, 5, macdBullish ? "✓" : "✗", text_color=macdBullish ? color.lime : color.red)
+        
+        table.cell(debugTable, 0, 6, "ALL CONDITIONS", text_color=color.white, bgcolor=color.new(color.orange, 50))
+        table.cell(debugTable, 1, 6, buySignal ? "BUY ✓" : "Wait", text_color=buySignal ? color.lime : color.orange, bgcolor=buySignal ? color.new(color.green, 80) : na)
+
+// ========== BACKGROUND COLORING ==========
+bgcolor(rsi < rsiOversold ? color.new(color.red, 95) : na, title="Oversold Zone")
+
+// ========== ALERTS ==========
+alertcondition(buySignal, title="Buy Signal", message="Penny Stock Reversal: BUY Signal Detected!")

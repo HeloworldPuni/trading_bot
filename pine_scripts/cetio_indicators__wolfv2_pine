@@ -1,0 +1,47 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © cetios
+
+// REMARKS:
+// The Wolf V2 Trend Strength indicator assesses trend strength and potential direction changes
+// based on the Awesome Oscillator (AO.) This indicator helps visualize
+// trend performance and predict trend continuation likelihood.
+// 
+// - The 'short' parameter determines the period for short-term leading calculations, impacting trend
+//   direction predictions and trend strength support.
+// - The 'long' parameter defines the period for lagging calculations, affecting trend strength evaluation.
+// - The `sigThresh` parameter determines the threshold difference between long-term and short-term trend strengths
+//   that must be reached to trigger a new signal.
+// 
+// The subchart for Wolf V2 consists of 2 lines, the aptitude baseline, and the strength line. As the baseline diverges
+// from 0 and away from the strength line, the trend is more likely to dissolve; conversely, as the baseline diverges from 0
+// and towards the strength line, the trend is more likely to subsist.
+// The long-term strength "fit" and short-term strength "squeeze" values will trigger a signal as they cross, indicating
+// unnatural or strong behavior, and the bearish/bullishness of the signal is determined by the previous signal strength.
+
+import TradingView/ta/7
+import mentalRock19315/Slope_TK/1 as TK
+
+//@version=5
+indicator("Wolf V2 Trend Strength", "WOLF V2", false)
+
+short = input.int(5, "Leading Period")
+long = input.int(34, "Lagging Period")
+sigThresh = input.float(0.2, "Signal Threshold")
+bullish = input.color(#0c9982, "Bullish Color")
+bearish = input.color(#f22945, "Bearish Color")
+aptitude = input.color(#ffd23f, "Aptitude Color")
+
+squeeze = ta.change(ta.ao(close, short, long)) - ta.change(close, short)
+fit = ta.sma(squeeze, long)
+icor = -ta.correlation(fit, squeeze, long)
+
+hist = 0
+for i = 1 to long
+    if ta.cross(squeeze, fit)[i] and (math.abs(squeeze - fit) > sigThresh)[i]
+        hist := i
+        break
+
+signal = ta.cross(squeeze, fit) and (math.abs(squeeze - fit) > sigThresh)
+
+fill(plot(squeeze, color = squeeze < 0 ? bullish : bearish, title = "Strength"), plot(icor, color = aptitude, title = "Aptitude"), color = squeeze < 0 ? color.new(bullish, 85) : color.new(bearish, 85))
+plotshape(signal ? 1 : na, style = shape.circle, size = size.tiny, force_overlay = true, color = squeeze[hist] > 0 ? bullish : bearish)

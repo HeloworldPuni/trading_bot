@@ -1,0 +1,116 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © rhapsodyz
+
+//@version=5
+strategy(title = "Strategy", 
+     overlay = true, 
+     pyramiding = 0, 
+     initial_capital = 100000,
+     default_qty_type= strategy.percent_of_equity, 
+     default_qty_value = 100, 
+     commission_type = strategy.commission.percent, 
+     commission_value = 0.04, 
+     slippage = 2)
+
+// #######################
+// === General Numbers ===
+// #######################
+
+// === Equity Usage ===
+// 只使用90%的账面资金交易，保留10%作为紧急流动性来源
+equityUsage = input(0.9, title="Equity Usage Percentage")
+_qty = (strategy.equity * equityUsage) / close
+
+// === Input A Bollinger Bands ===
+// 布林带使用21周期，默认使用2倍stdDev
+bollLength      = input.int(21, minval=1, title = "Boll Length",group="Boll Settings")
+bollMult        = input.float(2.0, minval=0.001, maxval=50, title="Boll StdDev", group="Boll Settings")
+
+// === Input B MACD ===
+// MACD使用经典数值12/26/9
+fastLength      = input.int(12, title="Fast Length", group="MACD Settings")
+slowLength      = input.int(26, title="Slow Length", group="MACD Settings")
+signalLength    = input.int(9, title="Signal Length", group="MACD Settings")
+
+// === Input C RSI ===
+// RSI使用默认14周期，使用布林带作为移动均线及附加指标
+rsiLength       = input.int(14, minval=1, title="RSI Length", group="RSI Settings")
+rsiSource       = input.source(hlc3, "RSI Source", group="RSI Settings")
+rsiMALength     = input.int(14, title="RSI MA Length", group="RSI Settings")
+rsiBollMult     = input.float(2.0, minval=0.001, maxval=50, title="RSI BB StdDev", group="RSI Settings")
+
+// === Input D TD ===
+
+// ##################
+// === Indicators ===
+// ##################
+
+// === Indicator A Bollinger Bands ===
+bollBasis = ta.ema(hlc3, bollLength)
+bollDev = bollMult * ta.stdev(hlc3, bollLength)
+bollUpper = bollBasis + bollDev
+bollLower = bollBasis - bollDev
+
+// === Indicator B MACD ===
+[macdCore, macdSignal, macdHist] = ta.macd(hlc3, fastLength, slowLength, signalLength)
+macdHistDiff = macdHist - macdHist[1]
+
+// === Indicator C RSI ===
+up = ta.rma(math.max(ta.change(rsiSource), 0), rsiLength)
+down = ta.rma(-math.min(ta.change(rsiSource), 0), rsiLength)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+rsiMA = ta.sma(hlc3, rsiMALength)
+
+rsiBollUpper = rsiMA + ta.stdev(rsi, rsiMALength) * rsiBollMult
+rsiBollLower = rsiMA - ta.stdev(rsi, rsiMALength) * rsiBollMult
+
+// ##################
+// === Conditions ===
+// ##################
+
+// === Condition A Bollinger Bands ===
+
+
+// === Condition B MACD ===
+
+
+// === Condition C RSI ===
+rsiLong = RSI < 50 and RSI < rsiMA
+
+// #######################
+// === Risk Management ===
+// #######################
+
+// === Stop-loss ===
+stopLoss   = input(3, "Stop Loss")
+var float stopLossPrice = na
+
+// === Take-profit ===
+takeProfit = input(30, "Take Profit")
+var float takeProfitPrice = na
+
+// #######################
+// === Order Execution ===
+// #######################
+
+// === Execute long entry ===
+if enterLong
+    stopLossPrice   := close * (1 - stopLoss/100)
+    takeProfitPrice := close * (1 + takeProfit/100)
+    strategy.entry("Long", strategy.long, qty = _qty)
+    strategy.exit("exit", "Long", stop = stopLossPrice, limit = takeProfitPrice)
+
+// === Execute long exit ===
+if exitLong
+    strategy.close("Long", qty_percent=100)
+
+// === Execute short entry ===
+if enterShort
+    stopLossPrice   := close * (1 + stopLoss/100)
+    takeProfitPrice := close * (1 - takeProfit/100)
+    strategy.entry("Short", strategy.short, qty = _qty)
+    strategy.exit("Exit", "Short", stop = stopLossPrice, limit = takeProfitPrice)
+
+// === Execute short exit ===
+if exitShort
+    strategy.close("Short", qty_percent = 100)

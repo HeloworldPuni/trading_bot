@@ -1,0 +1,29 @@
+//@version=4
+study("100Seconds Anchored Wolfpack", shorttitle="100Seconds_Anchored_Wolfpack")
+
+anchor1 = input(1, minval=1, title="Main anchor")
+anchor2 = input(3, minval=2, title="Alt anchor 1")
+anchor3 = input(9, minval=2, title="Alt anchor 2")
+slowLen = input(3, title = 'MACD Fast Length', type = input.integer)
+fastLen = input(8, title = 'MACD Slow Length', type = input.integer)
+updateBarColor = input(false, title = 'Update bar color', type = input.bool)
+
+
+zeroLine = plot(0, title = "Zero line", linewidth = 1, color = color.black)
+
+[wolfpack1, q1, r1] = macd(close, slowLen * anchor1, fastLen * anchor1, 21)
+[wolfpack2, q2, r2] =  macd(close, slowLen * anchor2, fastLen * anchor2, 21)
+[wolfpack3, q3, r3] =  macd(close, slowLen * anchor3, fastLen * anchor3, 21)
+
+wplot1 = plot(wolfpack1, title="Wolfpack(CTF)", color=wolfpack1 > 0 ? color.blue : color.black, linewidth=1, transp=0, style=plot.style_stepline)
+fill(zeroLine, wplot1, title="Wolfpack Wave 1", color=wolfpack1 > 0 ? color.new(color.blue, 85) : color.new(color.black, 85))
+
+wplot2 = plot(wolfpack2, title="Wolfpack(MTF) 1", color= wolfpack2 > 0 ? color.blue : color.black, linewidth=2, transp=0)
+fill(zeroLine, wplot2, title="Wolfpack Wave 2", color=wolfpack2 > 0 ? color.new(color.blue, 85) : color.new(color.black, 85))
+
+wplot3 = plot(wolfpack3, title="Wolfpack(MTF) 2", color= wolfpack3 > 0 ? color.blue : color.black, linewidth=3, transp=0)
+fill(zeroLine, wplot3, title="Wolfpack Wave 3", color=wolfpack3 > 0 ? color.new(color.blue, 85) : color.new(color.black, 85))
+
+BarColor = updateBarColor ? (wolfpack1 > 0 ? color.lime : color.red) : na
+barcolor(color=BarColor)
+

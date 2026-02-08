@@ -1,0 +1,303 @@
+//@version=5
+indicator("PacifiqueTrade Indicator 2.0", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ============================================================================
+// INPUT SETTINGS
+// ============================================================================
+
+// FVG Settings
+fvgEnabled = input.bool(true, "Show FVG Zones", group="FVG Settings")
+fvg3Candle = input.bool(true, "3-Candle FVG (Laminar)", group="FVG Settings")
+fvg2Candle = input.bool(true, "2-Candle Imbalance", group="FVG Settings")
+fvgHistoryLimit = input.int(20, "FVG History Limit", minval=1, maxval=100, group="FVG Settings")
+
+// Liquidity Sweep Settings
+sweepEnabled = input.bool(true, "Show Liquidity Sweeps", group="Sweep Settings")
+sweepLookback = input.int(20, "Sweep Lookback Period", minval=5, maxval=100, group="Sweep Settings")
+sweepTolerance = input.float(0.1, "Sweep Tolerance %", minval=0.01, maxval=1.0, group="Sweep Settings")
+
+// RSI Settings
+rsiEnabled = input.bool(true, "Use RSI Filter", group="Entry Filters")
+rsiPeriod = input.int(14, "RSI Period", minval=2, maxval=50, group="Entry Filters")
+rsiOverbought = input.float(70, "RSI Overbought", minval=50, maxval=90, group="Entry Filters")
+rsiOversold = input.float(30, "RSI Oversold", minval=10, maxval=50, group="Entry Filters")
+
+// Volume Settings
+volumeEnabled = input.bool(true, "Use Volume Filter", group="Entry Filters")
+volumeMAPeriod = input.int(99, "Volume MA Period", minval=10, maxval=200, group="Entry Filters")
+volumeMultiplier = input.float(1.5, "Volume Burst Multiplier", minval=1.0, maxval=5.0, group="Entry Filters")
+
+// Entry Zone Settings
+entryZoneEnabled = input.bool(true, "Show Entry Zones", group="Entry Zones")
+entryZoneBullColor = input.color(color.new(color.green, 80), "Long Entry Zone", group="Entry Zones")
+entryZoneBearColor = input.color(color.new(color.red, 80), "Short Entry Zone", group="Entry Zones")
+
+// Webhook Settings
+webhookEnabled = input.bool(false, "Enable Webhook Alerts", group="Webhook")
+webhookURL = input.string("", "Webhook URL (Optional)", group="Webhook")
+
+// ============================================================================
+// CALCULATIONS
+// ============================================================================
+
+// RSI
+rsi = ta.rsi(close, rsiPeriod)
+rsiOverboughtLevel = rsiEnabled and rsi > rsiOverbought
+rsiOversoldLevel = rsiEnabled and rsi < rsiOversold
+
+// Volume
+volumeMA = ta.sma(volume, volumeMAPeriod)
+volumeBurst = volumeEnabled and volume > volumeMA * volumeMultiplier
+
+// ============================================================================
+// FVG DETECTION (3-Candle Laminar Gap)
+// ============================================================================
+
+var box[] bullishFVGs = array.new_box()
+var box[] bearishFVGs = array.new_box()
+
+// Bullish FVG: candle[2].high < candle[0].low (gap up)
+bullishFVG = fvg3Candle and high[2] < low[0]
+if bullishFVG
+    fvgTop = low[0]
+    fvgBottom = high[2]
+    fvgLeft = bar_index[1]
+    fvgRight = bar_index + 50  // Extend into future
+    
+    // Create FVG box
+    fvgBox = box.new(
+        left=fvgLeft, 
+        top=fvgTop, 
+        right=fvgRight, 
+        bottom=fvgBottom,
+        border_color=color.new(color.green, 0),
+        bgcolor=color.new(color.green, 85),
+        border_width=1,
+        extend=extend.right,
+        text="FVG Bull",
+        text_color=color.green,
+        text_size=size.small
+    )
+    
+    array.push(bullishFVGs, fvgBox)
+    
+    // Limit history
+    if array.size(bullishFVGs) > fvgHistoryLimit
+        oldBox = array.shift(bullishFVGs)
+        box.delete(oldBox)
+
+// Bearish FVG: candle[2].low > candle[0].high (gap down)
+bearishFVG = fvg3Candle and low[2] > high[0]
+if bearishFVG
+    fvgTop = low[2]
+    fvgBottom = high[0]
+    fvgLeft = bar_index[1]
+    fvgRight = bar_index + 50
+    
+    fvgBox = box.new(
+        left=fvgLeft,
+        top=fvgTop,
+        right=fvgRight,
+        bottom=fvgBottom,
+        border_color=color.new(color.red, 0),
+        bgcolor=color.new(color.red, 85),
+        border_width=1,
+        extend=extend.right,
+        text="FVG Bear",
+        text_color=color.red,
+        text_size=size.small
+    )
+    
+    array.push(bearishFVGs, fvgBox)
+    
+    if array.size(bearishFVGs) > fvgHistoryLimit
+        oldBox = array.shift(bearishFVGs)
+        box.delete(oldBox)
+
+// Check if FVG filled (price entered the zone)
+for i = 0 to array.size(bullishFVGs) - 1
+    fvgBox = array.get(bullishFVGs, i)
+    fvgTop = box.get_top(fvgBox)
+    fvgBottom = box.get_bottom(fvgBox)
+    
+    // If price filled the FVG, make it transparent
+    if low <= fvgTop and high >= fvgBottom
+        box.set_bgcolor(fvgBox, color.new(color.green, 95))
+
+for i = 0 to array.size(bearishFVGs) - 1
+    fvgBox = array.get(bearishFVGs, i)
+    fvgTop = box.get_top(fvgBox)
+    fvgBottom = box.get_bottom(fvgBox)
+    
+    if low <= fvgTop and high >= fvgBottom
+        box.set_bgcolor(fvgBox, color.new(color.red, 95))
+
+// ============================================================================
+// 2-CANDLE IMBALANCE DETECTION
+// ============================================================================
+
+// Bullish imbalance: candle[1].high < candle[0].low
+bullishImbalance = fvg2Candle and high[1] < low[0]
+if bullishImbalance
+    line.new(
+        x1=bar_index[1], y1=high[1],
+        x2=bar_index, y2=high[1],
+        color=color.new(color.green, 50),
+        width=1,
+        style=line.style_dashed
+    )
+
+// Bearish imbalance: candle[1].low > candle[0].high  
+bearishImbalance = fvg2Candle and low[1] > high[0]
+if bearishImbalance
+    line.new(
+        x1=bar_index[1], y1=low[1],
+        x2=bar_index, y2=low[1],
+        color=color.new(color.red, 50),
+        width=1,
+        style=line.style_dashed
+    )
+
+// ============================================================================
+// LIQUIDITY SWEEP DETECTION
+// ============================================================================
+
+// Find recent high/low
+recentHigh = ta.highest(high, sweepLookback)
+recentLow = ta.lowest(low, sweepLookback)
+
+// Buy-side liquidity sweep (sweep below recent low then rally)
+buySweep = sweepEnabled and 
+           low < recentLow[1] and 
+           close > open and
+           close > close[1]
+
+if buySweep
+    label.new(
+        x=bar_index,
+        y=low,
+        text="💎 BUY SWEEP",
+        style=label.style_label_up,
+        color=color.new(color.green, 0),
+        textcolor=color.white,
+        size=size.normal
+    )
+
+// Sell-side liquidity sweep (sweep above recent high then drop)
+sellSweep = sweepEnabled and
+            high > recentHigh[1] and
+            close < open and
+            close < close[1]
+
+if sellSweep
+    label.new(
+        x=bar_index,
+        y=high,
+        text="💎 SELL SWEEP",
+        style=label.style_label_down,
+        color=color.new(color.red, 0),
+        textcolor=color.white,
+        size=size.normal
+    )
+
+// ============================================================================
+// ENTRY ZONE DETECTION
+// ============================================================================
+
+// Long Entry Zone Conditions:
+// 1. Buy Sweep occurred
+// 2. RSI oversold
+// 3. Volume burst
+// 4. Inside or near bullish FVG
+
+longEntryCondition = buySweep and 
+                     (not rsiEnabled or rsiOversoldLevel) and
+                     (not volumeEnabled or volumeBurst)
+
+if longEntryCondition and entryZoneEnabled
+    // Find nearest bullish FVG
+    var float nearestFVGTop = na
+    var float nearestFVGBottom = na
+    
+    for i = 0 to array.size(bullishFVGs) - 1
+        fvgBox = array.get(bullishFVGs, i)
+        fvgTop = box.get_top(fvgBox)
+        fvgBottom = box.get_bottom(fvgBox)
+        
+        // Check if current price is near FVG
+        if close >= fvgBottom * 0.999 and close <= fvgTop * 1.001
+            nearestFVGTop := fvgTop
+            nearestFVGBottom := fvgBottom
+            break
+    
+    // Draw Entry Zone
+    if not na(nearestFVGTop)
+        entryBox = box.new(
+            left=bar_index,
+            top=nearestFVGTop,
+            right=bar_index + 10,
+            bottom=nearestFVGBottom,
+            border_color=color.new(color.lime, 0),
+            bgcolor=entryZoneBullColor,
+            border_width=2,
+            text="🎯 LONG ENTRY",
+            text_color=color.lime,
+            text_size=size.large
+        )
+        
+        // Webhook alert
+        if webhookEnabled
+            alert('{"type":"LONG_ENTRY","pair":"' + syminfo.ticker + '","price":' + str.tostring(close) + ',"fvg_top":' + str.tostring(nearestFVGTop) + ',"fvg_bottom":' + str.tostring(nearestFVGBottom) + '}', alert.freq_once_per_bar)
+
+// Short Entry Zone Conditions
+shortEntryCondition = sellSweep and
+                      (not rsiEnabled or rsiOverboughtLevel) and
+                      (not volumeEnabled or volumeBurst)
+
+if shortEntryCondition and entryZoneEnabled
+    var float nearestFVGTop = na
+    var float nearestFVGBottom = na
+    
+    for i = 0 to array.size(bearishFVGs) - 1
+        fvgBox = array.get(bearishFVGs, i)
+        fvgTop = box.get_top(fvgBox)
+        fvgBottom = box.get_bottom(fvgBox)
+        
+        if close >= fvgBottom * 0.999 and close <= fvgTop * 1.001
+            nearestFVGTop := fvgTop
+            nearestFVGBottom := fvgBottom
+            break
+    
+    if not na(nearestFVGTop)
+        entryBox = box.new(
+            left=bar_index,
+            top=nearestFVGTop,
+            right=bar_index + 10,
+            bottom=nearestFVGBottom,
+            border_color=color.new(color.red, 0),
+            bgcolor=entryZoneBearColor,
+            border_width=2,
+            text="🎯 SHORT ENTRY",
+            text_color=color.red,
+            text_size=size.large
+        )
+        
+        if webhookEnabled
+            alert('{"type":"SHORT_ENTRY","pair":"' + syminfo.ticker + '","price":' + str.tostring(close) + ',"fvg_top":' + str.tostring(nearestFVGTop) + ',"fvg_bottom":' + str.tostring(nearestFVGBottom) + '}', alert.freq_once_per_bar)
+
+// ============================================================================
+// PLOTS & VISUAL INDICATORS
+// ============================================================================
+
+// RSI levels (subplot)
+plot(rsiEnabled ? rsi : na, "RSI", color=color.purple, linewidth=2)
+hline(rsiOverbought, "Overbought", color=color.red, linestyle=hline.style_dashed)
+hline(rsiOversold, "Oversold", color=color.green, linestyle=hline.style_dashed)
+hline(50, "Midline", color=color.gray, linestyle=hline.style_dotted)
+
+// Volume Burst markers
+plotshape(volumeBurst, style=shape.circle, location=location.belowbar, color=color.new(color.orange, 0), size=size.tiny, title="Volume Burst")
+
+// Background color for entry conditions
+bgcolor(longEntryCondition ? color.new(color.green, 95) : na, title="Long Setup BG")
+bgcolor(shortEntryCondition ? color.new(color.red, 95) : na, title="Short Setup BG")

@@ -1,0 +1,1450 @@
+// 本作品采用 Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) 许可协议 https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © LuxAlgo
+
+//@version=6
+strategy(
+     title = '智能资金概念策略 [LuxAlgo]',
+     shorttitle = '智能资金概念策略',
+     overlay = true,
+     max_labels_count = 500,
+     max_lines_count = 500,
+     max_boxes_count = 500,
+     initial_capital = 271.7882,
+     currency = currency.USD,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 50,
+     pyramiding = 0,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.02,
+     slippage = 2,
+     process_orders_on_close = false,
+     calc_on_order_fills = true,
+     calc_on_every_tick = false,
+     fill_orders_on_standard_ohlc = true
+ )
+//---------------------------------------------------------------------------------------------------------------------}
+//CONSTANTS & STRINGS & INPUTS
+//---------------------------------------------------------------------------------------------------------------------{
+BULLISH_LEG                     = 1
+BEARISH_LEG                     = 0
+BULLISH                         = 1
+BEARISH                         = -1
+
+GREEN                           = #089981
+RED                             = #F23645
+BLUE                            = #2157f3
+GRAY                            = #878b94
+MONO_BULLISH                    = #b2b5be
+MONO_BEARISH                    = #5d606b
+
+HISTORICAL                      = '历史'
+PRESENT                         = '当前'
+COLORED                         = '彩色'
+MONOCHROME                      = '单色'
+
+ALL                             = '全部'
+BOS                             = 'BOS'
+CHOCH                           = 'CHoCH'
+
+TINY                            = size.tiny
+SMALL                           = size.small
+NORMAL                          = size.normal
+
+ATR                             = 'ATR'
+RANGE                           = '累积平均范围'
+CLOSE                           = '收盘价'
+HIGHLOW                         = '高/低'
+
+SOLID                           = '⎯⎯⎯'
+DASHED                          = '----'
+DOTTED                          = '····'
+
+// 策略类型常量
+STRATEGY_AGGRESSIVE_LONG        = '激进做多'
+STRATEGY_MODERATE_LONG          = '稳健做多'
+STRATEGY_NEUTRAL                = '观望'
+STRATEGY_MODERATE_SHORT         = '稳健做空'
+STRATEGY_AGGRESSIVE_SHORT       = '激进做空'
+
+// 心理偏差类型
+BIAS_FOMO                       = 'FOMO恐慌'
+BIAS_REVENGE                    = '报复性交易'
+BIAS_OVERCONFIDENCE             = '过度自信'
+BIAS_LOSS_AVERSION              = '损失厌恶'
+BIAS_HERD                       = '羊群效应'
+
+SMART_GROUP                     = '智能资金概念'
+INTERNAL_GROUP                  = '实时内部结构'
+SWING_GROUP                     = '实时摆动结构'
+BLOCKS_GROUP                    = '订单块'
+EQUAL_GROUP                     = '等高/等低'
+GAPS_GROUP                      = '公允价值缺口'
+LEVELS_GROUP                    = '多时间框架高低点'
+ZONES_GROUP                     = '溢价与折价区域'
+STRATEGY_GROUP                  = '策略分析'
+PSYCHO_GROUP                    = '交易心理偏差'
+
+modeTooltip                     = '允许显示历史结构或仅显示最近的结构'
+styleTooltip                    = '指标颜色主题'
+showTrendTooltip                = '显示带有反映结构检测到的当前趋势的颜色蜡烛'
+showInternalsTooltip            = '显示内部市场结构'
+internalFilterConfluenceTooltip = '过滤非重要的内部结构突破'
+showStructureTooltip            = '显示摆动市场结构'
+showSwingsTooltip               = '在图表上将摆动点显示为标签'
+showHighLowSwingsTooltip        = '在图表上突出显示最近的强/弱高/低点'
+showInternalOrderBlocksTooltip  = '在图表上显示内部订单块\n\n要在图表上显示的内部订单块数量'
+showSwingOrderBlocksTooltip     = '在图表上显示摆动订单块\n\n要在图表上显示的摆动订单块数量'
+orderBlockFilterTooltip         = '用于过滤波动性订单块的方法\n\n当可用数据量较少时，建议使用累积平均范围方法'
+orderBlockMitigationTooltip     = '选择用于订单块缓解的值'
+showEqualHighsLowsTooltip       = '在图表上显示等高和等低'
+equalHighsLowsLengthTooltip     = '用于确认等高和等低的柱数'
+equalHighsLowsThresholdTooltip  = '(0, 1) 范围内的敏感度阈值，用于检测等高与等低\n\n较低的值将返回较少但更相关的结果'
+showFairValueGapsTooltip        = '在图表上显示公允价值缺口'
+fairValueGapsThresholdTooltip   = '过滤非重要的公允价值缺口'
+fairValueGapsTimeframeTooltip   = '公允价值缺口时间框架'
+fairValueGapsExtendTooltip      = '确定在图表上延长公允价值缺口框的柱数'
+showPremiumDiscountZonesTooltip = '在图表上显示溢价、折价和均衡区域'
+
+// 策略交易参数
+TRADE_GROUP                     = '交易参数'
+
+modeInput                       = input.string(HISTORICAL, '模式', group = SMART_GROUP, tooltip = modeTooltip, options = [HISTORICAL,PRESENT])
+styleInput                      = input.string(COLORED, '样式', group = SMART_GROUP, tooltip = styleTooltip, options = [COLORED,MONOCHROME])
+showTrendInput                  = input(false, '给蜡烛上色', group = SMART_GROUP, tooltip = showTrendTooltip)
+showInternalsInput              = input(true, '显示内部结构', group = INTERNAL_GROUP, tooltip = showInternalsTooltip)
+showInternalBullInput           = input.string(ALL, '看涨结构', group = INTERNAL_GROUP, inline = 'ibull', options = [ALL,BOS,CHOCH])
+internalBullColorInput          = input.string(GREEN, '', group = INTERNAL_GROUP, inline = 'ibull')
+showInternalBearInput           = input.string(ALL, '看跌结构', group = INTERNAL_GROUP, inline = 'ibear', options = [ALL,BOS,CHOCH])
+internalBearColorInput          = input.string(RED, '', group = INTERNAL_GROUP, inline = 'ibear')
+internalFilterConfluenceInput   = input(false, '共振过滤', group = INTERNAL_GROUP, tooltip = internalFilterConfluenceTooltip)
+internalStructureSize           = input.string(TINY, '内部标签大小', group = INTERNAL_GROUP, options = [TINY,SMALL,NORMAL])
+showStructureInput              = input(true, '显示摆动结构', group = SWING_GROUP, tooltip = showStructureTooltip)
+showSwingBullInput              = input.string(ALL, '看涨结构', group = SWING_GROUP, inline = 'bull', options = [ALL,BOS,CHOCH])
+swingBullColorInput             = input.string(GREEN, '', group = SWING_GROUP, inline = 'bull')
+showSwingBearInput              = input.string(ALL, '看跌结构', group = SWING_GROUP, inline = 'bear', options = [ALL,BOS,CHOCH])
+swingBearColorInput             = input.string(RED, '', group = SWING_GROUP, inline = 'bear')
+swingStructureSize              = input.string(SMALL, '摆动标签大小', group = SWING_GROUP, options = [TINY,SMALL,NORMAL])
+showSwingsInput                 = input(false, '显示摆动点', group = SWING_GROUP, tooltip = showSwingsTooltip, inline = 'swings')
+swingsLengthInput               = input.int(50, '', group = SWING_GROUP, inline = 'swings', minval = 10)
+showHighLowSwingsInput          = input(true, '显示强/弱高/低点', group = SWING_GROUP, tooltip = showHighLowSwingsTooltip)
+showInternalOrderBlocksInput    = input(true, '内部订单块', group = BLOCKS_GROUP, tooltip = showInternalOrderBlocksTooltip, inline = 'iob')
+internalOrderBlocksSizeInput    = input.int(5, '', group = BLOCKS_GROUP, inline = 'iob', minval = 1, maxval = 20)
+showSwingOrderBlocksInput       = input(false, '摆动订单块', group = BLOCKS_GROUP, tooltip = showSwingOrderBlocksTooltip, inline = 'ob')
+swingOrderBlocksSizeInput       = input.int(5, '', group = BLOCKS_GROUP, inline = 'ob', minval = 1, maxval = 20)
+orderBlockFilterInput           = input.string('ATR', '订单块过滤', group = BLOCKS_GROUP, tooltip = orderBlockFilterTooltip, options = [ATR,RANGE])
+orderBlockMitigationInput       = input.string(HIGHLOW, '订单块缓解', group = BLOCKS_GROUP, tooltip = orderBlockMitigationTooltip, options = [CLOSE,HIGHLOW])
+internalBullishOrderBlockColor  = input.color('color.new(#3179f5, 80)', '内部看涨 OB', group = BLOCKS_GROUP)
+internalBearishOrderBlockColor  = input.color('color.new(#f77c80, 80)', '内部看跌 OB', group = BLOCKS_GROUP)
+swingBullishOrderBlockColor     = input.color('color.new(#1848cc, 80)', '看涨 OB', group = BLOCKS_GROUP)
+swingBearishOrderBlockColor     = input.color('color.new(#b22833, 80)', '看跌 OB', group = BLOCKS_GROUP)
+showEqualHighsLowsInput         = input(true, '等高/等低', group = EQUAL_GROUP, tooltip = showEqualHighsLowsTooltip)
+equalHighsLowsLengthInput       = input.int(3, '柱数确认', group = EQUAL_GROUP, tooltip = equalHighsLowsLengthTooltip, minval = 1)
+equalHighsLowsThresholdInput    = input.float(0.1, '阈值', group = EQUAL_GROUP, tooltip = equalHighsLowsThresholdTooltip, minval = 0, maxval = 0.5, step = 0.1)
+equalHighsLowsSizeInput         = input.string(TINY, '标签大小', group = EQUAL_GROUP, options = [TINY,SMALL,NORMAL])
+showFairValueGapsInput          = input(false, '公允价值缺口', group = GAPS_GROUP, tooltip = showFairValueGapsTooltip)
+fairValueGapsThresholdInput     = input(true, '自动阈值', group = GAPS_GROUP, tooltip = fairValueGapsThresholdTooltip)
+fairValueGapsTimeframeInput     = input.timeframe('', '时间框架', group = GAPS_GROUP, tooltip = fairValueGapsTimeframeTooltip)
+fairValueGapsBullColorInput     = input.color('color.new(#00ff68, 70)', '看涨 FVG', group = GAPS_GROUP)
+fairValueGapsBearColorInput     = input.color('color.new(#ff0008, 70)', '看跌 FVG', group = GAPS_GROUP)
+fairValueGapsExtendInput        = input.int(1, '延伸 FVG', group = GAPS_GROUP, tooltip = fairValueGapsExtendTooltip, minval = 0)
+showDailyLevelsInput            = input(false, '日线', group = LEVELS_GROUP, inline = 'daily')
+dailyLevelsStyleInput           = input.string(SOLID, '', group = LEVELS_GROUP, inline = 'daily', options = [SOLID,DASHED,DOTTED])
+dailyLevelsColorInput           = input.string(BLUE, '', group = LEVELS_GROUP, inline = 'daily')
+showWeeklyLevelsInput           = input(false, '周线', group = LEVELS_GROUP, inline = 'weekly')
+weeklyLevelsStyleInput          = input.string(SOLID, '', group = LEVELS_GROUP, inline = 'weekly', options = [SOLID,DASHED,DOTTED])
+weeklyLevelsColorInput          = input.string(BLUE, '', group = LEVELS_GROUP, inline = 'weekly')
+showMonthlyLevelsInput          = input(false, '月线', group = LEVELS_GROUP, inline = 'monthly')
+monthlyLevelsStyleInput         = input.string(SOLID, '', group = LEVELS_GROUP, inline = 'monthly', options = [SOLID,DASHED,DOTTED])
+monthlyLevelsColorInput         = input.string(BLUE, '', group = LEVELS_GROUP, inline = 'monthly')
+showPremiumDiscountZonesInput   = input(false, '溢价/折价区域', group = ZONES_GROUP, tooltip = showPremiumDiscountZonesTooltip)
+premiumZoneColorInput           = input.color(RED, '溢价区域', group = ZONES_GROUP)
+equilibriumZoneColorInput       = input.color(GRAY, '均衡区域', group = ZONES_GROUP)
+discountZoneColorInput          = input.color(GREEN, '折价区域', group = ZONES_GROUP)
+
+// 策略分析输入
+showStrategyAnalysisInput       = input(true, '显示策略分析', group = STRATEGY_GROUP)
+strategyTablePositionInput      = input.string('top_right', '策略面板位置', group = STRATEGY_GROUP, options = ['top_left','top_center','top_right','middle_left','middle_center','middle_right','bottom_left','bottom_center','bottom_right'])
+signalTimeWindow                = input.int(60, '信号统计时间窗口(分钟)', group = STRATEGY_GROUP, tooltip = '统计多少分钟内的市场结构信号', minval = 5, maxval = 1440)
+strategyWeightInternal          = input.float(1, '内部结构权重', group = STRATEGY_GROUP, minval = 0, maxval = 3, step = 0.1)
+strategyWeightSwing             = input.float(1.5, '摆动结构权重', group = STRATEGY_GROUP, minval = 0, maxval = 3, step = 0.1)
+strategyWeightOrderBlock        = input.float(1.2, '订单块权重', group = STRATEGY_GROUP, minval = 0, maxval = 3, step = 0.1)
+strategyWeightFVG               = input.float(0.8, 'FVG权重', group = STRATEGY_GROUP, minval = 0, maxval = 3, step = 0.1)
+
+// 心理偏差输入
+showPsychoBiasInput             = input(true, '显示心理偏差分析', group = PSYCHO_GROUP)
+psychoTablePositionInput        = input.string('bottom_right', '心理面板位置', group = PSYCHO_GROUP, options = ['top_left','top_center','top_right','middle_left','middle_center','middle_right','bottom_left','bottom_center','bottom_right'])
+psychoFomoThreshold             = input.float(2, 'FOMO触发阈值', group = PSYCHO_GROUP, tooltip = '连续同向信号数量触发FOMO', minval = 1, maxval = 5, step = 0.5)
+psychoRevengeThreshold          = input.int(3, '报复交易触发次数', group = PSYCHO_GROUP, tooltip = '连续亏损次数触发报复交易', minval = 2, maxval = 10)
+psychoOverconfidenceThreshold   = input.int(3, '过度自信触发次数', group = PSYCHO_GROUP, tooltip = '连续盈利次数触发过度自信', minval = 2, maxval = 10)
+enableHighFrequencyMode         = input(false, '启用散户高频模式', group = PSYCHO_GROUP, tooltip = '模拟散户在心理偏差下的高频交易行为')
+enableTrading                   = input(false, '启用自动交易', group = TRADE_GROUP, tooltip = '启用后将根据策略信号自动开仓平仓')
+orderSizePct                    = input.float(1, '仓位 (% 账户)', group = TRADE_GROUP, tooltip = '每次交易使用的账户资金百分比', minval = 0.1, step = 0.1)
+slAtrMult                       = input.float(2, '止损 ATR 倍数', group = TRADE_GROUP, tooltip = '止损距离为ATR的倍数', minval = 0.1)
+tpAtrMult                       = input.float(4, '止盈 ATR 倍数', group = TRADE_GROUP, tooltip = '止盈距离为ATR的倍数', minval = 0.1)
+signalToken                     = input.string('xaQt4MCpwDaILEjHK0QjRTeB1M321oxfa2lCwXwDkz5jPwM2yaHXx9+dREKAvRqU26+Gf4fKs4V7NhLL21zOdQ==', 'signalToken', group = TRADE_GROUP)
+//---------------------------------------------------------------------------------------------------------------------}
+//数据结构 & 变量
+//---------------------------------------------------------------------------------------------------------------------{
+// @type                            表示警报作为布尔字段的 UDT
+// @field internalBullishBOS          内部结构自定义警报
+// @field internalBearishBOS          内部结构自定义警报
+// @field internalBullishCHoCH        内部结构自定义警报
+// @field internalBearishCHoCH        内部结构自定义警报
+// @field swingBullishBOS             摆动结构自定义警报
+// @field swingBearishBOS             摆动结构自定义警报
+// @field swingBullishCHoCH           摆动结构自定义警报
+// @field swingBearishCHoCH           摆动结构自定义警报
+// @field internalBullishOrderBlock   内部订单块自定义警报
+// @field internalBearishOrderBlock   内部订单块自定义警报
+// @field swingBullishOrderBlock      摆动订单块自定义警报
+// @field swingBearishOrderBlock      摆动订单块自定义警报
+// @field equalHighs                  等高自定义警报
+// @field equalLows                   等低自定义警报
+// @field bullishFairValueGap         公允价值缺口自定义警报
+// @field bearishFairValueGap         公允价值缺口自定义警报
+type alerts
+    bool internalBullishBOS     = false
+    bool internalBearishBOS     = false
+    bool internalBullishCHoCH   = false
+    bool internalBearishCHoCH   = false
+    bool swingBullishBOS        = false
+    bool swingBearishBOS        = false
+    bool swingBullishCHoCH      = false
+    bool swingBearishCHoCH      = false
+    bool internalBullishOrderBlock = false
+    bool internalBearishOrderBlock = false
+    bool swingBullishOrderBlock = false
+    bool swingBearishOrderBlock = false
+    bool equalHighs             = false
+    bool equalLows              = false
+    bool bullishFairValueGap    = false
+    bool bearishFairValueGap    = false
+
+// @type                            UDT representing last swing extremes (top & bottom)
+// @field top                         顶部极值
+// @field bottom                      底部极值
+// @field barTime                     柱时间
+// @field barIndex                    柱索引
+// @field lastTopTime                 上次顶部时间
+// @field lastBottomTime              上次底部时间
+type trailingExtremes
+    float top
+    float bottom
+    int barTime
+    int barIndex
+    int lastTopTime
+    int lastBottomTime
+
+// @type                            UDT representing Fair Value Gaps
+// @field top                         顶部价格
+// @field bottom                      底部价格
+// @field bias                        方向偏差
+// @field topBox                      顶部框
+// @field bottomBox                   底部框
+type fairValueGap
+    float top
+    float bottom
+    int bias
+    box topBox
+    box bottomBox
+
+// @type                            UDT representing trend bias
+// @field bias                        趋势偏差
+type trend
+    int bias
+
+// @type                            UDT representing Equal Highs Lows display
+// @field l_ine                       线条
+// @field l_abel                      标签
+type equalDisplay
+    line l_ine                  = na
+    label l_abel                = na
+
+// @type                            UDT representing a pivot point (swing point)
+// @field currentLevel                当前价格水平
+// @field lastLevel                   上次价格水平
+// @field crossed                     是否已突破
+// @field barTime                     柱时间
+// @field barIndex                    柱索引
+type pivot
+    float currentLevel
+    float lastLevel
+    bool crossed
+    int barTime                 = time
+    int barIndex                = bar_index
+
+// @type                            UDT representing an order block
+// @field barHigh                     柱高价
+// @field barLow                      柱低价
+// @field barTime                     柱时间
+// @field bias                        方向偏差
+type orderBlock
+    float barHigh
+    float barLow
+    int barTime
+    int bias
+
+// @type                            表示市场结构统计的 UDT
+// @field bullishSignals              看涨信号数
+// @field bearishSignals              看跌信号数
+// @field lastUpdateTime              最后更新时间
+// @field consecutiveBullish          连续看涨次数
+// @field consecutiveBearish          连续看跌次数
+type marketStructureStats
+    int bullishSignals          = 0
+    int bearishSignals          = 0
+    int lastUpdateTime          = 0
+    int consecutiveBullish      = 0
+    int consecutiveBearish      = 0
+
+// @type                            表示交易策略的 UDT
+// @field strategyType                策略类型
+// @field confidence                  信心度
+// @field lastChangeTime              最后变化时间
+// @field signalStrength              信号强度
+type tradingStrategy
+    string strategyType         = '观望'
+    float confidence            = 0
+    int lastChangeTime          = 0
+    float signalStrength        = 0
+
+// @type                            表示心理偏差状态的 UDT
+// @field activeBias                  当前偏差
+// @field biasStrength                偏差强度
+// @field consecutiveWins             连续盈利
+// @field consecutiveLosses           连续亏损
+// @field lastTradeResult             最后交易结果
+// @field tradeFrequency              交易频率
+// @field emotionalState              情绪状态
+type psychoBias
+    string activeBias           = ''
+    float biasStrength          = 0
+    int consecutiveWins         = 0
+    int consecutiveLosses       = 0
+    int lastTradeResult         = 0
+    float tradeFrequency        = 0
+    float emotionalState        = 0
+
+// @variable                        当前摆动枢轴高点
+var pivot swingHigh                         = pivot.new(na,na,false)
+// @variable                        当前摆动枢轴低点
+var pivot swingLow                          = pivot.new(na,na,false)
+// @variable                        当前内部枢轴高点
+var pivot internalHigh                      = pivot.new(na,na,false)
+// @variable                        当前内部枢轴低点
+var pivot internalLow                       = pivot.new(na,na,false)
+// @variable                        当前等高枢轴点
+var pivot equalHigh                         = pivot.new(na,na,false)
+// @variable                        当前等低枢轴点
+var pivot equalLow                          = pivot.new(na,na,false)
+// @variable                        摆动趋势倾向
+var trend swingTrend                        = trend.new(0)
+// @variable                        内部趋势倾向
+var trend internalTrend                     = trend.new(0)
+// @variable                        等高显示
+var equalDisplay equalHighDisplay           = equalDisplay.new()
+// @variable                        等低显示
+var equalDisplay equalLowDisplay            = equalDisplay.new()
+// @variable                        存储 fairValueGap UDT
+var array<fairValueGap> fairValueGaps       = array.new<fairValueGap>()
+// @variable                        存储解析后的高点
+var array<float> parsedHighs                = array.new<float>()
+// @variable                        存储解析后的低点
+var array<float> parsedLows                 = array.new<float>()
+// @variable                        存储原始高点
+var array<float> highs                      = array.new<float>()
+// @variable                        存储原始低点
+var array<float> lows                       = array.new<float>()
+// @variable                        存储柱时间值
+var array<int> times                        = array.new<int>()
+// @variable                        最后的跟随摆动高低点
+var trailingExtremes trailing               = trailingExtremes.new()
+// @variable                        存储 orderBlock UDT（摆动订单块）
+var array<orderBlock> swingOrderBlocks      = array.new<orderBlock>()
+// @variable                        存储 orderBlock UDT（内部订单块）
+var array<orderBlock> internalOrderBlocks   = array.new<orderBlock>()
+// @variable                        存储摆动订单块框
+var array<box> swingOrderBlocksBoxes        = array.new<box>()
+// @variable                        存储内部订单块框
+var array<box> internalOrderBlocksBoxes     = array.new<box>()
+// @variable                        摆动看涨结构的颜色
+var swingBullishColor                       = styleInput == MONOCHROME ? MONO_BULLISH : swingBullColorInput
+// @variable                        摆动看跌结构的颜色
+var swingBearishColor                       = styleInput == MONOCHROME ? MONO_BEARISH : swingBearColorInput
+// @variable                        看涨公允价值缺口的颜色
+var fairValueGapBullishColor                = styleInput == MONOCHROME ? color.new(MONO_BULLISH,70) : fairValueGapsBullColorInput
+// @variable                        看跌公允价值缺口的颜色
+var fairValueGapBearishColor                = styleInput == MONOCHROME ? color.new(MONO_BEARISH,70) : fairValueGapsBearColorInput
+// @variable                        溢价区域的颜色
+var premiumZoneColor                        = styleInput == MONOCHROME ? MONO_BEARISH : premiumZoneColorInput
+// @variable                        折价区域的颜色
+var discountZoneColor                       = styleInput == MONOCHROME ? MONO_BULLISH : discountZoneColorInput
+// @variable                        当前脚本迭代的柱索引
+varip int currentBarIndex                     = bar_index
+// @variable                        上一次脚本迭代的柱索引
+varip int lastBarIndex                        = bar_index
+// @variable                        当前柱的警报
+var alerts currentAlerts                    = alerts.new()
+// @variable                        图表开始的时间
+var initialTime                             = time
+
+// @variable                        市场结构统计
+var marketStructureStats structureStats     = marketStructureStats.new()
+// @variable                        交易策略
+var tradingStrategy currentStrategy         = tradingStrategy.new()
+// @variable                        心理偏差状态
+var psychoBias retailPsycho                 = psychoBias.new()
+// @variable                        策略历史记录（用于追踪策略变化）
+var array<string> strategyHistory           = array.new<string>()
+// @variable                        模拟交易记录（用于散户高频模式）
+var array<float> tradeResults               = array.new<float>()
+// @variable                        信号历史（存储时间和信号类型）
+var array<int> signalTimes                  = array.new<int>()
+// @variable                        正数=看涨, 负数=看跌
+var array<int> signalTypes                  = array.new<int>()
+
+// ATR 用于止损止盈计算
+atr14 = ta.atr(14)
+
+// JSON 告警负载
+strategyAlertPayload = '{ "id": "{{strategy.order.id}}", "action": "{{strategy.order.action}}", "marketPosition": "{{strategy.market_position}}", "prevMarketPosition": "{{strategy.prev_market_position}}", "marketPositionSize": "{{strategy.market_position_size}}", "prevMarketPositionSize": "{{strategy.prev_market_position_size}}", "instrument": "{{ticker}}", "signalToken": "' + signalToken + '", "timestamp": "{{timenow}}", "maxLag": "300", "investmentType": "base", "amount": "{{strategy.order.contracts}}"}' 
+
+// 在第一次执行时创建显示订单块所需的框
+if barstate.isfirst
+    if showSwingOrderBlocksInput
+        for index = 1 to swingOrderBlocksSizeInput
+            swingOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+    if showInternalOrderBlocksInput
+        for index = 1 to internalOrderBlocksSizeInput
+            internalOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+
+// @variable                        用于看跌订单块缓解的源
+bearishOrderBlockMitigationSource   = orderBlockMitigationInput == CLOSE ? close : high
+// @variable                        用于看涨订单块缓解的源
+bullishOrderBlockMitigationSource   = orderBlockMitigationInput == CLOSE ? close : low
+// @variable                        默认波动性测量
+atrMeasure                          = ta.atr(200)
+// @variable                        根据用户设置解析的波动性测量
+volatilityMeasure                   = orderBlockFilterInput == ATR ? atrMeasure : ta.cum(ta.tr)/bar_index
+// @variable                        如果当前柱是高波动性柱，则为 true
+highVolatilityBar                   = (high - low) >= (2 * volatilityMeasure)
+// @variable                        解析后的高点
+parsedHigh                          = highVolatilityBar ? low : high
+// @variable                        解析后的低点
+parsedLow                           = highVolatilityBar ? high : low
+
+// 在每个柱将当前值存储到数组中
+parsedHighs.push(parsedHigh)
+parsedLows.push(parsedLow)
+highs.push(high)
+lows.push(low)
+times.push(time)
+//---------------------------------------------------------------------------------------------------------------------}
+//用户自定义函数
+//---------------------------------------------------------------------------------------------------------------------{
+// @function            获取当前走势的值，可以是 0（看跌）或 1（看涨）
+// @param size           (int) 走势周期大小
+// @returns             int
+leg(int size) =>
+    var leg     = 0
+    newLegHigh  = high[size] > ta.highest( size)
+    newLegLow   = low[size]  < ta.lowest(  size)
+
+    if newLegHigh
+        leg := BEARISH_LEG
+    else if newLegLow
+        leg := BULLISH_LEG
+    leg
+
+// @function            识别当前值是否是新走势（摆动）的开始
+// @param leg            (int) 当前走势值
+// @returns             bool
+startOfNewLeg(int leg) =>
+    ta.change(leg) != 0
+
+// @function            识别当前水平是否是新看跌走势（摆动）的开始
+// @param leg            (int) 当前走势值
+// @returns             bool
+startOfBearishLeg(int leg) =>
+    ta.change(leg) == -1
+
+// @function            识别当前水平是否是新看涨走势（摆动）的开始
+// @param leg            (int) 当前走势值
+// @returns             bool
+startOfBullishLeg(int leg) =>
+    ta.change(leg) == +1
+
+// @function            创建一个新标签
+// @param labelTime     柱时间坐标
+// @param labelPrice    价格坐标
+// @param tag           要显示的文本
+// @param labelColor    文本颜色
+// @param labelStyle    标签样式
+// @returns             标签 ID
+drawLabel(int labelTime, float labelPrice, string tag, color labelColor, string labelStyle) =>
+    var label l_abel = na
+
+    if modeInput == PRESENT
+        l_abel.delete()
+
+    l_abel := label.new(chart.point.new(labelTime,na,labelPrice),tag,xloc.bar_time,color=color(na),textcolor=labelColor,style = labelStyle,size = size.small)
+
+// @function            创建一个表示 EQH 或 EQL 的新线和标签
+// @param p_ivot        起始枢轴点
+// @param level         当前枢轴点的价格水平
+// @param size          当前枢轴点是多少个柱之前检测到的
+// @param equalHigh     EQH 为 true，EQL 为 false
+// @returns             标签 ID
+drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh) =>
+    equalDisplay e_qualDisplay = equalHigh ? equalHighDisplay : equalLowDisplay
+
+    string tag          = 'EQL'
+    color equalColor    = swingBullishColor
+    string labelStyle   = label.style_label_up
+
+    if equalHigh
+        tag         := 'EQH'
+        equalColor  := swingBearishColor
+        labelStyle  := label.style_label_down
+
+    if modeInput == PRESENT
+        line.delete(    e_qualDisplay.l_ine)
+        label.delete(   e_qualDisplay.l_abel)
+
+    e_qualDisplay.l_ine     := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time[size],na,level), xloc = xloc.bar_time, color = equalColor, style = line.style_dotted)
+    labelPosition           = math.round(0.5*(p_ivot.barIndex + bar_index - size))
+    e_qualDisplay.l_abel    := label.new(chart.point.new(na,labelPosition,level), tag, xloc.bar_index, color = color(na), textcolor = equalColor, style = labelStyle, size = equalHighsLowsSizeInput)
+
+// @function            存储当前结构和跟随摆动点，并显示摆动点和等高/等低
+// @param size          (int) 结构大小
+// @param equalHighLow  (bool) 是否显示当前高/低点
+// @param internal      (bool) 是否获取内部结构
+// @returns             标签 ID
+getCurrentStructure(int size,bool equalHighLow = false, bool internal = false) =>
+    currentLeg              = leg(size)
+    newPivot                = startOfNewLeg(currentLeg)
+    pivotLow                = startOfBullishLeg(currentLeg)
+    pivotHigh               = startOfBearishLeg(currentLeg)
+
+    if newPivot
+        if pivotLow
+            pivot p_ivot    = equalHighLow ? equalLow : internal ? internalLow : swingLow
+
+            if equalHighLow and math.abs(p_ivot.currentLevel - low[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot, low[size], size, false)
+                currentAlerts.equalLows := true
+
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := low[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+
+            if not equalHighLow and not internal
+                trailing.bottom         := p_ivot.currentLevel
+                trailing.barTime        := p_ivot.barTime
+                trailing.barIndex       := p_ivot.barIndex
+                trailing.lastBottomTime := p_ivot.barTime
+
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel < p_ivot.lastLevel ? 'LL' : 'HL', swingBullishColor, label.style_label_up)
+        else
+            pivot p_ivot = equalHighLow ? equalHigh : internal ? internalHigh : swingHigh
+
+            if equalHighLow and math.abs(p_ivot.currentLevel - high[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot,high[size],size,true)
+                currentAlerts.equalHighs := true
+
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := high[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+
+            if not equalHighLow and not internal
+                trailing.top            := p_ivot.currentLevel
+                trailing.barTime        := p_ivot.barTime
+                trailing.barIndex       := p_ivot.barIndex
+                trailing.lastTopTime    := p_ivot.barTime
+
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel > p_ivot.lastLevel ? 'HH' : 'LH', swingBearishColor, label.style_label_down)
+
+// @function                绘制表示结构的线和标签
+// @param p_ivot            基础枢轴点
+// @param tag               要显示的文本
+// @param structureColor    基础颜色
+// @param lineStyle         线条样式
+// @param labelStyle        标签样式
+// @param labelSize         文本大小
+// @returns                 标签 ID
+drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize) =>
+    var line l_ine      = line.new(na,na,na,na,xloc = xloc.bar_time)
+    var label l_abel    = label.new(na,na)
+
+    if modeInput == PRESENT
+        l_ine.delete()
+        l_abel.delete()
+
+    l_ine   := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time,na,p_ivot.currentLevel), xloc.bar_time, color=structureColor, style=lineStyle)
+    l_abel  := label.new(chart.point.new(na,math.round(0.5*(p_ivot.barIndex+bar_index)),p_ivot.currentLevel), tag, xloc.bar_index, color=color(na), textcolor=structureColor, style=labelStyle, size = labelSize)
+
+// @function            删除订单块
+// @param internal      内部订单块为 true
+// @returns             orderBlock ID
+deleteOrderBlocks(bool internal = false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+
+    for [index,eachOrderBlock] in orderBlocks
+        bool crossedOderBlock = false
+
+        if bearishOrderBlockMitigationSource > eachOrderBlock.barHigh and eachOrderBlock.bias == BEARISH
+            crossedOderBlock := true
+            if internal
+                currentAlerts.internalBearishOrderBlock := true
+            else
+                currentAlerts.swingBearishOrderBlock    := true
+        else if bullishOrderBlockMitigationSource < eachOrderBlock.barLow and eachOrderBlock.bias == BULLISH
+            crossedOderBlock := true
+            if internal
+                currentAlerts.internalBullishOrderBlock := true
+            else
+                currentAlerts.swingBullishOrderBlock    := true
+        if crossedOderBlock
+            orderBlocks.remove(index)
+
+// @function            获取并存储订单块
+// @param p_ivot        基础枢轴点
+// @param internal      内部订单块为 true
+// @param bias          看涨或看跌
+// @returns             void
+storeOrdeBlock(pivot p_ivot,bool internal = false,int bias) =>
+    if (not internal and showSwingOrderBlocksInput) or (internal and showInternalOrderBlocksInput)
+
+        array<float> a_rray = na
+        int parsedIndex = na
+
+        if bias == BEARISH
+            a_rray      := parsedHighs.slice(p_ivot.barIndex,bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.max())
+        else
+            a_rray      := parsedLows.slice(p_ivot.barIndex,bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())
+
+        orderBlock o_rderBlock          = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex),bias)
+        array<orderBlock> orderBlocks   = internal ? internalOrderBlocks : swingOrderBlocks
+
+        if orderBlocks.size() >= 100
+            orderBlocks.pop()
+        orderBlocks.unshift(o_rderBlock)
+
+// @function            将订单块绘制为框
+// @param internal      内部订单块为 true
+// @returns             void
+drawOrderBlocks(bool internal = false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+    orderBlocksSize = orderBlocks.size()
+
+    if orderBlocksSize > 0
+        maxOrderBlocks                      = internal ? internalOrderBlocksSizeInput : swingOrderBlocksSizeInput
+        array<orderBlock> parsedOrdeBlocks  = orderBlocks.slice(0, math.min(maxOrderBlocks,orderBlocksSize))
+        array<box> b_oxes                   = internal ? internalOrderBlocksBoxes : swingOrderBlocksBoxes
+
+        for [index,eachOrderBlock] in parsedOrdeBlocks
+            orderBlockColor = styleInput == MONOCHROME ? (eachOrderBlock.bias == BEARISH ? color.new(MONO_BEARISH,80) : color.new(MONO_BULLISH,80)) : internal ? (eachOrderBlock.bias == BEARISH ? internalBearishOrderBlockColor : internalBullishOrderBlockColor) : (eachOrderBlock.bias == BEARISH ? swingBearishOrderBlockColor : swingBullishOrderBlockColor)
+
+            box b_ox        = b_oxes.get(index)
+            b_ox.set_top_left_point(    chart.point.new(eachOrderBlock.barTime,na,eachOrderBlock.barHigh))
+            b_ox.set_bottom_right_point(chart.point.new(last_bar_time,na,eachOrderBlock.barLow))
+            b_ox.set_border_color(      internal ? na : orderBlockColor)
+            b_ox.set_bgcolor(           orderBlockColor)
+
+// @function            检测并绘制结构，也检测并存储订单块
+// @param internal      内部结构或订单块为 true
+// @returns             void
+displayStructure(bool internal = false) =>
+    var bullishBar = true
+    var bearishBar = true
+
+    if internalFilterConfluenceInput
+        bullishBar := high - math.max(close, open) > math.min(close, open - low)
+        bearishBar := high - math.max(close, open) < math.min(close, open - low)
+
+    pivot p_ivot    = internal ? internalHigh : swingHigh
+    trend t_rend    = internal ? internalTrend : swingTrend
+
+    lineStyle       = internal ? line.style_dashed : line.style_solid
+    labelSize       = internal ? internalStructureSize : swingStructureSize
+
+    extraCondition  = internal ? internalHigh.currentLevel != swingHigh.currentLevel and bullishBar : true
+    bullishColor    = styleInput == MONOCHROME ? MONO_BULLISH : internal ? internalBullColorInput : swingBullColorInput
+
+    if ta.crossover(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+        string tag = t_rend.bias == BEARISH ? CHOCH : BOS
+
+        if internal
+            currentAlerts.internalBullishCHoCH  := tag == CHOCH
+            currentAlerts.internalBullishBOS    := tag == BOS
+        else
+            currentAlerts.swingBullishCHoCH     := tag == CHOCH
+            currentAlerts.swingBullishBOS       := tag == BOS
+
+        p_ivot.crossed  := true
+        t_rend.bias     := BULLISH
+
+        displayCondition = internal ? showInternalsInput and (showInternalBullInput == ALL or (showInternalBullInput == BOS and tag != CHOCH) or (showInternalBullInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBullInput == ALL or (showSwingBullInput == BOS and tag != CHOCH) or (showSwingBullInput == CHOCH and tag == CHOCH))
+
+        if displayCondition
+            drawStructure(p_ivot,tag,bullishColor,lineStyle,label.style_label_down,labelSize)
+
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrdeBlock(p_ivot,internal,BULLISH)
+
+    p_ivot          := internal ? internalLow : swingLow
+    extraCondition  := internal ? internalLow.currentLevel != swingLow.currentLevel and bearishBar : true
+    bearishColor    = styleInput == MONOCHROME ? MONO_BEARISH : internal ? internalBearColorInput : swingBearColorInput
+
+    if ta.crossunder(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+        string tag = t_rend.bias == BULLISH ? CHOCH : BOS
+
+        if internal
+            currentAlerts.internalBearishCHoCH  := tag == CHOCH
+            currentAlerts.internalBearishBOS    := tag == BOS
+        else
+            currentAlerts.swingBearishCHoCH     := tag == CHOCH
+            currentAlerts.swingBearishBOS       := tag == BOS
+
+        p_ivot.crossed := true
+        t_rend.bias := BEARISH
+
+        displayCondition = internal ? showInternalsInput and (showInternalBearInput == ALL or (showInternalBearInput == BOS and tag != CHOCH) or (showInternalBearInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBearInput == ALL or (showSwingBearInput == BOS and tag != CHOCH) or (showSwingBearInput == CHOCH and tag == CHOCH))
+
+        if displayCondition
+            drawStructure(p_ivot,tag,bearishColor,lineStyle,label.style_label_up,labelSize)
+
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrdeBlock(p_ivot,internal,BEARISH)
+
+// @function            绘制一个公允价值缺口框（每个公允价值缺口有两个框）
+// @param leftTime      左侧时间坐标
+// @param rightTime     右侧时间坐标
+// @param topPrice      顶部价格水平
+// @param bottomPrice   底部价格水平
+// @param boxColor      框颜色
+// @returns             框 ID
+fairValueGapBox(leftTime,rightTime,topPrice,bottomPrice,boxColor) => box.new(chart.point.new(leftTime,na,topPrice),chart.point.new(rightTime + fairValueGapsExtendInput * (time-time[1]),na,bottomPrice), xloc=xloc.bar_time, border_color = boxColor, bgcolor = boxColor)
+
+// @function            删除公允价值缺口
+// @returns             fairValueGap ID
+deleteFairValueGaps() =>
+    for [index,eachFairValueGap] in fairValueGaps
+        if (low < eachFairValueGap.bottom and eachFairValueGap.bias == BULLISH) or (high > eachFairValueGap.top and eachFairValueGap.bias == BEARISH)
+            eachFairValueGap.topBox.delete()
+            eachFairValueGap.bottomBox.delete()
+            fairValueGaps.remove(index)
+
+// @function            绘制公允价值缺口
+// @returns             fairValueGap ID
+drawFairValueGaps() =>
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]],lookahead = barmerge.lookahead_on)
+
+    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
+    newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
+    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+
+    bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
+    bearishFairValueGap = currentHigh < last2Low and lastClose < last2Low and -barDeltaPercent > threshold and newTimeframe
+
+    if bullishFairValueGap
+        currentAlerts.bullishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentLow,last2High,BULLISH,fairValueGapBox(lastTime,currentTime,currentLow,math.avg(currentLow,last2High),fairValueGapBullishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentLow,last2High),last2High,fairValueGapBullishColor)))
+    if bearishFairValueGap
+        currentAlerts.bearishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentHigh,last2Low,BEARISH,fairValueGapBox(lastTime,currentTime,currentHigh,math.avg(currentHigh,last2Low),fairValueGapBearishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentHigh,last2Low),last2Low,fairValueGapBearishColor)))
+
+// @function            从字符串获取线条样式
+// @param style         线条样式
+// @returns             string
+getStyle(string style) =>
+    switch style
+        SOLID => line.style_solid
+        DASHED => line.style_dashed
+        DOTTED => line.style_dotted
+
+// @function            绘制多时间框架水平
+// @param timeframe     基础时间框架
+// @param sameTimeframe 如果图表时间框架与基础时间框架相同，则为 true
+// @param style         线条样式
+// @param levelColor    线条和文本颜色
+// @returns             void
+drawLevels(string timeframe, bool sameTimeframe, string style, color levelColor) =>
+    [topLevel, bottomLevel, leftTime, rightTime] = request.security(syminfo.tickerid, timeframe, [high[1], low[1], time[1], time],lookahead = barmerge.lookahead_on)
+
+    float parsedTop         = sameTimeframe ? high : topLevel
+    float parsedBottom      = sameTimeframe ? low : bottomLevel
+
+    int parsedLeftTime      = sameTimeframe ? time : leftTime
+    int parsedRightTime     = sameTimeframe ? time : rightTime
+
+    int parsedTopTime       = time
+    int parsedBottomTime    = time
+
+    if not sameTimeframe
+        int leftIndex               = times.binary_search_rightmost(parsedLeftTime)
+        int rightIndex              = times.binary_search_rightmost(parsedRightTime)
+
+        array<int> timeArray        = times.slice(leftIndex,rightIndex)
+        array<float> topArray       = highs.slice(leftIndex,rightIndex)
+        array<float> bottomArray    = lows.slice(leftIndex,rightIndex)
+
+        parsedTopTime               := timeArray.size() > 0 ? timeArray.get(topArray.indexof(topArray.max())) : initialTime
+        parsedBottomTime            := timeArray.size() > 0 ? timeArray.get(bottomArray.indexof(bottomArray.min())) : initialTime
+
+    var line topLine        = line.new(na, na, na, na, xloc = xloc.bar_time, color = levelColor, style = getStyle(style))
+    var line bottomLine     = line.new(na, na, na, na, xloc = xloc.bar_time, color = levelColor, style = getStyle(style))
+    var label topLabel      = label.new(na, na, xloc = xloc.bar_time, text = str.format('P{0}H',timeframe), color=color(na), textcolor = levelColor, size = size.small, style = label.style_label_left)
+    var label bottomLabel   = label.new(na, na, xloc = xloc.bar_time, text = str.format('P{0}L',timeframe), color=color(na), textcolor = levelColor, size = size.small, style = label.style_label_left)
+
+    topLine.set_first_point(    chart.point.new(parsedTopTime,na,parsedTop))
+    topLine.set_second_point(   chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedTop))
+    topLabel.set_point(         chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedTop))
+
+    bottomLine.set_first_point( chart.point.new(parsedBottomTime,na,parsedBottom))
+    bottomLine.set_second_point(chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedBottom))
+    bottomLabel.set_point(      chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedBottom))
+
+// @function            如果图表时间框架高于提供的时间框架，则为 true
+// @param timeframe     要检查的时间框架
+// @returns             bool
+higherTimeframe(string timeframe) => timeframe.in_seconds() > timeframe.in_seconds(timeframe)
+
+// @function            更新跟随摆动点
+// @returns             int
+updateTrailingExtremes() =>
+    trailing.top            := math.max(high,trailing.top)
+    trailing.lastTopTime    := trailing.top == high ? time : trailing.lastTopTime
+    trailing.bottom         := math.min(low,trailing.bottom)
+    trailing.lastBottomTime := trailing.bottom == low ? time : trailing.lastBottomTime
+
+// @function            绘制跟随摆动点
+// @returns             void
+drawHighLowSwings() =>
+    var line topLine        = line.new(na, na, na, na, color = swingBearishColor, xloc = xloc.bar_time)
+    var line bottomLine     = line.new(na, na, na, na, color = swingBullishColor, xloc = xloc.bar_time)
+    var label topLabel      = label.new(na, na, color=color(na), textcolor = swingBearishColor, xloc = xloc.bar_time, style = label.style_label_down, size = size.tiny)
+    var label bottomLabel   = label.new(na, na, color=color(na), textcolor = swingBullishColor, xloc = xloc.bar_time, style = label.style_label_up, size = size.tiny)
+
+    rightTimeBar            = last_bar_time + 20 * (time - time[1])
+
+    topLine.set_first_point(    chart.point.new(trailing.lastTopTime, na, trailing.top))
+    topLine.set_second_point(   chart.point.new(rightTimeBar, na, trailing.top))
+    topLabel.set_point(         chart.point.new(rightTimeBar, na, trailing.top))
+    topLabel.set_text(          swingTrend.bias == BEARISH ? '强高点' : '弱高点')
+
+    bottomLine.set_first_point( chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
+    bottomLine.set_second_point(chart.point.new(rightTimeBar, na, trailing.bottom))
+    bottomLabel.set_point(      chart.point.new(rightTimeBar, na, trailing.bottom))
+    bottomLabel.set_text(       swingTrend.bias == BULLISH ? '强低点' : '弱低点')
+
+// @function            绘制带有标签和框的区域
+// @param labelLevel    标签的价格水平
+// @param labelIndex    标签的柱索引
+// @param top           框的顶部价格水平
+// @param bottom        框的底部价格水平
+// @param tag           要显示的文本
+// @param zoneColor     基础颜色
+// @param style         标签样式
+// @returns             void
+drawZone(float labelLevel, int labelIndex, float top, float bottom, string tag, color zoneColor, string style) =>
+    var label l_abel    = label.new(na,na,text = tag, color=color(na),textcolor = zoneColor, style = style, size = size.small)
+    var box b_ox        = box.new(na,na,na,na,bgcolor = color.new(zoneColor,80),border_color = color(na), xloc = xloc.bar_time)
+
+    b_ox.set_top_left_point(    chart.point.new(trailing.barTime,na,top))
+    b_ox.set_bottom_right_point(chart.point.new(last_bar_time,na,bottom))
+
+    l_abel.set_point(           chart.point.new(na,labelIndex,labelLevel))
+
+// @function            绘制溢价/折价区域
+// @returns             void
+drawPremiumDiscountZones() =>
+    drawZone(trailing.top, math.round(0.5*(trailing.barIndex + last_bar_index)), trailing.top, 0.95*trailing.top + 0.05*trailing.bottom, '溢价', premiumZoneColor, label.style_label_down)
+
+    equilibriumLevel = math.avg(trailing.top, trailing.bottom)
+    drawZone(equilibriumLevel, last_bar_index, 0.525*trailing.top + 0.475*trailing.bottom, 0.525*trailing.bottom + 0.475*trailing.top, '均衡', equilibriumZoneColorInput, label.style_label_left)
+
+    drawZone(trailing.bottom, math.round(0.5*(trailing.barIndex + last_bar_index)), 0.95*trailing.bottom + 0.05*trailing.top, trailing.bottom, '折价', discountZoneColor, label.style_label_up)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//可变变量 & 执行
+//---------------------------------------------------------------------------------------------------------------------{
+parsedOpen  = showTrendInput ? open : na
+candleColor = internalTrend.bias == BULLISH ? swingBullishColor : swingBearishColor
+plotcandle(parsedOpen,high,low,close,color = candleColor, wickcolor = candleColor, bordercolor = candleColor)
+
+if showHighLowSwingsInput or showPremiumDiscountZonesInput
+    updateTrailingExtremes()
+
+    if showHighLowSwingsInput
+        drawHighLowSwings()
+
+    if showPremiumDiscountZonesInput
+        drawPremiumDiscountZones()
+
+if showFairValueGapsInput
+    deleteFairValueGaps()
+
+getCurrentStructure(swingsLengthInput,false)
+getCurrentStructure(5,false,true)
+
+if showEqualHighsLowsInput
+    getCurrentStructure(equalHighsLowsLengthInput,true)
+
+if showInternalsInput or showInternalOrderBlocksInput or showTrendInput
+    displayStructure(true)
+
+if showStructureInput or showSwingOrderBlocksInput or showHighLowSwingsInput
+    displayStructure()
+
+if showInternalOrderBlocksInput
+    deleteOrderBlocks(true)
+
+if showSwingOrderBlocksInput
+    deleteOrderBlocks()
+
+if showFairValueGapsInput
+    drawFairValueGaps()
+
+if barstate.islastconfirmedhistory or barstate.islast
+    if showInternalOrderBlocksInput
+        drawOrderBlocks(true)
+
+    if showSwingOrderBlocksInput
+        drawOrderBlocks()
+
+lastBarIndex    := currentBarIndex
+currentBarIndex := bar_index
+newBar          = currentBarIndex != lastBarIndex
+
+if barstate.islastconfirmedhistory or (barstate.isrealtime and newBar)
+    if showDailyLevelsInput and not higherTimeframe('D')
+        drawLevels('D',timeframe.isdaily,dailyLevelsStyleInput,dailyLevelsColorInput)
+
+    if showWeeklyLevelsInput and not higherTimeframe('W')
+        drawLevels('W',timeframe.isweekly,weeklyLevelsStyleInput,weeklyLevelsColorInput)
+
+    if showMonthlyLevelsInput and not higherTimeframe('M')
+        drawLevels('M',timeframe.ismonthly,monthlyLevelsStyleInput,monthlyLevelsColorInput)
+
+
+//---------------------------------------------------------------------------------------------------------------------}
+//警报
+//---------------------------------------------------------------------------------------------------------------------{
+alertcondition(currentAlerts.internalBullishBOS,        '内部看涨 BOS',         '形成内部看涨 BOS')
+alertcondition(currentAlerts.internalBullishCHoCH,      '内部看涨 CHoCH',       '形成内部看涨 CHoCH')
+alertcondition(currentAlerts.internalBearishBOS,        '内部看跌 BOS',         '形成内部看跌 BOS')
+alertcondition(currentAlerts.internalBearishCHoCH,      '内部看跌 CHoCH',       '形成内部看跌 CHoCH')
+
+alertcondition(currentAlerts.swingBullishBOS,           '看涨 BOS',                  '形成看涨 BOS')
+alertcondition(currentAlerts.swingBullishCHoCH,         '看涨 CHoCH',                '形成看涨 CHoCH')
+alertcondition(currentAlerts.swingBearishBOS,           '看跌 BOS',                  '形成看跌 BOS')
+alertcondition(currentAlerts.swingBearishCHoCH,         '看跌 CHoCH',                '形成看跌 CHoCH')
+
+alertcondition(currentAlerts.internalBullishOrderBlock, '看涨内部 OB 突破', '价格突破看涨内部 OB')
+alertcondition(currentAlerts.internalBearishOrderBlock, '看跌内部 OB 突破', '价格突破看跌内部 OB')
+alertcondition(currentAlerts.swingBullishOrderBlock,    '看涨摆动 OB 突破',    '价格突破看涨摆动 OB')
+alertcondition(currentAlerts.swingBearishOrderBlock,    '看跌摆动 OB 突破',    '价格突破看跌摆动 OB')
+
+alertcondition(currentAlerts.equalHighs,                '等高',                  '检测到等高')
+alertcondition(currentAlerts.equalLows,                 '等低',                   '检测到等低')
+
+alertcondition(currentAlerts.bullishFairValueGap,       '看涨 FVG',                  '形成看涨 FVG')
+alertcondition(currentAlerts.bearishFairValueGap,       '看跌 FVG',                  '形成看跌 FVG')
+
+
+//---------------------------------------------------------------------------------------------------------------------}
+//策略分析与心理偏差模块
+//---------------------------------------------------------------------------------------------------------------------{
+
+// @function            统计当前市场结构信号（滚动1小时窗口）
+// @returns             void
+updateMarketStructureStats() =>
+    // 计算当前K线的信号
+    int currentBullSignal = 0
+    int currentBearSignal = 0
+
+    // 统计当前K线的看涨信号
+    if currentAlerts.internalBullishBOS or currentAlerts.internalBullishCHoCH
+        currentBullSignal += int(strategyWeightInternal)
+    if currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH
+        currentBullSignal += int(strategyWeightSwing * 1.5)
+    if currentAlerts.internalBullishOrderBlock or currentAlerts.swingBullishOrderBlock
+        currentBullSignal += int(strategyWeightOrderBlock)
+    if currentAlerts.bullishFairValueGap
+        currentBullSignal += int(strategyWeightFVG)
+
+    // 统计当前K线的看跌信号
+    if currentAlerts.internalBearishBOS or currentAlerts.internalBearishCHoCH
+        currentBearSignal += int(strategyWeightInternal)
+    if currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH
+        currentBearSignal += int(strategyWeightSwing * 1.5)
+    if currentAlerts.internalBearishOrderBlock or currentAlerts.swingBearishOrderBlock
+        currentBearSignal += int(strategyWeightOrderBlock)
+    if currentAlerts.bearishFairValueGap
+        currentBearSignal += int(strategyWeightFVG)
+
+    // 记录信号到历史数组
+    if currentBullSignal > 0 or currentBearSignal > 0
+        signalTimes.unshift(time)
+        signalTypes.unshift(currentBullSignal - currentBearSignal)
+
+        // 限制数组大小防止内存溢出
+        if signalTimes.size() > 500
+            signalTimes.pop()
+            signalTypes.pop()
+
+    // 计算时间窗口（根据用户设置的分钟数）
+    timeWindowMs = signalTimeWindow * 60 * 1000  // 转换为毫秒
+    windowStartTime = time - timeWindowMs
+
+    int bullCount = 0
+    int bearCount = 0
+    var array<int> recentSignals = array.new<int>()
+    array.clear(recentSignals)
+
+    // 统计时间窗口内的信号
+    if signalTimes.size() > 0
+        for i = 0 to signalTimes.size() - 1
+            signalTime = signalTimes.get(i)
+
+            // 只统计时间窗口内的信号
+            if signalTime >= windowStartTime
+                signalValue = signalTypes.get(i)
+
+                if signalValue > 0
+                    bullCount += signalValue
+                    array.push(recentSignals, 1)
+                else if signalValue < 0
+                    bearCount += math.abs(signalValue)
+                    array.push(recentSignals, -1)
+            else
+                // 信号已经超出时间窗口,停止遍历
+                break
+
+    // 计算连续性（基于最近的信号）
+    int consecutiveBull = 0
+    int consecutiveBear = 0
+
+    if array.size(recentSignals) > 0
+        // 从最新信号开始检查连续性（从后往前，最多10个）
+        int startIdx = array.size(recentSignals) - 1
+        int endIdx = math.max(0, array.size(recentSignals) - 11)
+
+        for i = 0 to (startIdx - endIdx)
+            actualIdx = startIdx - i
+            sig = array.get(recentSignals, actualIdx)
+            if sig > 0
+                if consecutiveBear == 0
+                    consecutiveBull += 1
+                else
+                    break
+            else if sig < 0
+                if consecutiveBull == 0
+                    consecutiveBear += 1
+                else
+                    break
+
+    // 更新统计
+    structureStats.bullishSignals := bullCount
+    structureStats.bearishSignals := bearCount
+    structureStats.consecutiveBullish := consecutiveBull
+    structureStats.consecutiveBearish := consecutiveBear
+
+    if bullCount > 0 or bearCount > 0
+        structureStats.lastUpdateTime := time
+
+// @function            根据市场结构确定交易策略
+// @returns             void
+determineTradingStrategy() =>
+    // 计算信号强度 (-100 到 +100)
+    totalBullish = structureStats.bullishSignals + structureStats.consecutiveBullish * 2
+    totalBearish = structureStats.bearishSignals + structureStats.consecutiveBearish * 2
+
+    maxSignal = math.max(totalBullish, totalBearish, 1)
+    signalStrength = ((totalBullish - totalBearish) / maxSignal) * 100
+
+    currentStrategy.signalStrength := signalStrength
+
+    // 确定策略类型
+    string newStrategy = STRATEGY_NEUTRAL
+    float confidence = math.abs(signalStrength)
+
+    if signalStrength > 60
+        newStrategy := STRATEGY_AGGRESSIVE_LONG
+        confidence := math.min(confidence, 95)
+    else if signalStrength > 30
+        newStrategy := STRATEGY_MODERATE_LONG
+        confidence := math.min(confidence * 1.2, 80)
+    else if signalStrength < -60
+        newStrategy := STRATEGY_AGGRESSIVE_SHORT
+        confidence := math.min(confidence, 95)
+    else if signalStrength < -30
+        newStrategy := STRATEGY_MODERATE_SHORT
+        confidence := math.min(confidence * 1.2, 80)
+    else
+        newStrategy := STRATEGY_NEUTRAL
+        confidence := 50 - math.abs(signalStrength)
+
+    // 更新策略
+    if currentStrategy.strategyType != newStrategy
+        currentStrategy.lastChangeTime := time
+        strategyHistory.unshift(str.format('{0}@{1}', newStrategy, time))
+        if strategyHistory.size() > 20
+            strategyHistory.pop()
+
+    currentStrategy.strategyType := newStrategy
+    currentStrategy.confidence := confidence
+
+// @function            分析交易心理偏差
+// @returns             void
+analyzePsychoBias() =>
+    // 情绪状态基于市场结构的连续性
+    emotionalSwing = (structureStats.consecutiveBullish - structureStats.consecutiveBearish) * 10
+    retailPsycho.emotionalState := math.max(-100, math.min(100, emotionalSwing))
+
+    // FOMO检测：连续同向信号
+    fomoTriggered = false
+    if structureStats.consecutiveBullish >= psychoFomoThreshold or structureStats.consecutiveBearish >= psychoFomoThreshold
+        fomoTriggered := true
+        retailPsycho.activeBias := BIAS_FOMO
+        retailPsycho.biasStrength := math.min(100, math.max(structureStats.consecutiveBullish, structureStats.consecutiveBearish) * 20)
+
+    // 报复交易检测：连续亏损（模拟）
+    if retailPsycho.consecutiveLosses >= psychoRevengeThreshold
+        retailPsycho.activeBias := BIAS_REVENGE
+        retailPsycho.biasStrength := math.min(100, retailPsycho.consecutiveLosses * 25)
+
+    // 过度自信检测：连续盈利（模拟）
+    else if retailPsycho.consecutiveWins >= psychoOverconfidenceThreshold
+        retailPsycho.activeBias := BIAS_OVERCONFIDENCE
+        retailPsycho.biasStrength := math.min(100, retailPsycho.consecutiveWins * 25)
+
+    // 损失厌恶检测：当前亏损且情绪低落
+    else if retailPsycho.emotionalState < -50 and retailPsycho.lastTradeResult == -1
+        retailPsycho.activeBias := BIAS_LOSS_AVERSION
+        retailPsycho.biasStrength := math.abs(retailPsycho.emotionalState)
+
+    // 羊群效应：跟随趋势
+    else if math.abs(currentStrategy.signalStrength) > 70
+        retailPsycho.activeBias := BIAS_HERD
+        retailPsycho.biasStrength := math.abs(currentStrategy.signalStrength)
+
+    // 无偏差状态
+    else if not fomoTriggered
+        retailPsycho.activeBias := ''
+        retailPsycho.biasStrength := 0
+
+    // 计算交易频率（高频模式下）
+    if enableHighFrequencyMode
+        baseFrequency = 1.0  // 基础：每小时1次
+
+        // 心理偏差增加交易频率
+        biasMultiplier = 1.0 + (retailPsycho.biasStrength / 100) * 3  // 最高4倍
+
+        // FOMO和报复交易显著增加频率
+        if retailPsycho.activeBias == BIAS_FOMO or retailPsycho.activeBias == BIAS_REVENGE
+            biasMultiplier *= 2
+
+        retailPsycho.tradeFrequency := baseFrequency * biasMultiplier
+
+// @function            模拟散户高频交易行为
+// @returns             bool 是否应该执行交易
+simulateRetailTrading() =>
+    if not enableHighFrequencyMode
+        false
+    else
+        // 基于交易频率和心理偏差决定是否交易
+        tradeSignal = false
+
+        // 计算交易概率（基于频率）
+        barsPerHour = timeframe.in_seconds() > 0 ? 3600 / timeframe.in_seconds() : 60
+        tradeProbability = retailPsycho.tradeFrequency / barsPerHour
+
+        // 心理偏差下的冲动交易
+        if retailPsycho.biasStrength > 60
+            tradeProbability *= 1.5
+
+        // 随机判定（简化模拟）
+        randomFactor = (bar_index % 100) / 100.0
+        tradeSignal := randomFactor < tradeProbability
+
+        // 记录交易结果（简化：基于当前信号方向）
+        if tradeSignal
+            // 模拟交易结果
+            correctDirection = (currentStrategy.signalStrength > 0 and close > open) or (currentStrategy.signalStrength < 0 and close < open)
+
+            // 心理偏差降低胜率
+            winProbability = correctDirection ? 0.55 : 0.45
+            if retailPsycho.activeBias == BIAS_FOMO
+                winProbability -= 0.15  // FOMO降低胜率
+            if retailPsycho.activeBias == BIAS_REVENGE
+                winProbability -= 0.20  // 报复交易更差
+            if retailPsycho.activeBias == BIAS_OVERCONFIDENCE
+                winProbability -= 0.10  // 过度自信
+
+            isWin = randomFactor < winProbability
+
+            if isWin
+                retailPsycho.consecutiveWins += 1
+                retailPsycho.consecutiveLosses := 0
+                retailPsycho.lastTradeResult := 1
+                tradeResults.unshift(1.0)
+            else
+                retailPsycho.consecutiveLosses += 1
+                retailPsycho.consecutiveWins := 0
+                retailPsycho.lastTradeResult := -1
+                tradeResults.unshift(-1.0)
+
+            // 限制历史记录大小
+            if tradeResults.size() > 100
+                tradeResults.pop()
+
+        tradeSignal
+
+// @function            绘制策略分析面板
+// @returns             void
+drawStrategyPanel() =>
+    if showStrategyAnalysisInput
+        // 创建表格
+        var table strategyTable = table.new(
+             position = strategyTablePositionInput == 'top_left' ? position.top_left :
+                       strategyTablePositionInput == 'top_center' ? position.top_center :
+                       strategyTablePositionInput == 'top_right' ? position.top_right :
+                       strategyTablePositionInput == 'middle_left' ? position.middle_left :
+                       strategyTablePositionInput == 'middle_center' ? position.middle_center :
+                       strategyTablePositionInput == 'middle_right' ? position.middle_right :
+                       strategyTablePositionInput == 'bottom_left' ? position.bottom_left :
+                       strategyTablePositionInput == 'bottom_center' ? position.bottom_center :
+                       position.bottom_right,
+             columns = 2,
+             rows = 6,
+             bgcolor = color.new(color.black, 10),
+             border_width = 2,
+             border_color = color.new(color.gray, 30)
+         )
+
+        // 标题
+        table.cell(strategyTable, 0, 0, '策略分析', bgcolor = color.new(color.blue, 70), text_color = color.white, text_size = size.normal)
+        table.merge_cells(strategyTable, 0, 0, 1, 0)
+
+        // 当前策略
+        strategyColor = (currentStrategy.strategyType == STRATEGY_AGGRESSIVE_LONG or currentStrategy.strategyType == STRATEGY_MODERATE_LONG) ? color.new(color.green, 70) : (currentStrategy.strategyType == STRATEGY_AGGRESSIVE_SHORT or currentStrategy.strategyType == STRATEGY_MODERATE_SHORT) ? color.new(color.red, 70) : color.new(color.gray, 70)
+
+        table.cell(strategyTable, 0, 1, '当前策略', text_color = color.white, text_size = size.small)
+        table.cell(strategyTable, 1, 1, currentStrategy.strategyType, bgcolor = strategyColor, text_color = color.white, text_size = size.small)
+
+        // 信心度
+        table.cell(strategyTable, 0, 2, '信心度', text_color = color.white, text_size = size.small)
+        table.cell(strategyTable, 1, 2, str.format('{0,number,#.0}%', currentStrategy.confidence), text_color = color.white, text_size = size.small)
+
+        // 信号强度
+        table.cell(strategyTable, 0, 3, '信号强度', text_color = color.white, text_size = size.small)
+        signalText = str.format('{0,number,#.0}', currentStrategy.signalStrength)
+        signalColor = currentStrategy.signalStrength > 0 ? color.green : currentStrategy.signalStrength < 0 ? color.red : color.gray
+        table.cell(strategyTable, 1, 3, signalText, text_color = signalColor, text_size = size.small)
+
+        // 看涨信号
+        table.cell(strategyTable, 0, 4, '看涨信号', text_color = color.white, text_size = size.small)
+        table.cell(strategyTable, 1, 4, str.tostring(structureStats.bullishSignals), text_color = color.green, text_size = size.small)
+
+        // 看跌信号
+        table.cell(strategyTable, 0, 5, '看跌信号', text_color = color.white, text_size = size.small)
+        table.cell(strategyTable, 1, 5, str.tostring(structureStats.bearishSignals), text_color = color.red, text_size = size.small)
+
+// @function            绘制心理偏差分析面板
+// @returns             void
+drawPsychoPanel() =>
+    if showPsychoBiasInput
+        // 创建表格
+        var table psychoTable = table.new(
+             position = psychoTablePositionInput == 'top_left' ? position.top_left :
+                       psychoTablePositionInput == 'top_center' ? position.top_center :
+                       psychoTablePositionInput == 'top_right' ? position.top_right :
+                       psychoTablePositionInput == 'middle_left' ? position.middle_left :
+                       psychoTablePositionInput == 'middle_center' ? position.middle_center :
+                       psychoTablePositionInput == 'middle_right' ? position.middle_right :
+                       psychoTablePositionInput == 'bottom_left' ? position.bottom_left :
+                       psychoTablePositionInput == 'bottom_center' ? position.bottom_center :
+                       position.bottom_right,
+             columns = 2,
+             rows = 7,
+             bgcolor = color.new(color.black, 10),
+             border_width = 2,
+             border_color = color.new(color.orange, 30)
+         )
+
+        // 标题
+        table.cell(psychoTable, 0, 0, '交易心理偏差', bgcolor = color.new(color.orange, 70), text_color = color.white, text_size = size.normal)
+        table.merge_cells(psychoTable, 0, 0, 1, 0)
+
+        // 当前偏差
+        biasText = retailPsycho.activeBias != '' ? retailPsycho.activeBias : '无偏差'
+        biasColor = retailPsycho.biasStrength > 60 ? color.new(color.red, 70) : retailPsycho.biasStrength > 30 ? color.new(color.orange, 70) : color.new(color.gray, 70)
+
+        table.cell(psychoTable, 0, 1, '当前偏差', text_color = color.white, text_size = size.small)
+        table.cell(psychoTable, 1, 1, biasText, bgcolor = biasColor, text_color = color.white, text_size = size.small)
+
+        // 偏差强度
+        table.cell(psychoTable, 0, 2, '偏差强度', text_color = color.white, text_size = size.small)
+        table.cell(psychoTable, 1, 2, str.format('{0,number,#.0}%', retailPsycho.biasStrength), text_color = color.orange, text_size = size.small)
+
+        // 情绪状态
+        table.cell(psychoTable, 0, 3, '情绪状态', text_color = color.white, text_size = size.small)
+        emotionText = retailPsycho.emotionalState > 50 ? '极度贪婪' : retailPsycho.emotionalState > 20 ? '贪婪' : retailPsycho.emotionalState > -20 ? '中性' : retailPsycho.emotionalState > -50 ? '恐慌' : '极度恐慌'
+        emotionColor = retailPsycho.emotionalState > 0 ? color.green : color.red
+        table.cell(psychoTable, 1, 3, emotionText, text_color = emotionColor, text_size = size.small)
+
+        // 连续盈利
+        table.cell(psychoTable, 0, 4, '连续盈利', text_color = color.white, text_size = size.small)
+        table.cell(psychoTable, 1, 4, str.tostring(retailPsycho.consecutiveWins), text_color = color.green, text_size = size.small)
+
+        // 连续亏损
+        table.cell(psychoTable, 0, 5, '连续亏损', text_color = color.white, text_size = size.small)
+        table.cell(psychoTable, 1, 5, str.tostring(retailPsycho.consecutiveLosses), text_color = color.red, text_size = size.small)
+
+        // 交易频率（高频模式）
+        if enableHighFrequencyMode
+            table.cell(psychoTable, 0, 6, '交易频率/时', text_color = color.white, text_size = size.small)
+            table.cell(psychoTable, 1, 6, str.format('{0,number,#.1}', retailPsycho.tradeFrequency), text_color = color.yellow, text_size = size.small)
+
+// 执行策略和心理分析
+updateMarketStructureStats()
+determineTradingStrategy()
+analyzePsychoBias()
+
+// 模拟散户交易（高频模式）
+tradeExecuted = simulateRetailTrading()
+
+
+//---------------------------------------------------------------------------------------------------------------------}
+//交易信号与下单逻辑
+//---------------------------------------------------------------------------------------------------------------------{
+
+// @function            生成进场信号
+// @returns             [做多信号, 做空信号]
+getEntrySignals() =>
+    bool longSignal = false
+    bool shortSignal = false
+
+    // 基于当前策略类型生成信号
+    if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_LONG
+        // 激进做多：BOS/CHoCH + 看涨订单块
+        longSignal := (currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH or currentAlerts.internalBullishBOS) and currentStrategy.confidence > 70
+
+    else if currentStrategy.strategyType == STRATEGY_MODERATE_LONG
+        // 稳健做多：确认多个看涨结构
+        longSignal := structureStats.consecutiveBullish >= 2 and structureStats.bullishSignals > structureStats.bearishSignals and currentStrategy.confidence > 60
+
+    else if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_SHORT
+        // 激进做空：BOS/CHoCH + 看跌订单块
+        shortSignal := (currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH or currentAlerts.internalBearishBOS) and currentStrategy.confidence > 70
+
+    else if currentStrategy.strategyType == STRATEGY_MODERATE_SHORT
+        // 稳健做空：确认多个看跌结构
+        shortSignal := structureStats.consecutiveBearish >= 2 and structureStats.bearishSignals > structureStats.bullishSignals and currentStrategy.confidence > 60
+
+    [longSignal, shortSignal]
+
+// @function            生成出场信号
+// @returns             [平多信号, 平空信号]
+getExitSignals() =>
+    bool exitLong = false
+    bool exitShort = false
+
+    // 反转信号出场
+    if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_SHORT or currentStrategy.strategyType == STRATEGY_MODERATE_SHORT
+        exitLong := true
+
+    if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_LONG or currentStrategy.strategyType == STRATEGY_MODERATE_LONG
+        exitShort := true
+
+    // 观望策略出场所有持仓
+    if currentStrategy.strategyType == STRATEGY_NEUTRAL
+        exitLong := true
+        exitShort := true
+
+    // 心理偏差触发出场（FOMO/报复交易等）
+    if retailPsycho.activeBias == BIAS_FOMO or retailPsycho.activeBias == BIAS_REVENGE
+        if retailPsycho.biasStrength > 80
+            exitLong := true
+            exitShort := true
+
+    [exitLong, exitShort]
+
+// @function            做多下单
+// @param id            订单ID
+// @param entryCond     进场条件
+placeLong(string id, bool entryCond) =>
+    if entryCond and enableTrading
+        // 计算合约数量
+        qty = (strategy.equity * orderSizePct / 100) / close
+        strategy.entry(id, strategy.long, qty = qty, comment = id)
+        // 设置止损止盈
+        stopPrice = close - atr14 * slAtrMult
+        takePrice = close + atr14 * tpAtrMult
+        strategy.exit(id + ':TP/SL', from_entry = id, stop = stopPrice, limit = takePrice)
+        alert(strategyAlertPayload, alert.freq_once_per_bar_close)
+
+// @function            做空下单
+// @param id            订单ID
+// @param entryCond     进场条件
+placeShort(string id, bool entryCond) =>
+    if entryCond and enableTrading
+        // 计算合约数量
+        qty = (strategy.equity * orderSizePct / 100) / close
+        strategy.entry(id, strategy.short, qty = qty, comment = id)
+        // 设置止损止盈
+        stopPrice = close + atr14 * slAtrMult
+        takePrice = close - atr14 * tpAtrMult
+        strategy.exit(id + ':TP/SL', from_entry = id, stop = stopPrice, limit = takePrice)
+        alert(strategyAlertPayload, alert.freq_once_per_bar_close)
+
+// 获取交易信号
+[longEntry, shortEntry] = getEntrySignals()
+[exitLong, exitShort] = getExitSignals()
+
+// 执行交易逻辑
+if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_LONG
+    placeLong('激进做多', longEntry)
+    if exitLong
+        strategy.close('激进做多')
+
+if currentStrategy.strategyType == STRATEGY_MODERATE_LONG
+    placeLong('稳健做多', longEntry)
+    if exitLong
+        strategy.close('稳健做多')
+
+if currentStrategy.strategyType == STRATEGY_AGGRESSIVE_SHORT
+    placeShort('激进做空', shortEntry)
+    if exitShort
+        strategy.close('激进做空')
+
+if currentStrategy.strategyType == STRATEGY_MODERATE_SHORT
+    placeShort('稳健做空', shortEntry)
+    if exitShort
+        strategy.close('稳健做空')
+
+// 可视化交易信号
+plotshape(longEntry and enableTrading, title = '做多信号', location = location.belowbar, color = color.new(color.green, 0), style = shape.triangleup, size = size.small)
+plotshape(shortEntry and enableTrading, title = '做空信号', location = location.abovebar, color = color.new(color.red, 0), style = shape.triangledown, size = size.small)
+
+// 绘制分析面板
+if barstate.islast
+    drawStrategyPanel()
+    drawPsychoPanel()
+
+// 在图表上标记交易信号（高频模式）
+if enableHighFrequencyMode and tradeExecuted
+    tradeColor = retailPsycho.lastTradeResult == 1 ? color.new(color.green, 80) : color.new(color.red, 80)
+    label.new(bar_index, high, '●', color = color(na), textcolor = tradeColor, style = label.style_label_down, size = size.tiny)
+
+//---------------------------------------------------------------------------------------------------------------------}

@@ -1,0 +1,180 @@
+//@version=6
+indicator(shorttitle="Kombo İndikatör", title="WT + RSI + MACD Kombine İndikatör")
+
+// ====== AYARLAR BÖLÜMÜ ======
+// Genel ayarlar
+showWaveTrend = input.bool(true, "WaveTrend Göster", group="Görünüm")
+showMACD = input.bool(true, "MACD Göster", group="Görünüm")
+showRSI = input.bool(true, "RSI Göster", group="Görünüm")
+showDots = input.bool(true, "Kesişim Noktalarını Göster", group="Görünüm")
+showSignals = input.bool(true, "Sinyal Etiketleri Göster", group="Görünüm")
+
+// ====== WAVETREND AYARLARI ======
+wt_group = "WaveTrend Ayarları"
+n1 = input.int(10, "Kanal Uzunluğu", group=wt_group)
+n2 = input.int(21, "Ortalama Uzunluğu", group=wt_group)
+obLevel1 = input.float(60, "Aşırı Alım Seviyesi 1", group=wt_group)
+obLevel2 = input.float(53, "Aşırı Alım Seviyesi 2", group=wt_group)
+osLevel1 = input.float(-60, "Aşırı Satım Seviyesi 1", group=wt_group)
+osLevel2 = input.float(-53, "Aşırı Satım Seviyesi 2", group=wt_group)
+
+// ====== MACD AYARLARI ======
+macd_group = "MACD Ayarları"
+fastLength = input.int(12, "Hızlı Periyot", group=macd_group)
+slowLength = input.int(26, "Yavaş Periyot", group=macd_group)
+signalLength = input.int(9, "Sinyal Periyodu", group=macd_group)
+hist_colorChange = input.bool(true, "MACD Histogram 4 Renk?", group=macd_group)
+macd_colorChange = input.bool(true, "MACD Çizgi Renk Değişimi?", group=macd_group)
+
+// ====== RSI AYARLARI ======
+rsi_group = "RSI Ayarları"
+rsiLength = input.int(14, "RSI Periyodu", group=rsi_group)
+rsiOverbought = input.int(70, "RSI Aşırı Alım Seviyesi", group=rsi_group)
+rsiOversold = input.int(30, "RSI Aşırı Satım Seviyesi", group=rsi_group)
+
+// ====== WAVETREND HESAPLAMALARI ======
+ap = hlc3 
+esa = ta.ema(ap, n1)
+d = ta.ema(math.abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, n2)
+ 
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+wt_diff = wt1 - wt2
+
+// WaveTrend sinyalleri
+wt_cross_up = ta.crossover(wt1, wt2) and wt1 < osLevel2
+wt_cross_down = ta.crossunder(wt1, wt2) and wt1 > obLevel2
+wt_overbought = wt1 >= obLevel1 or wt2 >= obLevel1
+wt_oversold = wt1 <= osLevel1 or wt2 <= osLevel1
+
+// ====== MACD HESAPLAMALARI ======
+fastMA = ta.ema(close, fastLength)
+slowMA = ta.ema(close, slowLength)
+macd = fastMA - slowMA
+signal = ta.sma(macd, signalLength)
+hist = macd - signal
+
+// MACD sinyalleri
+histA_IsUp = hist > hist[1] and hist > 0
+histA_IsDown = hist < hist[1] and hist > 0
+histB_IsDown = hist < hist[1] and hist <= 0
+histB_IsUp = hist > hist[1] and hist <= 0
+
+macd_cross_up = ta.crossover(macd, signal)
+macd_cross_down = ta.crossunder(macd, signal)
+macd_above_signal = macd >= signal
+macd_below_signal = macd < signal
+
+// ====== RSI HESAPLAMALARI ======
+rsi = ta.rsi(close, rsiLength)
+
+// RSI sinyalleri
+rsi_overbought = rsi >= rsiOverbought
+rsi_oversold = rsi <= rsiOversold
+rsi_cross_up = ta.crossover(rsi, rsiOversold)
+rsi_cross_down = ta.crossunder(rsi, rsiOverbought)
+
+// ====== DEĞERLERİN NORMALİZASYONU VE KOMBİNE EDİLMESİ ======
+// MACD ve RSI değerlerini normalize et (0-100 arasına ölçekle)
+// MACD için hareketli min-max değerler
+macd_period = 50  // Son 50 çubuk için min-max hesapla
+macd_max = ta.highest(macd, macd_period)
+macd_min = ta.lowest(macd, macd_period)
+macd_range = macd_max - macd_min
+
+// Normalize edilmiş MACD (0-100 aralığına)
+norm_macd = macd_range != 0 ? 
+          100 * (macd - macd_min) / macd_range : 
+          50  // Eğer range sıfır ise 50 değerini kullan
+
+// RSI zaten 0-100 aralığında, direkt kullanabiliriz
+norm_rsi = rsi
+
+// WT değerlerini normalize et (-100/100 arasından 0-100 arasına)
+wt_normalized = (wt1 + 100) / 2
+
+// Üç indikatörün ortalamasını al
+combined_indicator = (norm_macd + norm_rsi + wt_normalized) / 3
+
+// Kombine indikatör için alım-satım seviyeleri
+combined_overbought = input.int(70, "Kombine Aşırı Alım Seviyesi", group="Kombine İndikatör")
+combined_oversold = input.int(30, "Kombine Aşırı Satım Seviyesi", group="Kombine İndikatör")
+showCombined = input.bool(true, "Kombine İndikatörü Göster", group="Görünüm")
+
+// Kombine göstergeden alım-satım sinyalleri
+combined_cross_up = ta.crossover(combined_indicator, combined_oversold)
+combined_cross_down = ta.crossunder(combined_indicator, combined_overbought)
+
+// ====== KOMBİNE SİNYALLER ======
+// Güçlü alım sinyali: WaveTrend, MACD ve RSI hepsi alım sinyali veriyor
+strong_buy_signal = (wt_cross_up and macd_cross_up and rsi_cross_up) or combined_cross_up
+strong_sell_signal = (wt_cross_down and macd_cross_down and rsi_cross_down) or combined_cross_down
+
+// ====== ÇİZİM AYARLARI ======
+// Panel renkleri
+bullColor = color.new(color.green, 0)
+bearColor = color.new(color.red, 0)
+neutralColor = color.new(color.gray, 0)
+
+// MACD renk tanımlamaları
+macd_color = macd_colorChange ? (macd_above_signal ? color.green : color.red) : color.blue
+signal_color = color.new(color.yellow, 0)
+hist_color = hist_colorChange ? 
+             (histA_IsUp ? color.new(color.aqua, 0) : 
+              histA_IsDown ? color.new(color.blue, 0) : 
+              histB_IsDown ? color.new(color.red, 0) : 
+              color.new(color.maroon, 0)) : 
+             color.new(color.gray, 0)
+
+// ====== GRAFİK ÇİZİMİ ======
+// WaveTrend çizimleri - ana pencere
+// Sıfır çizgisi ve aşırı alım/satım seviyeleri
+plot(showWaveTrend ? 0 : na, "Sıfır Çizgisi", color.new(color.gray, 50), 1)
+plot(showWaveTrend ? obLevel1 : na, "Aşırı Alım 1", color.new(color.red, 0))
+plot(showWaveTrend ? osLevel1 : na, "Aşırı Satım 1", color.new(color.green, 0))
+plot(showWaveTrend ? obLevel2 : na, "Aşırı Alım 2", color.new(color.red, 50), 2)
+plot(showWaveTrend ? osLevel2 : na, "Aşırı Satım 2", color.new(color.green, 50), 2)
+
+// WT çizgileri
+plot(showWaveTrend ? wt1 : na, "WT1", color.new(color.green, 0))
+plot(showWaveTrend ? wt2 : na, "WT2", color.new(color.red, 0), 2)
+wt_fill = plot(showWaveTrend ? wt_diff : na, "WT Fark", color.new(color.blue, 0))
+wt_hline = plot(showWaveTrend ? 0 : na, "WT Sıfır", color.new(color.gray, 0))
+fill(wt_fill, wt_hline, showWaveTrend ? color.new(color.blue, 90) : na)
+
+// WaveTrend kesişim noktaları gösterimini kaldırdık
+
+// MACD göstergeleri (ayrı pencere)
+plot(showMACD ? macd : na, "MACD", macd_color, 2)
+plot(showMACD ? signal : na, "Sinyal", signal_color, 2)
+plot(showMACD ? hist : na, "Histogram", hist_color, 3)
+hline(showMACD ? 0 : na, "MACD Sıfır", color.new(color.gray, 50))
+
+// MACD Kesişim noktaları gösterimini kaldırdık
+
+// RSI çizimleri (ayrı pencere)
+plot(showRSI ? rsi : na, "RSI", color.new(color.purple, 0), 2)
+hline(showRSI ? 50 : na, "RSI Orta", color.new(color.gray, 50))
+hline(showRSI ? rsiOverbought : na, "RSI Aşırı Alım", color.new(color.red, 0))
+hline(showRSI ? rsiOversold : na, "RSI Aşırı Satım", color.new(color.green, 0))
+
+// ====== Normalize Edilmiş ve Kombine İndikatör Çizimleri ======
+plot(showCombined ? norm_macd : na, "Norm. MACD", color.new(color.blue, 30), 2)
+plot(showCombined ? norm_rsi : na, "Norm. RSI", color.new(color.purple, 30), 2)
+plot(showCombined ? wt_normalized : na, "Norm. WT", color.new(color.orange, 30), 2)
+plot(showCombined ? combined_indicator : na, "Kombine İndikatör", color.new(color.aqua, 0), 3)
+hline(showCombined ? combined_overbought : na, "Kombine Aşırı Alım", color.new(color.red, 0))
+hline(showCombined ? combined_oversold : na, "Kombine Aşırı Satım", color.new(color.green, 0))
+hline(showCombined ? 50 : na, "Kombine Orta", color.new(color.gray, 50))
+
+// Kombine indikatör için kesişim noktaları gösterimi kaldırıldı
+
+// Güçlü al/sat sinyalleri için ok işaretleri kaldırıldı
+
+// ====== UYARI TANIMLARI ======
+// Güçlü alım sinyali için uyarı
+alertcondition(strong_buy_signal, title="Güçlü Al Sinyali", message="WT+RSI+MACD Güçlü AL Sinyali!")
+// Güçlü satım sinyali için uyarı
+alertcondition(strong_sell_signal, title="Güçlü Sat Sinyali", message="WT+RSI+MACD Güçlü SAT Sinyali!")

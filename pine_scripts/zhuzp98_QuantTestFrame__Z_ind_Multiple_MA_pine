@@ -1,0 +1,56 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title     = "[Z] Multiple MA", 
+     shorttitle     = "MMA", 
+     overlay        = true, 
+     timeframe      = timeframe.period, 
+     timeframe_gaps = true)
+
+// ##################
+// === Parameters ===
+// ##################
+group3      = "Multiple MA Settings"
+baseType    = input.string("EMA", options = ["EMA", "SMA", "HMA"], title = "Base MA Type", inline = "Base MA", group = group3)
+slowType    = input.string("HMA", options = ["EMA", "SMA", "HMA"], title = "Slow MA Type", inline = "Slow MA", group = group3)
+fastType    = input.string("EMA", options = ["EMA", "SMA", "HMA"], title = "Fast MA Type", inline = "Fast MA", group = group3)
+baseLength  = input.int(200, minval = 120, maxval = 720, title = "Base MA Length", inline = "Base MA", group = group3)
+slowLength  = input.int(100, minval = 60, maxval = 200, title = "Slow MA Length", inline = "Slow MA", group = group3)
+fastLength  = input.int(60, minval = 12, maxval = 60, title = "Fast MA Length", inline = "Fast MA", group = group3)
+
+
+
+// ##################
+// === Indicators ===
+// ##################
+ma(src, type, length) =>
+    switch type
+        "SMA" => ta.sma(src, length)
+        "EMA" => ta.ema(src, length)
+        "HMA" => ta.wma(2*ta.wma(src, length/2)-ta.wma(src, length), math.floor(math.sqrt(length)))
+
+baseMA = ma(close, baseType, baseLength)
+slowMA = ma(close, slowType, slowLength)
+fastMA = ma(close, fastType, fastLength)
+
+slowColor = close > slowMA ? #00bcd4 : #e91e63
+
+// ##############
+// === Alerts ===
+// ##############
+
+deadCross = ta.crossunder(close, slowMA) and slowMA > baseMA
+goldCross = ta.crossover(close, slowMA) and slowMA < baseMA
+
+
+// #############
+// === Plots ===
+// #############
+
+basePlot = plot(baseMA, color = color.blue, linewidth = 2,title = "BaseMA")
+slowPlot = plot(slowMA, color = slowColor, linewidth = 4, title = "SlowMA")
+fastPlot = plot(fastMA, color = color.green, linewidth = 2, title = "FastMA")
+
+plotshape(deadCross,  title = "Down",  location=location.abovebar, color=color.rgb(241, 222, 15),  style=shape.labeldown, text="Down",  textcolor = color.black, display = display.pane)
+plotshape(goldCross,  title = "Up",  location=location.belowbar, color=color.rgb(145, 222, 106), style=shape.labelup,   text="Up",  textcolor = color.black, display = display.pane)

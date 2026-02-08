@@ -1,0 +1,146 @@
+//@version=5
+indicator("SuperLazyTradeV5", overlay=true, format=format.price, precision=2)
+
+//======================================================================
+// 🟩 TIER 1 — MUST HAVE FILTERS (VWAP → EMA → ATR)
+//======================================================================
+
+useVWAP = input.bool(false, "Use VWAP Confirmation?", group="Tier 1 Filters", tooltip="Requires price to be above VWAP for buys, below for sells. VWAP shows average price based on volume, indicating institutional interest levels.")
+useEMA = input.bool(false, "Use EMA Trend Filter?", group="Tier 1 Filters", tooltip="Only allows trades in the direction of the EMA trend. Buys when price > EMA, sells when price < EMA. Helps avoid counter-trend trades.")
+emaLen = input.int(9, "EMA Length", minval=1, group="Tier 1 Filters", tooltip="Period for EMA calculation. Shorter = more responsive but more signals. Common values: 9 (aggressive), 21 (moderate), 50 (conservative).")
+useMinATR = input.bool(false, "Use Minimum ATR Filter?", group="Tier 1 Filters", tooltip="Filters out signals during low volatility periods. Uses percentage of price for better adaptability across instruments.")
+minATRPct = input.float(0.5, "Minimum ATR % of Price", step=0.1, group="Tier 1 Filters", tooltip="ATR must be at least this % of current price. Example: 0.5 = ATR must be ≥0.5% of price. Adjust based on instrument volatility.")
+
+//======================================================================
+// 🟨 TIER 2 — HIGH BENEFIT FILTERS (BODY → VOLUME)
+//======================================================================
+
+useBody = input.bool(false, "Use Candle Body Filter?", group="Tier 2 Filters", tooltip="Requires strong directional candles. Filters out indecision candles (doji, spinning tops) that may lead to false signals.")
+minBodyPct = input.float(0.1, "Minimum Body % (0.1 = 10%)", step=0.01, group="Tier 2 Filters", tooltip="Body must be at least this % of total candle range (high to low). Example: 0.5 = 50% means body must be at least half the candle. Higher = stronger conviction required.")
+useVolume = input.bool(false, "Use Volume Filter?", group="Tier 2 Filters", tooltip="Requires above-average volume for signals. Confirms genuine interest and reduces false breakouts in low-volume conditions.")
+
+//======================================================================
+// 🟧 TIER 3 — OPTIONAL FILTER (RSI)
+//======================================================================
+
+useRSI = input.bool(false, "Use RSI Filter?", group="Tier 3 Filters", tooltip="Filters signals based on momentum. Can be used to buy into strength (>50) or wait for oversold/overbought conditions.")
+rsiLen = input.int(14, "RSI Length", minval=1, group="Tier 3 Filters", tooltip="Period for RSI calculation. Standard is 14. Shorter periods are more sensitive.")
+rsiBuyLevel = input.float(50.0, "RSI > (buy into strength)", minval=0.0, maxval=100.0, group="Tier 3 Filters", tooltip="Buy signals require RSI above this level. 50 = momentum, 30 = oversold bounces. Higher = more selective.")
+rsiSellLevel = input.float(50.0, "RSI < (sell into weakness)", minval=0.0, maxval=100.0, group="Tier 3 Filters", tooltip="Sell signals require RSI below this level. 50 = weakness, 70 = overbought peaks. Lower = more selective.")
+
+//======================================================================
+// 🟦 TIER 4 — SUPERTREND SETTINGS
+//======================================================================
+
+Periods = input.int(10, "ATR Period", minval=1, group="SuperTrend Settings", tooltip="Period for ATR calculation. Determines how far back to measure volatility. Lower = more responsive to recent changes. Common: 7-14.")
+src = input.source(hl2, "Source", group="SuperTrend Settings", tooltip="Price point used for SuperTrend calculation. hl2 (default) = average of high and low. Other options: close, hlc3, ohlc4.")
+Multiplier = input.float(3.0, "ATR Multiplier", minval=0.1, step=0.1, group="SuperTrend Settings", tooltip="Distance of bands from price in ATR units. Higher = wider bands, fewer signals, fewer whipsaws. Lower = tighter bands, more signals. Common: 2.0-4.0.")
+
+//======================================================================
+// 🟪 TIER 5 — UI + VISUAL OPTIONS
+//======================================================================
+
+showsignals = input.bool(true, "Show Buy/Sell Labels?", group="Visual Options", tooltip="Display 'Buy' and 'Sell' labels when all filters pass. Green circles = trend flips (always shown).")
+highlighting = input.bool(true, "Show Background Highlighter?", group="Visual Options", tooltip="Colors chart background based on trend direction. Green = uptrend, Red = downtrend. 75% transparent.")
+showCircles = input.bool(true, "Show Trend Flip Circles?", group="Visual Options", tooltip="Small circles marking SuperTrend direction changes. Always shows raw trend flips regardless of filter status.")
+
+//======================================================================
+// CONSTANTS
+//======================================================================
+
+const int MIN_VWAP_BARS = 10
+const int VOL_LENGTH = 20
+
+//======================================================================
+// CALCULATED INDICATORS
+//======================================================================
+
+emaVal = ta.ema(close, emaLen)
+rsiValue = ta.rsi(close, rsiLen)
+volSMA = ta.sma(volume, VOL_LENGTH)
+
+//======================================================================
+// SUPERTREND CORE — PROPERLY FIXED VERSION
+//======================================================================
+
+atr = ta.atr(Periods)
+float upBasic = src - Multiplier * atr
+float dnBasic = src + Multiplier * atr
+var float upTrend = na
+var float dnTrend = na
+
+if na(upTrend[1])
+    upTrend := upBasic
+    dnTrend := dnBasic
+else
+    upTrend := close[1] > upTrend[1] ? math.max(upBasic, upTrend[1]) : upBasic
+    dnTrend := close[1] < dnTrend[1] ? math.min(dnBasic, dnTrend[1]) : dnBasic
+
+var int trend = 1
+
+if na(trend[1])
+    trend := close > dnBasic ? 1 : close < upBasic ? -1 : 1
+else
+    trend := close > dnTrend[1] ? 1 : close < upTrend[1] ? -1 : trend[1]
+
+//======================================================================
+// BASE RAW SIGNALS (Before Filters)
+//======================================================================
+
+baseBuy = trend == 1 and trend[1] == -1
+baseSell = trend == -1 and trend[1] == 1
+
+//======================================================================
+// FILTER CONDITIONS — ALL PROPERLY VALIDATED
+//======================================================================
+
+vwapVal = ta.vwap(hlc3)
+vwapReady = bar_index >= MIN_VWAP_BARS or not timeframe.isintraday
+vwapOKBuy = not useVWAP or (vwapReady and close > vwapVal)
+vwapOKSell = not useVWAP or (vwapReady and close < vwapVal)
+emaOKBuy = not useEMA or (close > emaVal)
+emaOKSell = not useEMA or (close < emaVal)
+atrPctOfPrice = (atr / close) * 100
+atrOK = not useMinATR or (atrPctOfPrice >= minATRPct)
+bodyRange = high - low
+bodyPct = bodyRange > 0.0 ? math.abs(close - open) / bodyRange : 0.0
+bodyOK = not useBody or (bodyPct > minBodyPct)
+hasVolume = volume > 0
+volumeReady = bar_index >= VOL_LENGTH
+volOK = not useVolume or (volumeReady and hasVolume and volume > volSMA)
+rsiOKBuy = not useRSI or (rsiValue > rsiBuyLevel)
+rsiOKSell = not useRSI or (rsiValue < rsiSellLevel)
+
+//======================================================================
+// FINAL FILTERED BUY & SELL SIGNALS
+//======================================================================
+
+buySignal = baseBuy and vwapOKBuy and emaOKBuy and atrOK and bodyOK and volOK and rsiOKBuy
+sellSignal = baseSell and vwapOKSell and emaOKSell and atrOK and bodyOK and volOK and rsiOKSell
+
+//======================================================================
+// PLOTS AND VISUALS
+//======================================================================
+
+upPlot = plot(trend == 1 ? upTrend : na, title="Up Trend", style=plot.style_linebr, linewidth=2, color=color.green)
+dnPlot = plot(trend == 1 ? na : dnTrend, title="Down Trend", style=plot.style_linebr, linewidth=2, color=color.red)
+plotshape(showCircles and baseBuy ? upTrend : na, title="UpTrend Begins", location=location.absolute, style=shape.circle, size=size.tiny, color=color.green)
+plotshape(showCircles and baseSell ? dnTrend : na, title="DownTrend Begins", location=location.absolute, style=shape.circle, size=size.tiny, color=color.red)
+plotshape(buySignal and showsignals ? upTrend : na, title="Buy", text="Buy", location=location.absolute, style=shape.labelup, size=size.tiny, color=color.green, textcolor=color.white)
+plotshape(sellSignal and showsignals ? dnTrend : na, title="Sell", text="Sell", location=location.absolute, style=shape.labeldown, size=size.tiny, color=color.red, textcolor=color.white)
+upColor = highlighting ? color.new(color.green, 90) : color.new(color.white, 100)
+downColor = highlighting ? color.new(color.red, 90) : color.new(color.white, 100)
+mPlot = plot(ohlc4, title="", style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+fill(mPlot, upPlot, title="UpTrend Highlighter", color=upColor)
+fill(mPlot, dnPlot, title="DownTrend Highlighter", color=downColor)
+plot(useEMA ? emaVal : na, title="EMA", color=color.new(color.orange, 0), linewidth=1)
+
+//======================================================================
+// ALERTS
+//======================================================================
+
+alertcondition(buySignal, title="LazyTrade Buy", message="LazyTrade Buy Signal - All Filters Passed!")
+alertcondition(sellSignal, title="LazyTrade Sell", message="LazyTrade Sell Signal - All Filters Passed!")
+alertcondition(baseBuy, title="LazyTrade Raw Buy", message="LazyTrade Raw Buy (check filters)")
+alertcondition(baseSell, title="LazyTrade Raw Sell", message="LazyTrade Raw Sell (check filters)")
+alertcondition(trend != trend[1], title="LazyTrade Direction Change", message="LazyTrade has changed direction!")

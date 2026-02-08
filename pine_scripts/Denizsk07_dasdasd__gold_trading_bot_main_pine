@@ -1,0 +1,339 @@
+//@version=5
+indicator("Gold Trading Bot - XAU/USD Strategies v2.0", overlay=true, max_boxes_count=100, max_lines_count=100, max_labels_count=100)
+
+// ===== GRUNDEINSTELLUNGEN =====
+// Pip-Definition für XAU/USD
+PIP_SIZE = 0.01
+
+// TP/SL Einstellungen (fest definiert)
+TP1_PIPS = 20
+TP2_PIPS = 40 
+TP3_PIPS = 60
+SL_PIPS = 60
+
+// Trading-Zeiten (Deutsche Zeit)
+london_start = input.int(8, "London Start (Deutsche Zeit)", minval=0, maxval=23, group="Zeitfilter")
+london_end = input.int(11, "London Ende", minval=0, maxval=23, group="Zeitfilter")
+ny_start = input.int(14, "New York Start", minval=0, maxval=23, group="Zeitfilter") 
+ny_end = input.int(17, "New York Ende", minval=0, maxval=23, group="Zeitfilter")
+scalp_start = input.int(19, "Scalp Start (optional)", minval=0, maxval=23, group="Zeitfilter")
+scalp_end = input.int(21, "Scalp Ende (optional)", minval=0, maxval=23, group="Zeitfilter")
+enable_scalping = input.bool(false, "Scalping 19:00-21:00 aktivieren", group="Zeitfilter")
+
+// Strategieeinstellungen
+enable_liquidity_grab = input.bool(true, "Liquidity Grab aktivieren", group="Strategien")
+enable_break_retest = input.bool(true, "Break & Retest aktivieren", group="Strategien")
+enable_supply_demand = input.bool(true, "Supply & Demand aktivieren", group="Strategien")
+max_signals_per_session = input.int(3, "Max. Signale pro Session", minval=1, maxval=5, group="Strategien")
+
+// VWAP Einstellungen
+vwap_source = input.source(hlc3, "VWAP Quelle", group="VWAP Filter")
+show_vwap_bands = input.bool(true, "VWAP Bänder anzeigen", group="VWAP Filter")
+vwap_std_dev = input.float(1.0, "Standard Abweichung", minval=0.1, maxval=3.0, group="VWAP Filter")
+
+// Level Detection
+lookback_period = input.int(20, "Lookback Periode für Levels", minval=5, maxval=100, group="Level Detection")
+min_level_strength = input.int(3, "Minimum Level Stärke", minval=2, maxval=10, group="Level Detection")
+
+// ===== SESSION VWAP BERECHNUNG =====
+// Deutsche Zeit berücksichtigen (UTC+1/+2)
+is_dst = month >= 3 and month <= 10 // Vereinfachte Sommerzeit-Erkennung
+utc_offset = is_dst ? 2 : 1
+current_hour_de = (hour + utc_offset) % 24
+
+// Session VWAP (Reset um 00:00 deutsche Zeit)
+var float session_vwap = na
+var float vwap_sum = 0.0
+var float volume_sum = 0.0
+var int session_start_time = 0
+
+// Session Reset um 00:00 deutsche Zeit
+is_new_session = current_hour_de == 0 and minute == 0
+if is_new_session
+    session_vwap := na
+    vwap_sum := 0.0
+    volume_sum := 0.0
+    session_start_time := time
+
+// VWAP Berechnung
+typical_price = vwap_source
+current_volume = volume > 0 ? volume : 1
+
+if not na(typical_price)
+    vwap_sum += typical_price * current_volume
+    volume_sum += current_volume
+    session_vwap := volume_sum > 0 ? vwap_sum / volume_sum : typical_price
+
+// VWAP Bänder
+vwap_upper = session_vwap + (stdev(typical_price, 20) * vwap_std_dev)
+vwap_lower = session_vwap - (stdev(typical_price, 20) * vwap_std_dev)
+
+// ===== ZEITFILTER =====
+is_london_session = current_hour_de >= london_start and current_hour_de <= london_end
+is_ny_session = current_hour_de >= ny_start and current_hour_de <= ny_end
+is_scalp_session = enable_scalping and current_hour_de >= scalp_start and current_hour_de <= scalp_end
+is_trading_time = is_london_session or is_ny_session or is_scalp_session
+
+// Blackout-Zeiten
+is_asia_blackout = current_hour_de >= 1 and current_hour_de <= 6
+is_lunch_blackout = current_hour_de >= 11.5 and current_hour_de <= 13.5
+is_blackout_time = is_asia_blackout or is_lunch_blackout
+
+trading_allowed = is_trading_time and not is_blackout_time
+
+// ===== LEVEL DETECTION =====
+// Daily High/Low
+daily_high = request.security(syminfo.tickerid, "1D", high[1])
+daily_low = request.security(syminfo.tickerid, "1D", low[1])
+
+// Session High/Low (London)
+london_session_time = time >= timestamp(year, month, dayofmonth, london_start, 0) and 
+                      time <= timestamp(year, month, dayofmonth, london_end, 0)
+var float london_high = na
+var float london_low = na
+if london_session_time and na(london_high[1])
+    london_high := high
+    london_low := low
+if london_session_time
+    london_high := math.max(london_high, high)
+    london_low := math.min(london_low, low)
+
+// NY Session High/Low
+ny_session_time = time >= timestamp(year, month, dayofmonth, ny_start, 30) and 
+                  time <= timestamp(year, month, dayofmonth, ny_end, 0)
+var float ny_high = na
+var float ny_low = na
+if ny_session_time and na(ny_high[1])
+    ny_high := high
+    ny_low := low
+if ny_session_time
+    ny_high := math.max(ny_high, high)
+    ny_low := math.min(ny_low, low)
+
+// H1/H4 Key Levels
+h1_high = request.security(syminfo.tickerid, "60", high[1])
+h1_low = request.security(syminfo.tickerid, "60", low[1])
+h4_high = request.security(syminfo.tickerid, "240", high[1])
+h4_low = request.security(syminfo.tickerid, "240", low[1])
+
+// Runde Levels
+round_levels = array.new<float>()
+for i = 1800 to 2200 by 50
+    array.push(round_levels, i)
+
+// ===== KERZENMUSTER ERKENNUNG =====
+// Engulfing Pattern
+bullish_engulfing = close > open and close[1] < open[1] and 
+                   close > open[1] and open < close[1] and 
+                   (high - low) > (high[1] - low[1]) * 1.2
+
+bearish_engulfing = close < open and close[1] > open[1] and 
+                   close < open[1] and open > close[1] and 
+                   (high - low) > (high[1] - low[1]) * 1.2
+
+// Pinbar
+body_size = math.abs(close - open)
+candle_size = high - low
+upper_shadow = high - math.max(close, open)
+lower_shadow = math.min(close, open) - low
+
+bullish_pinbar = lower_shadow > body_size * 2 and upper_shadow < body_size * 0.3 and 
+                candle_size > ta.atr(14) * 0.5
+
+bearish_pinbar = upper_shadow > body_size * 2 and lower_shadow < body_size * 0.3 and 
+                candle_size > ta.atr(14) * 0.5
+
+// Doji
+doji = body_size < (candle_size * 0.1) and candle_size > ta.atr(14) * 0.3
+
+// Zusammenfassung Reversal-Muster
+bullish_reversal = bullish_engulfing or bullish_pinbar or (doji and close > open)
+bearish_reversal = bearish_engulfing or bearish_pinbar or (doji and close < open)
+
+// ===== STRATEGIE 1: LIQUIDITY GRAB + REVERSAL =====
+var int signal_count_session = 0
+var string current_session = ""
+
+// Session tracking
+session_name = is_london_session ? "London" : is_ny_session ? "NewYork" : is_scalp_session ? "Scalp" : "None"
+if session_name != current_session and session_name != "None"
+    current_session := session_name
+    signal_count_session := 0
+
+// Liquidity Grab Detection
+daily_high_break = high > daily_high and high[1] <= daily_high
+daily_low_break = low < daily_low and low[1] >= daily_low
+london_high_break = not na(london_high) and high > london_high and high[1] <= london_high
+london_low_break = not na(london_low) and low < london_low and low[1] >= london_low
+
+liquidity_grab_up = daily_high_break or london_high_break
+liquidity_grab_down = daily_low_break or london_low_break
+
+// Liquidity Grab Signale
+liquidity_grab_short = liquidity_grab_up and bearish_reversal and close <= session_vwap and 
+                      enable_liquidity_grab and trading_allowed and signal_count_session < max_signals_per_session
+
+liquidity_grab_long = liquidity_grab_down and bullish_reversal and close >= session_vwap and 
+                     enable_liquidity_grab and trading_allowed and signal_count_session < max_signals_per_session
+
+// ===== STRATEGIE 2: BREAK & RETEST =====
+// Level Break Detection (vereinfacht für H1 Level)
+h1_resistance_break = close > h1_high and close[1] <= h1_high and volume > ta.sma(volume, 20) * 1.5
+h1_support_break = close < h1_low and close[1] >= h1_low and volume > ta.sma(volume, 20) * 1.5
+
+var float broken_level = na
+var string break_direction = ""
+var int bars_since_break = 0
+
+// Level Break tracking
+if h1_resistance_break and na(broken_level)
+    broken_level := h1_high
+    break_direction := "up"
+    bars_since_break := 0
+else if h1_support_break and na(broken_level)
+    broken_level := h1_low  
+    break_direction := "down"
+    bars_since_break := 0
+
+// Retest Logic
+if not na(broken_level)
+    bars_since_break += 1
+    if bars_since_break > 20 // Reset nach 20 Bars
+        broken_level := na
+        break_direction := ""
+
+// Retest Detection
+retest_resistance = break_direction == "up" and not na(broken_level) and 
+                   math.abs(close - broken_level) <= PIP_SIZE * 5 and bullish_reversal
+
+retest_support = break_direction == "down" and not na(broken_level) and 
+                math.abs(close - broken_level) <= PIP_SIZE * 5 and bearish_reversal
+
+// Break & Retest Signale
+break_retest_long = retest_support and close >= session_vwap and 
+                   enable_break_retest and trading_allowed and signal_count_session < max_signals_per_session
+
+break_retest_short = retest_resistance and close <= session_vwap and 
+                    enable_break_retest and trading_allowed and signal_count_session < max_signals_per_session
+
+// ===== STRATEGIE 3: SUPPLY & DEMAND =====
+// Impulsive Move Detection
+atr_current = ta.atr(14)
+big_candle_up = (close - open) > atr_current * 2 and volume > ta.sma(volume, 20) * 1.3
+big_candle_down = (open - close) > atr_current * 2 and volume > ta.sma(volume, 20) * 1.3
+
+// Supply/Demand Zone Creation
+var box demand_zone = na
+var box supply_zone = na
+var int bars_since_impulse = 0
+
+// Demand Zone (nach starkem Aufwärts-Impuls)
+if big_candle_up and na(demand_zone)
+    zone_high = high
+    zone_low = math.min(open, close) - PIP_SIZE * 5
+    demand_zone := box.new(bar_index - 1, zone_low, bar_index + 20, zone_high, 
+                          bgcolor=color.new(color.green, 85), border_color=color.green)
+    bars_since_impulse := 0
+
+// Supply Zone (nach starkem Abwärts-Impuls)  
+if big_candle_down and na(supply_zone)
+    zone_low = low
+    zone_high = math.max(open, close) + PIP_SIZE * 5
+    supply_zone := box.new(bar_index - 1, zone_low, bar_index + 20, zone_high, 
+                          bgcolor=color.new(color.red, 85), border_color=color.red)
+    bars_since_impulse := 0
+
+// Zone Test
+in_demand_zone = not na(demand_zone) and low <= box.get_bottom(demand_zone) and high >= box.get_top(demand_zone)
+in_supply_zone = not na(supply_zone) and low <= box.get_bottom(supply_zone) and high >= box.get_top(supply_zone)
+
+// Supply & Demand Signale
+supply_demand_long = in_demand_zone and bullish_reversal and close >= session_vwap and 
+                    enable_supply_demand and trading_allowed and signal_count_session < max_signals_per_session
+
+supply_demand_short = in_supply_zone and bearish_reversal and close <= session_vwap and 
+                     enable_supply_demand and trading_allowed and signal_count_session < max_signals_per_session
+
+// ===== SIGNAL PRIORISIERUNG =====
+// Priorität: 1) Liquidity Grab, 2) Break & Retest, 3) Supply & Demand
+long_signal = liquidity_grab_long ? "Liquidity Grab" : 
+              break_retest_long ? "Break & Retest" : 
+              supply_demand_long ? "Supply & Demand" : na
+
+short_signal = liquidity_grab_short ? "Liquidity Grab" : 
+               break_retest_short ? "Break & Retest" : 
+               supply_demand_short ? "Supply & Demand" : na
+
+// Signal Counter Update
+if not na(long_signal) or not na(short_signal)
+    signal_count_session += 1
+
+// ===== TP/SL BERECHNUNG =====
+// Long Signale
+long_entry = close
+long_sl = long_entry - (SL_PIPS * PIP_SIZE)
+long_tp1 = long_entry + (TP1_PIPS * PIP_SIZE)
+long_tp2 = long_entry + (TP2_PIPS * PIP_SIZE)
+long_tp3 = long_entry + (TP3_PIPS * PIP_SIZE)
+
+// Short Signale
+short_entry = close
+short_sl = short_entry + (SL_PIPS * PIP_SIZE)
+short_tp1 = short_entry - (TP1_PIPS * PIP_SIZE)
+short_tp2 = short_entry - (TP2_PIPS * PIP_SIZE)
+short_tp3 = short_entry - (TP3_PIPS * PIP_SIZE)
+
+// ===== VISUALISIERUNG =====
+// VWAP
+plot(session_vwap, "Session VWAP", color.blue, 2)
+plot(show_vwap_bands ? vwap_upper : na, "VWAP Upper", color.blue, 1, plot.style_circles)
+plot(show_vwap_bands ? vwap_lower : na, "VWAP Lower", color.blue, 1, plot.style_circles)
+
+// Key Levels
+hline(daily_high, "Daily High", color.red, hline.style_dashed)
+hline(daily_low, "Daily Low", color.red, hline.style_dashed)
+hline(h4_high, "H4 High", color.orange, hline.style_dotted)
+hline(h4_low, "H4 Low", color.orange, hline.style_dotted)
+
+// Long Signale
+if not na(long_signal)
+    strategy_text = long_signal
+    label.new(bar_index, low - ta.atr(14), 
+             "🟢 LONG\n" + strategy_text + "\nEntry: " + str.tostring(long_entry, "#.##") + 
+             "\nSL: " + str.tostring(long_sl, "#.##") + "\nTP1: " + str.tostring(long_tp1, "#.##"),
+             color=color.green, textcolor=color.white, size=size.small)
+
+// Short Signale  
+if not na(short_signal)
+    strategy_text = short_signal
+    label.new(bar_index, high + ta.atr(14), 
+             "🔴 SHORT\n" + strategy_text + "\nEntry: " + str.tostring(short_entry, "#.##") + 
+             "\nSL: " + str.tostring(short_sl, "#.##") + "\nTP1: " + str.tostring(short_tp1, "#.##"),
+             color=color.red, textcolor=color.white, size=size.small)
+
+// Alerts
+alertcondition(not na(long_signal), "Gold Long Signal", "Long Signal: {{long_signal}} at {{close}}")
+alertcondition(not na(short_signal), "Gold Short Signal", "Short Signal: {{short_signal}} at {{close}}")
+
+// ===== SESSION INFO =====
+var table info_table = table.new(position.top_right, 3, 8, bgcolor=color.white, border_width=1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Parameter", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, "Wert", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 2, 0, "Status", text_color=color.black, bgcolor=color.gray)
+    
+    table.cell(info_table, 0, 1, "Current Session", text_color=color.black)
+    table.cell(info_table, 1, 1, current_session, text_color=color.black)
+    table.cell(info_table, 2, 1, trading_allowed ? "✅" : "❌", text_color=color.black)
+    
+    table.cell(info_table, 0, 2, "Signals Used", text_color=color.black)
+    table.cell(info_table, 1, 2, str.tostring(signal_count_session) + "/" + str.tostring(max_signals_per_session), text_color=color.black)
+    table.cell(info_table, 2, 2, signal_count_session < max_signals_per_session ? "✅" : "⚠️", text_color=color.black)
+    
+    table.cell(info_table, 0, 3, "VWAP Filter", text_color=color.black)
+    table.cell(info_table, 1, 3, str.tostring(session_vwap, "#.##"), text_color=color.black)
+    table.cell(info_table, 2, 3, "📊", text_color=color.black)
+    
+    table.cell(info_table, 0, 4, "Deutsche Zeit", text_color=color.black)
+    table.cell(info_table, 1, 4, str.tostring(current_hour_de) + ":00", text_color=color.black)
+    table.cell(info_table, 2, 4, "🕒", text_color=color.black)

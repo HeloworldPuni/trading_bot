@@ -1,0 +1,269 @@
+// ==================================================================================================================
+//
+// WTT_MarketSessionHotZones © William Skrzypczak Waverider Trading Technologies
+//
+// ==================================================================================================================
+
+// This Pine Script indicator, WTT_MarketSessionHotZones, visually highlights two key global forex session overlaps—
+// London-New York and Sydney-Tokyo—on intraday charts. It detects when these overlapping periods begin and end, 
+// then plots dynamic boxes showing the high, low, and open prices during each session. Users can customize the colors, 
+// line styles, label sizes, and whether to show background fill, midpoint lines, and open/close levels. 
+// The script also includes alerts for session starts/ends and new highs/lows within the overlaps, and it respects 
+// a user-defined lookback period and option to exclude weekends.
+
+//@version=5
+indicator("WTT_MarketSessionHotZones", overlay = true, max_boxes_count = 500)
+
+// User inputs - London-NY Overlap
+showLondonNYOverlap = input.bool(true, 'Show London-NY', inline='overlap1', group='London-NY Overlap')
+londonNYCol      = input.color(color.rgb(255, 215, 0, 90), 'Color', inline='overlap1', group='London-NY Overlap')
+
+// User inputs - Sydney-Tokyo Overlap
+showSydneyTokyoOverlap = input.bool(true, 'Show Sydney-Tokyo', inline='overlap2', group='Sydney-Tokyo Overlap')
+sydneyTokyoCol  = input.color(color.rgb(230, 21, 209, 90), 'Color', inline='overlap2', group='Sydney-Tokyo Overlap')
+
+// General settings
+colorBoxes      = input.bool(false, 'Box Background', inline='bg', group='General Settings')
+daysBack        = input.float(150, 'Lookback (Days)', group='General Settings', tooltip= 'This input defines the lookback period for plotting sessions')
+hideWeekends    = input.bool(true, 'Hide Weekends', inline='weekends', group='General Settings')
+halfline        = input.bool(false, 'Session 0.5 Level', inline='midlevel', group='General Settings')
+sessionOC       = input.bool(true, 'Open/Close Line', inline='midlevel', group='General Settings')
+
+// Box appearance
+borderWidth    = input.int(2, 'Box Border', inline='border', group='Appearance')
+borderStyle    = input.string('Dotted', '', ['Solid', 'Dashed', 'Dotted'], inline='border', group='Appearance', tooltip='Select the width and style of session box borders')
+levelsStyle    = input.string('Dotted', 'Line Style', ['Solid', 'Dashed', 'Dotted'], group='Appearance', tooltip='Select the style of 0.5 and Open/Close lines')
+
+// Enhanced line appearance
+lineWidth      = input.int(2, 'Line Width', minval=1, maxval=4, group='Enhanced Lines', tooltip='Width of internal lines (0.5 and Open/Close lines)')
+lineBrightness = input.int(80, 'Line Brightness', minval=0, maxval=100, group='Enhanced Lines', tooltip='Brightness of internal lines (0-100)')
+
+showLabels     = input.bool(true, 'Session Labels', inline='labels', group='Appearance')
+labelSize      = input.string('Normal', 'Label Size', options = ['Auto', 'Tiny', 'Small', 'Normal'], group='Appearance', tooltip='Select the size of text labels')
+
+// Session time definition
+LondonTimeX    = input.session(defval="0700-1600", title='London Session (UTC)', group='Session Times', tooltip = 'Set London session time in UTC')
+NewYorkTimeX   = input.session(defval="1300-2200", title='New York Session (UTC)', group='Session Times', tooltip = 'Set New York session time in UTC')
+SydneyTimeX    = input.session(defval="2100-0600", title='Sydney Session (UTC)', group='Session Times', tooltip = 'Set Sydney session time in UTC')
+TokyoTimeX     = input.session(defval="0000-0900", title='Tokyo Session (UTC)', group='Session Times', tooltip = 'Set Tokyo session time in UTC')
+SessionZone    = input.string("UTC", title="Input Timezone", group='Session Times')
+
+// Excluding or Including Weekends
+var LondonTime  = hideWeekends ? LondonTimeX+":123456" : LondonTimeX+":1234567"
+var NewYorkTime = hideWeekends ? NewYorkTimeX+":123456" : NewYorkTimeX+":1234567"
+var SydneyTime  = hideWeekends ? SydneyTimeX+":123456" : SydneyTimeX+":1234567"
+var TokyoTime   = hideWeekends ? TokyoTimeX+":123456" : TokyoTimeX+":1234567"
+
+// Define line style and label size functions
+lineStyle(x) =>
+    switch x
+        'Solid'  => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+labelStyle(x) =>
+    switch x
+        'Auto'   => size.auto
+        'Tiny'   => size.tiny
+        'Small'  => size.small
+        'Normal' => size.normal
+
+// Calculating lookback range
+MSPD        = 24 * 60 * 60 * 1000
+lastBarDate = timestamp(year(timenow), month(timenow), dayofmonth(timenow), hour(timenow), minute(timenow), second(timenow))
+thisBarDate = timestamp(year, month, dayofmonth, hour, minute, second)
+daysLeft    = math.abs(math.floor((lastBarDate - thisBarDate) / MSPD))
+inRange     = daysLeft < daysBack
+
+// Session time functions
+InLondon(LondonTime, LondonTimeZone=syminfo.timezone) =>
+    not na(time(timeframe.period, LondonTime, SessionZone))
+InNewYork(NewYorkTime, NewYorkTimeZone=syminfo.timezone) =>
+    not na(time(timeframe.period, NewYorkTime, SessionZone))
+InSydney(SydneyTime, SydneyTimeZone=syminfo.timezone) =>
+    not na(time(timeframe.period, SydneyTime, SessionZone))
+InTokyo(TokyoTime, TokyoTimeZone=syminfo.timezone) =>
+    not na(time(timeframe.period, TokyoTime, SessionZone))
+
+// Create variables for the London-NY overlap session
+var londonNYHighPrice  = 0.0
+var londonNYLowPrice   = 0.0
+var londonNYOpenPrice  = 0.0
+var box londonNYBox    = na
+var line londonNYLine  = na
+var label londonNYLabel = na
+var line londonNYOC    = na
+var string londonNYText = "London-NY Overlap"
+
+// Create variables for the Sydney-Tokyo overlap session
+var sydneyTokyoHighPrice  = 0.0
+var sydneyTokyoLowPrice   = 0.0
+var sydneyTokyoOpenPrice  = 0.0
+var box sydneyTokyoBox    = na
+var line sydneyTokyoLine  = na
+var label sydneyTokyoLabel = na
+var line sydneyTokyoOC    = na
+var string sydneyTokyoText = "Sydney-Tokyo Overlap"
+
+// Check if sessions are active
+inLondon       = InLondon(LondonTime, SessionZone) and timeframe.isintraday
+inNewYork      = InNewYork(NewYorkTime, SessionZone) and timeframe.isintraday
+inSydney       = InSydney(SydneyTime, SessionZone) and timeframe.isintraday
+inTokyo        = InTokyo(TokyoTime, SessionZone) and timeframe.isintraday
+
+// Check for overlaps
+inLondonNYOverlap      = inLondon and inNewYork
+londonNYOverlapStart   = inLondonNYOverlap and not inLondonNYOverlap[1]
+
+inSydneyTokyoOverlap      = inSydney and inTokyo
+sydneyTokyoOverlapStart   = inSydneyTokyoOverlap and not inSydneyTokyoOverlap[1]
+
+// Set initial values at start of London-NY overlap
+if londonNYOverlapStart
+    londonNYHighPrice := high
+    londonNYLowPrice  := low
+    londonNYOpenPrice := open
+
+// Track London-NY overlap high and low
+else if inLondonNYOverlap
+    londonNYHighPrice := math.max(londonNYHighPrice, high)
+    londonNYLowPrice  := math.min(londonNYLowPrice, low)
+    
+// Set initial values at start of Sydney-Tokyo overlap
+if sydneyTokyoOverlapStart
+    sydneyTokyoHighPrice := high
+    sydneyTokyoLowPrice  := low
+    sydneyTokyoOpenPrice := open
+
+// Track Sydney-Tokyo overlap high and low
+else if inSydneyTokyoOverlap
+    sydneyTokyoHighPrice := math.max(sydneyTokyoHighPrice, high)
+    sydneyTokyoLowPrice  := math.min(sydneyTokyoLowPrice, low)
+
+// Calculate opacity based on brightness (convert from 0-100 to 0-100 opacity)
+lineOpacity = 100 - lineBrightness
+
+// Create London-NY overlap box at the beginning of overlap
+if londonNYOverlapStart and showLondonNYOverlap and inRange
+    londonNYBox   := box.new(
+         left=bar_index, 
+         top=na, 
+         right=na, 
+         bottom=na, 
+         border_width=borderWidth, 
+         bgcolor=colorBoxes ? londonNYCol : na, 
+         border_style=lineStyle(borderStyle), 
+         border_color=color.new(londonNYCol, 40)
+     )
+    londonNYLine  := halfline ? line.new(
+         x1=bar_index, 
+         y1=na, 
+         x2=na, 
+         y2=na, 
+         width=lineWidth,
+         style=lineStyle(levelsStyle), 
+         color=color.new(londonNYCol, lineOpacity)
+     ) : na
+    londonNYLabel := showLabels ? label.new(
+     x=na, 
+     y=na, 
+     text=londonNYText, 
+     textcolor=color.rgb(242, 229, 172), 
+     color=color.rgb(0,0,0,100), 
+     size=labelStyle(labelSize)
+ ) : na
+
+    londonNYOC    := sessionOC ? line.new(
+         x1=bar_index, 
+         y1=londonNYOpenPrice, 
+         x2=na, 
+         y2=na, 
+         width=lineWidth,
+         style=lineStyle(levelsStyle), 
+         color=color.new(londonNYCol, lineOpacity)
+     ) : na
+
+// Create Sydney-Tokyo overlap box at the beginning of overlap
+if sydneyTokyoOverlapStart and showSydneyTokyoOverlap and inRange
+    sydneyTokyoBox   := box.new(
+         left=bar_index, 
+         top=na, 
+         right=na, 
+         bottom=na, 
+         border_width=borderWidth, 
+         bgcolor=colorBoxes ? sydneyTokyoCol : na, 
+         border_style=lineStyle(borderStyle), 
+         border_color=color.new(sydneyTokyoCol, 40)
+     )
+    sydneyTokyoLine  := halfline ? line.new(
+         x1=bar_index, 
+         y1=na, 
+         x2=na, 
+         y2=na, 
+         width=lineWidth,
+         style=lineStyle(levelsStyle), 
+         color=color.new(sydneyTokyoCol, lineOpacity)
+     ) : na
+    sydneyTokyoLabel := showLabels ? label.new(
+     x=na, 
+     y=na, 
+     text=sydneyTokyoText, 
+     textcolor=color.rgb(240, 185, 234), 
+     color=color.rgb(0,0,0,100), 
+     size=labelStyle(labelSize)
+ ) : na
+
+    sydneyTokyoOC    := sessionOC ? line.new(
+         x1=bar_index, 
+         y1=sydneyTokyoOpenPrice, 
+         x2=na, 
+         y2=na, 
+         width=lineWidth,
+         style=lineStyle(levelsStyle), 
+         color=color.new(sydneyTokyoCol, lineOpacity)
+     ) : na
+
+// Update the London-NY box during the overlap
+if inLondonNYOverlap and inRange
+    box.set_top(londonNYBox, londonNYHighPrice)
+    box.set_bottom(londonNYBox, londonNYLowPrice)
+    box.set_right(londonNYBox, bar_index + 1)
+    label.set_x(londonNYLabel, (box.get_left(londonNYBox)+box.get_right(londonNYBox))/2)
+    label.set_y(londonNYLabel, londonNYHighPrice)
+    
+    if sessionOC
+        line.set_x2(londonNYOC, bar_index)
+        line.set_y2(londonNYOC, close)
+    
+    if halfline
+        line.set_y1(londonNYLine, (londonNYHighPrice+londonNYLowPrice)/2)
+        line.set_y2(londonNYLine, (londonNYHighPrice+londonNYLowPrice)/2)
+        line.set_x2(londonNYLine, bar_index+1)
+
+// Update the Sydney-Tokyo box during the overlap
+if inSydneyTokyoOverlap and inRange
+    box.set_top(sydneyTokyoBox, sydneyTokyoHighPrice)
+    box.set_bottom(sydneyTokyoBox, sydneyTokyoLowPrice)
+    box.set_right(sydneyTokyoBox, bar_index + 1)
+    label.set_x(sydneyTokyoLabel, (box.get_left(sydneyTokyoBox)+box.get_right(sydneyTokyoBox))/2)
+    label.set_y(sydneyTokyoLabel, sydneyTokyoHighPrice)
+    
+    if sessionOC
+        line.set_x2(sydneyTokyoOC, bar_index)
+        line.set_y2(sydneyTokyoOC, close)
+    
+    if halfline
+        line.set_y1(sydneyTokyoLine, (sydneyTokyoHighPrice+sydneyTokyoLowPrice)/2)
+        line.set_y2(sydneyTokyoLine, (sydneyTokyoHighPrice+sydneyTokyoLowPrice)/2)
+        line.set_x2(sydneyTokyoLine, bar_index+1)
+
+// Alert conditions for London-NY Overlap
+alertcondition(inLondonNYOverlap and not inLondonNYOverlap[1], 'London-NY Overlap Starts', 'The London-NY Overlap has started')
+alertcondition(not inLondonNYOverlap and inLondonNYOverlap[1], 'London-NY Overlap Ends', 'The London-NY Overlap has ended')
+alertcondition(high > londonNYHighPrice[0] and inLondonNYOverlap, 'London-NY Overlap - New High', 'New High in London-NY Overlap')
+alertcondition(low < londonNYLowPrice[0] and inLondonNYOverlap, 'London-NY Overlap - New Low', 'New Low in London-NY Overlap')
+
+// Alert conditions for Sydney-Tokyo Overlap
+alertcondition(inSydneyTokyoOverlap and not inSydneyTokyoOverlap[1], 'Sydney-Tokyo Overlap Starts', 'The Sydney-Tokyo Overlap has started')
+alertcondition(not inSydneyTokyoOverlap and inSydneyTokyoOverlap[1], 'Sydney-Tokyo Overlap Ends', 'The Sydney-Tokyo Overlap has ended')
+alertcondition(high > sydneyTokyoHighPrice[0] and inSydneyTokyoOverlap, 'Sydney-Tokyo Overlap - New High', 'New High in Sydney-Tokyo Overlap')
+alertcondition(low < sydneyTokyoLowPrice[0] and inSydneyTokyoOverlap, 'Sydney-Tokyo Overlap - New Low', 'New Low in Sydney-Tokyo Overlap') 

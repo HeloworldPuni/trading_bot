@@ -1,0 +1,42 @@
+//@version=5
+strategy("BBand Breakout Strategy", overlay=true)
+
+// Set parameters for Bollinger Bands
+length = input.int(20, title="BBand Length")
+mult = input.float(2.0, title="BBand Multiplier")
+
+// Define the backtesting time range
+start_date = timestamp(2021, 12, 15, 0, 0)
+end_date = timestamp(2024, 12, 15, 0, 0)
+if (time < start_date or time > end_date)
+    strategy.close_all()
+
+// Calculate Bollinger Bands
+basis = ta.sma(close, length)
+upper = basis + mult * ta.stdev(close, length)
+lower = basis - mult * ta.stdev(close, length)
+
+// Plot Bollinger Bands
+plot(basis, color=color.blue, title="BBand Middle Line")
+plot(upper, color=color.green, title="BBand Upper Line")
+plot(lower, color=color.red, title="BBand Lower Line")
+
+// Define conditions for entry and exit
+below_lower_prev = ta.valuewhen(close[1] < lower[1], 1, 0)
+below_lower_now = close < lower
+above_upper_prev = ta.valuewhen(close[1] > upper[1], 1, 0)
+above_upper_now = close > upper
+
+// Buy condition: Previous close is below the lower band and the current close is also below the lower band
+buy_condition = below_lower_prev and below_lower_now
+if (buy_condition)
+    strategy.entry("Buy", strategy.long)
+
+// Sell condition: Previous close is above the upper band and the current close is also above the upper band
+sell_condition = above_upper_prev and above_upper_now
+if (sell_condition)
+    strategy.entry("Sell", strategy.short)
+
+// Plot buy and sell signals on the chart
+plotshape(buy_condition, style=shape.labelup, location=location.belowbar, color=color.green, size=size.small, title="Buy Signal")
+plotshape(sell_condition, style=shape.labeldown, location=location.abovebar, color=color.red, size=size.small, title="Sell Signal")

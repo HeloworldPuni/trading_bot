@@ -1,0 +1,91 @@
+//@version=5
+
+// Stochastic Momentum Index with Multiple Timeframes
+// Original Author: Surjith S M (India) - https://www.tradingview.com/u/surjithctly/
+// Modified to include timeframe selection
+// Copyright: CC 3.0 
+// Thanks UCSgears, lonestar108 for foundational work
+
+// Release: v2.2
+
+indicator("Stochastics Momentum Index - Multi Timeframe", shorttitle = "Stoch_MTM_MTF")
+
+// Timeframe input
+timeframe = input.timeframe("", "Timeframe", tooltip="Select the timeframe for SMI calculation. Leave empty for chart timeframe.")
+
+// Input parameters
+a = input.int(10, "Percent K Length", minval=1)
+b = input.int(3, "Percent D Length", minval=1)
+c = input.int(10, "EMA Signal Length", minval=1)
+smooth_period = input.int(5, "Smoothing Period", minval=1)
+ob = input.float(40, "Overbought", minval=-100, maxval=100)
+os = input.float(-40, "Oversold", minval=-100, maxval=100)
+
+// Function to calculate SMI
+calculateSMI() =>
+    // Range Calculation
+    ll = ta.lowest(low, a)
+    hh = ta.highest(high, a)
+    diff = hh - ll
+    rdiff = close - (hh+ll)/2
+
+    avgrel = ta.ema(rdiff, b)
+    avgdiff = ta.ema(diff, b)
+
+    // SMI calculations
+    SMI = avgdiff != 0 ? (avgrel/(avgdiff/2)*100) : 0.0
+
+    // Apply smoothing to SMI
+    SMI_smoothed = ta.sma(SMI, smooth_period)
+    SMI_smoothed
+
+// Function to calculate EMA signal
+calculateEMASignal() =>
+    // Range Calculation
+    ll = ta.lowest(low, a)
+    hh = ta.highest(high, a)
+    diff = hh - ll
+    rdiff = close - (hh+ll)/2
+
+    avgrel = ta.ema(rdiff, b)
+    avgdiff = ta.ema(diff, b)
+
+    // SMI calculations
+    SMI = avgdiff != 0 ? (avgrel/(avgdiff/2)*100) : 0.0
+
+    // Apply smoothing to SMI
+    SMI_smoothed = ta.sma(SMI, smooth_period)
+    emasignal = ta.ema(SMI_smoothed, c)
+    emasignal
+
+// Get SMI values from selected timeframe
+SMI_smoothed = timeframe == "" ? calculateSMI() : request.security(syminfo.tickerid, timeframe, calculateSMI())
+emasignal = timeframe == "" ? calculateEMASignal() : request.security(syminfo.tickerid, timeframe, calculateEMASignal())
+
+// Plotting
+plot(SMI_smoothed, "Stochastic", color=color.black, linewidth=2)
+plot(emasignal, "EMA", color=color.red, linewidth=1)
+
+h0 = hline(ob, "Overbought", color=color.gray, linestyle=hline.style_dashed)
+h1 = hline(os, "Oversold", color=color.gray, linestyle=hline.style_dashed)
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dotted)
+
+level_ob = ob
+level_obsmi = SMI_smoothed > level_ob ? SMI_smoothed : level_ob
+
+level_os = os
+level_ossmi = SMI_smoothed < level_os ? SMI_smoothed : level_os
+
+p1 = plot(level_ob, display=display.none)
+p2 = plot(level_obsmi, display=display.none)
+
+p3 = plot(level_os, display=display.none)
+p4 = plot(level_ossmi, display=display.none)
+
+fill(p1, p2, color=color.new(color.red, 60), title='OverBought')
+fill(p3, p4, color=color.new(color.green, 60), title='OverSold')
+
+// Optional: Display current timeframe in a table
+if timeframe != ""
+    var table infoTable = table.new(position.top_right, 1, 1, bgcolor=color.white, border_width=1)
+    table.cell(infoTable, 0, 0, "SMI TF: " + timeframe, text_color=color.black, text_size=size.small)

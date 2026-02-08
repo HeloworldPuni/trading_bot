@@ -1,0 +1,331 @@
+//@version=6
+type ConditionDictionary
+	array<string> keys = na 
+	array<bool> values = na 
+create_ConditionDictionary() =>
+	ConditionDictionary dict = ConditionDictionary.new() 
+	dict.keys := array.new<string>()
+	dict.values := array.new<bool>()
+	dict 
+//returns true if we added a new entry
+ConditionDictionary_set_value(ConditionDictionary dict, string key, bool value) =>
+    int index = array.indexof(dict.keys, key)
+    if index != -1
+        array.set(dict.values, index, value)
+		false 
+    else
+        dict.keys.push(key)
+        dict.values.push(value)
+		true
+ConditionDictionary_get_value(ConditionDictionary dict, string key) => 
+    int index = array.indexof(dict.keys, key)
+    if index != -1
+        dict.values.get(index)
+
+
+enum ENTRY_ACTION_TYPE 
+	EntryIsCandle //the entry is at one end of the candle with the stoploss at the other end
+type EntryAction 
+	string name = na 
+	ENTRY_ACTION_TYPE entry_type = na 
+	Direction trade_direction = na 
+	OrderType order_type = na 
+
+enum EXIT_ACTION_TYPE
+	SetRiskRewardRatio
+	SetTargetPrice
+type ExitAction 
+	string name = na 
+	EXIT_ACTION_TYPE exit_type = na 
+	float rr_or_target_value = na 
+	TradeExitInfo trade_exit_info = na 
+
+
+type EntryRule
+	string rule_name = na 
+	array<BooleanExpression> conditions = na 
+	EntryAction entry_action = na 
+	ExitAction exit_action = na
+
+	
+type EntryLibraryOutput
+	bool has_output = false 
+	array<EntryRule> taken_actions = na
+create_EntryLibraryOutput() =>
+	EntryLibraryOutput output = EntryLibraryOutput.new() 
+	output.taken_actions := array.new<EntryRule>()
+	output
+reset_EntryLibraryOutput(EntryLibraryOutput output) =>
+	output.has_output := false 
+	output.taken_actions.clear()
+
+	
+type EntryLibraryArgs
+	ConditionDictionary condition_dict = na 
+	array<EntryRule> entry_rules = na 
+	array<BooleanExpression> compound_conditions = na 
+	array<EntryAction> entry_actions = na 
+	array<ExitAction> exit_actions = na
+	EntryLibraryOutput output = na
+	TradeLibraryArgs trade_library_args = na
+	KeyLevelLibraryArgs key_level_library_args = na
+	MultiTimeFrameLibraryArgs multi_timeframe_library_args = na 
+	bool process_longs = true 
+	bool process_shorts = true 
+create_EntryLibraryArgs() => 
+	EntryLibraryArgs args = EntryLibraryArgs.new() 
+	args.condition_dict := create_ConditionDictionary()
+	args.entry_rules := array.new<EntryRule>()
+	args.compound_conditions := array.new<BooleanExpression>()
+	args.entry_actions := array.new<EntryAction>()
+	args.exit_actions := array.new<ExitAction>()
+	args.output := create_EntryLibraryOutput()
+	args.trade_library_args := create_TradeLibraryArgs()
+	args.key_level_library_args := create_KeyLevelLibraryArgs()
+	args.multi_timeframe_library_args := create_MultiTimeFrameLibraryArgs()
+	args
+
+
+///////////////////////////////////
+//////// FUNCTIONS FOR CONDITIONS 
+//////////////////////////////////
+
+
+get_condition_by_name(EntryLibraryArgs args, string name) => 
+	bool found_condition = false 
+	BooleanExpression condition = na 
+	if args.compound_conditions.size() > 0
+		for i = args.compound_conditions.size() - 1 to 0 
+			BooleanExpression current_cond = args.compound_conditions.get(i)
+			if current_cond.name == name 
+				found_condition := true 
+				condition := current_cond
+	
+	condition
+
+create_and_add_compound_condition_helper(EntryLibraryArgs args, string name, bool is_simple_condition, string left_condition_name, string right_condition_name, BOOLEAN_OPERATOR op) => 
+	BooleanExpression cond = na
+	if is_simple_condition
+		cond := create_BooleanExpression(name = name, is_base_level = is_simple_condition, base_level_val = false, left_val = na, right_val = na, operator = na)
+	else
+		BooleanExpression left_condition = get_condition_by_name(args, left_condition_name)
+		BooleanExpression right_condition = get_condition_by_name(args, right_condition_name)
+		cond := create_BooleanExpression(name = name, is_base_level = is_simple_condition, base_level_val = false, operator = op, left_val = left_condition, right_val = right_condition)
+	args.compound_conditions.push(cond)
+	cond //return the condition so we can use with var statement to call once per script 
+
+create_and_add_compound_condition(EntryLibraryArgs args, string name, string left_condition_name, string right_condition_name, BOOLEAN_OPERATOR op) =>
+	create_and_add_compound_condition_helper(args, name, false, left_condition_name, right_condition_name, op)
+
+update_simple_condition(EntryLibraryArgs args, string condition_name, bool current_value) => 
+	bool new_entry = ConditionDictionary_set_value(args.condition_dict, condition_name, current_value)
+	if new_entry
+		create_and_add_compound_condition_helper(args, condition_name, true, na, na, na) // adds simple condition
+
+	//update the value of the compound condition
+	BooleanExpression expr = get_condition_by_name(args, condition_name)
+	expr.base_level_expression := current_value 
+
+
+evaluate_conditions(EntryLibraryArgs args) =>
+	array<BooleanExpression> conditions = args.compound_conditions
+	if conditions.size() > 0
+		for i = conditions.size() - 1 to 0 
+			BooleanExpression current_condition = conditions.get(i)
+			evaluate_BooleanExpression(current_condition)
+
+
+stringify_conditions(EntryLibraryArgs args) => 
+	string my_string = "Conditions:\n"
+	array<BooleanExpression> conditions = args.compound_conditions
+	if conditions.size() > 0
+		for i = conditions.size() - 1 to 0 
+			BooleanExpression current_condition = conditions.get(i)
+			my_string += current_condition.name + " = " +str.tostring(current_condition.evaluated_value) + "\n"
+
+
+
+	
+
+///////////////////////////////////
+//////// FUNCTIONS FOR ACTIONS
+//////////////////////////////////
+
+create_EntryAction(string name, ENTRY_ACTION_TYPE action_type, Direction trade_direction, OrderType order_type) => 
+	EntryAction action = EntryAction.new(name, action_type, trade_direction, order_type)
+	action 
+// not to be used with the same action on every candle 
+add_EntryAction(EntryLibraryArgs args, EntryAction action) =>
+	args.entry_actions.push(action)
+create_and_add_EntryAction(EntryLibraryArgs args, string name, ENTRY_ACTION_TYPE action_type, Direction trade_direction, OrderType order_type) =>
+	EntryAction action = create_EntryAction(name, action_type, trade_direction, order_type)
+	add_EntryAction(args, action)
+	action // return action object so function can be used with var to be called once per script 
+
+get_entry_action_by_name(EntryLibraryArgs args, string name) => 
+	EntryAction Action = na 
+	if args.entry_actions.size() > 0
+		for i = args.entry_actions.size() - 1 to 0 
+			EntryAction cur_entry = args.entry_actions.get(i)
+			if cur_entry.name == name 
+				Action := cur_entry
+	Action
+
+
+create_and_add_ExitAction(EntryLibraryArgs args, string name, EXIT_ACTION_TYPE action_type, float exit_value) =>
+	ExitAction action = ExitAction.new(name, action_type, exit_value)
+	action.trade_exit_info := TradeExitInfo.new()
+	args.exit_actions.push(action)
+	action
+
+get_exit_action_by_name(EntryLibraryArgs args, string name) => 
+	ExitAction Action = na 
+	if args.exit_actions.size() > 0
+		for i = args.exit_actions.size() - 1 to 0 
+			ExitAction cur_exit = args.exit_actions.get(i)
+			if cur_exit.name == name 
+				Action := cur_exit
+	Action
+
+update_exit_action_value(EntryLibraryArgs args, string name, float value) =>
+	int return_value = 0
+	ExitAction exit_action = get_exit_action_by_name(args, name)
+	if not na(exit_action)
+		exit_action.rr_or_target_value := value 
+	else
+		return_value := -1 
+	return_value
+
+//returns 0 on success error code otherwise. Updates the exit action, which should apply to every rule with that action
+EntryStrategyLibrary_updateExitActionBreakeven(EntryLibraryArgs args, string exit_action_name, bool will_break_even = true, int breakeven_on_n = 1)=>
+	int return_value = 0
+	ExitAction exit_action = get_exit_action_by_name(args, exit_action_name)
+	if not na(exit_action)
+		exit_action.trade_exit_info.will_break_even := will_break_even
+		exit_action.trade_exit_info.breakeven_on_n := breakeven_on_n
+	else
+		return_value := -1 
+	return_value	
+
+
+// needs to be called on the same candle that the entry is for
+create_trade_from_EntryAction_and_ExitAction(EntryLibraryArgs args, EntryAction entry_action, ExitAction exit_action, int candle_index) =>
+	Entry entry = na 
+	bool is_long = entry_action.trade_direction == Direction.Long 
+	bool is_short = entry_action.trade_direction == Direction.Short
+	float entry_price = 0
+	float stop_loss_price = 0
+	float target_price = 0
+	//handle entry action 
+	if entry_action.entry_type == ENTRY_ACTION_TYPE.EntryIsCandle
+		if is_long 
+			entry_price := high 
+			stop_loss_price := low 
+		else if is_short 
+			entry_price := low 
+			stop_loss_price := high 
+
+	//process exit action 
+	if exit_action.exit_type == EXIT_ACTION_TYPE.SetRiskRewardRatio
+		float rr = exit_action.rr_or_target_value
+		entry := create_Entry_with_target_RR(entry_action.trade_direction, entry_action.order_type, entry_price, stop_loss_price, rr, candle_index)
+	else if exit_action.exit_type == EXIT_ACTION_TYPE.SetTargetPrice
+		float target = exit_action.rr_or_target_value
+		entry := create_Entry_with_target_price(entry_action.trade_direction, entry_action.order_type, entry_price, stop_loss_price, target, candle_index)
+
+	if exit_action.trade_exit_info.will_break_even
+		TradeManagerLibrary_setEntryBreakeven(args.trade_library_args, entry,exit_action.trade_exit_info.breakeven_on_n)
+	entry
+
+take_active_trades(EntryLibraryArgs args) =>
+	array<EntryRule> active_actions = args.output.taken_actions
+	if active_actions.size() > 0 
+		for i = active_actions.size() - 1 to 0 
+			EntryAction current_entry_action = active_actions.get(i).entry_action
+			ExitAction current_exit_action = active_actions.get(i).exit_action
+			Entry entry = create_trade_from_EntryAction_and_ExitAction(args, current_entry_action, current_exit_action, bar_index)
+			place_trade(args.trade_library_args, entry)
+
+
+	
+///////////////////////////////////
+//////// FUNCTIONS FOR RULES
+//////////////////////////////////
+
+create_and_add_EntryRule(EntryLibraryArgs args, string name, string condition_name, string entry_action_name, string exit_action_name) => 
+	//look for the condition by its name 
+	BooleanExpression cond = get_condition_by_name(args, condition_name)
+	EntryAction entry_action = get_entry_action_by_name(args, entry_action_name)
+	ExitAction exit_action = get_exit_action_by_name(args, exit_action_name)
+	array<BooleanExpression> conditions = array.new<BooleanExpression>()
+	conditions.push(cond)
+	EntryRule rule = EntryRule.new(name, conditions, entry_action, exit_action)
+	args.entry_rules.push(rule)
+	rule 
+	 
+
+get_rule_by_name(EntryLibraryArgs args, string name) =>  
+	EntryRule rule = na 
+	array<EntryRule> entry_rules = args.entry_rules
+	if entry_rules.size() > 0 
+		for i = entry_rules.size() - 1 to 0 
+			EntryRule current_rule = entry_rules.get(i)
+			if current_rule.rule_name == name 
+				rule := current_rule 
+	rule
+	
+
+add_condition_to_EntryRule(EntryLibraryArgs args, string rule_name, string condition_name) => 
+	EntryRule rule = get_rule_by_name(args, rule_name)
+	BooleanExpression cond = get_condition_by_name(args, condition_name)
+
+	//add condition if it does not already exist
+	bool already_exists = false 
+	if rule.conditions.size() > 0 
+		for i = rule.conditions.size() - 1 to 0
+			if rule.conditions.get(i).name == condition_name 
+				already_exists := true 
+	
+	if not already_exists
+		rule.conditions.push(cond)
+
+
+
+process_EntryRules(EntryLibraryArgs args) => 
+	array<EntryRule> entry_rules = args.entry_rules 
+	if entry_rules.size() > 0
+		for i = entry_rules.size() - 1 to 0 
+			EntryRule current_rule = entry_rules.get(i)
+			//make sure all conditions are valid 
+			bool all_conditions_met = true
+			for j = current_rule.conditions.size() - 1 to 0
+				if current_rule.conditions.get(j).evaluated_value != true 
+					all_conditions_met := false 
+			
+			if all_conditions_met
+				//process if we are allowed to take longs and/or shorts 
+				bool is_long = current_rule.entry_action.trade_direction == Direction.Long
+				bool is_short = current_rule.entry_action.trade_direction == Direction.Short
+				if (is_long and args.process_longs) or (is_short and args.process_shorts)
+					args.output.taken_actions.push(current_rule)
+					args.output.has_output := true
+				
+				
+has_output(EntryLibraryArgs args) =>
+	args.output.has_output
+get_output(EntryLibraryArgs args) =>
+	args.output.taken_actions
+
+EntryStrategyLibrary_process_candle(EntryLibraryArgs args) => 
+	// clear the output 
+	reset_EntryLibraryOutput(args.output)
+	//first evaluate / update conditions
+	evaluate_conditions(args)
+	// then check rules for conditions that have been met 
+	process_EntryRules(args)
+	//then take each active trade action and create a trade from it 
+	take_active_trades(args)
+	//process the trades with the trade library 
+	TradeManagerLibrary_process_candle(args.trade_library_args)
+	
+

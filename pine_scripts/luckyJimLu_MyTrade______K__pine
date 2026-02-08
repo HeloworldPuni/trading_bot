@@ -1,0 +1,173 @@
+//@version=5
+// Al Brooks' Gaps Identifier by Gemini (with Measuring Gaps)
+indicator("Al Brooks' Gaps Identifier", "Al's Gaps", overlay=true)
+
+// --- INPUTS ---
+// Group for MA and Trend Settings
+ma_len = input.int(20, "Moving Average Length", group="MA & Trend Settings")
+trend_lookback = input.int(20, "Trend Lookback Period", group="MA & Trend Settings")
+trend_threshold = input.int(15, "Trend Bar Threshold (out of Lookback)", group="MA & Trend Settings", tooltip="How many bars out of the lookback period must be above/below the MA to be considered a trend.")
+
+// Group for Pattern Settings
+exh_lookback = input.int(20, "Exhaustion Gap Lookback", group="Pattern Settings", tooltip="Lookback period to determine the biggest bar for a potential exhaustion gap.")
+island_lookback = input.int(10, "Island Reversal Lookback", group="Pattern Settings", tooltip="How many bars to look back for an opposing gap to form an island.")
+pivot_len = input.int(5, "Pivot Lookback Length", group="Pattern Settings", tooltip="Pivot length for finding the start of a move for Measuring Gaps.")
+
+// Group for Display Toggles
+show_traditional = input.bool(true, "Traditional Gaps", group="Display Options", inline="g1")
+show_open = input.bool(true, "Open Gaps", group="Display Options", inline="g1")
+show_mag = input.bool(true, "MA Gaps (MAG)", group="Display Options", inline="g2")
+show_exhaustion = input.bool(true, "Potential Exhaustion Gaps", group="Display Options", inline="g2")
+show_island = input.bool(true, "Island Reversals", group="Display Options", inline="g3")
+show_closed_gaps = input.bool(true, "Stairs (Closed Gaps)", group="Display Options", inline="g3")
+show_measuring = input.bool(true, "Measuring Gaps & Targets", group="Display Options", inline="g4")
+
+
+// --- CALCULATIONS ---
+// Moving Average
+ema = ta.ema(close, ma_len)
+
+// Trend Context
+var bars_above_ema = 0
+var bars_below_ema = 0
+bars_above_ema := 0
+bars_below_ema := 0
+for i = 0 to trend_lookback - 1
+    if close[i] > ema[i]
+        bars_above_ema += 1
+    if close[i] < ema[i]
+        bars_below_ema += 1
+
+is_bull_trend_context = bars_above_ema >= trend_threshold
+is_bear_trend_context = bars_below_ema >= trend_threshold
+
+
+// --- GAP CONDITIONS ---
+// 1. Traditional Gaps
+is_gap_up = low > high[1]
+is_gap_down = high < low[1]
+
+// 2. Open Gaps
+is_open_gap_up = open > close[1]
+is_open_gap_down = open < close[1]
+
+// 3. Moving Average Gaps (MAG)
+is_bull_mag = is_bull_trend_context and high < ema
+is_bear_mag = is_bear_trend_context and low > ema
+
+// 4. Potential Exhaustion Gaps
+bull_body_size = close - open
+bear_body_size = open - close
+is_biggest_bull_body = bull_body_size > 0 and bull_body_size == ta.highest(bull_body_size, exh_lookback)
+is_biggest_bear_body = bear_body_size > 0 and bear_body_size == ta.highest(bear_body_size, exh_lookback)
+
+pot_bull_exh = is_bull_trend_context and is_gap_up and is_biggest_bull_body
+pot_bear_exh = is_bear_trend_context and is_gap_down and is_biggest_bear_body
+
+// 5. Island Reversals
+last_gap_down_bars = ta.barssince(is_gap_down)
+last_gap_up_bars = ta.barssince(is_gap_up)
+is_island_bottom = is_gap_up and last_gap_down_bars[1] > 0 and last_gap_down_bars[1] <= island_lookback
+is_island_top = is_gap_down and last_gap_up_bars[1] > 0 and last_gap_up_bars[1] <= island_lookback
+
+// 6. Stairs (Closed Gaps)
+var open_up_gaps_level = array.new_float()
+var open_down_gaps_level = array.new_float()
+
+if is_gap_up
+    array.push(open_up_gaps_level, high[1])
+if is_gap_down
+    array.push(open_down_gaps_level, low[1])
+
+if array.size(open_up_gaps_level) > 0
+    for i = array.size(open_up_gaps_level) - 1 to 0
+        level = array.get(open_up_gaps_level, i)
+        if low <= level
+            if show_closed_gaps
+                label.new(bar_index, level, "↑ Gap Closed", color=color.new(color.maroon, 20), textcolor=color.maroon, style=label.style_label_right)
+            array.remove(open_up_gaps_level, i)
+
+if array.size(open_down_gaps_level) > 0
+    for i = array.size(open_down_gaps_level) - 1 to 0
+        level = array.get(open_down_gaps_level, i)
+        if high >= level
+            if show_closed_gaps
+                label.new(bar_index, level, "↓ Gap Closed", color=color.new(color.teal, 20), textcolor=color.teal, style=label.style_label_right)
+            array.remove(open_down_gaps_level, i)
+
+// 7. Measuring Gaps
+// Custom type to store target info
+type MeasuredTarget
+    line targetLine
+    bool isBull
+
+var activeTargets = array.new<MeasuredTarget>()
+
+// Bullish Measuring Gap Detection (gap up, followed by a successful test)
+is_bull_measure_setup = is_gap_up[1] and low > high[2]
+if show_measuring and is_bull_measure_setup
+    // Find start of the move
+    move_start_price = ta.pivotlow(pivot_len, pivot_len)
+    if not na(move_start_price)
+        breakout_level = high[2]
+        projection_dist = breakout_level - move_start_price
+        target_price = breakout_level + projection_dist
+        // Draw the target line and store it
+        newLine = line.new(bar_index, target_price, bar_index + 1, target_price, extend=extend.right, color=color.new(color.green, 0), style=line.style_dashed, width=1)
+        array.push(activeTargets, MeasuredTarget.new(newLine, true))
+        label.new(bar_index, low, 'M', style=label.style_label_up, color=color.new(color.green, 20), textcolor=color.white)
+
+// Bearish Measuring Gap Detection (gap down, followed by a successful test)
+is_bear_measure_setup = is_gap_down[1] and high < low[2]
+if show_measuring and is_bear_measure_setup
+    // Find start of the move
+    move_start_price = ta.pivothigh(pivot_len, pivot_len)
+    if not na(move_start_price)
+        breakout_level = low[2]
+        projection_dist = move_start_price - breakout_level
+        target_price = breakout_level - projection_dist
+        // Draw the target line and store it
+        newLine = line.new(bar_index, target_price, bar_index + 1, target_price, extend=extend.right, color=color.new(color.red, 0), style=line.style_dashed, width=1)
+        array.push(activeTargets, MeasuredTarget.new(newLine, false))
+        label.new(bar_index, high, 'M', style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white)
+        
+// Manage active target lines
+if array.size(activeTargets) > 0
+    for i = array.size(activeTargets) - 1 to 0 by 1
+        target = array.get(activeTargets, i)
+        targetLine = target.targetLine
+        targetPrice = line.get_y1(targetLine)
+        
+        is_hit = target.isBull ? high >= targetPrice : low <= targetPrice
+        
+        if is_hit
+            line.set_color(targetLine, target.isBull ? color.blue : color.fuchsia)
+            line.set_style(targetLine, line.style_solid)
+            array.remove(activeTargets, i)
+
+
+// --- PLOTTING ---
+// Plot MA
+plot(ema, "EMA", color=color.orange)
+
+// Plot Traditional Gaps
+plotshape(show_traditional and is_gap_up, "Up Gap", shape.triangleup, location.belowbar, color.new(color.blue, 20), size=size.small)
+plotshape(show_traditional and is_gap_down, "Down Gap", shape.triangledown, location.abovebar, color.new(color.red, 20), size=size.small)
+
+// Plot Open Gaps
+if show_open and is_open_gap_up
+    label.new(bar_index, y=low, text='●', yloc=yloc.belowbar, color=color.new(color.aqua, 0), style=label.style_none, size=size.tiny, textcolor=color.aqua)
+if show_open and is_open_gap_down
+    label.new(bar_index, y=high, text='●', yloc=yloc.abovebar, color=color.new(color.fuchsia, 0), style=label.style_none, size=size.tiny, textcolor=color.fuchsia)
+
+// Plot MA Gaps (MAG)
+bgcolor(show_mag and is_bull_mag ? color.new(color.red, 85) : na, title="Bull Trend MAG Bar")
+bgcolor(show_mag and is_bear_mag ? color.new(color.green, 85) : na, title="Bear Trend MAG Bar")
+
+// Plot Potential Exhaustion Gaps
+plotshape(show_exhaustion and pot_bull_exh, "Potential Bull Exhaustion", shape.labelup, location.belowbar, color.new(color.green, 0), text="Exhaustion\nUP?", textcolor=color.green, size=size.small)
+plotshape(show_exhaustion and pot_bear_exh, "Potential Bear Exhaustion", shape.labeldown, location.abovebar, color.new(color.maroon, 0), text="Exhaustion\nDOWN?", textcolor=color.maroon, size=size.small)
+
+// Plot Island Reversals
+plotshape(show_island and is_island_top, "Island Top", shape.labeldown, location.abovebar, color.new(color.purple, 20), text="Island\nTop", textcolor=color.white, size=size.normal)
+plotshape(show_island and is_island_bottom, "Island Bottom", shape.labelup, location.belowbar, color.new(color.purple, 20), text="Island\nBottom", textcolor=color.white, size=size.normal)

@@ -1,0 +1,354 @@
+//@version=6
+// ===== 概要 ====================================================================== // Summary
+// 戦略名: OrderManager // Strategy Name: OrderManager
+// 目的: 複数のエントリー・エグジット方法と、リスク管理機能を備えた取引戦略 // Purpose: Trading strategy with multiple entry/exit methods and risk management functions
+
+// ===== 基本設定 ==================================================================== // Basic Settings
+systemName = 'OrderManager'
+initialCapital = 10000
+initialPositionSize = 100.0
+initialCommissionRate = 0.06
+maxPyramidingLevels = 1
+
+strategy(title=systemName,
+         shorttitle=systemName, 
+         overlay=true, 
+         pyramiding=maxPyramidingLevels, 
+         initial_capital = initialCapital, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=initialPositionSize, 
+         commission_type=strategy.commission.percent, 
+         commission_value=initialCommissionRate, 
+         precision=6, 
+         max_lines_count=500, 
+         max_labels_count=500
+         )
+
+// ===== 1. 設定セクション =========================================================== // Settings Section
+
+// ----- ストップロス設定 ----- // Stop Loss Settings
+stopLossType = input.string(title='❌StopLoss Type', defval='ATR', options=['None', 'Percent', 'ATR', 'ATR Trailing'], inline = "stopType", group = "StopLoss")
+
+// パーセントストップ // Percent Stop
+stopLossPercentage = input.float(title=' Stop loss(%)', minval=0.0, step=0.1, defval=1.8, inline ="LOSS", group = "StopLoss") * 0.01
+
+// ATRストップ // ATR Stop
+atrPeriodForStopLoss = input.int(title='ATR Length', defval=14, inline ="ATR", group = "StopLoss")
+atrMultiplierForStopLoss = input.float(defval=2.0, title='ATR Mult', step=0.10, inline ="ATR", group = "StopLoss")
+
+// ATRトレーリングストップ // ATR Trailing Stop
+atrPeriodForTrailingStop = input.int(14, minval=1,title='Trailing Length', inline="inputsATR", group = "StopLoss")
+atrMultiplierForTrailingStop = input.float(1.5,title='Trailing Mult', step = 0.1, inline="inputsATR", group = "StopLoss")
+
+// ストップロス追加設定 // Additional Stop Loss Settings
+requireCloseBelowStopLoss = input.bool(false, "Require Close Below Stop Loss", inline = "requireCloseBelowStop", group = "StopLoss")
+emergencyStopThreshold = input.float(0.3, step = 0.1, minval=0.0, title = "Emergency Stop Threshold (%)", group = "StopLoss") * 0.01
+
+// ----- 利確設定 ----- // Take Profit Settings
+takeProfitStrategy = input.string(title='✅Profit Type', defval='RR', options=['None', 'Percent', 'RR','ATR'], inline = "takeProfitType", group = "TakeProfit")
+
+// パーセント利確 // Percent Take Profit
+longTakeProfitPercentage = input.float(title='TP%(long)', minval=0.0, step=0.1, defval=1.5, inline = "TP", group = "TakeProfit") * 0.01
+shortTakeProfitPercentage = input.float(title='TP%(short)', minval=0.0, step=0.1, defval=1.5, inline = "TP", group = "TakeProfit") * 0.01
+
+// リスクリワード利確 // Risk-Reward Take Profit
+longRiskRewardRatio = input.float(title="RR 1:(long", step=0.1 , defval=1.5, minval = 0, inline = "RR", group = "TakeProfit")
+shortRiskRewardRatio = input.float(title="RR 1:(short)", step=0.1 , defval=1.5, minval = 0,inline = "RR", group = "TakeProfit")
+
+// ATR利確 // ATR Take Profit
+atrPeriodForTakeProfit = input.int(defval = 14, title = 'ATR Length', minval = 1, inline = 'Take Profit ATR Multiplier', group = "TakeProfit")
+longAtrMultiplierForTakeProfit = input.float(defval = 2.0, title = 'L_Mult', minval = 0.1, step = 0.1, inline = 'Take Profit ATR Multiplier', group = "TakeProfit")
+shortAtrMultiplierForTakeProfit = input.float(defval = 2.0, title = 'S_Mult', minval = 0.1, step = 0.1, inline = 'Take Profit ATR Multiplier', group = "TakeProfit")
+
+// ----- ポジション管理 ----- // Position Management
+closeOnOpposite = input.bool(true, "Close on Opposite Signal", group = "Position Management")
+closeStop = input.bool(true, "Use Emergency Stop Loss", group = "Position Management") 
+
+// ----- トレードフィルター ----- // Trade Filters
+enableLongStrategy = input.bool(true, "Enable Long Strategy", group = "Trade Filters")
+enableShortStrategy = input.bool(true, "Enable Short Strategy", group = "Trade Filters")
+
+// ----- アラートメッセージ ----- // Alert Messages
+Alert_OpenLong = "Long Take Profit Hit"
+Alert_OpenShort = "Short Take Profit Hit"
+Alert_LongTP = "Long Take Profit"
+Alert_ShortTP = "Short Take Profit"
+
+// ----- その他設定 ----- // Other Settings
+mainStrategy = input.bool(true,'🟥 🟥 🟥  Main Strategy Settings 🟥 🟥 🟥 ',inline = "mainSettings")
+
+
+// ===== 2. メインロジックセクション =================================================== // Main Logic Section
+
+// ----- エントリーシグナル ----- // Entry Signals
+isBullishSignal = ta.crossover(close, ta.sma(close, 30))    // 買いシグナル: 30日SMAを上抜けたとき // Buy signal: When price crosses above 30-day SMA
+isBearishSignal = ta.crossunder(close, ta.sma(close, 200))  // 売りシグナル: 200日SMAを下抜けたとき // Sell signal: When price crosses below 200-day SMA
+
+// エグジットフラグ // Exit Flags
+shouldExitLongPosition = false  // ユーザーがカスタムロジックで設定可能 // Can be set by user with custom logic
+shouldExitShortPosition = false // ユーザーがカスタムロジックで設定可能 // Can be set by user with custom logic
+
+// ----- ポジション管理 ----- // Position Management
+// 新規エントリー条件 // New Entry Conditions
+isValidLongEntry = isBullishSignal and not (strategy.opentrades.size(strategy.opentrades - 1) > 0)
+isValidShortEntry = isBearishSignal and not (strategy.opentrades.size(strategy.opentrades - 1) < 0)
+
+// アクティブポジション確認 // Active Position Confirmation
+isLongPositionActive = isValidLongEntry or strategy.opentrades.size(strategy.opentrades - 1) > 0 and not shouldExitLongPosition
+isShortPositionActive = isValidShortEntry or strategy.opentrades.size(strategy.opentrades - 1) < 0 and not shouldExitShortPosition
+
+// ポジション再確認 // Position Reconfirmation
+isValidLongPosition = isBullishSignal and not (strategy.opentrades.size(strategy.opentrades - 1) > 0)
+isValidShortPosition = isBearishSignal and not (strategy.opentrades.size(strategy.opentrades - 1) < 0)
+
+// ----- ATR計算 ----- // ATR Calculation
+// エントリー時のATR値 // ATR Value at Entry
+initialAtrValue = ta.valuewhen(isValidLongPosition or isValidShortPosition, ta.atr(atrPeriodForStopLoss), 0)
+initialAtrValueForTakeProfit = ta.valuewhen(isValidLongPosition or isValidShortPosition, ta.atr(atrPeriodForTakeProfit), 0)
+xAtr = ta.atr(atrPeriodForTrailingStop)
+
+// ----- ストップロス設定 ----- // Stop Loss Settings
+useStopLoss = stopLossType != 'None'
+useSlPercent = stopLossType == 'Percent'
+useSlAtr = stopLossType == 'ATR'
+useSlAtrTrailing = stopLossType == "ATR Trailing"
+
+// パーセントストップロス計算 // Percent Stop Loss Calculation
+longStopPricePercent = strategy.position_avg_price * (1 - stopLossPercentage)
+shortPerStopPrice = strategy.position_avg_price * (1 + stopLossPercentage)
+
+// ATRストップロス計算 // ATR Stop Loss Calculation
+xAtrLongStop = strategy.position_avg_price - initialAtrValue * atrMultiplierForStopLoss
+xAtrShortStop = strategy.position_avg_price + initialAtrValue * atrMultiplierForStopLoss
+
+// ATRトレーリングストップ計算 // ATR Trailing Stop Calculation
+float atrTrailingStopPrice = na
+atrTrailingStopOffset = atrMultiplierForTrailingStop * xAtr
+
+// トレーリングストップロジック（ロング・ショート共通処理の整理） // Trailing Stop Logic (Common processing for long/short)
+atrTrailingStopCondition = close > nz(atrTrailingStopPrice[1], 0) ? ta.vwap(close) - atrTrailingStopOffset : ta.vwap(close) + atrTrailingStopOffset
+
+atrTrailingStopCalculation = close < nz(atrTrailingStopPrice[1], 0) and close[1] < nz(atrTrailingStopPrice[1], 0) ? math.min(nz(atrTrailingStopPrice[1]), ta.vwap(close) + atrTrailingStopOffset) : atrTrailingStopCondition
+
+atrTrailingStopPrice := close > nz(atrTrailingStopPrice[1], 0) and close[1] > nz(atrTrailingStopPrice[1], 0) ? math.max(nz(atrTrailingStopPrice[1]), ta.vwap(close) - atrTrailingStopOffset) : atrTrailingStopCalculation
+
+xAtrTrailingStop = atrTrailingStopPrice
+
+// 最終ストップロス値の決定 // Determining Final Stop Loss Value
+float finalSlLong = 0.0
+float finalSlShort = 0.0
+
+// タイプに基づいたストップロスの決定 // Determine stop loss based on type
+finalSlLong := switch
+    useSlPercent => longStopPricePercent
+    useSlAtr => xAtrLongStop
+    useSlAtrTrailing => xAtrTrailingStop
+    => na
+
+finalSlShort := switch
+    useSlPercent => shortPerStopPrice
+    useSlAtr => xAtrShortStop
+    useSlAtrTrailing => xAtrTrailingStop
+    => na
+
+// 現在のストップロスレベル // Current Stop Loss Level
+currentLongStopLossLevel = useStopLoss ? finalSlLong : na
+currentShortStopLossLevel = useStopLoss ? finalSlShort : na
+
+// 使用ストップロスレベル（strategy.exit用） // Stop Loss Level for strategy.exit
+float floatStopLossLong = currentLongStopLossLevel
+float floatStopLossShort = currentShortStopLossLevel
+
+// 緊急ストップロス設定 // Emergency Stop Loss Setting
+longEmergencyStopLevel = finalSlLong * (1 - emergencyStopThreshold)
+shortEmergencyStopLevel = finalSlShort * (1 + emergencyStopThreshold)
+
+// ----- 利確設定 ----- // Take Profit Settings
+useTp = takeProfitStrategy != 'None'
+
+// リスクリワード比のためのストップロス距離計算 // Stop Loss Distance Calculation for Risk-Reward Ratio
+longTrailingStopDistance = strategy.position_avg_price - floatStopLossLong 
+shortTrailingStopDistance = floatStopLossShort - strategy.position_avg_price 
+
+// 利確タイプに基づいた計算 // Calculation Based on Take Profit Type
+tpLong = switch takeProfitStrategy
+    "Percent" => strategy.position_avg_price * (1 + longTakeProfitPercentage)
+    "RR" => strategy.position_avg_price + (longTrailingStopDistance * longRiskRewardRatio)
+    "ATR" => close + longAtrMultiplierForTakeProfit * initialAtrValueForTakeProfit
+    => na
+
+tpShort = switch takeProfitStrategy
+    "Percent" => strategy.position_avg_price * (1 - shortTakeProfitPercentage)
+    "RR" => strategy.position_avg_price - (shortTrailingStopDistance * shortRiskRewardRatio)
+    "ATR" => close - shortAtrMultiplierForTakeProfit * initialAtrValueForTakeProfit
+    => na
+
+// 使用利確レベル // Take Profit Level to Use
+longTakeProfitLevel = useTp ? tpLong : na
+shortTakeProfitLevel = useTp ? tpShort : na
+
+// ----- トレード方向フィルター ----- // Trade Direction Filter
+isLongTradeAllowed = true  // プレースホルダー、実際のロジックに置き換え可能 // Placeholder, can be replaced with actual logic
+isShortTradeAllowed = true // プレースホルダー、実際のロジックに置き換え可能 // Placeholder, can be replaced with actual logic
+
+// ===== トレードロジック =================================================== // Trade Logic
+// 利確価格の記録と維持 // Recording and Maintaining Take Profit Price
+float longTakeProfitPrice = na
+longTakeProfitPrice := switch
+    isLongPositionActive and isValidLongEntry => tpLong
+    isLongPositionActive => nz(longTakeProfitPrice[1], tpLong)
+    => na
+
+float shortTakeProfitPrice = na
+shortTakeProfitPrice := switch
+    isShortPositionActive and isValidShortEntry => tpShort
+    isShortPositionActive => nz(shortTakeProfitPrice[1], tpShort)
+    => na
+
+// ===== ポジションサイジング ==================================================== // Position Sizing
+useStop = input.bool(false, "🏛️Order Sizing", group="🏛️order sizing")
+setRisk = input.string(title="methods", defval="Risk Base", options=["Risk Base", "Leverage", "Technical Algo"], group="🏛️order sizing", inline="risk")
+riskValue = input.float(2.0, title="Risk ", inline="risk", group="🏛️order sizing")
+_leverage = input.float(1, 'Lev', step=.5, group="🏛️order sizing", inline="risk")
+
+// ストップロス額の計算 // Stop Loss Amount Calculation
+stopLossAmount = stopLossType == 'ATR' ? initialAtrValue * atrMultiplierForStopLoss : stopLossType == "ATR Trailing" ? atrMultiplierForTrailingStop * xAtr : na 
+
+// リスク計算のヘルパー関数 // Risk Calculation Helper Functions
+slPercent = math.abs((1 - (close - stopLossAmount) / close) * 100)
+riskAmountInDollars = strategy.equity * riskValue / 100
+entryQuantity = math.abs(riskAmountInDollars / slPercent * 100) / close
+
+percent2money(price, percent) =>
+    price * percent / 100 * syminfo.pointvalue
+    
+calcPositionSize(entryPrice, slPercent) =>
+    risk = strategy.equity * riskValue / 100   
+    risk / percent2money(entryPrice, slPercent)
+
+// 動的配分設定 // Dynamic Allocation Settings
+lowZoneMultiplier = input.float(0.5, "Low", step=0.1, minval=0, maxval=10, group="🏛️order sizing", inline="DA")
+midZoneMultiplier = input.float(1, "Mid", step=0.1, minval=0, maxval=10, group="🏛️order sizing", inline="DA")
+highZoneMultiplier = input.float(1.5, "High", step=0.1, minval=0, maxval=10, group="🏛️order sizing", inline="DA")
+_riskSourceInput = input.string('ATR', 'DA Source', options=['close', 'volume', 'MA 5', 'MA 25', 'MACD', 'volume MA', 'ATR', 'VWAP', 'RSI', 'MFI'], group="🏛️order sizing", inline="DA2")
+riskBandwidth = input.float(3.1, "Risk Band", step=0.01, minval=2, group="🏛️order sizing", inline="DA2")
+
+// リスクベース計算 // Risk-Based Calculation
+riskSource = switch _riskSourceInput
+    "close" => close
+    "volume" => volume
+    "MA 5" => ta.sma(close, 5)
+    "MA 25" => ta.sma(close, 25)
+    "MACD" => ta.sma(close, 5) - ta.sma(close, 25)
+    "volume MA" => ta.sma(volume, 25)
+    "ATR" => ta.rma(ta.tr(true), 14)
+    "VWAP" => ta.vwap(close)
+    "RSI" => ta.rsi(close, 14)
+    "MFI" => ta.mfi(hlc3,  14)
+    => close
+
+// リスクゾーンの計算 // Risk Zone Calculation
+riskHighest = ta.highest(riskSource, 100)
+riskLowest = ta.lowest(riskSource, 100)
+riskThird = ((riskHighest - riskLowest) / riskBandwidth)
+riskZone1 = riskLowest + riskThird 
+riskZone2 = riskHighest - riskThird 
+
+// リスクゾーンに基づいたボリューム乗数の設定 // Setting Volume Multiplier Based on Risk Zone
+var float volumeMultiplier = 1.0
+
+if riskLowest <= riskSource and riskSource <= riskZone1
+    volumeMultiplier := lowZoneMultiplier
+
+if riskZone1 < riskSource and riskSource <= riskZone2
+    volumeMultiplier := midZoneMultiplier
+
+if riskZone2 < riskSource and riskSource <= riskHighest
+    volumeMultiplier := highZoneMultiplier
+
+// テクニカルアルゴリズムによるオーダーサイズ計算 // Order Size Calculation Using Technical Algorithm
+orderSize = (strategy.equity / close)
+orderSize := (strategy.equity / close * volumeMultiplier)
+
+// ストップロスタイプに基づいたリスクポジションサイズの計算 // Risk Position Size Calculation Based on Stop Loss Type
+calculatedRiskPositionSize = switch stopLossType
+    "Percent" => calcPositionSize(close, (stopLossPercentage * 100))
+    "ATR" => math.abs(riskAmountInDollars / slPercent * 100) / close
+    "ATR Trailing" => math.abs(riskAmountInDollars / slPercent * 100) / close
+    => float(na)
+
+// 選択されたリスク方法に基づくポジションサイズ計算 // Position Size Calculation Based on Selected Risk Method
+calculatedPositionSize = switch setRisk
+    "Risk Base" => calculatedRiskPositionSize
+    "Leverage" => math.min(math.max(.000001, strategy.equity / close * _leverage), 1000000000)
+    "Technical Algo" => orderSize
+    => float(na)
+
+// ===== エントリーロジック =================================================== // Entry Logic
+// ロングエントリー // Long Entry
+if isBullishSignal and enableLongStrategy and isLongTradeAllowed 
+    positionSize = useStop ? calculatedPositionSize : na
+    if useStop
+        strategy.entry("Long", strategy.long, qty=positionSize, comment="Long", alert_message="Opening Long")
+    else
+        strategy.entry("Long", strategy.long, comment="Long", alert_message="Opening Long")
+    strategy.exit(id='Long', limit=longTakeProfitLevel, stop=closeStop ? na : currentLongStopLossLevel, comment='Exit Long TP', alert_message=Alert_OpenLong)
+
+// ショートエントリー // Short Entry
+if isBearishSignal and enableShortStrategy and isShortTradeAllowed 
+    positionSize = useStop ? calculatedPositionSize : na
+    if useStop
+        strategy.entry("Short", strategy.short, qty=positionSize, comment="Short", alert_message="Opening Short")
+    else
+        strategy.entry("Short", strategy.short, comment="Short", alert_message="Opening Short")
+    strategy.exit(id='Short', limit=shortTakeProfitLevel, stop=closeStop ? na : currentShortStopLossLevel, comment='Exit Short TP', alert_message=Alert_OpenShort)
+
+// ===== エグジット管理 =================================================== // Exit Management
+// 通常のエグジット管理 // Normal Exit Management
+if strategy.position_size > 0
+    strategy.exit(id='Long', limit=longTakeProfitLevel, stop=closeStop ? na : floatStopLossLong, comment='Exit Long TP')
+if strategy.position_size < 0
+    strategy.exit(id='Short', limit=shortTakeProfitLevel, stop=closeStop ? na : floatStopLossShort, comment='Exit Short TP')
+
+// 条件に基づくポジションクローズ // Position Close Based on Conditions
+// 反対シグナルによるクローズ // Close on Opposite Signal
+if closeOnOpposite and strategy.position_size > 0 and isBearishSignal  
+    strategy.close(id='Long', comment='Short Signal\nClose Long')
+if closeOnOpposite and strategy.position_size < 0 and isBullishSignal  
+    strategy.close(id='Short', comment='Long Signal\nClose Short')
+
+// カスタムエグジット条件 // Custom Exit Conditions
+if strategy.position_size > 0 and shouldExitLongPosition
+    strategy.close(id='Long', comment='Custom Close Signal\nClose Long')
+if strategy.position_size < 0 and shouldExitShortPosition
+    strategy.close(id='Short', comment='Custom Close Signal\nClose Short')
+
+// 緊急ストップロス // Emergency Stop Loss
+if closeStop and strategy.position_size > 0 and close <= longEmergencyStopLevel
+    strategy.close(id='Long', comment='Emergency Stop Long')
+if closeStop and strategy.position_size < 0 and close >= shortEmergencyStopLevel
+    strategy.close(id='Short', comment='Emergency Stop Short')
+
+// ===== ユーティリティセクション =================================================== // Utility Section
+showTakeProfitStopLossPlots = input.bool(true, title="📊show Plot TP / SL", group="📊Dashboard")
+
+// ストップロスと利確レベル // Stop Loss and Take Profit Levels
+longStopLossLevel = currentLongStopLossLevel
+shortStopLossLevel = currentShortStopLossLevel
+
+// プロット設定 // Plot Settings
+plotStopLossLong = plot(showTakeProfitStopLossPlots and strategy.position_size > 0 ? longStopLossLevel : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=3, title="Long Stop Loss")
+plotEmergencyStopLong = plot(closeStop and showTakeProfitStopLossPlots and strategy.position_size > 0 ? longEmergencyStopLevel : na, style=plot.style_linebr, color=color.new(color.orange, 0), linewidth=3, title="Long Emergency Stop")
+plotStopLossShort = plot(showTakeProfitStopLossPlots and strategy.position_size < 0 ? shortStopLossLevel : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=3, title="Short Stop Loss")
+plotEmergencyStopShort = plot(closeStop and showTakeProfitStopLossPlots and strategy.position_size < 0 ? shortEmergencyStopLevel : na, style=plot.style_linebr, color=color.new(color.orange, 0), linewidth=3, title="Short Emergency Stop")
+plotTakeProfitLong = plot(showTakeProfitStopLossPlots and strategy.position_size > 0 ? longTakeProfitLevel : na, style=plot.style_linebr, color=color.new(color.green, 0), linewidth=3, title="Long Take Profit")
+plotTakeProfitShort = plot(showTakeProfitStopLossPlots and strategy.position_size < 0 ? shortTakeProfitLevel : na, style=plot.style_linebr, color=color.new(color.green, 0), linewidth=3, title="Short Take Profit")
+entryPriceLine = plot(showTakeProfitStopLossPlots ? strategy.position_avg_price : na, color=color.new(color.white, 50), style=plot.style_linebr, linewidth=3, title="Entry Price Marker")
+
+// エリア塗りつぶし // Area Fill
+fill(entryPriceLine, plotStopLossLong, color.new(color.red, 80))
+fill(entryPriceLine, plotStopLossShort, color.new(color.red, 80))
+fill(entryPriceLine, plotTakeProfitLong, color.new(color.green, 80))
+fill(entryPriceLine, plotTakeProfitShort, color.new(color.green, 80))
+fill(plotStopLossLong, plotEmergencyStopLong, color.new(color.orange, 80))
+fill(plotStopLossShort, plotEmergencyStopShort, color.new(color.orange, 80))

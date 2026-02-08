@@ -1,0 +1,49 @@
+// PropSync - VWAP Bounce Strategy (5 Minute)
+// Buy when price bounces off VWAP support, sell when hits resistance
+//@version=5
+strategy("PropSync VWAP Bounce 5m", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1)
+
+// ===== INPUTS =====
+vwapStdDev = input.float(2.0, "VWAP Std Dev Multiplier", minval=0.5, step=0.5)
+webhookUrl = input.string("YOUR_NGROK_URL_HERE/webhook", "Webhook URL")
+passphrase = input.string("YOUR_SECRET_PASSPHRASE", "Webhook Passphrase")
+symbol = input.string("NQ", "Trading Symbol (NQ, ES, etc)")
+quantity = input.int(1, "Contract Quantity", minval=1)
+
+// ===== CALCULATIONS =====
+vwapValue = ta.vwap(close)
+
+// Calculate VWAP bands (standard deviation)
+vwapStdDevValue = ta.stdev(close, 20)
+upperBand = vwapValue + (vwapStdDevValue * vwapStdDev)
+lowerBand = vwapValue - (vwapStdDevValue * vwapStdDev)
+
+// Plot VWAP and bands
+plot(vwapValue, "VWAP", color=color.yellow, linewidth=2)
+plot(upperBand, "Upper Band", color=color.red, linewidth=1)
+plot(lowerBand, "Lower Band", color=color.green, linewidth=1)
+fill(plot(upperBand), plot(vwapValue), color=color.new(color.red, 90))
+fill(plot(lowerBand), plot(vwapValue), color=color.new(color.green, 90))
+
+// ===== SIGNALS =====
+// Buy when price touches lower band and closes above it (bounce)
+buySignal = low <= lowerBand and close > lowerBand and close > open
+
+// Sell when price touches upper band and closes below it (rejection)
+sellSignal = high >= upperBand and close < upperBand and close < open
+
+// ===== ENTRIES =====
+if buySignal
+    strategy.entry("Long", strategy.long)
+    alert('{"passphrase":"' + passphrase + '","action":"buy","symbol":"' + symbol + '","quantity":' + str.tostring(quantity) + ',"price":' + str.tostring(close) + ',"strategy":"VWAP_Bounce_5m","vwap":' + str.tostring(vwapValue) + '}', alert.freq_once_per_bar)
+
+if sellSignal
+    strategy.entry("Short", strategy.short)
+    alert('{"passphrase":"' + passphrase + '","action":"sell","symbol":"' + symbol + '","quantity":' + str.tostring(quantity) + ',"price":' + str.tostring(close) + ',"strategy":"VWAP_Bounce_5m","vwap":' + str.tostring(vwapValue) + '}', alert.freq_once_per_bar)
+
+// ===== VISUALIZATION =====
+plotshape(buySignal, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(sellSignal, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+bgcolor(buySignal ? color.new(color.green, 90) : na)
+bgcolor(sellSignal ? color.new(color.red, 90) : na)

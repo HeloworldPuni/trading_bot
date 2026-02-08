@@ -1,0 +1,708 @@
+//@version=4
+study("Combined Indicators Fixed v4.2", overlay = true, max_bars_back = 1000, max_lines_count = 400, max_labels_count = 400)
+
+// ==========================================
+// 1. Divergence Indicator
+// ==========================================
+prd = input(defval = 5, title = "Pivot Period", minval = 1, maxval = 50)
+source = input(defval = "Close", title = "Source for Pivot Points", options = ["Close", "High/Low"])
+searchdiv = input(defval = "Regular", title = "Divergence Type", options = ["Regular", "Hidden", "Regular/Hidden"])
+showindis = input(defval = "Full", title = "Show Indicator Names", options = ["Full", "First Letter", "Don't Show"])
+showlimit = input(1, title="Minimum Number of Divergence", minval = 1, maxval = 11)
+maxpp = input(defval = 10, title = "Maximum Pivot Points to Check", minval = 1, maxval = 20)
+maxbars = input(defval = 100, title = "Maximum Bars to Check", minval = 30, maxval = 200)
+shownum = input(defval = true, title = "Show Divergence Number")
+showlast = input(defval = false, title = "Show Only Last Divergence")
+dontconfirm = input(defval = true, title = "Don't Wait for Confirmation")
+showlines = input(defval = true, title = "Show Divergence Lines")
+showpivot = input(defval = false, title = "Show Pivot Points")
+
+calcmacd = input(true, title = "MACD"), calcmacda = input(true, title = "MACD Histogram")
+calcrsi = input(true, title = "RSI"), calcstoc = input(true, title = "Stochastic")
+calccci = input(true, title = "CCI"), calcmom = input(true, title = "Momentum")
+calcobv = input(true, title = "OBV"), calcvwmacd = input(true, title = "VWmacd")
+calccmf = input(true, title = "Chaikin Money Flow"), calcmfi = input(true, title = "Money Flow Index")
+calcext = input(false, title = "Check External Indicator"), externalindi = input(defval = close, title = "External Indicator")
+
+pos_reg_div_col = input(color.yellow, title = "Positive Regular"), neg_reg_div_col = input(color.navy, title = "Negative Regular")
+pos_hid_div_col = input(color.lime, title = "Positive Hidden"), neg_hid_div_col = input(color.red, title = "Negative Hidden")
+pos_div_text_col = input(color.black, title = "Pos Text Color"), neg_div_text_col = input(color.white, title = "Neg Text Color")
+reg_div_l_style_ = input("Solid", title = "Regular Line Style", options = ["Solid", "Dashed", "Dotted"])
+hid_div_l_style_ = input("Dashed", title = "Hidden Line Style", options = ["Solid", "Dashed", "Dotted"])
+reg_div_l_width = input(2, title = "Regular Width", minval = 1, maxval = 5), hid_div_l_width = input(1, title = "Hidden Width", minval = 1, maxval = 5)
+
+showmas = input(false, title = "Show MAs 50 & 200", inline = "ma12")
+cma1col = input(color.lime, title = "", inline = "ma12"), cma2col = input(color.red, title = "", inline = "ma12")
+plot(showmas ? sma(close, 50) : na, color = cma1col)
+plot(showmas ? sma(close, 200) : na, color = cma2col)
+
+var reg_div_l_style = reg_div_l_style_ == "Solid" ? line.style_solid : reg_div_l_style_ == "Dashed" ? line.style_dashed : line.style_dotted
+var hid_div_l_style = hid_div_l_style_ == "Solid" ? line.style_solid : hid_div_l_style_ == "Dashed" ? line.style_dashed : line.style_dotted
+
+rsi = rsi(close, 14)
+[macd, signal, deltamacd] = macd(close, 12, 26, 9)
+moment = mom(close, 10)
+cci = cci(close, 10)
+Obv = obv
+stk = sma(stoch(close, high, low, 14), 3)
+maFast = vwma(close, 12), maSlow = vwma(close, 26), vwmacd = maFast - maSlow
+Cmfm = ((close-low) - (high-close)) / (high - low), Cmfv = Cmfm * volume, cmf = sma(Cmfv, 21) / sma(volume,21)
+Mfi = mfi(close, 14)
+
+var indicators_name = array.new_string(11)
+var div_colors = array.new_color(4)
+if barstate.isfirst
+    array.set(indicators_name, 0, showindis == "Full" ? "MACD" : "M")
+    array.set(indicators_name, 1, showindis == "Full" ? "Hist" : "H")
+    array.set(indicators_name, 2, showindis == "Full" ? "RSI" : "E")
+    array.set(indicators_name, 3, showindis == "Full" ? "Stoch" : "S")
+    array.set(indicators_name, 4, showindis == "Full" ? "CCI" : "C")
+    array.set(indicators_name, 5, showindis == "Full" ? "MOM" : "M")
+    array.set(indicators_name, 6, showindis == "Full" ? "OBV" : "O")
+    array.set(indicators_name, 7, showindis == "Full" ? "VWMACD" : "V")
+    array.set(indicators_name, 8, showindis == "Full" ? "CMF" : "C")
+    array.set(indicators_name, 9, showindis == "Full" ? "MFI" : "M")
+    array.set(indicators_name,10, showindis == "Full" ? "Extrn" : "X")
+    array.set(div_colors, 0, pos_reg_div_col)
+    array.set(div_colors, 1, neg_reg_div_col)
+    array.set(div_colors, 2, pos_hid_div_col)
+    array.set(div_colors, 3, neg_hid_div_col)
+
+float ph = pivothigh((source == "Close" ? close : high), prd, prd)
+float pl = pivotlow((source == "Close" ? close : low), prd, prd)
+plotshape(ph and showpivot, text = "H",  style = shape.labeldown, color = color.white, textcolor = color.red, location = location.abovebar, offset = -prd)
+plotshape(pl and showpivot, text = "L",  style = shape.labelup, color = color.white, textcolor = color.lime, location = location.belowbar, offset = -prd)
+
+var int maxarraysize = 20
+var ph_positions = array.new_int(maxarraysize, 0)
+var pl_positions = array.new_int(maxarraysize, 0)
+var ph_vals = array.new_float(maxarraysize, 0.)
+var pl_vals = array.new_float(maxarraysize, 0.)
+
+if ph
+    array.unshift(ph_positions, bar_index), array.unshift(ph_vals, ph)
+    if array.size(ph_positions) > maxarraysize
+        array.pop(ph_positions), array.pop(ph_vals)
+if pl
+    array.unshift(pl_positions, bar_index), array.unshift(pl_vals, pl)
+    if array.size(pl_positions) > maxarraysize
+        array.pop(pl_positions), array.pop(pl_vals)
+
+positive_regular_positive_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "Close" ? close : low
+    if dontconfirm or src > src[1] or close > close[1]
+        startpoint = dontconfirm ? 0 : 1
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(pl_positions, x) + prd
+            if array.get(pl_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and ((cond == 1 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(pl_vals, x))) or (cond == 2 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(pl_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - close[len]) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] < virtual_line1 or nz(close[y]) < virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+negative_regular_negative_hidden_divergence(src, cond)=>
+    divlen = 0
+    prsc = source == "Close" ? close : high
+    if dontconfirm or src < src[1] or close < close[1]
+        startpoint = dontconfirm ? 0 : 1
+        for x = 0 to maxpp - 1
+            len = bar_index - array.get(ph_positions, x) + prd
+            if array.get(ph_positions, x) == 0 or len > maxbars
+                break
+            if len > 5 and ((cond == 1 and src[startpoint] < src[len] and prsc[startpoint] > nz(array.get(ph_vals, x))) or (cond == 2 and src[startpoint] > src[len] and prsc[startpoint] < nz(array.get(ph_vals, x))))
+                slope1 = (src[startpoint] - src[len]) / (len - startpoint)
+                virtual_line1 = src[startpoint] - slope1
+                slope2 = (close[startpoint] - nz(close[len])) / (len - startpoint)
+                virtual_line2 = close[startpoint] - slope2
+                arrived = true
+                for y = 1 + startpoint to len - 1
+                    if src[y] > virtual_line1 or nz(close[y]) > virtual_line2
+                        arrived := false
+                        break
+                    virtual_line1 := virtual_line1 - slope1
+                    virtual_line2 := virtual_line2 - slope2
+                if arrived
+                    divlen := len
+                    break
+    divlen
+
+calculate_divs(cond, indicator)=>
+    divs = array.new_int(4, 0)
+    array.set(divs, 0, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? positive_regular_positive_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 1, cond and (searchdiv == "Regular" or searchdiv == "Regular/Hidden") ? negative_regular_negative_hidden_divergence(indicator, 1) : 0)
+    array.set(divs, 2, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? positive_regular_positive_hidden_divergence(indicator, 2) : 0)
+    array.set(divs, 3, cond and (searchdiv == "Hidden" or searchdiv == "Regular/Hidden")  ? negative_regular_negative_hidden_divergence(indicator, 2) : 0)
+    divs
+
+var all_divergences = array.new_int(44)
+array_set_divs(div_pointer, index)=>
+    for x = 0 to 3
+        array.set(all_divergences, index * 4 + x, array.get(div_pointer, x))
+
+array_set_divs(calculate_divs(calcmacd, macd), 0)
+array_set_divs(calculate_divs(calcmacda, deltamacd), 1)
+array_set_divs(calculate_divs(calcrsi, rsi), 2)
+array_set_divs(calculate_divs(calcstoc, stk), 3)
+array_set_divs(calculate_divs(calccci, cci), 4)
+array_set_divs(calculate_divs(calcmom, moment), 5)
+array_set_divs(calculate_divs(calcobv, Obv), 6)
+array_set_divs(calculate_divs(calcvwmacd, vwmacd), 7)
+array_set_divs(calculate_divs(calccmf, cmf), 8)
+array_set_divs(calculate_divs(calcmfi, Mfi), 9)
+array_set_divs(calculate_divs(calcext, externalindi), 10)
+
+total_div = 0
+for x = 0 to array.size(all_divergences) - 1
+    total_div := total_div + round(sign(array.get(all_divergences, x)))
+if total_div < showlimit
+    array.fill(all_divergences, 0)
+
+var pos_div_lines = array.new_line(0)
+var neg_div_lines = array.new_line(0)
+var pos_div_labels = array.new_label(0)
+var neg_div_labels = array.new_label(0) 
+
+delete_old_pos_div_lines()=>
+    if array.size(pos_div_lines) > 0    
+        for j = 0 to array.size(pos_div_lines) - 1 
+            line.delete(array.get(pos_div_lines, j))
+        array.clear(pos_div_lines)
+delete_old_neg_div_lines()=>
+    if array.size(neg_div_lines) > 0    
+        for j = 0 to array.size(neg_div_lines) - 1 
+            line.delete(array.get(neg_div_lines, j))
+        array.clear(neg_div_lines)
+delete_old_pos_div_labels()=>
+    if array.size(pos_div_labels) > 0 
+        for j = 0 to array.size(pos_div_labels) - 1 
+            label.delete(array.get(pos_div_labels, j))
+        array.clear(pos_div_labels)
+delete_old_neg_div_labels()=>
+    if array.size(neg_div_labels) > 0    
+        for j = 0 to array.size(neg_div_labels) - 1 
+            label.delete(array.get(neg_div_labels, j))
+        array.clear(neg_div_labels)
+delete_last_pos_div_lines_label(n)=>
+    if n > 0 and array.size(pos_div_lines) >= n    
+        asz = array.size(pos_div_lines)
+        for j = 1 to n
+            line.delete(array.get(pos_div_lines, asz - j))
+            array.pop(pos_div_lines)
+        if array.size(pos_div_labels) > 0  
+            label.delete(array.get(pos_div_labels, array.size(pos_div_labels) - 1))
+            array.pop(pos_div_labels)
+delete_last_neg_div_lines_label(n)=>
+    if n > 0 and array.size(neg_div_lines) >= n    
+        asz = array.size(neg_div_lines)
+        for j = 1 to n
+            line.delete(array.get(neg_div_lines, asz - j))
+            array.pop(neg_div_lines)
+        if array.size(neg_div_labels) > 0  
+            label.delete(array.get(neg_div_labels, array.size(neg_div_labels) - 1))
+            array.pop(neg_div_labels)
+
+pos_reg_div_detected = false
+neg_reg_div_detected = false
+pos_hid_div_detected = false
+neg_hid_div_detected = false
+
+var last_pos_div_lines = 0
+var last_neg_div_lines = 0
+var remove_last_pos_divs = false 
+var remove_last_neg_divs = false
+if pl
+    remove_last_pos_divs := false
+    last_pos_div_lines := 0
+if ph
+    remove_last_neg_divs := false
+    last_neg_div_lines := 0
+
+divergence_text_top = ""
+divergence_text_bottom = ""
+distances = array.new_int(0)
+dnumdiv_top = 0
+dnumdiv_bottom = 0
+top_label_col = color.white
+bottom_label_col = color.white
+old_pos_divs_can_be_removed = true
+old_neg_divs_can_be_removed = true
+startpoint = dontconfirm ? 0 : 1
+
+for x = 0 to 10
+    div_type = -1
+    for y = 0 to 3
+        if array.get(all_divergences, x * 4 + y) > 0
+            div_type := y
+            if (y % 2) == 1 
+                dnumdiv_top := dnumdiv_top + 1
+                top_label_col := array.get(div_colors, y)
+            if (y % 2) == 0
+                dnumdiv_bottom := dnumdiv_bottom + 1
+                bottom_label_col := array.get(div_colors, y)
+            if not array.includes(distances, array.get(all_divergences, x * 4 + y))
+                array.push(distances, array.get(all_divergences, x * 4 + y))
+                new_line = showlines ? line.new(x1 = bar_index - array.get(all_divergences, x * 4 + y), y1 = (source == "Close" ? close[array.get(all_divergences, x * 4 + y)] : (y % 2) == 0 ? low[array.get(all_divergences, x * 4 + y)] : high[array.get(all_divergences, x * 4 + y)]), x2 = bar_index - startpoint, y2 = (source == "Close" ? close[startpoint] : (y % 2) == 0 ? low[startpoint] : high[startpoint]), color = array.get(div_colors, y), style = y < 2 ? reg_div_l_style : hid_div_l_style, width = y < 2 ? reg_div_l_width : hid_div_l_width) : na
+                if (y % 2) == 0
+                    if old_pos_divs_can_be_removed
+                        old_pos_divs_can_be_removed := false
+                        if not showlast and remove_last_pos_divs
+                            delete_last_pos_div_lines_label(last_pos_div_lines)
+                            last_pos_div_lines := 0
+                        if showlast
+                            delete_old_pos_div_lines()
+                        array.push(pos_div_lines, new_line)
+                    last_pos_div_lines := last_pos_div_lines + 1
+                    remove_last_pos_divs := true
+                if (y % 2) == 1
+                    if old_neg_divs_can_be_removed
+                        old_neg_divs_can_be_removed := false
+                        if not showlast and remove_last_neg_divs
+                            delete_last_neg_div_lines_label(last_neg_div_lines)
+                            last_neg_div_lines := 0
+                        if showlast
+                            delete_old_neg_div_lines()
+                        array.push(neg_div_lines, new_line)
+                    last_neg_div_lines := last_neg_div_lines + 1
+                    remove_last_neg_divs := true
+            if y == 0
+                pos_reg_div_detected := true
+            if y == 1
+                neg_reg_div_detected := true
+            if y == 2
+                pos_hid_div_detected := true
+            if y == 3
+                neg_hid_div_detected := true
+    if div_type >= 0
+        divergence_text_top    := divergence_text_top    + ((div_type % 2) == 1 ? (showindis != "Don't Show" ? array.get(indicators_name, x) + "\n" : "") : "")
+        divergence_text_bottom := divergence_text_bottom + ((div_type % 2) == 0 ? (showindis != "Don't Show" ? array.get(indicators_name, x) + "\n" : "") : "")
+
+if showindis != "Don't Show" or shownum
+    if shownum and dnumdiv_top > 0
+        divergence_text_top := divergence_text_top + tostring(dnumdiv_top)
+    if shownum and dnumdiv_bottom > 0
+        divergence_text_bottom := divergence_text_bottom + tostring(dnumdiv_bottom)
+    if divergence_text_top != ""
+        if showlast
+            delete_old_neg_div_labels()
+        array.push(neg_div_labels, label.new( x = bar_index, y = max(high, high[1]), text = divergence_text_top, color = top_label_col, textcolor = neg_div_text_col, style = label.style_label_down))
+    if divergence_text_bottom != ""
+        if showlast
+            delete_old_pos_div_labels()
+        array.push(pos_div_labels, label.new( x = bar_index, y = min(low, low[1]), text = divergence_text_bottom, color = bottom_label_col, textcolor = pos_div_text_col, style = label.style_label_up))
+
+alertcondition(pos_reg_div_detected, title='Positive Regular Divergence Detected', message='Positive Regular Divergence Detected')
+alertcondition(neg_reg_div_detected, title='Negative Regular Divergence Detected', message='Negative Regular Divergence Detected')
+alertcondition(pos_hid_div_detected, title='Positive Hidden Divergence Detected', message='Positive Hidden Divergence Detected')
+alertcondition(neg_hid_div_detected, title='Negative Hidden Divergence Detected', message='Negative Hidden Divergence Detected')
+alertcondition(pos_reg_div_detected or pos_hid_div_detected, title='Positive Divergence Detected', message='Positive Divergence Detected')
+alertcondition(neg_reg_div_detected or neg_hid_div_detected, title='Negative Divergence Detected', message='Negative Divergence Detected')
+
+// ==========================================
+// 2. SuperTrend
+// ==========================================
+stPeriods = input(title="ATR Period ST", type=input.integer, defval=10)
+stMultiplier = input(title="ATR Multiplier ST", type=input.float, step=0.1, defval=3.0)
+stChangeATR= input(title="Change ATR Calc?", type=input.bool, defval=true)
+stShowsignals = input(title="Show Signals ST?", type=input.bool, defval=true)
+stHighlighting = input(title="Highlighter ST?", type=input.bool, defval=true)
+atr_st = stChangeATR ? atr(stPeriods) : sma(tr, stPeriods)
+up = hl2-(stMultiplier*atr_st)
+up := close[1] > nz(up[1],up) ? max(up,nz(up[1],up)) : up
+dn = hl2+(stMultiplier*atr_st)
+dn := close[1] < nz(dn[1], dn) ? min(dn, nz(dn[1], dn)) : dn
+trend = 1
+trend := nz(trend[1], trend)
+trend := trend == -1 and close > nz(dn[1], dn) ? 1 : trend == 1 and close < nz(up[1], up) ? -1 : trend
+upPlot = plot(trend == 1 ? up : na, title="Up Trend", style=plot.style_linebr, linewidth=2, color=color.green)
+dnPlot = plot(trend == 1 ? na : dn, title="Down Trend", style=plot.style_linebr, linewidth=2, color=color.red)
+buySignal = trend == 1 and trend[1] == -1
+sellSignal = trend == -1 and trend[1] == 1
+plotshape(buySignal ? up : na, title="UpTrend Begins", location=location.absolute, style=shape.circle, size=size.tiny, color=color.green)
+plotshape(buySignal and stShowsignals ? up : na, title="Buy", text="Buy", location=location.absolute, style=shape.labelup, size=size.tiny, color=color.green, textcolor=color.white)
+plotshape(sellSignal ? dn : na, title="DownTrend Begins", location=location.absolute, style=shape.circle, size=size.tiny, color=color.red)
+plotshape(sellSignal and stShowsignals ? dn : na, title="Sell", text="Sell", location=location.absolute, style=shape.labeldown, size=size.tiny, color=color.red, textcolor=color.white)
+mPlot = plot(ohlc4, title="", style=plot.style_circles, linewidth=0)
+fill(mPlot, upPlot, title="UpTrend Highlighter", color=stHighlighting and trend == 1 ? color.green : color.white)
+fill(mPlot, dnPlot, title="DownTrend Highlighter", color=stHighlighting and trend == -1 ? color.red : color.white)
+alertcondition(buySignal, title="SuperTrend Buy", message="SuperTrend Buy!")
+alertcondition(sellSignal, title="SuperTrend Sell", message="SuperTrend Sell!")
+
+// ==========================================
+// 3. Pivot Trendlines
+// ==========================================
+startyear = input(defval = 2020, title = "Start Year")
+startmonth = input(defval = 1, title = "Start Month")
+startday = input(defval = 1, title = "Start day")
+tlprd = input(defval = 20, title="Pivot Period TL", minval = 10, maxval = 50)
+PPnum = input(defval = 3, title="Num Pivot Points", minval = 2, maxval = 6)
+utcol = input(defval = #d57ddd, title = "Trendline Colors", inline = "tcol")
+dtcol = input(defval = #d57ddd, title = "", inline = "tcol")
+
+float tlph = pivothigh(tlprd, tlprd)
+float tlpl = pivotlow(tlprd, tlprd)
+var tval = array.new_float(PPnum), var tpos = array.new_int(PPnum)
+var bval = array.new_float(PPnum), var bpos = array.new_int(PPnum)
+add_to_array(apointer1, apointer2, val)=>
+    array.unshift(apointer1, val), array.unshift(apointer2, bar_index)
+    array.pop(apointer1), array.pop(apointer2)
+if tlph
+    add_to_array(tval, tpos, tlph)
+if tlpl
+    add_to_array(bval, bpos, tlpl)
+maxline = 3
+var bln = array.new_line(maxline, na), var tln = array.new_line(maxline, na)
+countlinelo = 0, countlinehi = 0
+starttime = timestamp(startyear, startmonth, startday, 0, 0, 0)
+if time >= starttime
+    for x = 0 to maxline - 1
+        line.delete(array.get(bln, x)), line.delete(array.get(tln, x))
+    for p1 = 0 to PPnum - 2 
+        uv1 = 0.0, uv2 = 0.0, up1 = 0, up2 = 0
+        if countlinelo <= maxline
+            for p2 = PPnum - 1 to p1 + 1
+                val1 = array.get(bval, p1), val2 = array.get(bval, p2)
+                pos1 = array.get(bpos, p1), pos2 = array.get(bpos, p2)
+                if val1 > val2
+                    diff = (val1 - val2) / (pos1 - pos2)
+                    hline = val2 + diff
+                    lloc = bar_index
+                    lval = low
+                    valid = true
+                    for x = pos2 + 1 - tlprd to bar_index
+                        if close[bar_index - x] < hline
+                            valid := false
+                            break
+                        lloc := x, lval := hline, hline := hline + diff
+                    if valid
+                        uv1 := hline - diff, uv2 := val2, up1 := lloc, up2 := pos2
+                        break
+        dv1 = 0.0, dv2 = 0.0, dp1 = 0, dp2 = 0                
+        if countlinehi <= maxline
+            for p2 = PPnum - 1 to p1 + 1                
+                val1 = array.get(tval, p1), val2 = array.get(tval, p2)
+                pos1 = array.get(tpos, p1), pos2 = array.get(tpos, p2)
+                if val1 < val2
+                    diff = (val2 - val1) / float(pos1 - pos2)
+                    hline = val2 - diff
+                    lloc = bar_index
+                    lval = high
+                    valid = true
+                    for x = pos2 + 1 - tlprd to bar_index
+                        if close[bar_index - x] > hline
+                            valid := false
+                            break
+                        lloc := x, lval := hline, hline := hline - diff
+                    if valid
+                        dv1 := hline + diff, dv2 := val2, dp1 := lloc, dp2 := pos2
+                        break
+        if up1 != 0 and up2 != 0 and countlinelo < maxline
+            countlinelo += 1
+            array.set(bln, countlinelo - 1, line.new(up2 - tlprd, uv2, up1, uv1, color = utcol))
+        if dp1 != 0 and dp2 != 0 and countlinehi < maxline
+            countlinehi += 1
+            array.set(tln, countlinehi - 1, line.new(dp2 - tlprd, dv2, dp1, dv1, color = dtcol))
+
+// ==========================================
+// 4. RSI Candle
+// ==========================================
+rsi_len_c = input(14, minval=1, title="RSI Candle Length")
+rsiup_c = rma(max(change(close), 0), rsi_len_c)
+rsidown_c = rma(-min(change(close), 0), rsi_len_c)
+rsicandle = rsidown_c == 0 ? 100 : rsiup_c == 0 ? 0 : 100 - (100 / (1 + rsiup_c / rsidown_c))
+len1_c = input(70, minval=1, title="UpLevel")
+len2_c = input(30, minval=1, title="DownLevel")
+barcolor(rsicandle > len1_c ? color.green : rsicandle < len2_c ? color.red : na )
+
+// ==========================================
+// 5. BB Breakout
+// ==========================================
+bb_use_ema = input(false, title="Use EMA for BB")
+bb_filter = input(false, title="Filter with BB")
+sqz_filter = input(false, title="Filter with Squeeze")
+bb_length = input(20, minval=1, title="BB Length")
+bb_mult = input(2.0, title="BB Mult", minval=0.5, maxval=10)
+fast_ma_len = input(3, title="Fast EMA Length", minval=2)
+sqz_length = input(100, "Squeeze Length", minval=5)
+sqz_threshold = input(50, "Squeeze Threshold %", maxval=99, step=5)
+
+bb_basis = bb_use_ema ? ema(close, bb_length) : sma(close, bb_length)
+bb_dev = bb_mult * stdev(close, bb_length)
+bb_upper = bb_basis + bb_dev
+bb_lower = bb_basis - bb_dev
+fast_ma = ema(close, fast_ma_len)
+ao_val = sma(hl2, 5) - sma(hl2, 34)
+ao_dir = ao_val >= 0 ? (ao_val > ao_val[1] ? 1 : 2) : (ao_val > ao_val[1] ? -1 : -2)
+
+spread = bb_upper - bb_lower
+avgspread = sma(spread, sqz_length)
+bb_squeeze = spread / avgspread * 100
+bb_offset = atr(14) * 0.5
+bb_sqz_upper = bb_upper + bb_offset
+bb_sqz_lower = bb_lower - bb_offset
+
+plot(bb_basis, title="Basis Line", color=color.red, transp=10, linewidth=2)
+ubi = plot(bb_upper, title="Upper Band", color=color.blue, transp=10)
+lbi = plot(bb_lower, title="Lower Band", color=color.blue, transp=10)
+fill(ubi, lbi, title="Channel Fill", color=color.silver, transp=90)
+usqzi = plot(bb_sqz_upper, "Sqz Upper", transp=100)
+lsqzi = plot(bb_sqz_lower, "Sqz Lower", transp=100)
+fill(ubi, usqzi, color=bb_squeeze > sqz_threshold ? color.white : color.blue, transp=50)
+fill(lbi, lsqzi, color=bb_squeeze > sqz_threshold ? color.white : color.blue, transp=50)
+plot(fast_ma, title="Fast EMA", color=color.black, transp=10, linewidth=2)
+
+break_down = crossunder(fast_ma, bb_basis) and close < bb_basis and abs(ao_dir) == 2 and (not bb_filter or close > bb_lower) and (not sqz_filter or bb_squeeze > sqz_threshold)
+break_up = crossover(fast_ma, bb_basis) and close > bb_basis and abs(ao_dir) == 1 and (not bb_filter or close < bb_upper) and (not sqz_filter or bb_squeeze > sqz_threshold)
+plotshape(break_down, title="Breakout Down", style=shape.arrowdown, location=location.abovebar, size=size.auto, text="Sell", color=color.red)
+plotshape(break_up, title="Breakout Up", style=shape.arrowup, location=location.belowbar, size=size.auto, text="Buy", color=color.green)
+alertcondition(break_down or break_up, title="BBAWE Alert", message="BBAWE Alert")
+
+// ==========================================
+// 6. Support/Resistance (REPAIRED)
+// ==========================================
+sr_prd = input(defval = 10, title="Pivot Period S/R", minval = 4, maxval = 30, group = "Settings S/R")
+ppsrc = input(defval = 'High/Low', title="Source S/R", options = ['High/Low', 'Close/Open'], group = "Settings S/R")
+ChannelW = input(defval = 5, title = "Max Channel Width %", minval = 1, maxval = 8, group = "Settings S/R")
+minstrength = input(defval = 1, title = "Min Strength", minval = 1, group = "Settings S/R")
+maxnumsr = input(defval = 6, title = "Max Num S/R", minval = 1, maxval = 10, group = "Settings S/R") - 1
+loopback = input(defval = 290, title = "Loopback Period", minval = 100, maxval = 400, group = "Settings S/R")
+res_col = input(defval = color.new(color.red, 75), title = "Resistance Color", group = "Colors S/R")
+sup_col = input(defval = color.new(color.lime, 75), title = "Support Color", group = "Colors S/R")
+inch_col = input(defval = color.new(color.gray, 75), title = "In Channel Color", group = "Colors S/R")
+showpp = input(defval = false, title = "Show Pivots S/R", group = "Extras")
+showsrbroken = input(defval = false, title = "Show Broken S/R", group = "Extras")
+
+showthema1en = input(defval = false, title = "MA 1", inline = "ma1")
+showthema1len = input(defval = 50, title = "", inline = "ma1")
+showthema1type = input(defval = "SMA", title = "", options = ["SMA", "EMA"], inline = "ma1")
+showthema2en = input(defval = false, title = "MA 2", inline = "ma2")
+showthema2len = input(defval = 200, title = "", inline = "ma2")
+showthema2type = input(defval = "SMA", title = "", options = ["SMA", "EMA"], inline = "ma2")
+
+// Renamed to avoid any potential conflict with previous variables
+sr_ma1 = showthema1en ? (showthema1type == "SMA" ? sma(close, showthema1len) : ema(close, showthema1len)) : na
+sr_ma2 = showthema2en ? (showthema2type == "SMA" ? sma(close, showthema2len) : ema(close, showthema2len)) : na
+plot(sr_ma1, color = not na(sr_ma1) ? color.blue : na)
+plot(sr_ma2, color = not na(sr_ma2) ? color.red : na)
+
+sr_src1 =  ppsrc == 'High/Low' ? high : max(close, open)
+sr_src2 =  ppsrc == 'High/Low' ? low: min(close, open)
+sr_ph = pivothigh(sr_src1, sr_prd, sr_prd)
+sr_pl = pivotlow(sr_src2, sr_prd, sr_prd) 
+plotshape(sr_ph and showpp, text = "H",  style = shape.labeldown, color = na, textcolor = color.red, location = location.abovebar, offset = -sr_prd)
+plotshape(sr_pl and showpp, text = "L",  style = shape.labelup, color = na, textcolor = color.lime, location = location.belowbar, offset = -sr_prd)
+
+sr_prdhighest =  highest(300)
+sr_prdlowest = lowest(300)
+cwidth = (sr_prdhighest - sr_prdlowest) * ChannelW / 100
+
+var pivotvals= array.new_float(0), var pivotlocs= array.new_float(0)
+if sr_ph or sr_pl
+    array.unshift(pivotvals, sr_ph ? sr_ph : sr_pl), array.unshift(pivotlocs, bar_index)
+    if array.size(pivotvals) > 0
+        for x = array.size(pivotvals) - 1 to 0
+            if bar_index - array.get(pivotlocs, x) > loopback 
+                array.pop(pivotvals), array.pop(pivotlocs)
+            else
+                0
+
+get_sr_vals(ind)=>
+    float lo = array.get(pivotvals, ind)
+    float hi = lo
+    int numpp = 0
+    for y = 0 to array.size(pivotvals) - 1
+        float cpp = array.get(pivotvals, y)
+        float wdth = cpp <= hi ? hi - cpp : cpp - lo
+        if wdth <= cwidth 
+            if cpp <= hi
+                lo := min(lo, cpp)
+            else
+                hi := max(hi, cpp)
+            numpp := numpp + 20 
+    [hi, lo, numpp] 
+
+var suportresistance = array.new_float(20, 0)
+changeit(x, y)=>
+    tmp = array.get(suportresistance, y * 2)
+    array.set(suportresistance, y * 2, array.get(suportresistance, x * 2))
+    array.set(suportresistance, x * 2, tmp)
+    tmp := array.get(suportresistance, y * 2 + 1)
+    array.set(suportresistance, y * 2 + 1, array.get(suportresistance, x * 2 + 1))
+    array.set(suportresistance, x * 2 + 1, tmp)
+    
+if sr_ph or sr_pl
+    supres = array.new_float(0)  
+    stren = array.new_float(10, 0)
+    for x = 0 to array.size(pivotvals) - 1
+        [hi, lo, strength] = get_sr_vals(x)
+        array.push(supres, strength), array.push(supres, hi), array.push(supres, lo)
+    for x = 0 to array.size(pivotvals) - 1
+        h = array.get(supres, x * 3 + 1), l = array.get(supres, x * 3 + 2), s = 0
+        for y = 0 to loopback
+            if (high[y] <= h and high[y] >= l) or (low[y] <= h and low[y] >= l)
+                s := s + 1
+        array.set(supres, x * 3, array.get(supres, x * 3) + s)
+    array.fill(suportresistance, 0)
+    src_idx = 0
+    for x = 0 to array.size(pivotvals) - 1
+        stv = -1., stl = -1
+        for y = 0 to array.size(pivotvals) - 1
+            if array.get(supres, y * 3) > stv and array.get(supres, y * 3) >= minstrength * 20
+                stv := array.get(supres, y * 3), stl := y
+        if stl >= 0
+            hh = array.get(supres, stl * 3 + 1), ll = array.get(supres, stl * 3 + 2)
+            array.set(suportresistance, src_idx * 2, hh), array.set(suportresistance, src_idx * 2 + 1, ll)
+            array.set(stren, src_idx, array.get(supres, stl * 3))
+            for y = 0 to array.size(pivotvals) - 1
+                if (array.get(supres, y * 3 + 1) <= hh and array.get(supres, y * 3 + 1) >= ll) or (array.get(supres, y * 3 + 2) <= hh and array.get(supres, y * 3 + 2) >= ll)
+                    array.set(supres, y * 3, -1)
+            src_idx += 1
+            if src_idx >= 10
+                break
+    for x = 0 to 8
+        for y = x + 1 to 9
+            if array.get(stren, y) > array.get(stren, x)
+                tmp = array.get(stren, y) 
+                array.set(stren, y, array.get(stren, x)), changeit(x, y)
+
+get_level(ind)=>
+    float ret = na
+    if ind < array.size(suportresistance)
+        if array.get(suportresistance, ind) != 0
+            ret := array.get(suportresistance, ind)
+    ret
+get_color(ind)=>
+    color ret = na
+    if ind < array.size(suportresistance)
+        if array.get(suportresistance, ind) != 0
+            ret := array.get(suportresistance, ind) > close and array.get(suportresistance, ind + 1) > close ? res_col : array.get(suportresistance, ind) < close and array.get(suportresistance, ind + 1) < close ? sup_col : inch_col
+    ret
+
+var srchannels = array.new_box(10)
+for x = 0 to min(9, maxnumsr)
+    box.delete(array.get(srchannels, x))
+    srcol = get_color(x * 2)
+    if not na(srcol)
+        array.set(srchannels, x, box.new(left = bar_index, top = get_level(x * 2), right = bar_index + 1, bottom = get_level(x * 2 + 1), border_color = srcol, border_width = 1, extend = extend.both, bgcolor = srcol))
+
+res_brk = false, sup_brk = false
+not_in_chan = true
+for x = 0 to min(9, maxnumsr)
+    if close <= array.get(suportresistance, x * 2) and close >= array.get(suportresistance, x * 2 + 1) 
+        not_in_chan := false
+if not_in_chan
+    for x = 0 to min(9, maxnumsr)
+        if close[1] <= array.get(suportresistance, x * 2) and close > array.get(suportresistance, x * 2)
+            res_brk := true
+        if close[1] >= array.get(suportresistance, x * 2 + 1) and close < array.get(suportresistance, x * 2 + 1)
+            sup_brk := true
+alertcondition(res_brk, title = "Res Broken", message = "Resistance Broken")
+alertcondition(sup_brk, title = "Sup Broken", message = "Support Broken")
+plotshape(showsrbroken and res_brk, style = shape.triangleup, location = location.belowbar, color = color.new(color.lime, 0), size = size.tiny)
+plotshape(showsrbroken and sup_brk, style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0), size = size.tiny)
+
+// ==========================================
+// 7. BBI
+// ==========================================
+BBI = (sma(close, 3) + sma(close, 6) + sma(close, 12) + sma(close, 24)) / 4
+plot(BBI, color=color.rgb(23, 201, 255), linewidth=2)
+
+// ==========================================
+// 8. Volume Profile
+// ==========================================
+length_vp = input(500,'Lookback VP',minval=1,maxval=1000,group='VP')
+row_vp = input(200,'Row Size VP',minval=1,maxval=500,group='VP')
+show_rpoc = input(false,'Show Rolling POC',group='VP')
+width_vp = input(50,'Width VP (%)',minval=1,maxval=100,group='VP')
+bar_width_vp = input(2,'Bar Width VP',group='VP')
+flip = input(false,'Flip Histogram',group='VP')
+grad = input(true,'Gradient',group='VP')
+solid = input(#2157f3,'Rows Solid Color',group='VP')
+poc_color = input(#ff5d00,'POC Solid Color',group='VP')
+
+var vol_css = array.new_color(na), var a = array.new_line(), var b = array.new_line()
+if barstate.isfirst
+    array.push(vol_css,#1E152A), array.push(vol_css,#262B3E), array.push(vol_css,#304455), array.push(vol_css,#365464), array.push(vol_css,#406E7D), array.push(vol_css,#498693), array.push(vol_css,#5097A3), array.push(vol_css,#5AB1BB)
+    for i = 0 to row_vp-1
+        array.push(a,line.new(na,na,na,na,width=2))
+    array.push(b,line.new(na,na,na,na,width=2))
+
+n = bar_index
+var Alvl = 0., var Blvl = 0.
+highest = highest(length_vp), lowest = lowest(length_vp)
+line l = na, line poc = na
+levels = array.new_float(0), sumv = array.new_float(0)
+vp_condition = show_rpoc ? true : barstate.islast
+
+if vp_condition
+    for i = 0 to row_vp
+        array.push(levels,lowest + i/row_vp*(highest-lowest))
+    for j = 0 to row_vp-1
+        sum = 0.
+        for k = 0 to length_vp-1
+            sum := high[k] > array.get(levels,j) and low[k] < array.get(levels,j+1) ? sum + volume[k] : sum
+        array.push(sumv,sum)
+    for j = 0 to row_vp-1
+        mult = array.get(sumv,j)/array.max(sumv)
+        l := array.get(a,j)
+        get = array.get(levels,j)
+        if flip
+            line.set_xy1(l,n,get)
+            line.set_xy2(l,n-round(length_vp*width_vp/100*mult),array.get(levels,j))
+        else
+            line.set_xy1(l,n-length_vp+1,get)
+            line.set_xy2(l,n-length_vp+round(length_vp*width_vp/100*mult),array.get(levels,j))
+        
+        col_idx = round(mult * (array.size(vol_css)-1))
+        col_idx := min(col_idx, array.size(vol_css)-1)
+        line.set_color(l,grad ? array.get(vol_css, col_idx) : solid)
+        line.set_width(l,bar_width_vp)
+        if mult == 1
+            poc := array.get(b,0)
+            avg = avg(get,array.get(levels,j+1))
+            if flip
+                line.set_xy1(poc,n,avg), line.set_xy2(poc,n-length_vp+1,avg)
+            else
+                line.set_xy1(poc,n-length_vp+1,avg), line.set_xy2(poc,n,avg)
+            line.set_color(poc,grad ? #5AB1BB : poc_color)
+            line.set_style(poc,line.style_dotted), line.set_width(poc,bar_width_vp)
+
+if show_rpoc and vp_condition
+    Alvl := array.get(levels,array.indexof(sumv,array.max(sumv)))
+    Blvl := array.get(levels,array.indexof(sumv,array.max(sumv))+1)
+plot(show_rpoc ? avg(Alvl,Blvl) : na,'Rolling POC',color=#ff1100) 
+
+// ==========================================
+// 9. BB RSI Combined
+// ==========================================
+bb2_rsi_len = input(6, title="RSI Length (BB)") 
+bb2_bb_len = input(200, minval=1, title="BB Length (BB)")
+bb2_bb_mult = 2 
+bb2_rsi = rsi(close, bb2_rsi_len)
+bb2_basis = sma(close, bb2_bb_len)
+bb2_dev = bb2_bb_mult * stdev(close, bb2_bb_len)
+bb2_upper = bb2_basis + bb2_dev
+bb2_lower = bb2_basis - bb2_dev
+plot(bb2_basis, "Basis BB2", color=color.aqua)
+p1_2 = plot(bb2_upper, "Upper BB2", color=color.silver)
+p2_2 = plot(bb2_lower, "Lower BB2", color=color.silver)
+fill(p1_2, p2_2)
+
+sw1 = input(true, title="Enable Bar Color BB2?")
+sw2 = input(true, title="Enable BG Color BB2?")
+bb2_col = (bb2_rsi > 50 and (close[1] > bb2_upper and close < bb2_upper) and bb2_basis < bb2_basis[1]) ? color.red : (bb2_rsi < 50 and (close[1] < bb2_lower and close > bb2_lower) and bb2_basis > bb2_basis[1]) ? color.green : na
+barcolor(sw1 ? bb2_col : na)
+bgcolor(sw2 ? bb2_col : na, transp=50)

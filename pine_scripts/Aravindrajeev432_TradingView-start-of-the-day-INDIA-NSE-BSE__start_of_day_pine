@@ -1,0 +1,29 @@
+//@version=6
+indicator("Current Day Open Line (Single Line)", overlay=true)
+
+var timeframes_to_avoid = map.new<string, string>()
+timeframes_to_avoid.put("1D","1D")
+timeframes_to_avoid.put("1W","1W")
+timeframes_to_avoid.put("1M","1M")
+timeframes_to_avoid.put("3M","3M")
+timeframes_to_avoid.put("6M","6M")
+timeframes_to_avoid.put("12M","12M")
+
+
+// Detect the start of a new day
+newDay = ta.change(time("D")) != 0
+
+// A persistent variable to store our line object
+var line dayOpenLine = na
+string t = timeframe.period
+if newDay
+    color textColor = color.rgb(0, 0, 255)
+    color labelColor = #FF000080 // Red color (FF0000) with 50% transparency (80 which is half of FF).
+    float h = high + 4
+
+    if not timeframes_to_avoid.contains(t)
+    
+        label.new(bar_index, h, text = "*", textcolor = textColor, style=label.style_none, size=size.large)
+
+    
+    // dayOpenLine := line.new(bar_index, open,bar_index, low,extend=extend.none,color=color.rgb(255, 0, 204, 49),width=4)

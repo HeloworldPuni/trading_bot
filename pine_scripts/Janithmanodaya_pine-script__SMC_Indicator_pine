@@ -1,0 +1,581 @@
+//@version=5
+indicator("SMC Indicator by Default Name", shorttitle="SMC", overlay=true, max_lines_count=100, max_boxes_count=100) // Increased max lines/boxes
+
+// --- Inputs ---
+// This section defines all user-configurable parameters for the indicator.
+// Inputs are organized into groups for better readability in the indicator settings.
+
+// Market Structure Settings
+grp_ms = "Market Structure Settings"
+lookback = input.int(10, title="Swing Lookback Period", group=grp_ms, tooltip="Number of bars to look back on each side to identify a swing point (high/low). Higher values mean more significant swings.")
+showMarketStructure = input.bool(true, title="Show Market Structure (HH/LL/LH/HL)", group=grp_ms, tooltip="Toggles the display of Higher High (HH), Lower Low (LL), Lower High (LH), and Higher Low (HL) markers on the chart.")
+
+// Order Block Detection Settings
+grp_ob_detect = "Order Block Detection"
+minOBSizeATR = input.float(0.3, title="Min OB Size (ATR Multiplier)", group=grp_ob_detect, tooltip="Minimum size of an order block candle (high-low range) relative to the current ATR. OBs smaller than this will be ignored.")
+showOrderBlocks = input.bool(true, title="Show Order Blocks", group=grp_ob_detect, tooltip="Toggles the display of identified Order Blocks (potential entry zones).")
+
+// Fair Value Gap (FVG) Settings
+grp_fvg = "Fair Value Gap (FVG) Settings"
+showFVGs = input.bool(true, title="Show Fair Value Gaps (FVGs)", group=grp_fvg, tooltip="Toggles the display of Fair Value Gaps (price imbalances).")
+
+// Signal Strength Settings
+grp_ss = "Signal Strength Settings"
+volLookback = input.int(10, title="Volume Lookback for SMA", group=grp_ss, tooltip="Lookback period for calculating the Simple Moving Average (SMA) of volume, used for volume strength assessment.")
+atrPeriod = input.int(14, title="ATR Period for OB Size/SL", group=grp_ss, tooltip="Average True Range (ATR) lookback period. Used for evaluating Order Block size and for ATR-based Stop Loss calculations.")
+volumeMinMultiplierStrong = input.float(1.5, title="Min Volume Multiplier for Strong OB", group=grp_ss, tooltip="Volume on the Order Block candle must be at least this many times the SMA volume to be considered for a 'Strong' signal. Example: 1.5 means 150% of SMA volume.")
+volumeMinMultiplierNormal = input.float(0.75, title="Min Volume Multiplier for Normal OB", group=grp_ss, tooltip="Volume on the Order Block candle must be at least this many times the SMA volume to avoid being classified as 'Weak' (if it's not Strong). Example: 0.75 means 75% of SMA volume.")
+obSizeMaxMultiplierSmall = input.float(0.5, title="Max OB Size for Small OB (ATR x)", group=grp_ss, tooltip="If the Order Block's size (high-low range) is less than ATR multiplied by this value, it's classified as 'Small'. Example: 0.5 means half the current ATR.")
+obSizeMinMultiplierLarge = input.float(1.0, title="Min OB Size for Large OB (ATR x)", group=grp_ss, tooltip="If the Order Block's size (high-low range) is greater than ATR multiplied by this value, it's classified as 'Large'. Example: 1.0 means at least the current ATR.")
+
+// SL/TP Settings - General
+grp_sltp = "SL/TP Settings"
+use_atr_for_sl = input.bool(true, title="Use ATR for SL Placement", group=grp_sltp, tooltip="If checked, Stop Loss is calculated based on ATR. If unchecked, a fixed pip value (defined below) is used.")
+fixed_sl_pips = input.int(20, title="Fixed SL Pips (if not ATR)", group=grp_sltp, tooltip="Fixed Stop Loss value in pips, used only if 'Use ATR for SL Placement' is unchecked.")
+showSLTPLevels = input.bool(true, title="Show SL/TP Levels", group=grp_sltp, tooltip="Toggles the display of calculated Stop Loss and Take Profit lines on the chart.")
+
+// SL/TP Settings - Strong Signal
+grp_sltp_strong = "SL/TP Settings - Strong Signal"
+sl_strong_atr_multiplier = input.float(1.0, title="Strong SL ATR Multiplier", group=grp_sltp_strong, tooltip="ATR multiplier for Stop Loss calculation when the signal strength is 'Strong'.")
+tp_strong_rr = input.float(3.0, title="Strong TP R/R Ratio", group=grp_sltp_strong, tooltip="Take Profit Risk/Reward ratio for 'Strong' signals. TP is set to this many times the risk (SL distance).")
+
+// SL/TP Settings - Moderate Signal
+grp_sltp_mod = "SL/TP Settings - Moderate Signal"
+sl_moderate_atr_multiplier = input.float(1.5, title="Moderate SL ATR Multiplier", group=grp_sltp_mod, tooltip="ATR multiplier for Stop Loss calculation when the signal strength is 'Moderate'.")
+tp_moderate_rr = input.float(2.0, title="Moderate TP R/R Ratio", group=grp_sltp_mod, tooltip="Take Profit Risk/Reward ratio for 'Moderate' signals.")
+
+// SL/TP Settings - Weak Signal
+grp_sltp_weak = "SL/TP Settings - Weak Signal"
+sl_weak_atr_multiplier = input.float(2.0, title="Weak SL ATR Multiplier", group=grp_sltp_weak, tooltip="ATR multiplier for Stop Loss calculation when the signal strength is 'Weak'.")
+tp_weak_rr = input.float(1.5, title="Weak TP R/R Ratio", group=grp_sltp_weak, tooltip="Take Profit Risk/Reward ratio for 'Weak' signals.")
+
+// Alert Settings
+grp_alerts = "Alert Settings"
+proximity_atr_multiplier = input.float(0.25, title="SL/TP Proximity ATR Multiplier", group=grp_alerts, tooltip="ATR multiplier to define how close price needs to be to SL/TP levels to trigger a proximity alert. Example: 0.25 means alert if price is within 0.25 * ATR of SL/TP.")
+
+// --- End Inputs ---
+
+// --- Core Logic ---
+
+// Section: Market Structure Identification
+// Identifies swing points and classifies them as Higher Highs (HH), Lower Lows (LL), etc.
+
+// Detect Swing Highs and Lows using Pine Script's built-in functions.
+// `ta.pivothigh` returns the price of the swing high if found, `na` otherwise. `lookback` defines the number of bars on each side of a pivot.
+swingHigh = ta.pivothigh(high, lookback, lookback)
+swingLow = ta.pivotlow(low, lookback, lookback)
+
+// Variables to store the price levels of the last two swing highs and lows.
+// `var` keyword ensures these variables retain their values across bars.
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var float prevSwingHigh = na // Previous swing high before the last one
+var float prevSwingLow = na  // Previous swing low before the last one
+var string marketTrend = "Neutral" // Possible states: "Neutral", "Uptrend", "Downtrend"
+var float lastConfirmedSwingHighForTrend = na // Store the HH that confirmed uptrend / BOS high
+var float lastConfirmedSwingLowForTrend = na  // Store the LL that confirmed downtrend / BOS low
+var float criticalSwingHighForChOCh = na     // Last significant LH in a downtrend to watch for Bullish CHoCH
+var float criticalSwingLowForChOCh = na      // Last significant HL in an uptrend to watch for Bearish CHoCH
+
+// Update swing point history when a new swing high is detected.
+if not na(swingHigh)
+    prevSwingHigh := lastSwingHigh // Shift current last to previous
+    lastSwingHigh := swingHigh     // Update last with the new swing high
+
+// Update swing point history when a new swing low is detected.
+if not na(swingLow)
+    prevSwingLow := lastSwingLow   // Shift current last to previous
+    lastSwingLow := swingLow       // Update last with the new swing low
+
+// Classify Market Structure points (HH, LL, LH, HL)
+// A Higher High (HH) is formed if the latest swing high is higher than the previous swing high.
+isHH = not na(lastSwingHigh) and not na(prevSwingHigh) and lastSwingHigh > prevSwingHigh
+// A Lower Low (LL) is formed if the latest swing low is lower than the previous swing low.
+isLL = not na(lastSwingLow) and not na(prevSwingLow) and lastSwingLow < prevSwingLow
+// A Lower High (LH) is formed if the latest swing high is lower than the previous swing high.
+isLH = not na(lastSwingHigh) and not na(prevSwingHigh) and lastSwingHigh < prevSwingHigh
+// A Higher Low (HL) is formed if the latest swing low is higher than the previous swing low.
+isHL = not na(lastSwingLow) and not na(prevSwingLow) and lastSwingLow > prevSwingLow
+
+// Section: Market Trend State Definition & CHoCH & BOS
+bool isBOS_Up = false      // Initialize BOS flags for the current bar
+bool isBOS_Down = false
+bool isCHoCH_Up = false    // Initialize CHoCH flags for the current bar
+bool isCHoCH_Down = false
+
+// Note: The old "1. Initial Trend Setting & Critical Point Updates" block is removed.
+// marketTrend starts as "Neutral" and is primarily changed by CHoCH.
+// Critical points for CHoCH are now set when a trend is established by CHoCH or confirmed by BOS.
+
+// 2. Change of Character (CHoCH) Detection - This can flip the marketTrend
+// Bearish CHoCH: Current trend is Uptrend (or Neutral, allowing first CHoCH), and price makes a Lower Low breaking the last critical Higher Low.
+if marketTrend == "Uptrend" and isLL and not na(criticalSwingLowForChOCh) and lastSwingLow < criticalSwingLowForChOCh
+    isCHoCH_Down := true
+    string newMarketTrend_BearCH = "Downtrend"
+    marketTrend := newMarketTrend_BearCH
+    float newLCSLFT_BearCH = lastSwingLow
+    lastConfirmedSwingLowForTrend := newLCSLFT_BearCH
+    float newLCSHFT_BearCH = lastSwingHigh
+    lastConfirmedSwingHighForTrend := newLCSHFT_BearCH
+    float newCSHFCH_BearCH = lastSwingHigh
+    criticalSwingHighForChOCh := newCSHFCH_BearCH
+    float newCSLFCH_BearCH = na
+    criticalSwingLowForChOCh := newCSLFCH_BearCH
+else if marketTrend == "Neutral" and isLL and not na(lastSwingHigh) and not na(prevSwingHigh) and lastSwingHigh < prevSwingHigh // First structure is LL after LH from neutral
+    isCHoCH_Down := true
+    string newMarketTrend_NeutralLL_CH = "Downtrend"
+    marketTrend := newMarketTrend_NeutralLL_CH
+    float newLCSLFT_NeutralLL_CH = lastSwingLow
+    lastConfirmedSwingLowForTrend := newLCSLFT_NeutralLL_CH
+    float newLCSHFT_NeutralLL_CH = lastSwingHigh
+    lastConfirmedSwingHighForTrend := newLCSHFT_NeutralLL_CH
+    float newCSHFCH_NeutralLL_CH = lastSwingHigh
+    criticalSwingHighForChOCh := newCSHFCH_NeutralLL_CH
+    float newCSLFCH_NeutralLL_CH = na
+    criticalSwingLowForChOCh := newCSLFCH_NeutralLL_CH
+
+
+// Bullish CHoCH: Current trend is Downtrend (or Neutral), and price makes a Higher High breaking the last critical Lower High.
+if (marketTrend == "Downtrend" or marketTrend == "Neutral") and isHH and not na(criticalSwingHighForChOCh) and lastSwingHigh > criticalSwingHighForChOCh
+    isCHoCH_Up := true
+    string newMarketTrend_BullCH = "Uptrend"
+    marketTrend := newMarketTrend_BullCH
+    float newLCSHFT_BullCH = lastSwingHigh
+    lastConfirmedSwingHighForTrend := newLCSHFT_BullCH
+    float newLCSLFT_BullCH = lastSwingLow
+    lastConfirmedSwingLowForTrend := newLCSLFT_BullCH
+    float newCSLFCH_BullCH = lastSwingLow  // Removed float() cast
+    criticalSwingLowForChOCh := newCSLFCH_BullCH
+    float newCSHFCH_BullCH = na
+    criticalSwingHighForChOCh := newCSHFCH_BullCH
+else if marketTrend == "Neutral" and isHH and not na(lastSwingLow) and not na(prevSwingLow) and lastSwingLow > prevSwingLow // First structure is HH after HL from neutral
+    isCHoCH_Up := true
+    string newMarketTrend_NeutralHH_CH = "Uptrend"
+    marketTrend := newMarketTrend_NeutralHH_CH
+    float newLCSHFT_NeutralHH_CH = lastSwingHigh
+    lastConfirmedSwingHighForTrend := newLCSHFT_NeutralHH_CH
+    float newLCSLFT_NeutralHH_CH = lastSwingLow
+    lastConfirmedSwingLowForTrend := newLCSLFT_NeutralHH_CH
+    float newCSLFCH_NeutralHH_CH = lastSwingLow // Removed float() cast
+    criticalSwingLowForChOCh := newCSLFCH_NeutralHH_CH
+    float newCSHFCH_NeutralHH_CH = na
+    criticalSwingHighForChOCh := newCSHFCH_NeutralHH_CH
+
+
+// 3. Break of Structure (BOS) Detection - Confirms the current (potentially CHoCH'd) trend
+// Check for Bullish BOS: New HH breaks the last high that confirmed/started the uptrend.
+if marketTrend == "Uptrend" and isHH and not isCHoCH_Up // Ensure it's not the CHoCH bar itself
+    if not na(lastConfirmedSwingHighForTrend) and lastSwingHigh > lastConfirmedSwingHighForTrend
+        isBOS_Up := true
+        lastConfirmedSwingHighForTrend := lastSwingHigh // Update the confirmation high to this new BOS high
+        if not na(lastSwingLow)
+            criticalSwingLowForChOCh := lastSwingLow   // The HL before BOS is now the critical low
+    else if na(lastConfirmedSwingHighForTrend) // If uptrend is set but no HH confirmed it yet (e.g. first leg after CHoCH)
+        lastConfirmedSwingHighForTrend := lastSwingHigh // This HH now confirms it
+        if not na(lastSwingLow)
+             criticalSwingLowForChOCh := lastSwingLow
+
+
+// Check for Bearish BOS: New LL breaks the last low that confirmed/started the downtrend.
+if marketTrend == "Downtrend" and isLL and not isCHoCH_Down // Ensure it's not the CHoCH bar itself
+    if not na(lastConfirmedSwingLowForTrend) and lastSwingLow < lastConfirmedSwingLowForTrend
+        isBOS_Down := true
+        lastConfirmedSwingLowForTrend := lastSwingLow // Update the confirmation low to this new BOS low
+        if not na(lastSwingHigh)
+            criticalSwingHighForChOCh := lastSwingHigh // The LH before BOS is now the critical high
+    else if na(lastConfirmedSwingLowForTrend) // If downtrend is set but no LL confirmed it yet
+        lastConfirmedSwingLowForTrend := lastSwingLow // This LL now confirms it
+        if not na(lastSwingHigh)
+            criticalSwingHighForChOCh := lastSwingHigh
+
+
+// Plot BOS and CHoCH markers if showMarketStructure is true
+// BOS Up: Plotted at the HH that caused the BOS
+plotshape(series=isBOS_Up and showMarketStructure,
+          title="Bullish BOS",
+          text="BOS",
+          location=location.abovebar,
+          color=color.new(color.green, 0),
+          style=shape.labeldown,
+          textcolor=color.white,
+          size=size.tiny,
+          textalign=text.align_center)
+
+// BOS Down: Plotted at the LL that caused the BOS
+plotshape(series=isBOS_Down and showMarketStructure,
+          title="Bearish BOS",
+          text="BOS",
+          location=location.belowbar,
+          color=color.new(color.red, 0),
+          style=shape.labelup,
+          textcolor=color.white,
+          size=size.tiny,
+          textalign=text.align_center)
+
+// CHoCH Up: Plotted at the HH that caused the Bullish CHoCH
+plotshape(series=isCHoCH_Up and showMarketStructure,
+          title="Bullish CHoCH",
+          text="CHoCH",
+          location=location.abovebar,
+          color=color.new(color.blue, 0),
+          style=shape.labeldown,
+          textcolor=color.white,
+          size=size.tiny,
+          textalign=text.align_center)
+
+// CHoCH Down: Plotted at the LL that caused the Bearish CHoCH
+plotshape(series=isCHoCH_Down and showMarketStructure,
+          title="Bearish CHoCH",
+          text="CHoCH",
+          location=location.belowbar,
+          color=color.new(color.orange, 0),
+          style=shape.labelup,
+          textcolor=color.white,
+          size=size.tiny,
+          textalign=text.align_center)
+
+// Section: Order Block (OB), SL/TP, and Strength Variables
+// Variables for storing OB details, SL/TP lines, and active levels.
+var box bullishOrderBlock = na   // Stores the box object for the current bullish OB
+var box bearishOrderBlock = na   // Stores the box object for the current bearish OB
+var string bullishOBStrength = "" // Stores strength ("Strong", "Moderate", "Weak") of bullish OB
+var string bearishOBStrength = "" // Stores strength of bearish OB
+var line bullishSLline = na      // Stores the line object for bullish SL
+var line bullishTPline = na      // Stores the line object for bullish TP
+var float activeBullishSL = na   // Stores the price level of active bullish SL
+var float activeBullishTP = na   // Stores the price level of active bullish TP
+var line bearishSLline = na      // Stores the line object for bearish SL
+var line bearishTPline = na      // Stores the line object for bearish TP
+var float activeBearishSL = na   // Stores the price level of active bearish SL
+var float activeBearishTP = na   // Stores the price level of active bearish TP
+
+// Calculate SMA of volume and ATR value, used in multiple calculations.
+smaVolume = ta.sma(volume, volLookback)
+atrValue = ta.atr(atrPeriod)
+
+// Section: Visual Styling - Colors
+// Defines colors used for plotting various elements.
+strong_ob_bull_color = color.new(color.green, 60)  // More solid for strong bullish OB
+moderate_ob_bull_color = color.new(color.green, 75) // Adjusted transparency for moderate
+weak_ob_bull_color = color.new(color.green, 85)    // Adjusted transparency for weak bullish OB
+strong_ob_bear_color = color.new(color.red, 60)    // More solid for strong bearish OB
+moderate_ob_bear_color = color.new(color.red, 75)   // Adjusted transparency for moderate
+weak_ob_bear_color = color.new(color.red, 85)      // Adjusted transparency for weak bearish OB
+
+fvg_bull_color = color.new(color.blue, 92)         // Color for bullish FVG boxes
+fvg_bear_color = color.new(color.purple, 92)       // Color for bearish FVG boxes
+
+sl_long_color = color.new(color.maroon, 0)         // Color for long trade Stop Loss lines (dark red)
+tp_long_color = color.new(color.teal, 0)           // Color for long trade Take Profit lines (dark cyan/teal)
+sl_short_color = color.new(color.maroon, 0)        // Color for short trade Stop Loss lines
+tp_short_color = color.new(color.teal, 0)          // Color for short trade Take Profit lines
+
+// Section: Fair Value Gap (FVG) Detection
+// FVGs are price ranges where inefficiency or imbalance occurred.
+// A Bullish FVG is a 3-candle pattern: current bar's low is above the high of the bar two periods ago.
+bullishFVG_top = high[2]     // Top of the FVG is the high of the candle before the middle one.
+bullishFVG_bottom = low      // Bottom of the FVG is the low of the current candle (defining the gap with candle[2]).
+// Condition for bullish FVG: gap exists, and middle & current candles are bullish (specific rule).
+isBullishFVG = low > high[2] and close[1] > open[1] and close > open
+
+// A Bearish FVG is a 3-candle pattern: current bar's high is below the low of the bar two periods ago.
+bearishFVG_top = high        // Top of the FVG is the high of the current candle.
+bearishFVG_bottom = low[2]   // Bottom of the FVG is the low of the candle before the middle one.
+// Condition for bearish FVG: gap exists, and middle & current candles are bearish (specific rule).
+isBearishFVG = high < low[2] and close[1] < open[1] and close < open
+
+// Plot FVGs if enabled by user. FVGs are extended to the right until price interacts with them (not explicitly coded here, but typical use).
+if showFVGs
+    if isBullishFVG
+        box.new(bar_index[2], bullishFVG_top, bar_index, bullishFVG_bottom, border_color=na, bgcolor=fvg_bull_color, extend=extend.right)
+    if isBearishFVG
+        box.new(bar_index[2], bearishFVG_top, bar_index, bearishFVG_bottom, border_color=na, bgcolor=fvg_bear_color, extend=extend.right)
+
+// --- Bullish Order Block (OB) Identification, Strength Assessment, and Plotting ---
+var bool newBullishOBDetectedThisBar = false // Flag for new bullish OB alert
+newBullishOBDetectedThisBar := false         // Reset flag at the start of each bar's logic
+
+// Condition for a potential Bullish Order Block:
+// 1. A Higher High (isHH) must have just formed.
+// 2. There must be a previous swing low (not na(prevSwingLow)) to indicate some prior structure.
+// 3. The candle preceding the current bar (candle[1]) must be a down-close candle (close[1] < open[1]). This is the OB candle.
+if isHH and not na(prevSwingLow) and close[1] < open[1]
+    bullishOB_low = low[1]    // Low of the OB candle
+    bullishOB_high = high[1]  // High of the OB candle
+    bullishOB_size = bullishOB_high - bullishOB_low // Size of the OB candle
+    isValidOBMinSize = bullishOB_size >= atrValue * minOBSizeATR // Check if OB meets minimum size criteria
+
+    // Assess OB Volume Strength
+    obVolume = volume[1] // Volume of the OB candle
+    isHighVolumeBullish = obVolume > smaVolume * volumeMinMultiplierStrong
+    isLowVolumeBullish = obVolume < smaVolume * volumeMinMultiplierNormal
+
+    // Assess OB Size Strength relative to ATR
+    isLargeOBBullish = bullishOB_size > atrValue * obSizeMinMultiplierLarge
+    isSmallOBBullish = bullishOB_size < atrValue * obSizeMaxMultiplierSmall
+
+    // Assign Signal Strength based on Volume and OB Size
+    // FVG confluence is not currently factored in but could be added here.
+    if isHighVolumeBullish and isLargeOBBullish
+        bullishOBStrength := "Strong"
+    else if isLowVolumeBullish or isSmallOBBullish
+        bullishOBStrength := "Weak"
+    else
+        bullishOBStrength := "Moderate"
+
+    // If OB is valid (meets min size) and is a new OB (or different from the last drawn one):
+    if isValidOBMinSize and (na(bullishOrderBlock) or bullishOB_low != box.get_bottom(bullishOrderBlock))
+        // Delete previous bullish OB box and SL/TP lines
+        if not na(bullishOrderBlock)
+            box.delete(bullishOrderBlock)
+            bullishOrderBlock := na // Reset box variable
+        if bullishSLline != na
+            line.delete(bullishSLline)
+            bullishSLline := na // Reset line variable
+        if bullishTPline != na
+            line.delete(bullishTPline)
+            bullishTPline := na // Reset line variable
+        activeBullishSL := na // Reset active SL/TP levels
+        activeBullishTP := na
+
+        // Determine OB color based on strength
+        currentBullishOBColor = bullishOBStrength == "Strong" ? strong_ob_bull_color : bullishOBStrength == "Moderate" ? moderate_ob_bull_color : weak_ob_bull_color
+
+        // Plot the new Bullish Order Block if enabled
+        if showOrderBlocks
+            bullishOrderBlock := box.new(bar_index[1], bullishOB_high, bar_index, bullishOB_low, border_color=na, bgcolor=currentBullishOBColor)
+
+        newBullishOBDetectedThisBar := true // Set flag for alert
+
+        // Calculate SL/TP for this Bullish OB
+        entry_price_long = bullishOB_high // Entry assumed at the high of the OB candle
+        sl_long = 0.0
+        tp_long = 0.0
+        sl_style_long = line.style_dashed // Default SL/TP line style/width
+        sl_width_long = 1
+        tp_style_long = line.style_dashed
+        tp_width_long = 1
+
+        // Calculate SL based on ATR or fixed pips
+        if use_atr_for_sl
+            // ATR-based SL calculation (actual price set based on strength below, this is just for example if fixed ATR mult was used)
+            // This part of the logic could be simplified if sl_long is always set based on strength multipliers
+            // For now, we calculate a base SL and then adjust if needed, or just set it directly in strength checks
+            sl_long := entry_price_long - (atrValue * sl_moderate_atr_multiplier) // Default ATR SL for calculation base
+        else
+            sl_long := entry_price_long - (fixed_sl_pips * syminfo.mintick) // Fixed pip SL
+
+        // Determine SL price AND Style/Width based on strength, AFTER SL price is initially determined by ATR/Fixed
+        if bullishOBStrength == "Strong"
+            if use_atr_for_sl
+                sl_long := entry_price_long - (atrValue * sl_strong_atr_multiplier)
+            // If fixed SL, sl_long remains as calculated above (fixed_sl_pips)
+            sl_style_long := line.style_solid
+            sl_width_long := 2
+            tp_style_long := line.style_solid
+            tp_width_long := 2
+        else if bullishOBStrength == "Moderate"
+            if use_atr_for_sl
+                sl_long := entry_price_long - (atrValue * sl_moderate_atr_multiplier)
+            sl_style_long := line.style_dashed
+            sl_width_long := 1
+            tp_style_long := line.style_dashed
+            tp_width_long := 1
+        else // Weak
+            if use_atr_for_sl
+                sl_long := entry_price_long - (atrValue * sl_weak_atr_multiplier)
+            sl_style_long := line.style_dotted
+            sl_width_long := 1
+            tp_style_long := line.style_dotted
+            tp_width_long := 1
+
+        // Calculate TP based on Risk/Reward ratio
+        risk_amount_long = entry_price_long - sl_long
+        if risk_amount_long > 0 // Ensure risk is positive to prevent erroneous TP
+            if bullishOBStrength == "Strong"
+                tp_long := entry_price_long + (risk_amount_long * tp_strong_rr)
+            else if bullishOBStrength == "Moderate"
+                tp_long := entry_price_long + (risk_amount_long * tp_moderate_rr)
+            else // Weak
+                tp_long := entry_price_long + (risk_amount_long * tp_weak_rr)
+
+            // Plot SL/TP lines if enabled
+            if showSLTPLevels
+                if bullishSLline != na
+                    line.delete(bullishSLline)
+                    bullishSLline := na
+                if bullishTPline != na
+                    line.delete(bullishTPline)
+                    bullishTPline := na
+                bullishSLline := line.new(bar_index[1], sl_long, bar_index, sl_long, extend=extend.right, color=sl_long_color, style=sl_style_long, width=sl_width_long)
+                bullishTPline := line.new(bar_index[1], tp_long, bar_index, tp_long, extend=extend.right, color=tp_long_color, style=tp_style_long, width=tp_width_long)
+            activeBullishSL := sl_long // Store active SL/TP levels
+            activeBullishTP := tp_long
+    // Removed redundant: else if not isValidOBMinSize newBullishOBDetectedThisBar := false
+    // newBullishOBDetectedThisBar is already false by default and only set true if isValidOBMinSize is true.
+
+// --- Bearish Order Block (OB) Identification, Strength Assessment, and Plotting ---
+var bool newBearishOBDetectedThisBar = false // Flag for new bearish OB alert
+newBearishOBDetectedThisBar := false        // Reset flag
+
+// Condition for a potential Bearish Order Block:
+// 1. A Lower Low (isLL) must have just formed.
+// 2. There must be a previous swing high (not na(prevSwingHigh)).
+// 3. The candle preceding the current bar (candle[1]) must be an up-close candle (close[1] > open[1]). This is the OB candle.
+if isLL and not na(prevSwingHigh) and close[1] > open[1]
+    bearishOB_low = low[1]    // Low of the OB candle
+    bearishOB_high = high[1]  // High of the OB candle
+    bearishOB_size = bearishOB_high - bearishOB_low // Size of the OB candle
+    isValidOBMinSizeBearish = bearishOB_size >= atrValue * minOBSizeATR // Check min size
+
+    // Assess OB Volume Strength
+    obVolume = volume[1]
+    isHighVolumeBearish = obVolume > smaVolume * volumeMinMultiplierStrong
+    isLowVolumeBearish = obVolume < smaVolume * volumeMinMultiplierNormal
+
+    // Assess OB Size Strength
+    isLargeOBBearish = bearishOB_size > atrValue * obSizeMinMultiplierLarge
+    isSmallOBBearish = bearishOB_size < atrValue * obSizeMaxMultiplierSmall
+
+    // Assign Signal Strength
+    if isHighVolumeBearish and isLargeOBBearish
+        bearishOBStrength := "Strong"
+    else if isLowVolumeBearish or isSmallOBBearish
+        bearishOBStrength := "Weak"
+    else
+        bearishOBStrength := "Moderate"
+
+    // If OB is valid and new/changed:
+    if isValidOBMinSizeBearish and (na(bearishOrderBlock) or bearishOB_high != box.get_top(bearishOrderBlock))
+        // Delete previous bearish OB box and SL/TP lines
+        if not na(bearishOrderBlock)
+            box.delete(bearishOrderBlock)
+            bearishOrderBlock := na
+        if bearishSLline != na
+            line.delete(bearishSLline)
+            bearishSLline := na
+        if bearishTPline != na
+            line.delete(bearishTPline)
+            bearishTPline := na
+        activeBearishSL := na
+        activeBearishTP := na
+
+        // Determine OB color
+        currentBearishOBColor = bearishOBStrength == "Strong" ? strong_ob_bear_color : bearishOBStrength == "Moderate" ? moderate_ob_bear_color : weak_ob_bear_color
+
+        // Plot new Bearish Order Block if enabled
+        if showOrderBlocks
+            bearishOrderBlock := box.new(bar_index[1], bearishOB_high, bar_index, bearishOB_low, border_color=na, bgcolor=currentBearishOBColor)
+
+        newBearishOBDetectedThisBar := true // Set alert flag
+
+        // Calculate SL/TP for this Bearish OB
+        entry_price_short = bearishOB_low // Entry assumed at the low of the OB
+        sl_short = 0.0
+        tp_short = 0.0
+        sl_style_short = line.style_dashed // Default line styles/widths
+        sl_width_short = 1
+        tp_style_short = line.style_dashed
+        tp_width_short = 1
+
+        // Calculate SL based on ATR or fixed pips
+        if use_atr_for_sl
+            sl_short := entry_price_short + (atrValue * sl_moderate_atr_multiplier) // Default ATR SL for calculation base
+        else
+            sl_short := entry_price_short + (fixed_sl_pips * syminfo.mintick)
+
+        // Determine SL price AND Style/Width based on strength, AFTER SL price is initially determined by ATR/Fixed
+        if bearishOBStrength == "Strong"
+            if use_atr_for_sl
+                sl_short := entry_price_short + (atrValue * sl_strong_atr_multiplier)
+            sl_style_short := line.style_solid
+            sl_width_short := 2
+            tp_style_short := line.style_solid
+            tp_width_short := 2
+        else if bearishOBStrength == "Moderate"
+            if use_atr_for_sl
+                sl_short := entry_price_short + (atrValue * sl_moderate_atr_multiplier)
+            sl_style_short := line.style_dashed
+            sl_width_short := 1
+            tp_style_short := line.style_dashed
+            tp_width_short := 1
+        else // Weak
+            if use_atr_for_sl
+                sl_short := entry_price_short + (atrValue * sl_weak_atr_multiplier)
+            sl_style_short := line.style_dotted
+            sl_width_short := 1
+            tp_style_short := line.style_dotted
+            tp_width_short := 1
+
+        // Calculate TP
+        risk_amount_short = sl_short - entry_price_short
+        if risk_amount_short > 0
+            if bearishOBStrength == "Strong"
+                tp_short := entry_price_short - (risk_amount_short * tp_strong_rr)
+            else if bearishOBStrength == "Moderate"
+                tp_short := entry_price_short - (risk_amount_short * tp_moderate_rr)
+            else // Weak
+                tp_short := entry_price_short - (risk_amount_short * tp_weak_rr)
+
+            // Plot SL/TP lines if enabled
+            if showSLTPLevels
+                if bearishSLline != na
+                    line.delete(bearishSLline)
+                    bearishSLline := na
+                if bearishTPline != na
+                    line.delete(bearishTPline)
+                    bearishTPline := na
+                bearishSLline := line.new(bar_index[1], sl_short, bar_index, sl_short, extend=extend.right, color=sl_short_color, style=sl_style_short, width=sl_width_short)
+                bearishTPline := line.new(bar_index[1], tp_short, bar_index, tp_short, extend=extend.right, color=tp_short_color, style=tp_style_short, width=tp_width_short)
+            activeBearishSL := sl_short // Store active SL/TP
+            activeBearishTP := tp_short
+    else if not isValidOBMinSizeBearish // If OB doesn't meet min size
+        newBearishOBDetectedThisBar := false
+
+// Section: Alert Logic
+
+// Reset new OB flags if the primary conditions for their formation are no longer met.
+// This helps prevent alerts from lingering if market conditions change rapidly.
+if not (isHH and not na(prevSwingLow) and close[1] < open[1])
+    newBullishOBDetectedThisBar := false
+if not (isLL and not na(prevSwingHigh) and close[1] > open[1])
+    newBearishOBDetectedThisBar := false
+
+// Proximity Alert Variables and Calculation
+proximity = atrValue * proximity_atr_multiplier // Proximity zone based on ATR
+long_sl_proximity_condition = false
+long_tp_proximity_condition = false
+short_sl_proximity_condition = false
+short_tp_proximity_condition = false
+
+// Check for price proximity to active Bullish SL/TP levels.
+// Only active if SL/TP levels are shown, an SL/TP is active, and it's not the bar the OB just formed on.
+if showSLTPLevels and not na(activeBullishSL) and not na(activeBullishTP) and not newBullishOBDetectedThisBar
+    if close <= activeBullishSL + proximity and close > activeBullishSL // Price is near SL
+        long_sl_proximity_condition := true
+    if close >= activeBullishTP - proximity and close < activeBullishTP // Price is near TP
+        long_tp_proximity_condition := true
+
+// Check for price proximity to active Bearish SL/TP levels.
+if showSLTPLevels and not na(activeBearishSL) and not na(activeBearishTP) and not newBearishOBDetectedThisBar
+    if close >= activeBearishSL - proximity and close < activeBearishSL // Price is near SL
+        short_sl_proximity_condition := true
+    if close <= activeBearishTP + proximity and close > activeBearishTP // Price is near TP
+        short_tp_proximity_condition := true
+
+// Alert Conditions for TradingView UI
+// These allow users to create custom alerts within TradingView based on these indicator events.
+// New OB alerts trigger if OBs or SL/TP levels are shown (implying user interest).
+// Message argument must be a 'const string'. Dynamic details like signal strength or exact SL/TP levels
+// cannot be included directly in 'alertcondition' messages if they come from series variables.
+alertcondition(newBullishOBDetectedThisBar and (showOrderBlocks or showSLTPLevels), title="New Bullish OB Entry", message="New Long Entry detected on {{ticker}} at {{interval}}. Check chart for signal strength.")
+alertcondition(newBearishOBDetectedThisBar and (showOrderBlocks or showSLTPLevels), title="New Bearish OB Entry", message="New Short Entry detected on {{ticker}} at {{interval}}. Check chart for signal strength.")
+
+// Proximity alerts trigger only if SL/TP levels are visible.
+alertcondition(long_sl_proximity_condition and showSLTPLevels, title="Long SL Proximity", message="Price approaching Long Stop Loss on {{ticker}} at {{interval}}.")
+alertcondition(long_tp_proximity_condition and showSLTPLevels, title="Long TP Proximity", message="Price approaching Long Take Profit on {{ticker}} at {{interval}}.")
+alertcondition(short_sl_proximity_condition and showSLTPLevels, title="Short SL Proximity", message="Price approaching Short Stop Loss on {{ticker}} at {{interval}}.")
+alertcondition(short_tp_proximity_condition and showSLTPLevels, title="Short TP Proximity", message="Price approaching Short Take Profit on {{ticker}} at {{interval}}.")
+
+// Note: The base plot of 'close' price has been removed for cleaner chart visuals, as this indicator focuses on overlays.
+// plot(close, "Close Price", color=color.gray)

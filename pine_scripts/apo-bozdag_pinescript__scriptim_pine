@@ -1,0 +1,1844 @@
+//@version=6
+indicator("Otomatik Destek / Direnç - Optimize Edilmiş", shorttitle="OD/D", overlay = true, max_labels_count = 100)
+// Version 3.1 - Optimized
+// Author: Abdullah Bozdağ
+
+import Trendoscope/utils/1 as ut
+import Trendoscope/ohlc/3 as o
+import Trendoscope/LineWrapper/2 as wr
+import Trendoscope/ZigzagLite/3 as zg
+
+import Trendoscope/abstractchartpatterns/9 as p
+import Trendoscope/basechartpatterns/8 as bp
+
+// === EMA AYARLARI ===
+emaEnabled = input.bool(true, title="EMA Göster", group="Hareketli Ortalamalar")
+emaLength = input.int(8, minval=1, title="EMA Periyodu", group="Hareketli Ortalamalar")
+smaEnabled = input.bool(false, title="SMA Göster", group="Hareketli Ortalamalar")
+smaLength = input.int(8, minval=1, title="SMA Periyodu", group="Hareketli Ortalamalar")
+
+// === PİVOT AYARLARI ===
+lookback1 = input.int(5, title="Geriye Bakış 1", group="Pivot Noktaları")
+lookback2 = input.int(10, title="Geriye Bakış 2", group="Pivot Noktaları")
+lookback3 = input.int(20, title="Geriye Bakış 3", group="Pivot Noktaları")
+
+// === TREND ÇİZGİSİ AYARLARI ===
+shortPeriod = input.int(30, title="Kısa Periyot", group="Trend Çizgileri")
+longPeriod = input.int(100, title="Uzun Periyot", group="Trend Çizgileri")
+
+// === OTOMATİK DESTEK/DİRENÇ AYARLARI ===
+prd = input.int(10, title="Pivot Periyodu", minval=4, maxval=30, group="Otomatik D/D")
+ppsrc = input.string('High/Low', title="Kaynak", options=['High/Low', 'Close/Open'], group="Otomatik D/D")
+maxnumpp = input.int(20, title="Maksimum Pivot", minval=5, maxval=100, group="Otomatik D/D")
+ChannelW = input.int(10, title="Maks. Kanal Genişliği %", minval=1, group="Otomatik D/D")
+maxnumsr = input.int(5, title="Maks. D/D Çizgileri", minval=1, maxval=10, group="Otomatik D/D")
+min_strength = input.int(2, title="Min. Güç", minval=1, maxval=10, group="Otomatik D/D")
+
+// === GÖRÜNÜM AYARLARI ===
+showpp = input.bool(false, title="Pivot Noktalarını Göster", group="Görünüm")
+showFibLevels = input.bool(true, title="Fibonacci Seviyelerini Göster", group="Görünüm")
+linewidth = input.int(2, title="Çizgi Kalınlığı", minval=1, maxval=4, group="Görünüm")
+resistancecolor = input.color(color.red, title="Direnç Rengi", group="Görünüm")
+supportcolor = input.color(color.lime, title="Destek Rengi", group="Görünüm")
+
+// === SUPERTREND AYARLARI ===
+enableSupertrend = input.bool(false, title="SuperTrend'i Etkinleştir", group="SuperTrend")
+atr_len = input.int(10, "ATR Uzunluğu", group="SuperTrend")
+factor = input.float(3.0, "Faktör", step=0.1, group="SuperTrend")
+
+// === FIBONACCI AYARLARI ===
+fastperiod = input.int(50, title="Hızlı MA", minval=1, group="Fibonacci")
+emaperiod = input.int(100, title="Yavaş MA", minval=1, group="Fibonacci")
+
+// === HAREKETLİ ORTALAMALAR ===
+ema_out = ta.ema(close, emaLength)
+sma_out = ta.sma(close, smaLength)
+
+ema_up = ema_out > ema_out[1]
+ema_down = ema_out < ema_out[1]
+ema_color = ema_up ? color.green : ema_down ? color.red : color.blue
+
+sma_up = sma_out > sma_out[1]
+sma_down = sma_out < sma_out[1]
+sma_color = sma_up ? color.green : sma_down ? color.red : color.blue
+
+plot(emaEnabled ? ema_out : na, title="EMA", color=ema_color, linewidth=2)
+plot(smaEnabled ? sma_out : na, title="SMA", color=sma_color, linewidth=1)
+
+// === PIVOT POINTS ===
+pivot_high1 = ta.pivothigh(high, lookback1, lookback1)
+pivot_low1  = ta.pivotlow(low, lookback1, lookback1)
+pivot_high2 = ta.pivothigh(high, lookback2, lookback2)
+pivot_low2  = ta.pivotlow(low, lookback2, lookback2)
+pivot_high3 = ta.pivothigh(high, lookback3, lookback3)
+pivot_low3  = ta.pivotlow(low, lookback3, lookback3)
+
+// Boolean seriler: pivot noktası oluştu mu?
+is_pivot_high1 = not na(pivot_high1)
+is_pivot_low1  = not na(pivot_low1)
+is_pivot_high2 = not na(pivot_high2)
+is_pivot_low2  = not na(pivot_low2)
+is_pivot_high3 = not na(pivot_high3)
+is_pivot_low3  = not na(pivot_low3)
+
+// valuewhen fonksiyonunu doğru şekilde kullan
+plot_high1 = ta.valuewhen(is_pivot_high1, high[lookback1], 0)
+plot_low1  = ta.valuewhen(is_pivot_low1, low[lookback1], 0)
+plot_high2 = ta.valuewhen(is_pivot_high2, high[lookback2], 0)
+plot_low2  = ta.valuewhen(is_pivot_low2, low[lookback2], 0)
+plot_high3 = ta.valuewhen(is_pivot_high3, high[lookback3], 0)
+plot_low3  = ta.valuewhen(is_pivot_low3, low[lookback3], 0)
+
+// Sadece etkinleştirildiğinde çiz
+plot(plot_high1, style=plot.style_line, title="D1", color=color.white, show_last=1, linewidth=1, trackprice=true)
+plot(plot_low1,  style=plot.style_line, title="S1", color=color.white, show_last=1, linewidth=1, trackprice=true)
+plot(plot_high2, style=plot.style_line, title="D2", color=color.yellow, show_last=1, linewidth=2, trackprice=true)
+plot(plot_low2,  style=plot.style_line, title="S2", color=color.yellow, show_last=1, linewidth=2, trackprice=true)
+plot(plot_high3, style=plot.style_line, title="D3", color=color.orange, show_last=1, linewidth=3, trackprice=true)
+plot(plot_low3,  style=plot.style_line, title="S3", color=color.orange, show_last=1, linewidth=3, trackprice=true)
+
+// === OTOMATİK D/D MANTIĞI ===
+src1 = ppsrc == 'High/Low' ? high : math.max(close, open)
+src2 = ppsrc == 'High/Low' ? low : math.min(close, open)
+ph = ta.pivothigh(src1, prd, prd)
+pl = ta.pivotlow(src2, prd, prd)
+
+plotshape(not na(ph) and showpp, text="H", style=shape.labeldown, color=na, textcolor=color.red, location=location.abovebar, offset=-prd)
+plotshape(not na(pl) and showpp, text="L", style=shape.labelup, color=na, textcolor=color.lime, location=location.belowbar, offset=-prd)
+
+// === SUPERTREND (OPTIMIZED) ===
+pine_supertrend(factor, atr) =>
+    hl2Src = hl2
+    upperBand = hl2Src + factor * atr
+    lowerBand = hl2Src - factor * atr
+    prevLowerBand = nz(lowerBand[1])
+    prevUpperBand = nz(upperBand[1])
+
+    lowerBand := lowerBand > prevLowerBand or close[1] < prevLowerBand ? lowerBand : prevLowerBand
+    upperBand := upperBand < prevUpperBand or close[1] > prevUpperBand ? upperBand : prevUpperBand
+    int direction = na
+    float superTrend = na
+    prevSuperTrend = superTrend[1]
+    if na(atr[1])
+        direction := 1
+    else if prevSuperTrend == prevUpperBand
+        direction := close > upperBand ? -1 : 1
+    else
+        direction := close < lowerBand ? 1 : -1
+    superTrend := direction == -1 ? lowerBand : upperBand
+    [superTrend, direction]
+
+// Calculate SuperTrend values
+var float ST = na
+var int dir = na
+if enableSupertrend
+    [_ST, _dir] = pine_supertrend(factor, ta.atr(atr_len))
+    ST := _ST
+    dir := _dir
+else
+    ST := na
+    dir := na
+
+plot(enableSupertrend ? ST : na, "SuperTrend", color=color.new(dir < 0 ? color.green : color.red, 0), linewidth=2)
+
+// === FIBONACCI LEVELS (OPTIMIZED - CONDITIONAL PLOTTING) ===
+toc = math.max(open, close)
+boc = math.min(open, close)
+
+effclose = close >= open ? toc : boc
+
+midline = nz(ta.ema(effclose, emaperiod))
+dev = ta.stdev(effclose, emaperiod)
+
+plusdevmult = toc > midline ? (toc - midline) / dev : 0
+minusdevmult = boc < midline ? (midline - boc) / dev : 0
+
+maxmult = math.max(minusdevmult, plusdevmult)
+lm = ta.ema(maxmult, emaperiod)
+lm2 = lm / 2
+lm3 = lm2 * 0.38196601
+lm4 = lm * 1.38196601
+lm5 = lm * 1.61803399
+lm6 = (lm + lm2) / 2
+
+// Fibonacci seviyelerini şartlı olarak çiz
+plot(showFibLevels ? midline : na, color=color.new(color.red, 0), title="Orta Çizgi", linewidth=2)
+plot(showFibLevels ? midline + (dev * lm5) : na, title="Seviye 6 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline + (dev * lm4) : na, title="Seviye 5 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline + (dev * lm) : na, title="Seviye 4 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline + (dev * lm6) : na, title="Seviye 3 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline + (dev * lm2) : na, title="Seviye 2 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline + (dev * lm3) : na, title="Seviye 1 Yukarı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm3) : na, title="Seviye 1 Aşağı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm2) : na, title="Seviye 2 Aşağı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm6) : na, title="Seviye 3 Aşağı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm) : na, title="Seviye 4 Aşağı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm4) : na, title="Seviye 5 Aşağı", color=color.new(color.black, 25))
+plot(showFibLevels ? midline - (dev * lm5) : na, title="Seviye 6 Aşağı", color=color.new(color.black, 25))
+
+// === UYARILAR (OPTİMİZE EDİLMİŞ) ===
+alertcondition(close > plot_high1, title="Fiyat D1'in Üstünde", message="Fiyat Direnç 1'in Üstünde")
+alertcondition(close < plot_low1, title="Fiyat S1'in Altında", message="Fiyat Destek 1'in Altında")
+alertcondition(close > plot_high2, title="Fiyat D2'nin Üstünde", message="Fiyat Direnç 2'nin Üstünde")
+alertcondition(close < plot_low2, title="Fiyat S2'nin Altında", message="Fiyat Destek 2'nin Altında")
+alertcondition(close > plot_high3, title="Fiyat D3'ün Üstünde", message="Fiyat Direnç 3'ün Üstünde")
+alertcondition(close < plot_low3, title="Fiyat S3'ün Altında", message="Fiyat Destek 3'ün Altında")
+
+alertcondition(enableSupertrend and ta.crossunder(dir, 0), title="Yükseliş SuperTrend", message="SuperTrend Yükselişe Döndü")
+alertcondition(enableSupertrend and ta.crossover(dir, 0), title="Düşüş SuperTrend", message="SuperTrend Düşüşe Döndü")
+
+// Akıllı Para Konseptleri [LuxAlgo]
+//---------------------------------------------------------------------------------------------------------------------}
+//SABİTLER & DİZİLER & GİRİŞLER
+//---------------------------------------------------------------------------------------------------------------------{
+BULLISH_LEG                     = 1
+BEARISH_LEG                     = 0
+
+BULLISH                         = +1
+BEARISH                         = -1
+
+GREEN                           = #089981
+RED                             = #F23645
+BLUE                            = #2157f3
+GRAY                            = #878b94
+MONO_BULLISH                    = #b2b5be
+MONO_BEARISH                    = #5d606b
+
+HISTORICAL                      = 'Geçmiş'
+PRESENT                         = 'Güncel'
+
+COLORED                         = 'Renkli'
+MONOCHROME                      = 'Tek Renk'
+
+ALL                             = 'Tümü'
+// BOS = Break of Structure (Yapı Kırılımı): Fiyatın önceki yüksek/düşükleri kırarak yeni bir yön belirlediğini gösterir
+BOS                             = 'Yapı Kırılımı (BOS)'
+// CHoCH = Change of Character (Karakter Değişimi): Fiyatın davranışında önemli bir değişiklik olduğunu gösterir
+CHOCH                           = 'Karakter Değişimi (CHoCH)'
+
+TINY                            = size.tiny
+SMALL                           = size.small
+NORMAL                          = size.normal
+
+ATR                             = 'Atr'
+RANGE                           = 'Kümülatif Ortalama Aralık'
+
+CLOSE                           = 'Kapanış'
+HIGHLOW                         = 'Yüksek/Düşük'
+
+SOLID                           = '⎯⎯⎯'
+DASHED                          = '----'
+DOTTED                          = '····'
+
+SMART_GROUP                     = 'Akıllı Para Konseptleri'
+INTERNAL_GROUP                  = 'Gerçek Zamanlı İç Yapı'
+SWING_GROUP                     = 'Gerçek Zamanlı Salınım Yapısı'
+BLOCKS_GROUP                    = 'Sipariş Blokları'
+EQUAL_GROUP                     = 'Eşit Yüksek/Düşük'
+GAPS_GROUP                      = 'Adil Değer Boşlukları'
+LEVELS_GROUP                    = 'Yüksek & Düşükler MTF'
+ZONES_GROUP                     = 'Premium & Discount Bölgeleri'
+
+modeTooltip                     = 'Geçmiş yapıyı veya sadece güncel yapıyı göstermeyi sağlar'
+styleTooltip                    = 'Gösterge renk teması'
+showTrendTooltip                = 'Yapı tarafından tespit edilen mevcut trendi yansıtan renkte mumları göster'
+showInternalsTooltip            = 'İç piyasa yapısını göster'
+internalFilterConfluenceTooltip = 'Önemsiz iç yapı kırılımlarını filtrele'
+showStructureTooltip            = 'Salınım piyasa yapısını göster'
+showSwingsTooltip               = 'Salınım noktalarını grafik üzerinde etiket olarak göster'
+showHighLowSwingsTooltip        = 'En son güçlü ve zayıf yüksek/düşük noktaları grafikte vurgula'
+showInternalOrderBlocksTooltip  = 'İç sipariş bloklarını grafikte göster  Grafikte gösterilecek iç sipariş blok sayısı'
+showSwingOrderBlocksTooltip     = 'Salınım sipariş bloklarını grafikte göster  Grafikte gösterilecek iç salınım blok sayısı'
+orderBlockFilterTooltip         = 'Değişken sipariş bloklarını filtrelemek için kullanılan yöntem   Az miktarda veri mevcut olduğunda kümülatif ortalama aralık yöntemini kullanmak önerilir'
+orderBlockMitigationTooltip     = 'Sipariş bloğu hafifletme için kullanılacak değerleri seçin'
+showEqualHighsLowsTooltip       = 'Eşit yüksekleri ve eşit düşükleri grafikte göster'
+equalHighsLowsLengthTooltip     = 'Eşit yüksekleri ve eşit düşükleri onaylamak için kullanılan çubuk sayısı'
+equalHighsLowsThresholdTooltip  = 'Eşit yüksek ve düşüklerin tespiti için kullanılan (0, 1) aralığındaki hassasiyet eşiği  Düşük değerler daha az ancak daha alakalı sonuçlar döndürür'
+showFairValueGapsTooltip        = 'Adil değer boşluklarını grafikte göster'
+fairValueGapsThresholdTooltip   = 'Önemsiz adil değer boşluklarını filtrele'
+fairValueGapsTimeframeTooltip   = 'Adil değer boşlukları zaman dilimi'
+fairValueGapsExtendTooltip      = 'Adil Değer Boşluğu kutularının grafikte kaç çubuk uzağa taşınacağını belirler'
+showPremiumDiscountZonesTooltip = 'Premium, discount ve denge bölgelerini grafikte göster'
+
+modeInput                       = input.string( HISTORICAL, 'Mod',                       group = SMART_GROUP,    tooltip = modeTooltip, options = [HISTORICAL, PRESENT])
+styleInput                      = input.string( COLORED,    'Stil',                     group = SMART_GROUP,    tooltip = styleTooltip,options = [COLORED, MONOCHROME])
+showTrendInput                  = input(        false,      'Mumları Renklendir',         group = SMART_GROUP,    tooltip = showTrendTooltip)
+
+showInternalsInput              = input(        true,       'İç Yapıyı Göster',           group = INTERNAL_GROUP, tooltip = showInternalsTooltip)
+showInternalBullInput           = input.string( ALL,        'Yükseliş Yapısı',            group = INTERNAL_GROUP, inline = 'ibull', options = [ALL,BOS,CHOCH])
+internalBullColorInput          = input(        GREEN,      '',                         group = INTERNAL_GROUP, inline = 'ibull')
+showInternalBearInput           = input.string( ALL,        'Düşüş Yapısı' ,            group = INTERNAL_GROUP, inline = 'ibear', options = [ALL,BOS,CHOCH])
+internalBearColorInput          = input(        RED,        '',                         group = INTERNAL_GROUP, inline = 'ibear')
+internalFilterConfluenceInput   = input(        false,      'Çakışma Filtresi',           group = INTERNAL_GROUP, tooltip = internalFilterConfluenceTooltip)
+internalStructureSize           = input.string( TINY,       'İç Etiket Boyutu',            group = INTERNAL_GROUP, options = [TINY,SMALL,NORMAL])
+
+showStructureInput              = input(        true,       'Salınım Yapısını Göster',   group = SWING_GROUP,    tooltip = showStructureTooltip)
+showSwingBullInput              = input.string( ALL,        'Yükseliş Yapısı',            group = SWING_GROUP,    inline = 'bull',    options = [ALL,BOS,CHOCH])
+swingBullColorInput             = input(        GREEN,      '',                         group = SWING_GROUP,    inline = 'bull')
+showSwingBearInput              = input.string( ALL,        'Düşüş Yapısı',            group = SWING_GROUP,    inline = 'bear',    options = [ALL,BOS,CHOCH])
+swingBearColorInput             = input(        RED,        '',                         group = SWING_GROUP,    inline = 'bear')
+swingStructureSize              = input.string( SMALL,      'Salınım Etiket Boyutu',       group = SWING_GROUP,    options = [TINY,SMALL,NORMAL])
+showSwingsInput                 = input(        false,      'Salınım Noktalarını Göster', group = SWING_GROUP,    tooltip = showSwingsTooltip,inline = 'swings')
+swingsLengthInput               = input.int(    50,         '',                         group = SWING_GROUP,    minval = 10,                inline = 'swings')
+showHighLowSwingsInput          = input(        true,       'Güçlü/Zayıf Yüksek/Düşük Göster',group = SWING_GROUP,    tooltip = showHighLowSwingsTooltip)
+
+showInternalOrderBlocksInput    = input(        true,       'İç Sipariş Blokları' ,        group = BLOCKS_GROUP,   tooltip = showInternalOrderBlocksTooltip,   inline = 'iob')
+internalOrderBlocksSizeInput    = input.int(    5,          '',                         group = BLOCKS_GROUP,   minval = 1, maxval = 20,                    inline = 'iob')
+showSwingOrderBlocksInput       = input(        false,      'Salınım Sipariş Blokları',   group = BLOCKS_GROUP,   tooltip = showSwingOrderBlocksTooltip,      inline = 'ob')
+swingOrderBlocksSizeInput       = input.int(    5,          '',                         group = BLOCKS_GROUP,   minval = 1, maxval = 20,                    inline = 'ob')
+orderBlockFilterInput           = input.string( 'Atr',      'Sipariş Bloğu Filtresi',     group = BLOCKS_GROUP,   tooltip = orderBlockFilterTooltip,          options = [ATR, RANGE])
+orderBlockMitigationInput       = input.string( HIGHLOW,    'Sipariş Bloğu Hafifletme',   group = BLOCKS_GROUP,   tooltip = orderBlockMitigationTooltip,      options = [CLOSE,HIGHLOW])
+internalBullishOrderBlockColor  = input.color(color.new(#3179f5, 80), 'İç Yükseliş OB',            group = BLOCKS_GROUP)
+internalBearishOrderBlockColor  = input.color(color.new(#f77c80, 80), 'İç Düşüş OB',              group = BLOCKS_GROUP)
+swingBullishOrderBlockColor     = input.color(color.new(#1848cc, 80), 'Yükseliş OB',                 group = BLOCKS_GROUP)
+swingBearishOrderBlockColor     = input.color(color.new(#b22833, 80), 'Düşüş OB',                   group = BLOCKS_GROUP)
+
+showEqualHighsLowsInput         = input(        true,       'Eşit Yüksek/Düşük',         group = EQUAL_GROUP,    tooltip = showEqualHighsLowsTooltip)
+equalHighsLowsLengthInput       = input.int(    3,          'Çubuk Onayı',               group = EQUAL_GROUP,    tooltip = equalHighsLowsLengthTooltip,      minval = 1)
+equalHighsLowsThresholdInput    = input.float(  0.1,        'Eşik',                     group = EQUAL_GROUP,    tooltip = equalHighsLowsThresholdTooltip,   minval = 0, maxval = 0.5, step = 0.1)
+equalHighsLowsSizeInput         = input.string( TINY,       'Etiket Boyutu',             group = EQUAL_GROUP,    options = [TINY,SMALL,NORMAL])
+
+showFairValueGapsInput          = input(        false,      'Adil Değer Boşlukları',      group = GAPS_GROUP,     tooltip = showFairValueGapsTooltip)
+fairValueGapsThresholdInput     = input(        true,       'Otomatik Eşik',            group = GAPS_GROUP,     tooltip = fairValueGapsThresholdTooltip)
+fairValueGapsTimeframeInput     = input.timeframe('',       'Zaman Dilimi',             group = GAPS_GROUP,     tooltip = fairValueGapsTimeframeTooltip)
+fairValueGapsBullColorInput     = input.color(color.new(#00ff68, 70), 'Yükseliş FVG' , group = GAPS_GROUP)
+fairValueGapsBearColorInput     = input.color(color.new(#ff0008, 70), 'Düşüş FVG' , group = GAPS_GROUP)
+fairValueGapsExtendInput        = input.int(    1,          'FVG Uzatma',               group = GAPS_GROUP,     tooltip = fairValueGapsExtendTooltip,       minval = 0)
+
+showDailyLevelsInput            = input(        false,      'Günlük',    group = LEVELS_GROUP,   inline = 'daily')
+dailyLevelsStyleInput           = input.string( SOLID,      '',         group = LEVELS_GROUP,   inline = 'daily',   options = [SOLID,DASHED,DOTTED])
+dailyLevelsColorInput           = input(        BLUE,       '',         group = LEVELS_GROUP,   inline = 'daily')
+showWeeklyLevelsInput           = input(        false,      'Haftalık',  group = LEVELS_GROUP,   inline = 'weekly')
+weeklyLevelsStyleInput          = input.string( SOLID,      '',         group = LEVELS_GROUP,   inline = 'weekly',  options = [SOLID,DASHED,DOTTED])
+weeklyLevelsColorInput          = input(        BLUE,       '',         group = LEVELS_GROUP,   inline = 'weekly')
+showMonthlyLevelsInput          = input(        false,      'Aylık',    group = LEVELS_GROUP,   inline = 'monthly')
+monthlyLevelsStyleInput         = input.string( SOLID,      '',         group = LEVELS_GROUP,   inline = 'monthly', options = [SOLID,DASHED,DOTTED])
+monthlyLevelsColorInput         = input(        BLUE,       '',         group = LEVELS_GROUP,   inline = 'monthly')
+
+showPremiumDiscountZonesInput   = input(        true,      'Premium/Discount Bölgeleri', group = ZONES_GROUP , tooltip = showPremiumDiscountZonesTooltip)
+premiumZoneColorInput           = input.color(  RED,        'Premium Bölgesi',           group = ZONES_GROUP)
+equilibriumZoneColorInput       = input.color(  GRAY,       'Denge Bölgesi',              group = ZONES_GROUP)
+discountZoneColorInput          = input.color(  GREEN,      'Discount Bölgesi',          group = ZONES_GROUP)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//DATA STRUCTURES & VARIABLES
+//---------------------------------------------------------------------------------------------------------------------{
+// @type                            UDT representing alerts as bool fields
+// @field internalBullishBOS        internal structure custom alert
+// @field internalBearishBOS        internal structure custom alert
+// @field internalBullishCHoCH      internal structure custom alert
+// @field internalBearishCHoCH      internal structure custom alert
+// @field swingBullishBOS           swing structure custom alert
+// @field swingBearishBOS           swing structure custom alert
+// @field swingBullishCHoCH         swing structure custom alert
+// @field swingBearishCHoCH         swing structure custom alert
+// @field internalBullishOrderBlock internal order block custom alert
+// @field internalBearishOrderBlock internal order block custom alert
+// @field swingBullishOrderBlock    swing order block custom alert
+// @field swingBearishOrderBlock    swing order block custom alert
+// @field equalHighs                equal high low custom alert
+// @field equalLows                 equal high low custom alert
+// @field bullishFairValueGap       fair value gap custom alert
+// @field bearishFairValueGap       fair value gap custom alert
+type alerts
+    bool internalBullishBOS         = false
+    bool internalBearishBOS         = false
+    bool internalBullishCHoCH       = false
+    bool internalBearishCHoCH       = false
+    bool swingBullishBOS            = false
+    bool swingBearishBOS            = false
+    bool swingBullishCHoCH          = false
+    bool swingBearishCHoCH          = false
+    bool internalBullishOrderBlock  = false
+    bool internalBearishOrderBlock  = false
+    bool swingBullishOrderBlock     = false
+    bool swingBearishOrderBlock     = false
+    bool equalHighs                 = false
+    bool equalLows                  = false
+    bool bullishFairValueGap        = false
+    bool bearishFairValueGap        = false
+
+// @type                            UDT representing last swing extremes (top & bottom)
+// @field top                       last top swing price
+// @field bottom                    last bottom swing price
+// @field barTime                   last swing bar time
+// @field barIndex                  last swing bar index
+// @field lastTopTime               last top swing time
+// @field lastBottomTime            last bottom swing time
+type trailingExtremes
+    float top
+    float bottom
+    int barTime
+    int barIndex
+    int lastTopTime
+    int lastBottomTime
+
+// @type                            UDT representing Fair Value Gaps
+// @field top                       top price
+// @field bottom                    bottom price
+// @field bias                      bias (BULLISH or BEARISH)
+// @field topBox                    top box
+// @field bottomBox                 bottom box
+type fairValueGap
+    float top
+    float bottom
+    int bias
+    box topBox
+    box bottomBox
+
+// @type                            UDT representing trend bias
+// @field bias                      BULLISH or BEARISH
+type trend
+    int bias
+
+// @type                            UDT representing Equal Highs Lows display
+// @field l_ine                     displayed line
+// @field l_abel                    displayed label
+type equalDisplay
+    line l_ine      = na
+    label l_abel    = na
+
+// @type                            UDT representing a pivot point (swing point)
+// @field currentLevel              current price level
+// @field lastLevel                 last price level
+// @field crossed                   true if price level is crossed
+// @field barTime                   bar time
+// @field barIndex                  bar index
+type pivot
+    float currentLevel
+    float lastLevel
+    bool crossed
+    int barTime     = time
+    int barIndex    = bar_index
+
+// @type                            UDT representing an order block
+// @field barHigh                   bar high
+// @field barLow                    bar low
+// @field barTime                   bar time
+// @field bias                      BULLISH or BEARISH
+type orderBlock
+    float barHigh
+    float barLow
+    int barTime
+    int bias
+
+// @variable                        current swing pivot high
+var pivot swingHigh                 = pivot.new(na,na,false)
+// @variable                        current swing pivot low
+var pivot swingLow                  = pivot.new(na,na,false)
+// @variable                        current internal pivot high
+var pivot internalHigh              = pivot.new(na,na,false)
+// @variable                        current internal pivot low
+var pivot internalLow               = pivot.new(na,na,false)
+// @variable                        current equal high pivot
+var pivot equalHigh                 = pivot.new(na,na,false)
+// @variable                        current equal low pivot
+var pivot equalLow                  = pivot.new(na,na,false)
+// @variable                        swing trend bias
+var trend swingTrend                = trend.new(0)
+// @variable                        internal trend bias
+var trend internalTrend             = trend.new(0)
+// @variable                        equal high display
+var equalDisplay equalHighDisplay   = equalDisplay.new()
+// @variable                        equal low display
+var equalDisplay equalLowDisplay    = equalDisplay.new()
+// @variable                        storage for fairValueGap UDTs
+var array<fairValueGap> fairValueGaps = array.new<fairValueGap>()
+// @variable                        storage for parsed highs
+var array<float> parsedHighs        = array.new<float>()
+// @variable                        storage for parsed lows
+var array<float> parsedLows         = array.new<float>()
+// @variable                        storage for raw highs
+var array<float> highs              = array.new<float>()
+// @variable                        storage for raw lows
+var array<float> lows               = array.new<float>()
+// @variable                        storage for bar time values
+var array<int> times                = array.new<int>()
+// @variable                        last trailing swing high and low
+var trailingExtremes trailing       = trailingExtremes.new()
+// @variable                                storage for orderBlock UDTs (swing order blocks)
+var array<orderBlock> swingOrderBlocks      = array.new<orderBlock>()
+// @variable                                storage for orderBlock UDTs (internal order blocks)
+var array<orderBlock> internalOrderBlocks   = array.new<orderBlock>()
+// @variable                                storage for swing order blocks boxes
+var array<box> swingOrderBlocksBoxes        = array.new<box>()
+// @variable                                storage for internal order blocks boxes
+var array<box> internalOrderBlocksBoxes     = array.new<box>()
+// @variable                        color for swing bullish structures
+var swingBullishColor               = styleInput == MONOCHROME ? MONO_BULLISH : swingBullColorInput
+// @variable                        color for swing bearish structures
+var swingBearishColor               = styleInput == MONOCHROME ? MONO_BEARISH : swingBearColorInput
+// @variable                        color for bullish fair value gaps
+var fairValueGapBullishColor        = styleInput == MONOCHROME ? color.new(MONO_BULLISH,70) : fairValueGapsBullColorInput
+// @variable                        color for bearish fair value gaps
+var fairValueGapBearishColor        = styleInput == MONOCHROME ? color.new(MONO_BEARISH,70) : fairValueGapsBearColorInput
+// @variable                        color for premium zone
+var premiumZoneColor                = styleInput == MONOCHROME ? MONO_BEARISH : premiumZoneColorInput
+// @variable                        color for discount zone
+var discountZoneColor               = styleInput == MONOCHROME ? MONO_BULLISH : discountZoneColorInput
+// @variable                        bar index on current script iteration
+varip int currentBarIndex           = bar_index
+// @variable                        bar index on last script iteration
+varip int lastBarIndex              = bar_index
+// @variable                        alerts in current bar
+alerts currentAlerts                = alerts.new()
+// @variable                        time at start of chart
+var initialTime                     = time
+
+// we create the needed boxes for displaying order blocks at the first execution
+if barstate.isfirst
+    if showSwingOrderBlocksInput
+        for index = 1 to swingOrderBlocksSizeInput
+            swingOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+    if showInternalOrderBlocksInput
+        for index = 1 to internalOrderBlocksSizeInput
+            internalOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+
+// @variable                        source to use in bearish order blocks mitigation
+bearishOrderBlockMitigationSource   = orderBlockMitigationInput == CLOSE ? close : high
+// @variable                        source to use in bullish order blocks mitigation
+bullishOrderBlockMitigationSource   = orderBlockMitigationInput == CLOSE ? close : low
+// @variable                        default volatility measure
+atrMeasure                          = ta.atr(200)
+// @variable                        parsed volatility measure by user settings
+volatilityMeasure                   = orderBlockFilterInput == ATR ? atrMeasure : ta.cum(ta.tr)/bar_index
+// @variable                        true if current bar is a high volatility bar
+highVolatilityBar                   = (high - low) >= (2 * volatilityMeasure)
+// @variable                        parsed high
+parsedHigh                          = highVolatilityBar ? low : high
+// @variable                        parsed low
+parsedLow                           = highVolatilityBar ? high : low
+
+// we store current values into the arrays at each bar
+parsedHighs.push(parsedHigh)
+parsedLows.push(parsedLow)
+highs.push(high)
+lows.push(low)
+times.push(time)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//USER-DEFINED FUNCTIONS
+//---------------------------------------------------------------------------------------------------------------------{
+// @function            Get the value of the current leg, it can be 0 (bearish) or 1 (bullish)
+// @returns             int
+leg(int size) =>
+    var leg     = 0
+    newLegHigh  = high[size] > ta.highest( size)
+    newLegLow   = low[size]  < ta.lowest(  size)
+
+    if newLegHigh
+        leg := BEARISH_LEG
+    else if newLegLow
+        leg := BULLISH_LEG
+    leg
+
+// @function            Identify whether the current value is the start of a new leg (swing)
+// @param leg           (int) Current leg value
+// @returns             bool
+startOfNewLeg(int leg)      => ta.change(leg) != 0
+
+// @function            Identify whether the current level is the start of a new bearish leg (swing)
+// @param leg           (int) Current leg value
+// @returns             bool
+startOfBearishLeg(int leg)  => ta.change(leg) == -1
+
+// @function            Identify whether the current level is the start of a new bullish leg (swing)
+// @param leg           (int) Current leg value
+// @returns             bool
+startOfBullishLeg(int leg)  => ta.change(leg) == +1
+
+// @function            create a new label
+// @param labelTime     bar time coordinate
+// @param labelPrice    price coordinate
+// @param tag           text to display
+// @param labelColor    text color
+// @param labelStyle    label style
+// @returns             label ID
+drawLabel(int labelTime, float labelPrice, string tag, color labelColor, string labelStyle) =>
+    var label l_abel = na
+
+    if modeInput == PRESENT
+        l_abel.delete()
+
+    l_abel := label.new(chart.point.new(labelTime,na,labelPrice),tag,xloc.bar_time,color=color(na),textcolor=labelColor,style = labelStyle,size = size.small)
+
+// @function            create a new line and label representing an EQH or EQL
+// @param p_ivot        starting pivot
+// @param level         price level of current pivot
+// @param size          how many bars ago was the current pivot detected
+// @param equalHigh     true for EQH, false for EQL
+// @returns             label ID
+drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh) =>
+    equalDisplay e_qualDisplay = equalHigh ? equalHighDisplay : equalLowDisplay
+
+    string tag          = 'EQL'
+    color equalColor    = swingBullishColor
+    string labelStyle   = label.style_label_up
+
+    if equalHigh
+        tag         := 'EQH'
+        equalColor  := swingBearishColor
+        labelStyle  := label.style_label_down
+
+    if modeInput == PRESENT
+        line.delete(    e_qualDisplay.l_ine)
+        label.delete(   e_qualDisplay.l_abel)
+
+    e_qualDisplay.l_ine     := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time[size],na,level), xloc = xloc.bar_time, color = equalColor, style = line.style_dotted)
+    labelPosition           = math.round(0.5*(p_ivot.barIndex + bar_index - size))
+    e_qualDisplay.l_abel    := label.new(chart.point.new(na,labelPosition,level), tag, xloc.bar_index, color = color(na), textcolor = equalColor, style = labelStyle, size = equalHighsLowsSizeInput)
+
+// @function            store current structure and trailing swing points, and also display swing points and equal highs/lows
+// @param size          (int) structure size
+// @param equalHighLow  (bool) true for displaying current highs/lows
+// @param internal      (bool) true for getting internal structures
+// @returns             label ID
+getCurrentStructure(int size,bool equalHighLow = false, bool internal = false) =>
+    currentLeg              = leg(size)
+    newPivot                = startOfNewLeg(currentLeg)
+    pivotLow                = startOfBullishLeg(currentLeg)
+    pivotHigh               = startOfBearishLeg(currentLeg)
+
+    if newPivot
+        if pivotLow
+            pivot p_ivot    = equalHighLow ? equalLow : internal ? internalLow : swingLow
+
+            if equalHighLow and math.abs(p_ivot.currentLevel - low[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot, low[size], size, false)
+
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := low[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+
+            if not equalHighLow and not internal
+                trailing.bottom         := p_ivot.currentLevel
+                trailing.barTime        := p_ivot.barTime
+                trailing.barIndex       := p_ivot.barIndex
+                trailing.lastBottomTime := p_ivot.barTime
+
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel < p_ivot.lastLevel ? 'LL' : 'HL', swingBullishColor, label.style_label_up)
+        else
+            pivot p_ivot = equalHighLow ? equalHigh : internal ? internalHigh : swingHigh
+
+            if equalHighLow and math.abs(p_ivot.currentLevel - high[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot,high[size],size,true)
+
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := high[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+
+            if not equalHighLow and not internal
+                trailing.top            := p_ivot.currentLevel
+                trailing.barTime        := p_ivot.barTime
+                trailing.barIndex       := p_ivot.barIndex
+                trailing.lastTopTime    := p_ivot.barTime
+
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel > p_ivot.lastLevel ? 'HH' : 'LH', swingBearishColor, label.style_label_down)
+
+// @function            draw line and label representing a structure
+// @param p_ivot        base pivot point
+// @param tag           test to display
+// @param structureColor    base color
+// @param lineStyle         line style
+// @param labelStyle        label style
+// @param labelSize         text size
+// @returns                 label ID
+drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize) =>
+    var line l_ine      = line.new(na,na,na,na,xloc = xloc.bar_time)
+    var label l_abel    = label.new(na,na)
+
+    if modeInput == PRESENT
+        l_ine.delete()
+        l_abel.delete()
+
+    l_ine   := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time,na,p_ivot.currentLevel), xloc.bar_time, color=structureColor, style=lineStyle)
+    l_abel  := label.new(chart.point.new(na,math.round(0.5*(p_ivot.barIndex+bar_index)),p_ivot.currentLevel), tag, xloc.bar_index, color=color(na), textcolor=structureColor, style=labelStyle, size = labelSize)
+
+// @function            delete order blocks
+// @param internal      true for internal order blocks
+// @returns             orderBlock ID
+deleteOrderBlocks(bool internal = false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+
+    for [index,eachOrderBlock] in orderBlocks
+        bool crossedOderBlock = false
+
+        if bearishOrderBlockMitigationSource > eachOrderBlock.barHigh and eachOrderBlock.bias == BEARISH
+            crossedOderBlock := true
+            if internal
+                currentAlerts.internalBearishOrderBlock := true
+            else
+                currentAlerts.swingBearishOrderBlock    := true
+        else if bullishOrderBlockMitigationSource < eachOrderBlock.barLow and eachOrderBlock.bias == BULLISH
+            crossedOderBlock := true
+            if internal
+                currentAlerts.internalBullishOrderBlock := true
+            else
+                currentAlerts.swingBullishOrderBlock    := true
+        if crossedOderBlock
+            orderBlocks.remove(index)
+
+// @function            fetch and store order blocks
+// @param p_ivot        base pivot point
+// @param internal      true for internal order blocks
+// @param bias          BULLISH or BEARISH
+// @returns             void
+storeOrdeBlock(pivot p_ivot,bool internal = false,int bias) =>
+    if (not internal and showSwingOrderBlocksInput) or (internal and showInternalOrderBlocksInput)
+
+        array<float> a_rray = na
+        int parsedIndex = na
+
+        if bias == BEARISH
+            a_rray      := parsedHighs.slice(p_ivot.barIndex,bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.max())
+        else
+            a_rray      := parsedLows.slice(p_ivot.barIndex,bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())
+
+        orderBlock o_rderBlock          = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times.get(parsedIndex),bias)
+        array<orderBlock> orderBlocks   = internal ? internalOrderBlocks : swingOrderBlocks
+
+        if orderBlocks.size() >= 100
+            orderBlocks.pop()
+        orderBlocks.unshift(o_rderBlock)
+
+// @function            draw order blocks as boxes
+// @param internal      true for internal order blocks
+// @returns             void
+drawOrderBlocks(bool internal = false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+    orderBlocksSize = orderBlocks.size()
+
+    if orderBlocksSize > 0
+        maxOrderBlocks                      = internal ? internalOrderBlocksSizeInput : swingOrderBlocksSizeInput
+        array<orderBlock> parsedOrdeBlocks  = orderBlocks.slice(0, math.min(maxOrderBlocks,orderBlocksSize))
+        array<box> b_oxes                   = internal ? internalOrderBlocksBoxes : swingOrderBlocksBoxes
+
+        for [index,eachOrderBlock] in parsedOrdeBlocks
+            orderBlockColor = styleInput == MONOCHROME ? (eachOrderBlock.bias == BEARISH ? color.new(MONO_BEARISH,80) : color.new(MONO_BULLISH,80)) : internal ? (eachOrderBlock.bias == BEARISH ? internalBearishOrderBlockColor : internalBullishOrderBlockColor) : (eachOrderBlock.bias == BEARISH ? swingBearishOrderBlockColor : swingBullishOrderBlockColor)
+
+            box b_ox        = b_oxes.get(index)
+            b_ox.set_top_left_point(    chart.point.new(eachOrderBlock.barTime,na,eachOrderBlock.barHigh))
+            b_ox.set_bottom_right_point(chart.point.new(last_bar_time,na,eachOrderBlock.barLow))
+            b_ox.set_border_color(      internal ? na : orderBlockColor)
+            b_ox.set_bgcolor(           orderBlockColor)
+
+// @function            detect and draw structures, also detect and store order blocks
+// @param internal      true for internal structures or order blocks
+// @returns             void
+displayStructure(bool internal = false) =>
+    var bullishBar = true
+    var bearishBar = true
+
+    if internalFilterConfluenceInput
+        bullishBar := high - math.max(close, open) > math.min(close, open - low)
+        bearishBar := high - math.max(close, open) < math.min(close, open - low)
+
+    pivot p_ivot    = internal ? internalHigh : swingHigh
+    trend t_rend    = internal ? internalTrend : swingTrend
+
+    lineStyle       = internal ? line.style_dashed : line.style_solid
+    labelSize       = internal ? internalStructureSize : swingStructureSize
+
+    extraCondition  = internal ? internalHigh.currentLevel != swingHigh.currentLevel and bullishBar : true
+    bullishColor    = styleInput == MONOCHROME ? MONO_BULLISH : internal ? internalBullColorInput : swingBullColorInput
+
+    if ta.crossover(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+        string tag = t_rend.bias == BEARISH ? CHOCH : BOS
+
+        if internal
+            currentAlerts.internalBullishCHoCH  := tag == CHOCH
+            currentAlerts.internalBullishBOS    := tag == BOS
+        else
+            currentAlerts.swingBullishCHoCH     := tag == CHOCH
+            currentAlerts.swingBullishBOS       := tag == BOS
+
+        p_ivot.crossed  := true
+        t_rend.bias     := BULLISH
+
+        displayCondition = internal ? showInternalsInput and (showInternalBullInput == ALL or (showInternalBullInput == BOS and tag != CHOCH) or (showInternalBullInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBullInput == ALL or (showSwingBullInput == BOS and tag != CHOCH) or (showSwingBullInput == CHOCH and tag == CHOCH))
+
+        if displayCondition
+            drawStructure(p_ivot,tag,bullishColor,lineStyle,label.style_label_down,labelSize)
+
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrdeBlock(p_ivot,internal,BULLISH)
+
+    p_ivot          := internal ? internalLow : swingLow
+    extraCondition  := internal ? internalLow.currentLevel != swingLow.currentLevel and bearishBar : true
+    bearishColor    = styleInput == MONOCHROME ? MONO_BEARISH : internal ? internalBearColorInput : swingBearColorInput
+
+    if ta.crossunder(close,p_ivot.currentLevel) and not p_ivot.crossed and extraCondition
+        string tag = t_rend.bias == BULLISH ? CHOCH : BOS
+
+        if internal
+            currentAlerts.internalBearishCHoCH  := tag == CHOCH
+            currentAlerts.internalBearishBOS    := tag == BOS
+        else
+            currentAlerts.swingBearishCHoCH     := tag == CHOCH
+            currentAlerts.swingBearishBOS       := tag == BOS
+
+        p_ivot.crossed := true
+        t_rend.bias := BEARISH
+
+        displayCondition = internal ? showInternalsInput and (showInternalBearInput == ALL or (showInternalBearInput == BOS and tag != CHOCH) or (showInternalBearInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBearInput == ALL or (showSwingBearInput == BOS and tag != CHOCH) or (showSwingBearInput == CHOCH and tag == CHOCH))
+
+        if displayCondition
+            drawStructure(p_ivot,tag,bearishColor,lineStyle,label.style_label_up,labelSize)
+
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrdeBlock(p_ivot,internal,BEARISH)
+
+// @function            draw one fair value gap box (each fair value gap has two boxes)
+// @param leftTime      left time coordinate
+// @param rightTime     right time coordinate
+// @param topPrice      top price level
+// @param bottomPrice   bottom price level
+// @param boxColor      box color
+// @returns             box ID
+fairValueGapBox(leftTime,rightTime,topPrice,bottomPrice,boxColor) => box.new(chart.point.new(leftTime,na,topPrice),chart.point.new(rightTime + fairValueGapsExtendInput * (time-time[1]),na,bottomPrice), xloc=xloc.bar_time, border_color = boxColor, bgcolor = boxColor)
+
+// @function            delete fair value gaps
+// @returns             fairValueGap ID
+deleteFairValueGaps() =>
+    for [index,eachFairValueGap] in fairValueGaps
+        if (low < eachFairValueGap.bottom and eachFairValueGap.bias == BULLISH) or (high > eachFairValueGap.top and eachFairValueGap.bias == BEARISH)
+            eachFairValueGap.topBox.delete()
+            eachFairValueGap.bottomBox.delete()
+            fairValueGaps.remove(index)
+
+// @function            draw fair value gaps
+// @returns             fairValueGap ID
+drawFairValueGaps() =>
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]],lookahead = barmerge.lookahead_on)
+
+    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
+    newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
+    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+
+    bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
+    bearishFairValueGap = currentHigh < last2Low and lastClose < last2Low and -barDeltaPercent > threshold and newTimeframe
+
+    if bullishFairValueGap
+        currentAlerts.bullishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentLow,last2High,BULLISH,fairValueGapBox(lastTime,currentTime,currentLow,math.avg(currentLow,last2High),fairValueGapBullishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentLow,last2High),last2High,fairValueGapBullishColor)))
+    if bearishFairValueGap
+        currentAlerts.bearishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentHigh,last2Low,BEARISH,fairValueGapBox(lastTime,currentTime,currentHigh,math.avg(currentHigh,last2Low),fairValueGapBearishColor),fairValueGapBox(lastTime,currentTime,math.avg(currentHigh,last2Low),last2Low,fairValueGapBearishColor)))
+
+// @function            get line style from string
+// @param style         line style
+// @returns             string
+getStyle(string style) =>
+    switch style
+        SOLID => line.style_solid
+        DASHED => line.style_dashed
+        DOTTED => line.style_dotted
+
+// @function            draw MultiTimeFrame levels
+// @param timeframe     base timeframe
+// @param sameTimeframe true if chart timeframe is same as base timeframe
+// @param style         line style
+// @param levelColor    line and text color
+// @returns             void
+drawLevels(string timeframe, bool sameTimeframe, string style, color levelColor) =>
+    [topLevel, bottomLevel, leftTime, rightTime] = request.security(syminfo.tickerid, timeframe, [high[1], low[1], time[1], time],lookahead = barmerge.lookahead_on)
+
+    float parsedTop         = sameTimeframe ? high : topLevel
+    float parsedBottom      = sameTimeframe ? low : bottomLevel
+
+    int parsedLeftTime      = sameTimeframe ? time : leftTime
+    int parsedRightTime     = sameTimeframe ? time : rightTime
+
+    int parsedTopTime       = time
+    int parsedBottomTime    = time
+
+    if not sameTimeframe
+        int leftIndex               = times.binary_search_rightmost(parsedLeftTime)
+        int rightIndex              = times.binary_search_rightmost(parsedRightTime)
+
+        array<int> timeArray        = times.slice(leftIndex,rightIndex)
+        array<float> topArray       = highs.slice(leftIndex,rightIndex)
+        array<float> bottomArray    = lows.slice(leftIndex,rightIndex)
+
+        parsedTopTime               := timeArray.size() > 0 ? timeArray.get(topArray.indexof(topArray.max())) : initialTime
+        parsedBottomTime            := timeArray.size() > 0 ? timeArray.get(bottomArray.indexof(bottomArray.min())) : initialTime
+
+    var line topLine        = line.new(na, na, na, na, xloc = xloc.bar_time, color = levelColor, style = getStyle(style))
+    var line bottomLine     = line.new(na, na, na, na, xloc = xloc.bar_time, color = levelColor, style = getStyle(style))
+    var label topLabel      = label.new(na, na, xloc = xloc.bar_time, text = str.format('P{0}H',timeframe), color=color(na), textcolor = levelColor, size = size.small, style = label.style_label_left)
+    var label bottomLabel   = label.new(na, na, xloc = xloc.bar_time, text = str.format('P{0}L',timeframe), color=color(na), textcolor = levelColor, size = size.small, style = label.style_label_left)
+
+    topLine.set_first_point(    chart.point.new(parsedTopTime,na,parsedTop))
+    topLine.set_second_point(   chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedTop))
+    topLabel.set_point(         chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedTop))
+
+    bottomLine.set_first_point( chart.point.new(parsedBottomTime,na,parsedBottom))
+    bottomLine.set_second_point(chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedBottom))
+    bottomLabel.set_point(      chart.point.new(last_bar_time + 20 * (time-time[1]),na,parsedBottom))
+
+// @function            true if chart timeframe is higher than provided timeframe
+// @param timeframe     timeframe to check
+// @returns             bool
+higherTimeframe(string timeframe) => timeframe.in_seconds() > timeframe.in_seconds(timeframe)
+
+// @function            update trailing swing points
+// @returns             int
+updateTrailingExtremes() =>
+    trailing.top            := math.max(high,trailing.top)
+    trailing.lastTopTime    := trailing.top == high ? time : trailing.lastTopTime
+    trailing.bottom         := math.min(low,trailing.bottom)
+    trailing.lastBottomTime := trailing.bottom == low ? time : trailing.lastBottomTime
+
+// @function            draw trailing swing points
+// @returns             void
+drawHighLowSwings() =>
+    var line topLine        = line.new(na, na, na, na, color = swingBearishColor, xloc = xloc.bar_time)
+    var line bottomLine     = line.new(na, na, na, na, color = swingBullishColor, xloc = xloc.bar_time)
+    var label topLabel      = label.new(na, na, color=color(na), textcolor = swingBearishColor, xloc = xloc.bar_time, style = label.style_label_down, size = size.tiny)
+    var label bottomLabel   = label.new(na, na, color=color(na), textcolor = swingBullishColor, xloc = xloc.bar_time, style = label.style_label_up, size = size.tiny)
+
+    rightTimeBar            = last_bar_time + 20 * (time - time[1])
+
+    topLine.set_first_point(    chart.point.new(trailing.lastTopTime, na, trailing.top))
+    topLine.set_second_point(   chart.point.new(rightTimeBar, na, trailing.top))
+    topLabel.set_point(         chart.point.new(rightTimeBar, na, trailing.top))
+    topLabel.set_text(          swingTrend.bias == BEARISH ? 'Güçlü Yüksek' : 'Zayıf Yüksek')
+
+    bottomLine.set_first_point( chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
+    bottomLine.set_second_point(chart.point.new(rightTimeBar, na, trailing.bottom))
+    bottomLabel.set_point(      chart.point.new(rightTimeBar, na, trailing.bottom))
+    bottomLabel.set_text(       swingTrend.bias == BULLISH ? 'Güçlü Dip' : 'Zayıf Dip')
+
+// @function            draw a zone with a label and a box
+// @param labelLevel    price level for label
+// @param labelIndex    bar index for label
+// @param top           top price level for box
+// @param bottom        bottom price level for box
+// @param tag           text to display
+// @param zoneColor     base color
+// @param style         label style
+// @returns             void
+drawZone(float labelLevel, int labelIndex, float top, float bottom, string tag, color zoneColor, string style) =>
+    var label l_abel    = label.new(na,na,text = tag, color=color(na),textcolor = zoneColor, style = style, size = size.small)
+    var box b_ox        = box.new(na,na,na,na,bgcolor = color.new(zoneColor,80),border_color = color(na), xloc = xloc.bar_time)
+
+    b_ox.set_top_left_point(    chart.point.new(trailing.barTime,na,top))
+    b_ox.set_bottom_right_point(chart.point.new(last_bar_time,na,bottom))
+
+    l_abel.set_point(           chart.point.new(na,labelIndex,labelLevel))
+
+// @function            draw premium/discount zones
+// @returns             void
+drawPremiumDiscountZones() =>
+    drawZone(trailing.top, math.round(0.5*(trailing.barIndex + last_bar_index)), trailing.top, 0.95*trailing.top + 0.05*trailing.bottom, 'Premium Bölge', premiumZoneColor, label.style_label_down)
+
+    equilibriumLevel = math.avg(trailing.top, trailing.bottom)
+    drawZone(equilibriumLevel, last_bar_index, 0.525*trailing.top + 0.475*trailing.bottom, 0.525*trailing.bottom + 0.475*trailing.top, 'Denge Bölgesi', equilibriumZoneColorInput, label.style_label_left)
+
+    drawZone(trailing.bottom, math.round(0.5*(trailing.barIndex + last_bar_index)), 0.95*trailing.bottom + 0.05*trailing.top, trailing.bottom, 'İndirim Bölgesi', discountZoneColor, label.style_label_up)
+
+//---------------------------------------------------------------------------------------------------------------------}
+//MUTABLE VARIABLES & EXECUTION
+//---------------------------------------------------------------------------------------------------------------------{
+parsedOpen  = showTrendInput ? open : na
+candleColor = internalTrend.bias == BULLISH ? swingBullishColor : swingBearishColor
+plotcandle(parsedOpen,high,low,close,color = candleColor, wickcolor = candleColor, bordercolor = candleColor)
+
+if showHighLowSwingsInput or showPremiumDiscountZonesInput
+    updateTrailingExtremes()
+
+    if showHighLowSwingsInput
+        drawHighLowSwings()
+
+    if showPremiumDiscountZonesInput
+        drawPremiumDiscountZones()
+
+if showFairValueGapsInput
+    deleteFairValueGaps()
+
+getCurrentStructure(swingsLengthInput,false)
+getCurrentStructure(5,false,true)
+
+if showEqualHighsLowsInput
+    getCurrentStructure(equalHighsLowsLengthInput,true)
+
+if showInternalsInput or showInternalOrderBlocksInput or showTrendInput
+    displayStructure(true)
+
+if showStructureInput or showSwingOrderBlocksInput or showHighLowSwingsInput
+    displayStructure()
+
+if showInternalOrderBlocksInput
+    deleteOrderBlocks(true)
+
+if showSwingOrderBlocksInput
+    deleteOrderBlocks()
+
+if showFairValueGapsInput
+    drawFairValueGaps()
+
+if barstate.islastconfirmedhistory or barstate.islast
+    if showDailyLevelsInput and not higherTimeframe('D')
+        drawLevels('D',timeframe.isdaily,dailyLevelsStyleInput,dailyLevelsColorInput)
+
+    if showWeeklyLevelsInput and not higherTimeframe('W')
+        drawLevels('W',timeframe.isweekly,weeklyLevelsStyleInput,weeklyLevelsColorInput)
+
+    if showMonthlyLevelsInput and not higherTimeframe('M')
+        drawLevels('M',timeframe.ismonthly,monthlyLevelsStyleInput,monthlyLevelsColorInput)
+
+lastBarIndex    := currentBarIndex
+currentBarIndex := bar_index
+newBar          = currentBarIndex != lastBarIndex
+
+if barstate.islastconfirmedhistory or (barstate.isrealtime and newBar)
+    if showInternalOrderBlocksInput
+        drawOrderBlocks(true)
+
+    if showSwingOrderBlocksInput
+        drawOrderBlocks()
+
+//---------------------------------------------------------------------------------------------------------------------}
+//ALARMLAR
+//---------------------------------------------------------------------------------------------------------------------{
+// Türkçe Çeviriler ve Açıklamalar:
+// BOS = Yapı Kırılımı: Fiyatın önemli destek/direnç seviyelerini kırdığını gösterir.
+// CHoCH = Karakter Değişimi: Fiyat davranışında önemli bir dönüşüm olduğunu gösterir.
+// OB = Order Block (Sipariş Bloku): Güçlü algı veya satış bölgeleri.
+// FVG = Fair Value Gap (Adil Değer Boşluğu): Fiyatta açıklık oluşturan ani hareketler sonucu oluşan boşluklar.
+
+alertcondition(currentAlerts.internalBullishBOS,        'İç Yükseliş Yapı Kırılımı',         'İç Yükseliş Yapı Kırılımı oluştu')
+alertcondition(currentAlerts.internalBullishCHoCH,      'İç Yükseliş Karakter Değişimi',       'İç Yükseliş Karakter Değişimi oluştu')
+alertcondition(currentAlerts.internalBearishBOS,        'İç Düşüş Yapı Kırılımı',         'İç Düşüş Yapı Kırılımı oluştu')
+alertcondition(currentAlerts.internalBearishCHoCH,      'İç Düşüş Karakter Değişimi',       'İç Düşüş Karakter Değişimi oluştu')
+
+alertcondition(currentAlerts.swingBullishBOS,           'Yükseliş Yapı Kırılımı',                  'Yükseliş Yapı Kırılımı oluştu')
+alertcondition(currentAlerts.swingBullishCHoCH,         'Yükseliş Karakter Değişimi',                'Yükseliş Karakter Değişimi oluştu')
+alertcondition(currentAlerts.swingBearishBOS,           'Düşüş Yapı Kırılımı',                  'Düşüş Yapı Kırılımı oluştu')
+alertcondition(currentAlerts.swingBearishCHoCH,         'Düşüş Karakter Değişimi',                'Düşüş Karakter Değişimi oluştu')
+
+alertcondition(currentAlerts.internalBullishOrderBlock, 'Yükseliş İç Sipariş Bloku Kırılması', 'Yükseliş iç sipariş bloku kırıldı')
+alertcondition(currentAlerts.internalBearishOrderBlock, 'Düşüş İç Sipariş Bloku Kırılması', 'Düşüş iç sipariş bloku kırıldı')
+alertcondition(currentAlerts.swingBullishOrderBlock,    'Yükseliş Salınım Sipariş Bloku Kırılması',    'Yükseliş salınım sipariş bloku kırıldı')
+alertcondition(currentAlerts.swingBearishOrderBlock,    'Düşüş Salınım Sipariş Bloku Kırılması',    'Düşüş salınım sipariş bloku kırıldı')
+
+alertcondition(currentAlerts.equalHighs,                'Eşit Yüksekler',                  'Eşit yüksekler tespit edildi')
+alertcondition(currentAlerts.equalLows,                 'Eşit Düşükler',                   'Eşit düşükler tespit edildi')
+
+alertcondition(currentAlerts.bullishFairValueGap,       'Yükseliş Adil Değer Boşluğu',                  'Yükseliş Adil Değer Boşluğu oluştu')
+alertcondition(currentAlerts.bearishFairValueGap,       'Düşüş Adil Değer Boşluğu',                  'Düşüş Adil Değer Boşluğu oluştu')
+
+//---------------------------------------------------------------------------------------------------------------------}
+
+
+openSource = input.source(open, '', inline='cs', group='Kaynak', display = display.none)
+highSource = input.source(high, '', inline='cs', group='Kaynak', display = display.none)
+lowSource = input.source(low, '', inline='cs', group='Kaynak', display = display.none)
+closeSource = input.source(close, '', inline='cs', group='Kaynak', display = display.none, tooltip = 'Zigzag ve desen hesaplamasının yapıldığı kaynak')
+
+useZigzag1 = input.bool(true, '', group = 'Zigzag', inline='z1', display = display.none)
+zigzagLength1 = input.int(8, step=5, minval=1, title='', group='Zigzag', inline='z1', display=display.none)
+depth1 = input.int(55, "", step=25, maxval=500, group='Zigzag', inline='z1', display=display.none, tooltip = 'Zigzag 1 için Uzunluk ve Derinlik değerlerini ayarlayın. Zigzag, fiyat hareketlerindeki yüksek ve düşük noktaları tespit eden bir göstergedir.')
+
+useZigzag2 = input.bool(false, '', group = 'Zigzag', inline='z2', display = display.none)
+zigzagLength2 = input.int(13, step=5, minval=1, title='', group='Zigzag', inline='z2', display=display.none)
+depth2 = input.int(34, "", step=25, maxval=500, group='Zigzag', inline='z2', display=display.none, tooltip = 'Zigzag 2 için Uzunluk ve Derinlik değerlerini ayarlayın')
+
+useZigzag3 = input.bool(false, '', group = 'Zigzag', inline='z3', display = display.none)
+zigzagLength3 = input.int(21, step=5, minval=1, title='', group='Zigzag', inline='z3', display=display.none)
+depth3 = input.int(21, "", step=25, maxval=500, group='Zigzag', inline='z3', display=display.none, tooltip = 'Zigzag 3 için Uzunluk ve Derinlik değerlerini ayarlayın')
+
+useZigzag4 = input.bool(false, '', group = 'Zigzag', inline='z4', display = display.none)
+zigzagLength4 = input.int(34, step=5, minval=1, title='', group='Zigzag', inline='z4', display=display.none)
+depth4 = input.int(13, "", step=25, maxval=500, group='Zigzag', inline='z4', display=display.none, tooltip = 'Zigzag 4 için Uzunluk ve Derinlik değerlerini ayarlayın')
+
+numberOfPivots = input.int(5, "Dönüş Noktası Sayısı", [5, 6], 'Desen tanımlaması için kullanılan dönüş noktası sayısı.', group='Tarama', display = display.none)
+errorThresold = input.float(20.0, 'Hata Eşiği', 0.0, 100, 5, 'Trend çizgisi doğrulaması için hata eşiği - yüksek değerler daha esnek eşleşme sağlar', group='Tarama', display = display.none)
+flatThreshold = input.float(20.0, 'Düz Eğim Eşiği', 0.0, 30, 5, 'Trend çizgilerinin eğimini tanımlamak için oran eşiği - düşük değerler daha yatay çizgileri tanımlar', group='Tarama', display = display.none)
+lastPivotDirection = input.string('both', 'Son Dönüş Yönü', ['up', 'down', 'both', 'custom'], 'Son dönüş noktası yönüne göre desenleri filtreler. '+
+                             'Bu seçenek, bireysel desenlerin geriye dönük test edilmesinde faydalıdır. "Custom" seçildiğinde, her desenin kendi son dönüş noktası ayarı kullanılır.',
+                             group='Tarama', display=display.none)
+checkBarRatio = input.bool(true, 'Bar Oranını Doğrula', 'Fiyatı kontrol etmenin yanı sıra, barların orantılı olarak yerleştirilip yerleştirilmediğini de doğrular.', group='Tarama', inline = 'br', display = display.none)
+barRatioLimit = input.float(0.382, '', group='Tarama', display = display.none, inline='br')
+avoidOverlap = input.bool(true, 'Üst üste Binmeyi Önle',  group='Tarama', inline='a', display = display.none)
+repaint = input.bool(false, 'Yeniden Çiz', 'Üst üste Binmeyi Önle - Mevcut bir desenin bitiminden önce başlıyorsa deseni dikkate almaz. '+
+                     'Yeniden Çiz - Desenleri aramak için gerçek zamanlı barları kullanır. Seçili değilse, yalnızca onaylanmış barları kullanır.', 
+                     group='Tarama', inline='a', display = display.none)
+
+allowChannels = input.bool(true, 'Kanallar', group='Desen Grupları - Geometrik Şekiller', display = display.none, inline='g')
+allowWedges = input.bool(true, 'Takozlar', group='Desen Grupları - Geometrik Şekiller', display = display.none, inline='g')
+allowTriangles = input.bool(true, 'Üçgenler', group='Desen Grupları - Geometrik Şekiller', display = display.none, inline='g',
+         tooltip = 'Kanallar - Trend çizgileri birbirine paralel olarak eşit mesafeli fiyat kanalları oluşturur.'+
+                     ' \t- Yükselen Kanal (fiyatlar yukarı yönlü hareket eder) \t- Alçalan Kanal (fiyatlar aşağı yönlü hareket eder) \t- Yatay Kanal (fiyatlar yatay hareket eder)'+
+                     '  Takozlar - Trend çizgileri ya birbirine yaklaşır ya da birbirinden uzaklaşır ve her iki trend çizgisi de aynı yönde hareket eder. Fiyat hareketinin dar bir bölgeye sıkışması veya genişlemesidir.'+
+                     ' \t- Yükselen Takoz (Genişleyen) \t- Yükselen Takoz (Daralan) \t- Düşen Takoz (Genişleyen) \t- Düşen Takoz (Daralan)'+
+                     '  Üçgenler - Trend çizgileri ya birbirine yaklaşır ya da uzaklaşır ve her iki trend çizgisi farklı yönlerde hareket eder. Üçgenler, alım-satım kararlarında yaygın kullanılan önemli fiyat formasyonlarıdır.'+
+                     ' \t- Daralan Üçgen (fiyatların bir noktada birleşmesi) \t- Genişleyen Üçgen (fiyat aralığının açılması) \t- Yükselen Üçgen (Daralan) \t- Yükselen Üçgen (Genişleyen) \t- Alçalan Üçgen (Daralan) \t- Alçalan Üçgen (Genişleyen)')
+
+allowRisingPatterns = input.bool(true, 'Yükselen', group='Desen Grupları - Yön', display = display.none, inline = 'd')
+allowFallingPatterns = input.bool(true, 'Alçalan', group='Desen Grupları - Yön', display = display.none, inline = 'd')
+allowNonDirectionalPatterns = input.bool(true, 'Yatay/Çift Yönlü', group='Desen Grupları - Yön', display = display.none, inline = 'd',
+         tooltip = 'Yükselen - Ya her iki trend çizgisi de yukarı doğru hareket ediyor ya da bir trend çizgisi düz ve diğeri yukarı doğru hareket ediyor.'+
+                     ' \t- Yükselen Kanal \t- Yükselen Takoz (Genişleyen) \t- Yükselen Takoz (Daralan) \t- Yükselen Üçgen (Genişleyen) \t- Yükselen Üçgen (Daralan)'+
+                     '  Alçalan - Ya her iki trend çizgisi de aşağı doğru hareket ediyor ya da bir trend çizgisi düz ve diğeri aşağı doğru hareket ediyor.'+
+                     ' \t- Alçalan Kanal \t- Alçalan Takoz (Genişleyen) \t- Alçalan Takoz (Daralan) \t- Alçalan Üçgen (Genişleyen) \t- Alçalan Üçgen (Daralan)'+
+                     '  Yatay/Çift Yönlü - Trend çizgileri farklı yönlerde hareket ediyor veya her ikisi de düz.'+
+                     ' \t- Yatay Kanal \t- Daralan Üçgen \t- Genişleyen Üçgen')
+
+allowExpandingPatterns = input.bool(true, 'Genişleyen', group='Desen Grupları - Formasyon Dinamiği', display = display.none, inline = 'f')
+allowContractingPatterns = input.bool(true, 'Daralan', group='Desen Grupları - Formasyon Dinamiği', display = display.none, inline='f')
+allowParallelChannels = input.bool(true, 'Paralel', group = 'Desen Grupları - Formasyon Dinamiği', display = display.none, inline = 'f',
+         tooltip = 'Genişleyen - Trend çizgileri birbirinden uzaklaşır. Genellikle piyasanın oynak hale geldiğine işaret eder.'+
+                     ' \t- Yükselen Takoz (Genişleyen) \t- Düşen Takoz (Genişleyen) \t- Yükselen Üçgen (Genişleyen) \t- Düşen Üçgen (Genişleyen) \t- Genişleyen Üçgen'+
+                     '  Daralan - Trend çizgileri birbirine doğru yaklaşır. Fiyatın dar bir alanda sıkıştığını ve büyük bir hareketin yaklaştığını gösterebilir.'+
+                     ' \t- Yükselen Takoz (Daralan) \t- Düşen Takoz (Daralan) \t- Yükselen Üçgen (Daralan) \t- Alçalan Üçgen (Daralan) \t- Daralan Üçgen'+
+                     '  Paralel - Trend çizgileri birbirine neredeyse paraleldir. Fiyatın belirli bir kanal içinde hareket ettiğini gösterir.'+
+                     ' \t- Yükselen Kanal \t- Alçalan Kanal \t- Yatay Kanal')
+
+allowUptrendChannel = input.bool(true, 'Yükselen   ', group = 'Fiyat Kanalları', inline='uc', display = display.none)
+upTrendChannelLastPivotDirection = input.string('both', '', ['up', 'down', 'both'], inline='uc', group='Fiyat Kanalları', display = display.none,
+             tooltip='Yükselen Kanalı etkinleştirin ve son dönüş noktası yön filtresini seçin. Son dönüş yönü yalnızca Genel Son Dönüş Yönü parametresi "Custom" olarak ayarlanmışsa kullanılacaktır. Yükselen kanal, fiyatların yukarı yönlü bir trende girdiğini gösterir.')
+
+allowDowntrendChannel = input.bool(true, 'Alçalan   ', group = 'Fiyat Kanalları', inline='dc', display = display.none)
+downTrendChannelLastPivotDirection = input.string('both', '', ['up', 'down', 'both'], inline='dc', group='Fiyat Kanalları', display = display.none,
+             tooltip='Alçalan Kanalı etkinleştirin ve son dönüş noktası yön filtresini seçin. Son dönüş yönü yalnızca Genel Son Dönüş Yönü parametresi "Custom" olarak ayarlanmışsa kullanılacaktır. Alçalan kanal, fiyatların aşağı yönlü bir trende girdiğini gösterir.')
+
+allowRangingChannel = input.bool(true, 'Yatay     ', group = 'Fiyat Kanalları', inline='rc', display = display.none)
+rangingChannelLastPivotDirection = input.string('both', '', ['up', 'down', 'both'], inline='rc', group='Fiyat Kanalları', display = display.none,
+             tooltip='Yatay Kanalı etkinleştirin ve son dönüş noktası yön filtresini seçin. Son dönüş yönü yalnızca Genel Son Dönüş Yönü parametresi "Custom" olarak ayarlanmışsa kullanılacaktır. Yatay kanal, fiyatların belirli bir aralıkta yatay olarak hareket ettiğini gösterir.')
+
+allowRisingWedgeExpanding = input.bool(true, 'Yükselen   ', inline='rwe', group = 'Genişleyen Takozlar', display = display.none)
+risingWedgeExpandingLastPivotDirection = input.string('down', '', ['up', 'down', 'both'], inline='rwe', group='Genişleyen Takozlar', display = display.none,
+             tooltip='Yükselen Takoz (Genişleyen) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Genişleyen yükselen takoz, genellikle yükseliş trendinde geçici bir düzeltme olarak yorumlanır ve ileride düşüş eğilimi gösterebilir.')
+
+allowFallingWedgeExpanding = input.bool(true, 'Alçalan    ', inline='fwe', group = 'Genişleyen Takozlar', display = display.none)
+fallingWedgeExpandingLastPivotDirection = input.string('up', '', ['up', 'down', 'both'], inline='fwe', group='Genişleyen Takozlar', display = display.none,
+             tooltip='Alçalan Takoz (Genişleyen) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Genişleyen alçalan takoz, genellikle düşüş trendinde geçici bir düzeltme olarak yorumlanır ve ileride yükseliş eğilimi gösterebilir.')
+
+allowRisingWedgeContracting = input.bool(true, 'Yükselen   ', inline='rwc', group = 'Daralan Takozlar', display = display.none)
+risingWedgeContractingLastPivotDirection = input.string('down', '', ['up', 'down', 'both'], inline='rwc', group='Daralan Takozlar', display = display.none,
+             tooltip='Yükselen Takoz (Daralan) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Daralan yükselen takoz, yükseliş trendinde bir yorulma işareti olabilir ve fiyatın düşüşe geçebileceğini gösterebilir.')
+
+allowFallingWedgeContracting = input.bool(true, 'Alçalan    ', inline='fwc', group = 'Daralan Takozlar', display = display.none)
+fallingWedgeContractingLastPivotDirection = input.string('up', '', ['up', 'down', 'both'], inline='fwc', group='Daralan Takozlar', display = display.none,
+             tooltip='Alçalan Takoz (Daralan) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Daralan alçalan takoz, düşüş trendinde bir yorulma işareti olabilir ve fiyatın yükselişe geçebileceğini gösterebilir.')
+
+allowRisingTriangleExpanding = input.bool(true, 'Yükselen  ', inline='rte', group = 'Genişleyen Üçgenler', display = display.none)
+risingTriangleExpandingLastPivotDirection = input.string('up', '', ['up', 'down', 'both'], inline='rte', group='Genişleyen Üçgenler', display = display.none,
+             tooltip='Yükselen Üçgen (Genişleyen) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Genişleyen yükselen üçgen, yükselen bir destek çizgisi ile genişleyen direnç çizgisi arasında oluşur ve genellikle fiyat oynaklığının artacağını gösterir.')
+
+allowFallingTriangleExpanding = input.bool(true, 'Alçalan  ', inline='fte', group = 'Genişleyen Üçgenler', display = display.none)
+fallingTriangleExpandingLastPivotDirection = input.string('down', '', ['up', 'down', 'both'], inline='fte', group='Genişleyen Üçgenler', display = display.none,
+             tooltip='Alçalan Üçgen (Genişleyen) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Genişleyen alçalan üçgen, alçalan bir direnç çizgisi ile genişleyen destek çizgisi arasında oluşur ve genellikle fiyat oynaklığının artacağını gösterir.')
+
+allowExpandingTriangle = input.bool(true, 'Ayrışan  ', inline='dt', group = 'Genişleyen Üçgenler', display = display.none)
+divergineTriangleLastPivotDirection = input.string('both', '', ['up', 'down', 'both'], inline='dt', group='Genişleyen Üçgenler', display = display.none,
+             tooltip='Ayrışan Üçgen (Genişleyen) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Ayrışan üçgen, fiyatların daha geniş bir aralıkta salınım yaptığı, direnç ve destek çizgilerinin birbirinden uzaklaştığı bir formasyondur. Genellikle yüksek volatilite dönemlerinde görülür.')
+
+allowRisingTriangleConverging= input.bool(true, 'Yükselen  ', inline='rtc', group = 'Daralan Üçgenler', display = display.none)
+risingTriangleContractingLastPivotDirection = input.string('up', '', ['up', 'down', 'both'], inline='rtc', group='Daralan Üçgenler', display = display.none,
+             tooltip='Yükselen Üçgen (Daralan) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Yükselen daralan üçgen, yatay bir direnç çizgisi ile yükselen bir destek çizgisi arasında oluşur. Genellikle yukarı yönlü bir kırılma sinyali verir ve alım fırsatı olarak değerlendirilir.')
+
+allowFallingTriangleConverging = input.bool(true, 'Alçalan  ', inline='ftc', group = 'Daralan Üçgenler', display = display.none)
+fallingTriangleContractingLastPivotDirection = input.string('down', '', ['up', 'down', 'both'], inline='ftc', group='Daralan Üçgenler', display = display.none,
+             tooltip='Alçalan Üçgen (Daralan) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Alçalan daralan üçgen, yatay bir destek çizgisi ile alçalan bir direnç çizgisi arasında oluşur. Genellikle aşağı yönlü bir kırılma sinyali verir ve satış fırsatı olarak değerlendirilir.')
+
+allowConvergingTriangle = input.bool(true, 'Yakınsayan', inline='ct', group = 'Daralan Üçgenler', display = display.none)
+convergingTriangleLastPivotDirection = input.string('both', '', ['up', 'down', 'both'], inline='ct', group='Daralan Üçgenler', display = display.none,
+             tooltip='Yakınsayan Üçgen (Daralan) özelliğini etkinleştirin ve son dönüş noktası yön filtresini seçin. Yakınsayan üçgen, alçalan bir direnç çizgisi ile yükselen bir destek çizgisi arasında oluşur ve fiyatın giderek daralan bir alanda sıkıştığını gösterir. Genellikle büyük bir fiyat hareketi öncesinde görülür ve simetrik üçgen olarak da adlandırılır.')
+
+allowedPatterns = array.from(
+     false,
+     allowUptrendChannel and allowRisingPatterns and allowParallelChannels and allowChannels,
+     allowDowntrendChannel and allowFallingPatterns and allowParallelChannels and allowChannels,
+     allowRangingChannel and allowNonDirectionalPatterns and allowParallelChannels and allowChannels,
+     allowRisingWedgeExpanding and allowRisingPatterns and allowExpandingPatterns and allowWedges,
+     allowFallingWedgeExpanding and allowFallingPatterns and allowExpandingPatterns and allowWedges,
+     allowExpandingTriangle and allowNonDirectionalPatterns and allowExpandingPatterns and allowTriangles,
+     allowRisingTriangleExpanding and allowRisingPatterns and allowExpandingPatterns and allowTriangles,
+     allowFallingTriangleExpanding and allowFallingPatterns and allowExpandingPatterns and allowTriangles,
+     allowRisingWedgeContracting and allowRisingPatterns and allowContractingPatterns and allowWedges,
+     allowFallingWedgeContracting and allowFallingPatterns and allowContractingPatterns and allowWedges,
+     allowConvergingTriangle and allowNonDirectionalPatterns and allowContractingPatterns and allowTriangles,
+     allowFallingTriangleConverging and allowFallingPatterns and allowContractingPatterns and allowTriangles,
+     allowRisingTriangleConverging and allowRisingPatterns and allowContractingPatterns and allowTriangles
+     )
+
+getLastPivotDirectionInt(lastPivotDirection)=>lastPivotDirection == 'up'? 1 : lastPivotDirection == 'down'? -1 : 0
+allowedLastPivotDirections = array.from( 
+     0,
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(upTrendChannelLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(downTrendChannelLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(rangingChannelLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(risingWedgeExpandingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(fallingWedgeExpandingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(divergineTriangleLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(risingTriangleExpandingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(fallingTriangleExpandingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(risingWedgeContractingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(fallingWedgeContractingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(convergingTriangleLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(fallingTriangleContractingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection),
+     lastPivotDirection == 'custom'? getLastPivotDirectionInt(risingTriangleContractingLastPivotDirection) : getLastPivotDirectionInt(lastPivotDirection)
+     )
+
+theme = input.enum(ut.Theme.DARK, title='Tema', group='Görünüm', inline='pc',
+         tooltip='Grafik tema ayarları. Çizgi ve etiket renkleri tema ayarlarına göre oluşturulur. Koyu tema seçilirse '+
+         'daha açık renkler kullanılır ve açık tema seçilirse daha koyu renkler kullanılır.  '+
+         'Desen Çizgi Kalınlığı - desen çizgilerini çizmek için kullanılacaktır.', display=display.none)
+patternLineWidth = input.int(2, '', minval=1, inline='pc', group = 'Görünüm', display = display.none)
+
+useCustomColors = input.bool(false, 'Özel Renkler', group='Görünüm', display = display.none)
+customColorsArray = array.from(
+     input.color(color.rgb(251, 244, 109), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(141, 186, 81), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(74, 159, 245), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(255, 153, 140), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(255, 149, 0), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(0, 234, 211), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(167, 153, 183), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(255, 210, 113), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(119, 217, 112), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(95, 129, 228), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(235, 146, 190), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(198, 139, 89), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(200, 149, 149), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(196, 182, 182), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(255, 190, 15), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(192, 226, 24), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(153, 140, 235), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(206, 31, 107), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(251, 54, 64), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(194, 255, 217), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(255, 219, 197), '', '', inline='c1', group = 'Görünüm', display = display.none),
+     input.color(color.rgb(121, 180, 183), '', '', inline='c1', group = 'Görünüm', display = display.none)
+ )
+showPatternLabel = input.bool(true, 'Desen Etiketi', inline='pl1', group = 'Görünüm', display = display.none)
+patternLabelSize = input.string(size.normal, '', [size.tiny, size.small, size.normal, size.large, size.huge], inline='pl1', group = 'Görünüm', display = display.none,
+                     tooltip = 'Desen etiketini gösterme ve boyutunu seçme seçeneği')
+
+showPivotLabels = input.bool(true, 'Dönüş Etiketleri ', inline='pl2', group = 'Görünüm', display = display.none, tooltip = 'Dönüş noktası etiketlerini gösterme ve boyutunu seçme seçeneği')
+pivotLabelSize = input.string(size.normal, '', [size.tiny, size.small, size.normal, size.large, size.huge], inline='pl2', group = 'Görünüm', display = display.none)
+
+showZigzag = input.bool(true, 'Zigzag', inline='z', group = 'Görünüm', display = display.none)
+zigzagColor = input.color(color.blue, '', inline='z', group = 'Görünüm', display = display.none, tooltip = 'Desen içinde zigzag gösterme ve varsayılan zigzag çizgi rengi seçeneği')
+
+deleteOldPatterns = input.bool(true, 'Maks. Desen', inline='do', group = 'Görünüm', display = display.none)
+maxPatterns = input.int(20, '', minval=1, step=5, inline = 'do', group = 'Görünüm', display = display.none, tooltip = 'Seçilirse, grafikte yalnızca son N desen korunacaktır.')
+
+errorRatio = errorThresold/100
+flatRatio = flatThreshold/100
+showLabel = true
+offset = 0
+
+type Scanner
+    bool enabled
+    string ticker
+    string timeframe
+    p.ScanProperties sProperties
+    p.DrawingProperties dProperties
+    array<p.Pattern> patterns
+    array<zg.Zigzag> zigzags
+
+method getZigzagAndPattern(Scanner this, int length, int depth, array<o.OHLC> ohlcArray, int offset=0)=>
+    var zg.Zigzag zigzag = zg.Zigzag.new(length, depth, 0)
+    var map<int, int> lastDBar = map.new<int, int>()
+    zigzag.calculate(array.from(highSource, lowSource))
+
+    var validPatterns = 0
+    mlzigzag = zigzag
+    if(zigzag.flags.newPivot)
+        while(mlzigzag.zigzagPivots.size() >= 6+offset)
+            lastBar = mlzigzag.zigzagPivots.first().point.index
+            lastDir = int(math.sign(mlzigzag.zigzagPivots.first().dir))
+            if(lastDBar.contains(mlzigzag.level)? lastDBar.get(mlzigzag.level) < lastBar : true)
+                lastDBar.put(mlzigzag.level, lastBar)
+                [valid, currentPattern] = mlzigzag.find(this.sProperties, this.dProperties, this.patterns, ohlcArray)
+                if(valid)
+                    validPatterns+=1
+                    currentPattern.draw()
+                    this.patterns.push(currentPattern, maxPatterns)
+                    alert('New Pattern Alert')
+            else
+                break
+            mlzigzag := mlzigzag.nextlevel()
+    true
+
+method scan(Scanner this)=>
+    var array<o.OHLC> ohlcArray = array.new<o.OHLC>()
+    var array<p.Pattern> patterns = array.new<p.Pattern>()
+    ohlcArray.push(o.OHLC.new(openSource, highSource, lowSource, closeSource))
+    if(useZigzag1)
+        this.getZigzagAndPattern(zigzagLength1, depth1, ohlcArray)
+    if(useZigzag2)
+        this.getZigzagAndPattern(zigzagLength2, depth2, ohlcArray)
+    if(useZigzag3)
+        this.getZigzagAndPattern(zigzagLength3, depth3, ohlcArray)
+    if(useZigzag4)
+        this.getZigzagAndPattern(zigzagLength4, depth4, ohlcArray)
+
+var scanner = Scanner.new(true, "", "", 
+             p.ScanProperties.new(
+                     offset, numberOfPivots, errorRatio, flatRatio, checkBarRatio, barRatioLimit, avoidOverlap, 
+                     allowedPatterns=allowedPatterns, allowedLastPivotDirections= allowedLastPivotDirections, themeColors = useCustomColors? customColorsArray : theme.getColors()),
+             p.DrawingProperties.new(
+                     patternLineWidth, showZigzag, 1, zigzagColor, showPatternLabel, patternLabelSize, 
+                     showPivotLabels, pivotLabelSize, deleteOnPop = deleteOldPatterns),
+             array.new<p.Pattern>())
+
+if(barstate.isconfirmed or repaint)
+    scanner.scan()
+
+// === GELİŞMİŞ TREND OLASILIK GÖSTERGESİ ===
+// Trend yönü ve olasılık hesaplama ayarları
+showTrendProbability = input.bool(true, title="Trend Olasılığını Göster", group="Trend Analizi")
+probLabelLocation = input.string("Mumun Sağı", title="Etiket Konumu", options=["Mumun Sağı", "Barın Üstü", "Barın Altı"], group="Trend Analizi", tooltip="Trend analiz metninin konumunu seçin")
+probLabelVertical = input.bool(true, title="Dikey Yazı", group="Trend Analizi", tooltip="Trend analiz metnini dikey olarak görüntüle")
+probDetailedAnalysis = input.bool(true, title="Detaylı Analiz Göster", group="Trend Analizi")
+
+// === 1. TEKNİK İNDİKATÖRLER ANALİZİ ===
+rsi = ta.rsi(close, 14)
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+emaSlope = ema_out - ema_out[5]
+superTrendSignal = enableSupertrend and dir < 0 ? -1 : enableSupertrend and dir >= 0 ? 1 : 0
+
+// WaveTrend Oscillator Ayarları
+wtEnabled = input.bool(true, "WaveTrend Kullan", group="Trend Analizi")
+n1 = input.int(10, "Channel Length", group="WaveTrend")
+n2 = input.int(21, "Average Length", group="WaveTrend")
+obLevel1 = input.int(60, "Over Bought Level 1", group="WaveTrend")
+obLevel2 = input.int(53, "Over Bought Level 2", group="WaveTrend")
+osLevel1 = input.int(-60, "Over Sold Level 1", group="WaveTrend")
+osLevel2 = input.int(-53, "Over Sold Level 2", group="WaveTrend")
+showWTLabels = input.bool(true, "Sinyal Etiketleri Göster", group="WaveTrend")
+showWTBackground = input.bool(true, "Aşırı Alım/Satım Bölgelerini Göster", group="WaveTrend")
+
+// WaveTrend Hesaplamaları
+ap = hlc3
+esa = ta.ema(ap, n1)
+d = ta.ema(math.abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, n2)
+
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+
+// WaveTrend sinyal durumları
+wtOverbought1 = wt1 >= obLevel1 or wt2 >= obLevel1  // Daha hafif aşırı alım
+wtOverbought2 = wt1 >= obLevel2 or wt2 >= obLevel2  // Daha güçlü aşırı alım
+wtOversold1 = wt1 <= osLevel1 or wt2 <= osLevel1    // Daha hafif aşırı satım
+wtOversold2 = wt1 <= osLevel2 or wt2 <= osLevel2    // Daha güçlü aşırı satım
+
+wtCrossUp = ta.crossover(wt1, wt2)   // Alım sinyali
+wtCrossDown = ta.crossunder(wt1, wt2) // Satım sinyali
+
+// Tepe ve dip noktalarını tespit et - sadece aşırı alım/satım bölgelerinde
+wtPeak = wtOverbought1 and ta.falling(wt1, 1)  // Tepe noktası
+wtTrough = wtOversold1 and ta.rising(wt1, 1)   // Dip noktası
+
+// WaveTrend sinyali (-1, 0, 1) - sinyal güçlendirildi
+wtSignal = wtOverbought2 ? -1.5 : wtOverbought1 ? -1.0 : 
+         wtOversold2 ? 1.5 : wtOversold1 ? 1.0 : 
+         wtCrossUp ? 1.0 : wtCrossDown ? -1.0 : 
+         wtPeak ? -0.5 : wtTrough ? 0.5 : 
+         wt1 > wt2 ? 0.25 : -0.25
+
+// === 2. PİVOT NOKTALARI VE DESTEK/DİRENÇ ANALİZİ ===
+// Pivot ve destek/direnç sinyalleri
+pivotSignals = 0
+
+// Fiyatın pivot seviyelerine göre konumu
+abovePivotHigh1 = close > plot_high1 ? 1 : 0
+belowPivotLow1 = close < plot_low1 ? -1 : 0
+abovePivotHigh2 = close > plot_high2 ? 1 : 0
+belowPivotLow2 = close < plot_low2 ? -1 : 0
+abovePivotHigh3 = close > plot_high3 ? 1 : 0
+belowPivotLow3 = close < plot_low3 ? -1 : 0
+
+// Ağırlıklı pivot sinyali (uzun pivot noktaları daha önemli)
+pivotSignal = abovePivotHigh1 + belowPivotLow1 + abovePivotHigh2*1.5 + belowPivotLow2*1.5 + abovePivotHigh3*2 + belowPivotLow3*2
+pivotDirection = pivotSignal > 0 ? 1 : pivotSignal < 0 ? -1 : 0
+
+// === 3. FİBONACCİ VE TRENDLİNE ANALİZİ ===
+// EMA/SMA yönü
+emaDirectionSignal = ema_up ? 1 : ema_down ? -1 : 0
+smaDirectionSignal = sma_up ? 1 : sma_down ? -1 : 0
+
+// Fiyatın pivot ve sağlamlık seviyelerine göre konumu
+priceStrength = 0
+
+// Güçlü pivot yükselik/düşüklere göre fiyat konumu
+is_strong_high = is_pivot_high3 and (not is_pivot_high1) and (not is_pivot_high2)
+is_strong_low = is_pivot_low3 and (not is_pivot_low1) and (not is_pivot_low2)
+
+priceStrength := is_strong_high ? 1 : is_strong_low ? -1 : 0
+
+// Premium/Discount bölgeleri kontrolü (varsa)
+premiumDiscountSignal = 0
+if showPremiumDiscountZonesInput
+    // Premium bölgesindeyse düşüş potansiyeli
+    premiumZoneCheck = close > ema_out * 1.05 ? -1 : 0
+    // Discount bölgesindeyse yükseliş potansiyeli
+    discountZoneCheck = close < ema_out * 0.95 ? 1 : 0
+    premiumDiscountSignal := premiumZoneCheck + discountZoneCheck
+
+// === 4. TÜM SİNYALLERİ BİRLEŞTİRME ===
+// Teknik indikatör sinyalleri (RSI, MACD, EMA eğimi, SuperTrend, WaveTrend)
+// WaveTrend sinyallerini ağırlıklı olarak dahil et
+// Sinyal önemi: 
+wtCrossSignal = wtCrossUp ? 1.5 : wtCrossDown ? -1.5 : 0 // Kesim noktaları - en güçlü sinyal
+wtZoneSignal = wtOverbought2 ? -1.2 : wtOversold2 ? 1.2 : wtOverbought1 ? -0.8 : wtOversold1 ? 0.8 : 0 // Aşırı bölgeler
+wtTrendSignal = wt1 > wt2 ? 0.5 : -0.5 // Genel trend
+wtPeakTroughSignal = wtPeak ? -1.0 : wtTrough ? 1.0 : 0 // Tepe ve dip noktaları
+
+// WaveTrend toplam etkisi - algı ağırlığı arttırıldı
+wtTotalSignal = wtEnabled ? (wtCrossSignal * 0.5 + wtZoneSignal * 0.3 + wtTrendSignal * 0.1 + wtPeakTroughSignal * 0.1) : 0
+
+// WaveTrend sinyal olasılıkları hesaplama
+float wtBuyProb = 0.0
+float wtSellProb = 0.0
+
+// EMA/SMA kırılım kontrolü
+emaAboveMA = ema_out > sma_out
+priceAboveEMA = close > ema_out
+priceAboveSMA = close > sma_out
+
+// Destek/direnç ile karşılaştırma
+priceNearResistance = close > plot_high1 * 0.995 and close < plot_high1 * 1.005 // Fiyat direnç seviyesine yakın
+priceNearSupport = close < plot_low1 * 1.005 and close > plot_low1 * 0.995 // Fiyat destek seviyesine yakın
+
+if wtCrossUp  // Alım sinyali
+    // Temel olasılık değeri
+    wtBuyProb := 65.0
+    
+    // Teknik analizleri kontrol et
+    wtBuyProb := wtBuyProb + (rsi < 50 and rsi > 30 ? 10.0 : 0.0)  // RSI düşük ama aşırı satım değil
+    wtBuyProb := wtBuyProb + (macdLine > 0 ? 5.0 : -5.0)           // MACD pozitif/negatif
+    wtBuyProb := wtBuyProb + (emaAboveMA ? 5.0 : -5.0)             // EMA > SMA ise trend yükselişte
+    wtBuyProb := wtBuyProb + (priceAboveEMA ? 5.0 : -5.0)         // Fiyat > EMA ise momentum yükselişte
+    
+    // Destek/direnç kontrolü
+    wtBuyProb := wtBuyProb + (priceNearSupport ? 15.0 : 0.0)       // Destek seviyesinden dönüş
+    wtBuyProb := wtBuyProb + (priceNearResistance ? -10.0 : 0.0)  // Direnç seviyesine yaklaşmış - riskli
+    
+    // Aşırı satım bölgesinden çıkış sinyali
+    wtBuyProb := wtBuyProb + (wtOversold1 ? 10.0 : 0.0)            // Aşırı satım bölgesinden çıkış
+    wtBuyProb := wtBuyProb + (wtOversold2 ? 15.0 : 0.0)           // Güçlü aşırı satım bölgesinden çıkış
+    
+    // Olasılığı sınırla (0-100 arası)
+    wtBuyProb := math.min(math.max(wtBuyProb, 0), 100)
+
+if wtCrossDown  // Satım sinyali
+    // Temel olasılık değeri
+    wtSellProb := 65.0
+    
+    // Teknik analizleri kontrol et
+    wtSellProb := wtSellProb + (rsi > 50 and rsi < 70 ? 10.0 : 0.0) // RSI yüksek ama aşırı alım değil
+    wtSellProb := wtSellProb + (macdLine < 0 ? 5.0 : -5.0)         // MACD negatif/pozitif
+    wtSellProb := wtSellProb + (emaAboveMA ? -5.0 : 5.0)           // SMA > EMA ise trend düşüşte
+    wtSellProb := wtSellProb + (priceAboveEMA ? -5.0 : 5.0)        // Fiyat < EMA ise momentum düşüşte
+    
+    // Destek/direnç kontrolü
+    wtSellProb := wtSellProb + (priceNearResistance ? 15.0 : 0.0)   // Direnç seviyesinden dönüş
+    wtSellProb := wtSellProb + (priceNearSupport ? -10.0 : 0.0)    // Destek seviyesine yaklaşmış - riskli
+    
+    // Aşırı alım bölgesinden çıkış sinyali
+    wtSellProb := wtSellProb + (wtOverbought1 ? 10.0 : 0.0)         // Aşırı alım bölgesinden çıkış
+    wtSellProb := wtSellProb + (wtOverbought2 ? 15.0 : 0.0)        // Güçlü aşırı alım bölgesinden çıkış
+    
+    // Olasılığı sınırla (0-100 arası)
+    wtSellProb := math.min(math.max(wtSellProb, 0), 100)
+
+technicalSignals = (rsi > 50 ? 1 : -1) + (macdLine > 0 ? 1 : -1) + (emaSlope > 0 ? 1 : -1) + (superTrendSignal) + wtTotalSignal
+weightedSignal = (technicalSignals * 0.4) + (pivotDirection * 0.3) + ((emaDirectionSignal + smaDirectionSignal + priceStrength + premiumDiscountSignal) * 0.075)
+
+// Olabilecek en yüksek ve en düşük değerleri hesaplayıp oranı düzeltelim (wtTotalSignal eklendiği için)
+const float maxSignal = 4 + 1.5  // wtTotalSignal en yüksek 1.5 olabilir
+const float minSignal = -4 - 1.5 // wtTotalSignal en düşük -1.5 olabilir
+
+bullishProbability = math.round(((weightedSignal - minSignal) / (maxSignal - minSignal)) * 100)
+bearishProbability = 100 - bullishProbability
+// Mevcut ATR değerini kullanarak potansiyel hareket büyüklüğünü hesaplayalım
+float atr = ta.atr(14)
+
+// NaN kontrolü ve varsayılan değer
+if na(atr) or atr <= 0
+    atr := close * 0.01  // Fiyatın %1'i kadar varsayılan ATR
+
+float potentialMovement = atr * 3 // 3 ATR genişliğinde potansiyel hareket
+
+// Doğrudan fiyatla ilişkili minimum yükseliş ve düşüş hesaplama
+float minPriceMove = close * 0.01  // En azından fiyatın %1'i kadar hareket
+
+// Trend yönüne göre hedef fiyatları hesapla
+float trendTargetUp = close + math.max(bullishProbability / 100 * potentialMovement, minPriceMove) // Yükseliş hedefi
+float trendTargetDown = close - math.max(bearishProbability / 100 * potentialMovement, minPriceMove) // Düşüş hedefi
+
+// Direnç ve destek seviyesi belirleme - fiyat yuvarlama
+float resistanceLevel = math.round_to_mintick(math.max(trendTargetUp, close * 1.03)) // Minimum %3 yukarısı
+float supportLevel = math.round_to_mintick(math.min(trendTargetDown, close * 0.97)) // Minimum %3 aşağısı
+
+// Trendin güçlü olduğu durumda hedef mesafesini artır
+if bullishProbability > 75 or bearishProbability > 75
+    resistanceLevel := math.round_to_mintick(bullishProbability > 75 ? trendTargetUp * 1.02 : resistanceLevel)
+    supportLevel := math.round_to_mintick(bearishProbability > 75 ? trendTargetDown * 0.98 : supportLevel)
+    
+// Direnç ve destek seviyelerini grafikte çizme
+var line resistanceLine = na
+var line supportLine = na
+var label resistanceLabel = na
+var label supportLabel = na
+
+if barstate.islast
+    // Eski çizgileri ve etiketleri temizle
+    line.delete(resistanceLine)
+    line.delete(supportLine)
+    label.delete(resistanceLabel)
+    label.delete(supportLabel)
+    
+    // Yeni çizgileri oluştur
+    resistanceLine := line.new(bar_index - 30, resistanceLevel, bar_index + 25, resistanceLevel, 
+                              color=color.new(color.red, 20), width=2, style=line.style_dashed)
+    supportLine := line.new(bar_index - 30, supportLevel, bar_index + 25, supportLevel, 
+                          color=color.new(color.green, 20), width=2, style=line.style_dashed)
+    
+    // Çizgilere etiket ekle - daha belirgin ve okunaklı - tek satıra alındı
+    // Değerleri doğrudan hesaplayalım ve formatı düzeltip kontrol edelim
+    float resistanceValue = resistanceLevel
+    float supportValue = supportLevel
+    
+    // Kesirli değerleri okunablır formata çevir
+    string resistanceText = na(resistanceValue) ? "Direnç: ?" : "Direnç: " + str.tostring(resistanceValue)
+    string supportText = na(supportValue) ? "Destek: ?" : "Destek: " + str.tostring(supportValue)
+    
+    // Önceki etiketleri temizle
+    label.delete(resistanceLabel)
+    label.delete(supportLabel)
+    
+    // Yeni etiketleri oluştur
+    resistanceLabel := label.new(bar_index + 25, resistanceValue, text=resistanceText, style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.normal)
+    supportLabel := label.new(bar_index + 25, supportValue, text=supportText, style=label.style_label_left, color=color.new(color.green, 20), textcolor=color.white, size=size.normal)
+
+analysisDetails = ""
+if probDetailedAnalysis
+    // Teknik indikatörler
+    techDetails = "RSI: " + (rsi > 50 ? "Yükseliş" : "Düşüş") + " | MACD: " + (macdLine > 0 ? "Yükseliş" : "Düşüş") + " | EMA Eğimi: " + (emaSlope > 0 ? "Yükseliş" : "Düşüş")
+    
+    // WaveTrend durumu
+    if wtEnabled
+        wtStatus = ""
+        if wtOverbought2
+            wtStatus := "Güçlü Aşırı Alım"
+        else if wtOverbought1
+            wtStatus := "Aşırı Alım"
+        else if wtOversold2
+            wtStatus := "Güçlü Aşırı Satım"
+        else if wtOversold1
+            wtStatus := "Aşırı Satım"
+        else if wtCrossUp
+            wtStatus := "Alım Sinyali"
+        else if wtCrossDown
+            wtStatus := "Satım Sinyali"
+        else if wtPeak
+            wtStatus := "Tepe Noktası"
+        else if wtTrough
+            wtStatus := "Dip Noktası"
+        else if wt1 > wt2
+            wtStatus := "Yükseliş"
+        else
+            wtStatus := "Düşüş"
+        
+        techDetails := techDetails + " | WT: " + wtStatus
+    
+    // Pivot analizi
+    pivotDetails = "Pivot: " + (pivotDirection > 0 ? "Dirençler Kırıldı" : pivotDirection < 0 ? "Destekler Kırıldı" : "Nötr")
+    
+    // Premium/Discount
+    zoneDetails = premiumDiscountSignal > 0 ? "Discount Bölgesi" : premiumDiscountSignal < 0 ? "Premium Bölgesi" : "Nötr Bölge"
+    
+    // Hedef seviyeler
+    targetDetails = "\nHedef Direnç: " + str.tostring(resistanceLevel, "#.##") + "\nHedef Destek: " + str.tostring(supportLevel, "#.##")
+    
+    analysisDetails := techDetails + " " + pivotDetails + " | " + zoneDetails + targetDetails
+
+// Ana trend metni
+trendStrength = ""
+if bullishProbability >= 80
+    trendStrength := "Çok Güçlü Yükseliş"
+else
+    if bullishProbability >= 65
+        trendStrength := "Güçlü Yükseliş"
+    else
+        if bullishProbability >= 55
+            trendStrength := "Hafif Yükseliş"
+        else
+            if bearishProbability >= 80
+                trendStrength := "Çok Güçlü Düşüş"
+            else
+                if bearishProbability >= 65
+                    trendStrength := "Güçlü Düşüş"
+                else
+                    if bearishProbability >= 55
+                        trendStrength := "Hafif Düşüş"
+                    else
+                        trendStrength := "Kararsız"
+
+// Etiketleri saklamak için değişkenler
+var label trendInfoLabel = na
+var label trendTextLabel = na
+
+trendText = trendStrength + " (" + str.tostring(bullishProbability) + "%)" + " / " + str.tostring(bearishProbability) + "%"
+trendText := probDetailedAnalysis ? trendText + " - " + analysisDetails : trendText
+
+// Trend rengini belirle
+trendColor = bullishProbability >= 65 ? color.green : bearishProbability >= 65 ? color.red : bullishProbability >= 55 ? color.new(color.green, 40) : bearishProbability >= 55 ? color.new(color.red, 40) : color.orange
+
+// Trend olasılık göstergesini ekrana çiz
+if showTrendProbability and barstate.islast
+    var style = label.style_label_right
+    var position = close
+    
+    if probLabelLocation == "Barın Üstü"
+        style := label.style_label_down
+        position := high
+    else if probLabelLocation == "Barın Altı"
+        style := label.style_label_up
+        position := low
+    else // Mumun Sağı
+        style := probLabelVertical ? label.style_label_right : label.style_label_center
+        position := close
+
+    // Eğer dikey yazı isteniyorsa ve konum mumun sağı ise, tek bir etiket oluştur
+    if probLabelVertical and probLabelLocation == "Mumun Sağı"
+        // Tüm bilgileri birleştir, ama daha belirgin bir formatta
+        if barstate.islast
+            // Önceki etiketleri temizle
+            label.delete(trendInfoLabel)
+            
+            // Ana trend bilgisi, arka plan rengi olarak trend rengini kullan - daha koyu arka plan (40% şeffaflık)
+            trendInfoLabel := label.new(bar_index + 4, close, text=trendStrength + "\n" + "Yükseliş: %" + str.tostring(bullishProbability) + "\n" + "Düşüş: %" + str.tostring(bearishProbability), color=color.new(trendColor, 40), textcolor=color.white, size=size.normal, style=label.style_label_left, yloc=yloc.price)
+    else
+        // Önceki etiketi temizle
+        label.delete(trendTextLabel)
+        // Tüm metni tek etikette birleştir - tek satırda yazım
+        trendTextLabel := label.new(bar_index, position, text=trendText, color=color.new(color.black, 70), textcolor=trendColor, size=size.normal, style=style)
+
+// === WAVETREND GÖRSELLEŞTİRME ===
+// Görselleştirme ayarları
+showWaveTrendVisual = input.bool(true, title="WaveTrend Göstergelerini Göster", group="WaveTrend")
+showWTSignals = input.bool(true, title="WaveTrend Sinyal Etiketlerini Göster", group="WaveTrend")
+
+// Ana grafikte sinyal işaretleri
+if showWaveTrendVisual and showWTSignals
+    // Alım sinyali işaretleri (wt1 wt2'yi yukarı doğru kestiğinde)
+    if wtCrossUp and wtBuyProb >= 85
+        buyLabel = "WT AL (%" + str.tostring(math.round(wtBuyProb)) + ")"
+        // Renk yüzdesi - olasılık yüksekse daha koyu yeşil
+        buyColor = color.new(color.green, math.max(0, 80 - (0.8 * wtBuyProb)))
+        // Mumun altında, mumun hemen bitişindeki konuma yerleştir
+        label.new(bar_index, low, text=buyLabel, color=buyColor, textcolor=color.white, style=label.style_label_up, size=size.small, xloc=xloc.bar_index)
+    
+    // Satım sinyali işaretleri (wt1 wt2'yi aşağı doğru kestiğinde)
+    if wtCrossDown and wtSellProb >= 85
+        sellLabel = "WT SAT (%" + str.tostring(math.round(wtSellProb)) + ")"
+        // Renk yüzdesi - olasılık yüksekse daha koyu kırmızı
+        sellColor = color.new(color.red, math.max(0, 80 - (0.8 * wtSellProb)))
+        // Mumun üstünde, mumun hemen bitişindeki konuma yerleştir
+        label.new(bar_index, high, text=sellLabel, color=sellColor, textcolor=color.white, style=label.style_label_down, size=size.small, xloc=xloc.bar_index)
+        
+    // Aşırı alım bölgesinden çıkış (tepe noktası)
+    if wtPeak
+        peakLabel = "TEPE"
+        if wtOverbought2
+            peakLabel := peakLabel + " (GÜÇLÜ)"
+        // Mumun üstünde, doğrudan yakın konuma yerleştir
+        label.new(bar_index, high, text=peakLabel, color=color.new(color.red, 40), textcolor=color.red, style=label.style_circle, size=size.tiny, xloc=xloc.bar_index)
+        
+    // Aşırı satım bölgesinden çıkış (dip noktası)
+    if wtTrough
+        dipLabel = "DİP"
+        if wtOversold2
+            dipLabel := dipLabel + " (GÜÇLÜ)"
+        // Mumun altında, doğrudan yakın konuma yerleştir
+        label.new(bar_index, low, text=dipLabel, color=color.new(color.green, 40), textcolor=color.green, style=label.style_circle, size=size.tiny, xloc=xloc.bar_index)
+
+// Arka plan renklerini belirle (ayrı bir gösterge olmadan ana grafik üzerinde gösterim)
+bgcolor(showWaveTrendVisual and wtOverbought2 ? color.new(color.red, 95) : 
+       showWaveTrendVisual and wtOversold2 ? color.new(color.green, 95) : na)
+
+// WaveTrend görselleştirmesi için ayrı indicator
+// Not: Pine Script v4'te her indicator için yeni bir script gerekiyor, inline panel oluşturulamaz
+// Bu kod içinde WaveTrend ana grafik üzerinde işaretleme yapacak
+
+// === GELECEK MUM TAHMİN MODELI ===
+showNextCandlePrediction = input.bool(true, title="Sonraki Mum Tahmini Göster", group="Tahmin Modeli")
+nextCandleStyle = input.string("Ok + Mum", title="Tahmin Görünümü", options=["Ok", "Mum", "Ok + Mum", "Gölge"], group="Tahmin Modeli")
+nextCandleTransparency = input.int(60, title="Tahmin Şeffaflığı %", minval=0, maxval=100, group="Tahmin Modeli")
+showPredictionAccuracy = input.bool(true, title="Tahmin Doğruluk Yüzdesi Göster", group="Tahmin Modeli")
+
+// Tahmin faktörleri
+var float predictedOpen = na
+var float predictedClose = na
+var float predictedHigh = na
+var float predictedLow = na
+var float predictionAccuracy = 50.0  // Başlangıç değeri %50
+var int totalPredictions = 0
+var int correctPredictions = 0
+var float atrValue = na
+var int transparencyValue = 60  // Varsayılan şeffaflık değeri
+
+// Tahmin modelini oluştur - mevcut ve önceki veriler kullanılarak gelecek mum tahmini yapılıyor
+if barstate.islast and showNextCandlePrediction
+    // ATR kullanarak muhtemel hareket miktarını hesapla
+    atrValue := ta.atr(14)
+    
+    // Tahmin yönünü hesapla (bullishProbability ve bearishProbability'e göre)
+    float directionBias = (bullishProbability - 50) / 50  // -1 ile +1 arası bir değer
+    
+    // Son kapanış fiyatını başlangıç olarak al
+    predictedOpen := close
+    
+    // WaveTrend ve diğer indikatörleri kullanarak tahmin
+    float momentumFactor = 0.0
+    
+    // WaveTrend sinyallerini değerlendir
+    if wtCrossUp
+        momentumFactor := momentumFactor + (wtBuyProb / 100)
+    if wtCrossDown
+        momentumFactor := momentumFactor - (wtSellProb / 100)
+    if wtOverbought1
+        momentumFactor := momentumFactor - 0.3
+    if wtOversold1
+        momentumFactor := momentumFactor + 0.3
+    if wt1 > wt2
+        momentumFactor := momentumFactor + 0.1
+    else
+        momentumFactor := momentumFactor - 0.1
+    
+    // RSI etkisi
+    if rsi > 70
+        momentumFactor := momentumFactor - 0.2
+    else if rsi < 30
+        momentumFactor := momentumFactor + 0.2
+    else if rsi > 50
+        momentumFactor := momentumFactor + 0.1
+    else
+        momentumFactor := momentumFactor - 0.1
+    
+    // MACD etkisi
+    if macdLine > 0 and macdLine > macdLine[1]
+        momentumFactor := momentumFactor + 0.2
+    else if macdLine < 0 and macdLine < macdLine[1]
+        momentumFactor := momentumFactor - 0.2
+    
+    // Fiyat ve hareketli ortalama ilişkisini kontrol et
+    if close > ema_out and close > sma_out
+        momentumFactor := momentumFactor + 0.15
+    else if close < ema_out and close < sma_out
+        momentumFactor := momentumFactor - 0.15
+    
+    // Pivot noktalarına yakınlık
+    if priceNearResistance
+        momentumFactor := momentumFactor - 0.3
+    if priceNearSupport
+        momentumFactor := momentumFactor + 0.3
+    
+    // Genel trend yönü ve olasılık
+    momentumFactor := momentumFactor + (directionBias * 0.5)
+    
+    // Tahmin edilen kapanış fiyatı hesaplama
+    float predictedMove = atrValue * momentumFactor
+    predictedClose := predictedOpen + predictedMove
+    
+    // Yüksek ve düşük tahminleri (volatilite bazlı)
+    float rangeFactor = math.abs(momentumFactor) < 0.2 ? 0.5 : math.abs(momentumFactor) < 0.5 ? 0.7 : 1.0
+    float predictedRange = atrValue * rangeFactor
+    
+    // Trend yönüne göre high/low ayarla
+    if momentumFactor > 0
+        // Yükselen tahmin
+        predictedHigh := predictedClose + (predictedRange * 0.6)  // Daha uzun üst gölge
+        predictedLow := predictedOpen - (predictedRange * 0.4)    // Daha kısa alt gölge
+    else
+        // Düşen tahmin
+        predictedHigh := predictedOpen + (predictedRange * 0.4)   // Daha kısa üst gölge
+        predictedLow := predictedClose - (predictedRange * 0.6)   // Daha uzun alt gölge
+    
+    // Doğruluk hesaplaması (yeni kapanış bilgisi geldiğinde)
+    if not na(predictedClose[1]) and not na(close[1])
+        totalPredictions := totalPredictions + 1
+        
+        // Önceki tahminin yönü doğru muydu?
+        bool correctDirection = (predictedClose[1] > predictedOpen[1] and close[1] > open[1]) or 
+                              (predictedClose[1] < predictedOpen[1] and close[1] < open[1])
+                              
+        // Doğru tahmin sayısını güncelle
+        if correctDirection
+            correctPredictions := correctPredictions + 1
+            
+        // Doğruluk yüzdesi hesapla (en az 5 tahmin sonrası)
+        if totalPredictions >= 5
+            predictionAccuracy := (correctPredictions / totalPredictions) * 100
+
+// Gelecek mum tahmini paneli
+if barstate.islast and showNextCandlePrediction
+    // Tahmin algoritması
+    atrValue := ta.atr(14)
+    
+    // NaN veya eksik değerleri kontrol et
+    if na(bullishProbability) or na(bearishProbability)
+        bullishProbability := 50
+        bearishProbability := 50
+    
+    float directionBias = (bullishProbability - bearishProbability) / 100
+    
+    // Tahmin hesaplaması
+    predictedOpen := close
+    float predictedMove = atrValue * directionBias
+    predictedClose := predictedOpen + predictedMove
+    
+    // NaN kontrolü
+    if na(predictedClose) or math.abs(predictedClose) > close * 2
+        predictedClose := close * (1 + 0.005 * math.sign(directionBias))  // %0.5 değişim varsayılanı
+    
+    // Yön belirleme
+    string tahminYonu = predictedClose > predictedOpen ? "Yükselme" : "Düşüş"
+    color tahminRengi = predictedClose > predictedOpen ? color.green : color.red
+    float tahminYuzdesi = math.abs(directionBias) * 100
+    
+    // Tahmin bilgilerini sabit konumda göster (panel benzeri)
+    var table tahminTablosu = table.new(position.top_right, 2, 5, border_width=1)
+    
+    // Tabloyu temizle ve yeniden oluştur
+    table.cell(tahminTablosu, 0, 0, "Sonraki Mum Tahmini", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.small, width=12)
+    table.cell(tahminTablosu, 1, 0, "", bgcolor=color.new(color.gray, 70), text_size=size.small, width=8)
+    
+    // Tahmin yönü
+    table.cell(tahminTablosu, 0, 1, "Yön", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(tahminTablosu, 1, 1, tahminYonu, text_color=tahminRengi, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    
+    // Tahmin olasılığı
+    table.cell(tahminTablosu, 0, 2, "Güç", text_color=color.white, bgcolor=color.new(color.gray, 85), text_size=size.small)
+    table.cell(tahminTablosu, 1, 2, "% " + str.tostring(math.round(tahminYuzdesi)), text_color=tahminRengi, bgcolor=color.new(color.gray, 85), text_size=size.small)
+    
+    // Hedef fiyat
+    table.cell(tahminTablosu, 0, 3, "Hedef", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    table.cell(tahminTablosu, 1, 3, str.tostring(math.round_to_mintick(predictedClose)), text_color=tahminRengi, bgcolor=color.new(color.gray, 80), text_size=size.small)
+    
+    // Tahmin sebepleri
+    string tahminSebebi = ""
+    if bullishProbability > 50
+        tahminSebebi := "RSI: " + (rsi > 50 ? "Yüksek" : "Düşük") + ", MACD: " + (macdLine > 0 ? "Yükseliş" : "Düşüş")
+    else
+        tahminSebebi := "RSI: " + (rsi < 50 ? "Düşük" : "Yüksek") + ", MACD: " + (macdLine < 0 ? "Düşüş" : "Yükseliş")
+    
+    table.cell(tahminTablosu, 0, 4, "Neden?", text_color=color.white, bgcolor=color.new(color.gray, 75), text_size=size.small)
+    table.cell(tahminTablosu, 1, 4, tahminSebebi, text_color=color.white, bgcolor=color.new(color.gray, 75), text_size=size.small)

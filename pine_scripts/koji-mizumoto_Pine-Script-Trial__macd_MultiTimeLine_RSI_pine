@@ -1,0 +1,73 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+// 参考サイト：Pineスクリプト（Pine Script）でMACDを作成する方法
+// URL:https://www.oanda.jp/lab-education/tradingviewstrategy/pine/pine_script_macd/
+
+//@version=6
+indicator("MACD MultiTimeFlame (+RSI)", overlay = false)
+
+// input MACD Multi
+SignalLength    = input.int(title = "Signal期間", defval = 9, minval = 1)
+fastMA          = input.int(title = "Fast MA 期間", defval = 12, minval = 1)
+slowMA          = input.int(title = "Slow MA 期間", defval = 26, minval = 1)
+
+// input RSI (Back)
+// RSIを裏で計算する、プロットには出さない
+short_RSI = input.int(defval = 7, title = "短期RSI")
+long_RSI = input.int(defval = 14, title = "長期RSI")
+entry_RSI = input.int(defval = 20, title = "最小RSIエントリー")     // test
+
+// ====================
+// MACD calc
+src = close
+[_CurMACD, _Signal, _CurHistogram]   = ta.macd(src[0], fastMA, slowMA, SignalLength)
+[_, _, _PreHistogram]                = ta.macd(src[1], fastMA, slowMA, SignalLength)
+
+// MultiTimeFlame Setting
+IptSpeed = input.timeframe("D", title = "マルチタイムフレーム")
+
+CurMACD         = request.security(syminfo.tickerid, IptSpeed, _CurMACD)
+Signal          = request.security(syminfo.tickerid, IptSpeed, _Signal)
+CurHistogram    = request.security(syminfo.tickerid, IptSpeed, _CurHistogram)
+PreHistogram    = request.security(syminfo.tickerid, IptSpeed, _PreHistogram)
+
+// Histogram
+his_colorUp1    = color.new(color.lime, transp = 50)
+his_colorUp2    = color.new(color.green, transp = 50)
+his_colorDown1  = color.new(color.maroon, transp = 50)
+his_colorDown2  = color.new(color.red, transp = 50)
+
+// 条件によるヒストグラムの塗分け
+plotColor = CurHistogram > 0 ? CurHistogram > PreHistogram ? his_colorUp1 : his_colorUp2
+                             : CurHistogram < PreHistogram ? his_colorDown1 :his_colorDown2
+// ====================
+// RSI calc
+short_RSI_value = ta.rsi(close, short_RSI)
+long_RSI_value = ta.rsi(close, long_RSI)
+MACD_GC_Signal = ta.crossover(CurMACD, Signal)
+MACD_DC_Signal = ta.crossunder(CurMACD, Signal)
+RSI_low = long_RSI_value < entry_RSI
+
+// ====================
+// Signal
+// エントリーしきい値以下（デフォルト20）になって、かつMACDのGDが出たらエントリー
+// isEntryPoint = long_RSI_value < entry_RSI and MACD_GC_Signal
+// past_MACD = ta.barssince(RSI_low)
+isEntryPoint = MACD_GC_Signal and RSI_low
+
+// MAXDでデッドクロスが出たらイグジット
+isExitPoint = MACD_DC_Signal
+
+// plot
+plot(CurMACD,       title = "MACD",      color = color.blue, linewidth = 2)
+plot(Signal,        title = "シグナル",  color = color.red, linewidth = 2)
+plot(CurHistogram,  title = "ヒストグラム",     style = plot.style_histogram, color = plotColor, linewidth = 3)
+plot(0, title = "0 Line", color = color.gray, linewidth = 1)
+
+// ====================
+// test
+plotshape(isEntryPoint, title = "RSI 20%lowCross", style = shape.triangleup, location = location.bottom,
+     color = color.yellow, size = size.small, text = "Entry", textcolor = color.white)
+plotshape(isExitPoint, title = "RSI 80%underCross", style = shape.triangledown, location = location.top,
+     color = color.green, size = size.small, text = "Exit", textcolor = color.white)

@@ -1,0 +1,122 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © DuffmanRob
+
+//@version=5
+indicator("Multi-Timeframe RSI", overlay=false)
+
+rsi1_length = input.int(10, title="RSI 1 Length")
+rsi2_length = input.int(10, title="RSI 2 Length")
+rsi3_length = input.int(10, title="RSI 3 Length")
+
+rsi_timeframe1 = input.string("1", "RSI 1 Timeframe")
+rsi_timeframe2 = input.string("5", "RSI 2 Timeframe")
+rsi_timeframe3 = input.string("15", "RSI 3 Timeframe")
+
+rsi_upper = input.int(70, title="RSI Upper Band")
+rsi_middle = input.int(50, title="RSI Middle Band")
+rsi_lower = input.int(30, title="RSI Lower Band")
+
+vwap_min_distance = input.float(10.0, title="VWAP Distance")
+band_count_threshold = input.int(3, "RSI Band Crossing Count", minval=0, maxval=3)
+rsi_look_back = input.int(5, "RSI Lookback", minval=1, maxval=10)
+debug = input.bool(false, title="Debug output?")
+
+rsi1 = request.security(syminfo.tickerid, rsi_timeframe1, ta.rsi(close, rsi1_length))
+rsi2 = request.security(syminfo.tickerid, rsi_timeframe2, ta.rsi(close, rsi2_length))
+rsi3 = request.security(syminfo.tickerid, rsi_timeframe3, ta.rsi(close, rsi3_length))
+//-- Since we have 3 RSI indicators.
+rsi_count = 3
+
+upper_hline = hline(rsi_upper, "Upper Band", color=color.red)
+middle_hline = hline(rsi_middle, "Middle Band", color=color.gray)
+lower_hline = hline(rsi_lower, "Lower Band", color=color.green)
+
+rsi_plot1 = plot(rsi1, color=color.blue, title="RSI 1")
+rsi_plot2 = plot(rsi2, color=color.orange, title="RSI 2")
+rsi_plot3 = plot(rsi3, color=color.purple, title="RSI 3")
+
+vwap = ta.vwap(close)
+band1 = vwap * (1 + 0.05)
+band2 = vwap * (1 - 0.05)
+band3 = vwap * (1 + 0.1)
+band4 = vwap * (1 - 0.1)
+distance_to_vwap = math.abs(close - vwap) * 10000
+
+//== Base RSI signals
+//-- RSI Above Upper Band (aub) count.
+rsi_aub_count = (rsi1 >= rsi_upper? 1 : 0) + (rsi2 >= rsi_upper? 1 : 0) + (rsi3 >= rsi_upper? 1 : 0)
+//-- RSI Below Lower Band (blb) count.
+rsi_blb_count =  (rsi1 <= rsi_lower? 1 : 0) + (rsi2 <= rsi_lower? 1 : 0) + (rsi3 <= rsi_lower? 1 : 0) 
+//--RSI Below Upper Band (bub) count.
+rsi_bub_count = (rsi1 < rsi_upper? 1 : 0) + (rsi2 < rsi_upper? 1 : 0) + (rsi3 < rsi_upper? 1 : 0)
+//-- RSI Above Lower Band (alb) count.
+rsi_alb_count = (rsi1 > rsi_lower? 1 : 0) + (rsi2 > rsi_lower? 1 : 0) + (rsi3 > rsi_lower? 1 : 0)
+//-- RSI above upper band (aub) count for a given lookback (lb) period.
+rsi_aub_lb_count = (ta.highest(rsi1, rsi_look_back) >= rsi_upper? 1 : 0) + (ta.highest(rsi2, rsi_look_back) >= rsi_upper? 1 : 0) + (ta.highest(rsi3, rsi_look_back) >= rsi_upper? 1 : 0)
+rsi_has_aub_lb = (rsi_aub_lb_count > 0)
+//-- RSI below lower band (blb) count for a given lookback (lb) period.
+rsi_blb_lb_count = (ta.lowest(rsi1, rsi_look_back) <= rsi_lower? 1 : 0) + (ta.lowest(rsi2, rsi_look_back) <= rsi_lower? 1 : 0) + (ta.lowest(rsi3, rsi_look_back) <= rsi_lower? 1 : 0)
+rsi_has_blb_lb = (rsi_blb_lb_count > 0)
+//-- RSI moving upward count.
+rsi_up_count = ((rsi1 - rsi1[1]) > 0? 1 : 0) + ((rsi2 - rsi2[1]) > 0? 1 : 0) + ((rsi3 - rsi3[1]) > 0? 1 : 0)
+rsi_all_up = (rsi_up_count == rsi_count)
+//-- RSI moving downward count.
+rsi_down_count = ((rsi1[1] - rsi1) > 0? 1 : 0) + ((rsi2[1] - rsi2) > 0? 1 : 0) + ((rsi2[1] - rsi2) > 0? 1 : 0)
+rsi_all_down = (rsi_down_count == rsi_count)
+
+//== Composite RSI signals
+//-- All rsi Below Upper Band (bub).
+all_rsi_bub = (rsi_bub_count == rsi_count)
+//-- All rsi Above Lower Band (alb).
+all_rsi_alb = (rsi_alb_count == rsi_count)
+
+//-- UPPER BAND: RSI going up above the upper RSI band and then back down (preferrable sharply).
+signal_upper_rsi_up = ((rsi1[1] - rsi1[2]) > 0 and (rsi2[1] - rsi2[2]) > 0 and (rsi3[1] - rsi3[2]) > 0)
+signal_upper_rsi_count = (rsi1[1] >= rsi_upper? 1 : 0) + (rsi2[1] >= rsi_upper? 1 : 0) + (rsi3[1] >= rsi_upper? 1 : 0)
+signal_upper_rsi_down = (rsi1[1] - rsi1) > 0 and (rsi2[1] - rsi2) > 0 and (rsi2[1] - rsi2) > 0
+
+//-- LOWER BAND: RSI going down below the lower RSI band and then back up (preferrably sharply).
+signal_lower_rsi_down = (rsi1[2] - rsi1[1]) > 0 and (rsi2[2] - rsi2[1]) > 0 and (rsi3[2] - rsi3[1]) > 0
+signal_lower_rsi_count = (rsi1[1] <= rsi_lower? 1 : 0) + (rsi2[1] <= rsi_lower? 1 : 0) + (rsi3[1] <= rsi_lower? 1 : 0) 
+signal_lower_rsi_up = (rsi1 - rsi1[1]) > 0 and (rsi2 - rsi2[1]) > 0 and (rsi3 - rsi3[1]) > 0
+
+vwap_upper_color = distance_to_vwap >= vwap_min_distance? color.red : color.yellow
+vwap_lower_color = distance_to_vwap >= vwap_min_distance? color.green : color.aqua
+
+signal_upper3 = signal_upper_rsi_up and signal_upper_rsi_count == 3 and signal_upper_rsi_down and signal_upper_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+signal_lower3 = signal_lower_rsi_down and signal_lower_rsi_count == 3 and signal_lower_rsi_up and signal_lower_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+
+plotshape(signal_upper3, title="All RSI Above Upper Band", location=location.top, color=vwap_upper_color, style=shape.diamond, size=size.tiny)
+plotshape(signal_lower3, title="All RSI Below Lower Band", location=location.bottom, color=vwap_lower_color, style=shape.diamond, size=size.tiny)
+
+signal_upper2 = signal_upper_rsi_up and signal_upper_rsi_count == 2 and signal_upper_rsi_down and signal_upper_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+signal_lower2 = signal_lower_rsi_down and signal_lower_rsi_count == 2 and signal_lower_rsi_up and signal_lower_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+
+plotshape(signal_upper2, title="All RSI Above Upper Band", location=location.top, color=vwap_upper_color, style=shape.triangledown, size=size.tiny)
+plotshape(signal_lower2, title="All RSI Below Lower Band", location=location.bottom, color=vwap_lower_color, style=shape.triangleup, size=size.tiny)
+
+signal_upper1 = signal_upper_rsi_up and signal_upper_rsi_count == 1 and signal_upper_rsi_down and signal_upper_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+signal_lower1 = signal_lower_rsi_down and signal_lower_rsi_count == 1 and signal_lower_rsi_up and signal_lower_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+
+plotshape(signal_upper1, title="All RSI Above Upper Band", location=location.top, color=vwap_upper_color, style=shape.square, size=size.tiny)
+plotshape(signal_lower1, title="All RSI Below Lower Band", location=location.bottom, color=vwap_lower_color, style=shape.square, size=size.tiny)
+
+signal_upper = signal_upper_rsi_up and signal_upper_rsi_count == 0 and signal_upper_rsi_down and signal_upper_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+signal_lower = signal_lower_rsi_down and signal_lower_rsi_count == 0 and signal_lower_rsi_up and signal_lower_rsi_count >= band_count_threshold //and distance_to_vwap >= vwap_min_distance
+
+plotshape(signal_upper, title="All RSI Above Upper Band", location=location.top, color=vwap_upper_color, style=shape.circle, size=size.tiny)
+plotshape(signal_lower, title="All RSI Below Lower Band", location=location.bottom, color=vwap_lower_color, style=shape.circle, size=size.tiny)
+
+//rsi_upper_check = rsi1[1] >= rsi_upper and rsi2 >= rsi_upper and rsi3 >= rsi_upper
+//test_signal_upper = rsi_upper_check[1] and rsi_upper_check == false
+//rsi_upper_check = rsi1 < rsi_upper and rsi2 < rsi_upper and rsi3 < rsi_upper and ta.highest(rsi1, rsi_look_back) >= rsi_upper and ta.highest(rsi2, rsi_look_back) >= rsi_upper and ta.highest(rsi3, rsi_look_back) >= rsi_upper
+//test_signal_upper = rsi_upper_check[1] and rsi_upper_check == false
+test_signal_upper = rsi_aub_count <= 1 and rsi_aub_count[1] > 0 and rsi_aub_lb_count[1] == rsi_count
+plotshape(test_signal_upper, title="RSI Test Signal", location=location.top, color=vwap_upper_color, style=shape.xcross, size=size.tiny)
+
+//rsi_lower_check = rsi1[1] <= rsi_lower and rsi2 <= rsi_lower and rsi3 <= rsi_lower 
+//test_signal_lower = rsi_lower_check[1] and rsi_lower_check == false
+//rsi_lower_check = ta.lowest(rsi1, rsi_look_back) <= rsi_lower and ta.lowest(rsi2, rsi_look_back) <= rsi_lower and ta.lowest(rsi3, rsi_look_back) <= rsi_lower and rsi1 > rsi_lower and rsi2 > rsi_lower and rsi3 > rsi_lower
+//test_signal_lower = rsi_lower_check and rsi_lower_check[1] == false //rsi_lower_check[1] and rsi_lower_check == false
+test_signal_lower = rsi_blb_count <= 1 and rsi_blb_count[1] > 0 and rsi_blb_lb_count[1] == rsi_count
+plotshape(test_signal_lower, title="RSI Test Signal", location=location.bottom, color=vwap_lower_color, style=shape.xcross, size=size.tiny)

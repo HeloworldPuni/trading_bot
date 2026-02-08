@@ -1,0 +1,319 @@
+//@version=5
+strategy("Wyckoff Accumulation + BB Mean Reversion - Day Trade Forex", overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity,
+         commission_type=strategy.commission.percent,
+         commission_value=0.0001)
+
+// ============================================================================
+// 📊 ESTRATÉGIA WYCKOFF ACCUMULATION + BB MEAN REVERSION - DAY TRADE FOREX
+// ============================================================================
+//
+// 🎯 PROPÓSITO:
+// Esta estratégia combina fases de acumulação de Wyckoff com reversão à média das
+// Bollinger Bands para identificar pontos de entrada em day trade forex.
+//
+// 🔧 FUNCIONAMENTO:
+// 1. WYCKOFF PHASES: Identifica fases de acumulação (Spring, Test, Jump)
+//    - Spring: Quebra falsa do suporte (trap)
+//    - Test: Teste secundário do suporte
+//    - Jump: Sinal de força (breakout)
+// 2. BB MEAN REVERSION: Entrada na banda inferior durante acumulação (oversold)
+// 3. GESTÃO: Stop loss baseado em ATR, take profit com risk/reward configurável
+//
+// 📈 CARACTERÍSTICAS:
+// - Lógica clara e bem definida
+// - Boa para iniciantes
+// - Menor risco
+// - Funciona bem em tendências
+// - Filtros de sessão forex
+//
+// ⏰ TIMEFRAME IDEAL: M15, H1
+// 💱 PARES RECOMENDADOS: EUR/USD, GBP/USD, USD/JPY
+// 🎯 TIPO: Accumulation Trading (Trading de Acumulação)
+// ⭐ DIFICULDADE: ⭐⭐⭐ (Intermediário)
+//
+// ============================================================================
+
+// ===== INPUTS CONFIGURÁVEIS =====
+// Parâmetros de Risco
+risk_per_trade = input.float(2.0, "Risco por Trade (%)", minval=0.1, maxval=5.0, group="Gerenciamento de Risco")
+risk_reward_ratio = input.float(2.0, "Risk/Reward Ratio", minval=1.0, maxval=5.0, group="Gerenciamento de Risco")
+use_trailing_stop = input.bool(true, "Usar Trailing Stop", group="Gerenciamento de Risco")
+trailing_stop_atr = input.float(1.5, "Trailing Stop (ATR)", minval=0.5, maxval=3.0, group="Gerenciamento de Risco")
+
+// Parâmetros Bollinger Bands
+bb_length = input.int(20, "BB Length", minval=1, group="Bollinger Bands")
+bb_mult = input.float(2.0, "BB Multiplier", minval=0.1, group="Bollinger Bands")
+bb_mean_reversion_threshold = input.float(0.8, "BB Mean Reversion Threshold", minval=0.1, maxval=1.0, group="Bollinger Bands")
+
+// Parâmetros Wyckoff
+wyckoff_lookback = input.int(50, "Wyckoff Lookback", minval=20, group="Wyckoff")
+spring_threshold = input.float(0.5, "Spring Threshold (%)", minval=0.1, maxval=2.0, group="Wyckoff")
+test_threshold = input.float(0.3, "Test Threshold (%)", minval=0.1, maxval=1.0, group="Wyckoff")
+jump_threshold = input.float(0.8, "Jump Threshold (%)", minval=0.1, maxval=2.0, group="Wyckoff")
+
+// Parâmetros ATR
+atr_length = input.int(14, "ATR Length", minval=1, group="Volatilidade")
+atr_multiplier = input.float(2.0, "ATR Multiplier", minval=1.0, maxval=5.0, group="Volatilidade")
+
+// Filtros de Tempo (Day Trade)
+use_time_filter = input.bool(true, "Usar Filtro de Tempo", group="Filtros de Tempo")
+start_hour = input.int(8, "Hora Início (GMT)", minval=0, maxval=23, group="Filtros de Tempo")
+end_hour = input.int(17, "Hora Fim (GMT)", minval=0, maxval=23, group="Filtros de Tempo")
+avoid_news = input.bool(true, "Evitar Horários de Notícias", group="Filtros de Tempo")
+
+// Filtros de Sessão Forex
+use_session_filter = input.bool(true, "Usar Filtro de Sessão", group="Sessões Forex")
+london_session = input.bool(true, "Sessão Londres (8-17 GMT)", group="Sessões Forex")
+ny_session = input.bool(true, "Sessão NY (13-22 GMT)", group="Sessões Forex")
+tokyo_session = input.bool(false, "Sessão Tóquio (0-9 GMT)", group="Sessões Forex")
+
+// ===== CÁLCULOS DE INDICADORES =====
+// Bollinger Bands
+bb_middle = ta.sma(close, bb_length)
+bb_std = ta.stdev(close, bb_length)
+bb_upper = bb_middle + (bb_std * bb_mult)
+bb_lower = bb_middle - (bb_std * bb_mult)
+
+// BB Mean Reversion
+bb_position = (close - bb_lower) / (bb_upper - bb_lower)
+bb_oversold = bb_position < (1 - bb_mean_reversion_threshold)
+bb_overbought = bb_position > bb_mean_reversion_threshold
+bb_mean_reversion = bb_position < 0.2 or bb_position > 0.8
+
+// ATR para volatilidade
+atr = ta.atr(atr_length)
+
+// Indicadores de Momentum
+rsi = ta.rsi(close, 14)
+stoch_k = ta.stoch(close, high, low, 14)
+stoch_d = ta.sma(stoch_k, 3)
+
+// Volume
+volume_ma = ta.sma(volume, 20)
+volume_spike = volume > volume_ma * 1.5
+volume_decline = volume < volume_ma * 0.8
+
+// ===== WYCKOFF ACCUMULATION PHASES =====
+// Support Level (S)
+support_level = ta.lowest(low, wyckoff_lookback)
+resistance_level = ta.highest(high, wyckoff_lookback)
+
+// Spring (Selling Climax)
+spring_condition = low <= support_level * (1 - spring_threshold / 100) and 
+                  close > support_level and 
+                  volume_spike
+
+// Test (Secondary Test)
+test_condition = low <= support_level * (1 + test_threshold / 100) and 
+                low >= support_level * (1 - test_threshold / 100) and 
+                close > support_level and 
+                volume_decline
+
+// Jump (Sign of Strength)
+jump_condition = close > resistance_level * (1 - jump_threshold / 100) and 
+                close > ta.ema(close, 20) and 
+                volume_spike
+
+// Accumulation Phase Detection
+accumulation_phase = spring_condition or test_condition
+distribution_phase = close > resistance_level * (1 + jump_threshold / 100)
+
+// ===== CONDIÇÕES DE FILTROS =====
+// Filtro de Tempo
+time_ok = not use_time_filter or (hour >= start_hour and hour <= end_hour)
+news_ok = not avoid_news or (hour != 8 and hour != 13 and hour != 15)
+
+// Filtro de Sessão Forex
+london_active = not use_session_filter or not london_session or (hour >= 8 and hour <= 17)
+ny_active = not use_session_filter or not ny_session or (hour >= 13 and hour <= 22)
+tokyo_active = not use_session_filter or not tokyo_session or (hour >= 0 and hour <= 9)
+active_session = london_active or ny_active or tokyo_active
+
+// Filtro de Volatilidade
+atr_ok = atr > atr * 0.5
+
+// ===== LÓGICA DE ENTRADA =====
+// Condições Long (Wyckoff Accumulation + BB Mean Reversion)
+wyckoff_accumulation_long = accumulation_phase and not distribution_phase
+bb_mean_reversion_long = bb_oversold and close > bb_lower
+momentum_long = rsi < 30 and stoch_k < 20  // Oversold
+volume_confirmation_long = volume_spike or volume_decline
+
+long_condition = wyckoff_accumulation_long and 
+                 bb_mean_reversion_long and 
+                 momentum_long and 
+                 volume_confirmation_long and 
+                 atr_ok and 
+                 time_ok and 
+                 news_ok and 
+                 active_session
+
+// Condições Short (Wyckoff Distribution + BB Mean Reversion)
+wyckoff_distribution_short = distribution_phase and not accumulation_phase
+bb_mean_reversion_short = bb_overbought and close < bb_upper
+momentum_short = rsi > 70 and stoch_k > 80  // Overbought
+volume_confirmation_short = volume_spike or volume_decline
+
+short_condition = wyckoff_distribution_short and 
+                  bb_mean_reversion_short and 
+                  momentum_short and 
+                  volume_confirmation_short and 
+                  atr_ok and 
+                  time_ok and 
+                  news_ok and 
+                  active_session
+
+// ===== LÓGICA DE SAÍDA =====
+// Cálculo de Stop Loss e Take Profit
+stop_distance = atr * atr_multiplier
+profit_distance = stop_distance * risk_reward_ratio
+
+// Entrada Long
+if long_condition and barstate.isconfirmed and strategy.position_size == 0
+    stop_loss = close - stop_distance
+    take_profit = close + profit_distance
+    
+    strategy.entry("Long Wyckoff+BB", strategy.long)
+    strategy.exit("Long Exit", "Long Wyckoff+BB", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Long Trailing", "Long Wyckoff+BB", trail_price=close, trail_offset=atr * trailing_stop_atr)
+
+// Entrada Short
+if short_condition and barstate.isconfirmed and strategy.position_size == 0
+    stop_loss = close + stop_distance
+    take_profit = close - profit_distance
+    
+    strategy.entry("Short Wyckoff+BB", strategy.short)
+    strategy.exit("Short Exit", "Short Wyckoff+BB", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Short Trailing", "Short Wyckoff+BB", trail_price=close, trail_offset=atr * trailing_stop_atr)
+
+// ===== PLOTS E VISUALIZAÇÕES =====
+// Bollinger Bands
+plot(bb_upper, "BB Superior", color=color.orange, linewidth=2)
+plot(bb_lower, "BB Inferior", color=color.orange, linewidth=2)
+plot(bb_middle, "BB Média", color=color.orange, linewidth=1, style=plot.style_line)
+
+// Wyckoff Levels
+plot(support_level, "Support (S)", color=color.green, linewidth=2, style=plot.style_line)
+plot(resistance_level, "Resistance (R)", color=color.red, linewidth=2, style=plot.style_line)
+
+// Wyckoff Phases Background
+bgcolor(accumulation_phase ? color.new(color.green, 90) : na, title="Accumulation Phase")
+bgcolor(distribution_phase ? color.new(color.red, 90) : na, title="Distribution Phase")
+
+// BB Mean Reversion Background
+bgcolor(bb_oversold ? color.new(color.blue, 95) : na, title="BB Oversold")
+bgcolor(bb_overbought ? color.new(color.purple, 95) : na, title="BB Overbought")
+
+// Sinais de Entrada
+plotchar(long_condition, "Long Signal", "▲", location.belowbar, color=color.green, size=size.normal)
+plotchar(short_condition, "Short Signal", "▼", location.abovebar, color=color.red, size=size.normal)
+
+// Wyckoff Signals
+plotchar(spring_condition, "Spring", "S", location.belowbar, color=color.yellow, size=size.small)
+plotchar(test_condition, "Test", "T", location.belowbar, color=color.orange, size=size.small)
+plotchar(jump_condition, "Jump", "J", location.abovebar, color=color.lime, size=size.small)
+
+// Background para Sessões
+bgcolor(london_active and use_session_filter ? color.new(color.blue, 95) : na, title="Sessão Londres")
+bgcolor(ny_active and use_session_filter ? color.new(color.orange, 95) : na, title="Sessão NY")
+bgcolor(tokyo_active and use_session_filter ? color.new(color.purple, 95) : na, title="Sessão Tóquio")
+
+// ===== ALERTAS =====
+alertcondition(long_condition, title="Wyckoff Accumulation + BB Long", message="Sinal de compra Wyckoff Accumulation + BB detectado")
+alertcondition(short_condition, title="Wyckoff Distribution + BB Short", message="Sinal de venda Wyckoff Distribution + BB detectado")
+
+// ===== INFORMAÇÕES ADICIONAIS =====
+// Display de informações na tela
+var table info_table = table.new(position.top_right, 2, 12, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "BB Position", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, str.tostring(bb_position, "#.##"), text_color=color.black)
+    
+    table.cell(info_table, 0, 1, "BB Status", text_color=color.black, bgcolor=color.gray)
+    bb_status = bb_oversold ? "Oversold" : bb_overbought ? "Overbought" : "Normal"
+    table.cell(info_table, 1, 1, bb_status, 
+               text_color=bb_oversold ? color.blue : bb_overbought ? color.purple : color.gray)
+    
+    table.cell(info_table, 0, 2, "ATR", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 2, str.tostring(atr, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 3, "RSI", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 3, str.tostring(rsi, "#.##"), text_color=color.black)
+    
+    table.cell(info_table, 0, 4, "Wyckoff Phase", text_color=color.black, bgcolor=color.gray)
+    wyckoff_phase = accumulation_phase ? "Accumulation" : distribution_phase ? "Distribution" : "Neutral"
+    table.cell(info_table, 1, 4, wyckoff_phase, 
+               text_color=accumulation_phase ? color.green : distribution_phase ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 5, "Spring", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 5, spring_condition ? "Sim" : "Não", 
+               text_color=spring_condition ? color.yellow : color.gray)
+    
+    table.cell(info_table, 0, 6, "Test", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 6, test_condition ? "Sim" : "Não", 
+               text_color=test_condition ? color.orange : color.gray)
+    
+    table.cell(info_table, 0, 7, "Jump", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 7, jump_condition ? "Sim" : "Não", 
+               text_color=jump_condition ? color.lime : color.gray)
+    
+    table.cell(info_table, 0, 8, "Volume", text_color=color.black, bgcolor=color.gray)
+    volume_status = volume_spike ? "Alto" : volume_decline ? "Baixo" : "Normal"
+    table.cell(info_table, 1, 8, volume_status, 
+               text_color=volume_spike ? color.green : volume_decline ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 9, "Sessão", text_color=color.black, bgcolor=color.gray)
+    session_text = london_active and use_session_filter ? "Londres" : 
+                   ny_active and use_session_filter ? "NY" : 
+                   tokyo_active and use_session_filter ? "Tóquio" : "Fechado"
+    table.cell(info_table, 1, 9, session_text, text_color=color.black)
+    
+    table.cell(info_table, 0, 10, "Posição", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 10, strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Neutro", 
+               text_color=strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 11, "P&L", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 11, str.tostring(strategy.netprofit, "#.##"), 
+               text_color=strategy.netprofit > 0 ? color.green : color.red)
+
+// ===== COMENTÁRIOS EXPLICATIVOS =====
+// Esta estratégia combina Wyckoff Accumulation com Bollinger Bands Mean Reversion para day trade em forex:
+// 
+// 1. WYCKOFF ACCUMULATION PHASES:
+//    - Spring (Selling Climax): Quebra falsa do suporte com volume alto
+//    - Test (Secondary Test): Teste do suporte com volume baixo
+//    - Jump (Sign of Strength): Rompimento da resistência com volume alto
+//    - Accumulation: Fase de acumulação antes do movimento principal
+//
+// 2. BOLLINGER BANDS MEAN REVERSION:
+//    - Entrada na banda inferior durante acumulação (oversold)
+//    - Entrada na banda superior durante distribuição (overbought)
+//    - Reversão à média como target
+//
+// 3. LÓGICA DE ENTRADA:
+//    - Wyckoff Accumulation + BB Oversold = Long
+//    - Wyckoff Distribution + BB Overbought = Short
+//    - Confirmação com momentum (RSI, Stochastic)
+//    - Confirmação de volume
+//
+// 4. GERENCIAMENTO DE RISCO:
+//    - Stop loss baseado em ATR
+//    - Take profit com risk/reward configurável
+//    - Trailing stop opcional
+//    - Position sizing baseado em risco
+//
+// 5. FILTROS FOREX:
+//    - Filtros de sessão (Londres, NY, Tóquio)
+//    - Filtros de tempo para evitar spreads altos
+//    - Evita horários de notícias importantes
+//
+// Otimizada para pares majors como EURUSD, GBPUSD, USDJPY em timeframes M15-H1

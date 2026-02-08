@@ -1,0 +1,343 @@
+//@version=4
+study("MJ - ATR", overlay=true)
+
+//Plot ATR for placing stop loss
+
+length = input(5, title="ATR Period", minval=1)
+smoothing = input(title="Smoothing", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+
+groupMultipliers = 'Multipliers'
+
+multiplierOne = 1
+multiplierTwo = input(2, '2', minval=.01, maxval=100, step=0.1, inline=groupMultipliers, group=groupMultipliers)
+multiplierThree = input(3, '3', minval=.01, maxval=100, step=0.1, inline=groupMultipliers, group=groupMultipliers)
+
+tblPos = input(
+  title="Position on Chart",
+  defval="Bottom Left",
+  options=["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Left", "Middle Right" ]
+  )
+
+tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Top Right" ? position.top_right : tblPos == "Bottom Left" ? position.bottom_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Middle Left" ? position.middle_left : position.middle_right
+
+inlineColors = 'Colors'
+tblFrameColor = input(color.new(#090720, 10), 'Frame', inline=inlineColors)
+tblBorderColor = input(color.new(#090720, 10), 'Border', inline=inlineColors)
+cellBgColor = input(color.new(#090720, 10), 'BG', inline=inlineColors)
+cellTextColor = input(color.new(#ffcc80, 10), 'Text', inline=inlineColors)
+
+_applySmoothing(source, length) =>
+	if smoothing == "RMA"
+		rma(source, length)
+	else
+		if smoothing == "SMA"
+			sma(source, length)
+		else
+			if smoothing == "EMA"
+				ema(source, length)
+			else
+				wma(source, length)
+
+
+catr = _applySmoothing(tr(true), length)
+
+atrOne = (catr * multiplierOne)
+atrTwo = (catr * multiplierTwo)
+atrThree = (catr * multiplierThree)
+
+highValOne = high + atrOne
+highValTwo = high + atrTwo
+highValThree = high + atrThree
+
+lowValOne = low - atrOne
+lowValTwo = low - atrTwo
+lowValThree = low - atrThree
+
+
+// /////////////////////////////////////////////////////////
+//
+// --- High Volatility ---
+//
+// /////////////////////////////////////////////////////////
+
+groupVolatility = 'Volatility'
+plotHighVolatilityMarkers = input(false, 'Show Markers', inline=groupVolatility, group=groupVolatility)
+percentInput = input(50, 'Length', minval=2, maxval=100, step=1, inline=groupVolatility, group=groupVolatility)
+highVolColor = input(color.new(color.white, 50), 'High', inline=groupVolatility, group=groupVolatility)
+lowVolColor = input(color.new(#787b86, 50), 'Low', inline=groupVolatility, group=groupVolatility)
+volMarkerPosition = input(location.bottom, 'Position', options=[location.top, location.bottom], inline=groupVolatility, group=groupVolatility)
+
+currentAtrPercentage = (catr / close) * 100
+averageAtrPercentage = sma(currentAtrPercentage, percentInput)
+volatilityAverage = sma(catr, percentInput)
+isHighVolatility = currentAtrPercentage > averageAtrPercentage
+
+plotshape(
+  plotHighVolatilityMarkers and not isHighVolatility,
+  title="Volatility Low",
+  style=shape.circle,
+  location=volMarkerPosition,
+  size=size.tiny,
+  color=lowVolColor
+  )
+
+plotshape(
+  plotHighVolatilityMarkers and isHighVolatility,
+  title="Volatility High",
+  style=shape.circle,
+  location=volMarkerPosition,
+  size=size.tiny,
+  color=highVolColor
+  )
+
+
+//////////////////////////////////////////////////////////////////
+//
+// ==== PRINT CURRENT DATE/TIME ====
+//
+//////////////////////////////////////////////////////////////////
+
+groupDateTimeLabel = 'Date/Time Label'
+
+isDaylightSavings = input(false, 'Is Daylight Savings?', group=groupDateTimeLabel)
+
+_dateDisplay() => '(' + tostring(month) + '/' + tostring(dayofmonth) + ') '
+
+_getMinute() => minute < 10 ? '0' + tostring(minute) : tostring(minute)
+
+_getAdjustedHour() =>
+    _hour = isDaylightSavings ? hour : (hour == 0 ? 23 : hour - 1) // adjust for daylight savings.  pine does something weird here
+    _hour := _hour < 4 ? _hour + 20 : _hour - 4
+
+_getAdjustedTimeDisplay() => tostring(_getAdjustedHour()) + ':' + _getMinute()
+// _debugDisplay() => 'D' + tostring(dayofweek) + ' h' + tostring(hour) + ' m' + tostring(minute) + ' | '
+
+_getAdjustedDay() =>
+    adjustedDay = dayofweek == 1 and hour < 4 ? 7
+      : hour < 4 ? dayofweek - 1
+      : dayofweek
+
+_getDayOfWeekLabel() =>
+    adjustedHour = _getAdjustedHour()
+    adjustedDay = _getAdjustedDay()
+
+    if adjustedDay == 1
+        'Sun'
+    else if adjustedDay == 2
+        'Mon'
+    else if adjustedDay == 3
+        'Tues'
+    else if adjustedDay == 4
+        'Wed'
+    else if adjustedDay == 5
+        'Thur'
+    else if adjustedDay == 6
+        'Fri'
+    else
+        'Sat'
+
+_getDateTimeDisplay() =>
+    _display = _dateDisplay() + _getDayOfWeekLabel() + ' - ' + _getAdjustedTimeDisplay()
+    timeframe.isintraday ? _display : na
+
+// /////////////////////////////////////////////////////////
+//
+// --- Table ---
+//
+// /////////////////////////////////////////////////////////
+
+var resultsTable = table.new(
+  position=tablePosition,
+  columns=3,
+  rows=4,
+  bgcolor=cellBgColor,
+  border_width=1,
+  border_color=tblBorderColor,
+  frame_color=tblFrameColor,
+  frame_width=1
+  )
+
+table.clear(resultsTable, 0, 0)
+
+// --- Header ---
+
+table.cell(
+  resultsTable,
+  row=0,
+  column=0,
+  text='M',
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=0,
+  column=1,
+  text='ATR',
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=0,
+  column=2,
+  text='Date',
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+_formatValue(value) =>
+    formatString = close > 10000 ? '######' : close > 1000 ? '######.0' : close > 10 ? '######.00' : close > 1 ? '######.000' : '######.0000'
+    tostring(value, formatString)
+
+// --- Row One ---
+
+table.cell(
+  resultsTable,
+  row=1,
+  column=0,
+  text=tostring(multiplierOne),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=1,
+  column=1,
+  text=_formatValue(atrOne),
+  text_color=isHighVolatility ? color.new(highVolColor, 0) : cellTextColor,
+  text_halign=text.align_right,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=1,
+  column=2,
+  text=_dateDisplay(),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+// --- Row Two ---
+
+table.cell(
+  resultsTable,
+  row=2,
+  column=0,
+  text=tostring(multiplierTwo),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=2,
+  column=1,
+  text=_formatValue(atrTwo),
+  text_color=cellTextColor,
+  text_halign=text.align_right,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=2,
+  column=2,
+  text=_getDayOfWeekLabel(),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+// --- Row Three ---
+
+table.cell(
+  resultsTable,
+  row=3,
+  column=0,
+  text=tostring(multiplierThree),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=3,
+  column=1,
+  text=_formatValue(atrThree),
+  text_color=cellTextColor,
+  text_halign=text.align_right,
+  text_valign=text.align_center
+  )
+
+table.cell(
+  resultsTable,
+  row=3,
+  column=2,
+  text=_getAdjustedTimeDisplay(),
+  text_color=cellTextColor,
+  text_halign=text.align_left,
+  text_valign=text.align_center
+  )
+
+// /////////////////////////////////////////////////////////
+//
+// --- Labels ---
+//
+// /////////////////////////////////////////////////////////
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+_getTimeNBarsFromNow(numBars) => numBars > 0 ? _getFutureTimeNBarsFromNow(numBars) : _getPastTimeNBarsBackFromNow(numBars * -1)
+
+groupLabels = 'Labels'
+labelsActive = input(true, 'Active', inline=groupLabels, group=groupLabels)
+labelTextColor = input(color.new(#787b86, 20), 'Color', inline=groupLabels)
+labelOffset = input(40, 'Offset', inline=groupLabels)
+labelSize = input(size.normal, 'Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group=groupLabels, inline=groupLabels)
+
+_drawLabels(multiplier, highVal, lowVal) =>
+    labelTime = _getTimeNBarsFromNow(labelOffset)
+
+    highLabel = label.new(
+      x=labelTime,
+      y=labelsActive ? highVal : na,
+      //text=tostring(multiplier) + ': ' + _formatValue(highVal),
+      text=tostring(multiplier),
+      style=label.style_none,
+      xloc=xloc.bar_time,
+      textcolor=labelTextColor,
+      size=labelSize
+      )
+    label.delete(highLabel[1])
+
+    lowLabel = label.new(
+      x=labelTime,
+      y=labelsActive ? lowVal : na,
+      text=tostring(multiplier),
+      style=label.style_none,
+      xloc=xloc.bar_time,
+      textcolor=labelTextColor,
+      size=labelSize
+      )
+    label.delete(lowLabel[1])
+
+
+_drawLabels(multiplierOne, highValOne, lowValOne)
+_drawLabels(multiplierTwo, highValTwo, lowValTwo)
+_drawLabels(multiplierThree, highValThree, lowValThree)
+
+
+
+

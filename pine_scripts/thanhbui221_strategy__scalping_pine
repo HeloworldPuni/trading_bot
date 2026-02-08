@@ -1,0 +1,94 @@
+//@version=5
+strategy("Scalping Strategy with Trailing", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// === INPUTS ===
+emaFast5m        = input.int(6, "EMA Fast (5M)", group="5M Signals")
+emaSlow5m        = input.int(13, "EMA Slow (5M)", group="5M Signals")
+macdFast         = input.int(6, "MACD Fast", group="5M Signals")
+macdSlow         = input.int(13, "MACD Slow", group="5M Signals")
+macdSignal       = input.int(4, "MACD Signal", group="5M Signals")
+rsiLength        = input.int(8, "RSI Length", group="5M Signals")
+rsiOB            = input.int(80, "RSI Overbought", group="5M Signals")
+rsiOS            = input.int(20, "RSI Oversold", group="5M Signals")
+
+// Bollinger Bands inputs
+bbLength         = input.int(20, "BB Length", group="5M Signals")
+bbMult           = input.float(2, "BB Multiplier", step=0.1, group="5M Signals")
+
+atrLen           = input.int(6, "ATR Length", group="Risk")
+slMult           = input.float(1.0, "SL Multiplier", step=0.1, group="Risk")
+tpMult           = input.float(2.0, "TP Multiplier", step=0.1, group="Risk")
+trailOffset      = input.float(0.5, "Trail Offset (ATR)", step=0.1, group="Risk")
+minSlPips        = input.float(15, "Minimum SL (Pips)", step=1, group="Risk")
+entryOffset      = input.float(0.2, "Entry Offset (ATR)", step=0.1, group="Risk")
+
+// === TIME FILTER ===
+hour_   = hour(time, "GMT+7")
+minute_ = minute(time, "GMT+7")
+
+inSession = ( (hour_ == 13 and minute_ >= 30) or (hour_ > 13 and hour_ < 15) or (hour_ == 15 and minute_ < 30) or (hour_ == 18 and minute_ >= 30) or (hour_ > 18 and hour_ < 23) or (hour_ == 23 and minute_ < 30))
+
+// === SIGNAL LOGIC ===
+ema9  = ta.ema(close, emaFast5m)
+ema21 = ta.ema(close, emaSlow5m)
+emaBull = ema9 > ema21
+emaBear = ema9 < ema21
+
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+macdBull = macdLine > signalLine
+macdBear = macdLine < signalLine
+macdMomentum = macdLine > macdLine[1]
+macdMomentumDown = macdLine < macdLine[1]
+
+rsi = ta.rsi(close, rsiLength)
+rsiOk = rsi > rsiOS and rsi < rsiOB
+
+// Bollinger Bands calculation
+[bbMiddle, bbUpper, bbLower] = ta.bb(close, bbLength, bbMult)
+bbLowerTouch = close <= bbLower
+bbUpperTouch = close >= bbUpper
+
+priceUp = close > close[1] and close[1] > close[2]
+priceDown = close < close[1] and close[1] < close[2]
+
+longCondition = emaBull and macdBull and macdMomentum and rsiOk and priceUp and inSession 
+shortCondition = emaBear and macdBear and macdMomentumDown and rsiOk and priceDown and inSession 
+
+// === SL/TP ===
+atr = ta.atr(atrLen)
+minSL = minSlPips * 0.0001
+slValue = math.max(atr * slMult, minSL)
+tpValue = slValue * tpMult
+trailValue = atr * trailOffset
+entryValue = atr * entryOffset
+
+// === TRADE EXECUTION ===
+if longCondition and strategy.position_size == 0
+    entryPrice = close - entryValue  // Enter slightly below current price
+    strategy.entry("Long", strategy.long, limit=entryPrice)
+    strategy.exit("Long Exit", "Long", 
+        stop=entryPrice - slValue, 
+        limit=entryPrice + tpValue,
+        trail_points=trailValue * 10000,
+        trail_offset=trailValue * 10000)
+
+if shortCondition and strategy.position_size == 0
+    entryPrice = close + entryValue  // Enter slightly above current price
+    strategy.entry("Short", strategy.short, limit=entryPrice)
+    strategy.exit("Short Exit", "Short", 
+        stop=entryPrice + slValue, 
+        limit=entryPrice - tpValue,
+        trail_points=trailValue * 10000,
+        trail_offset=trailValue * 10000)
+
+// === PLOTS ===
+plot(ema9, "EMA 9", color=color.blue)
+plot(ema21, "EMA 21", color=color.orange)
+plot(bbUpper, "BB Upper", color=color.red, style=plot.style_line)
+plot(bbMiddle, "BB Middle", color=color.yellow, style=plot.style_line)
+plot(bbLower, "BB Lower", color=color.green, style=plot.style_line)
+plotshape(longCondition, title="Long Signal", location=location.belowbar, style=shape.triangleup, color=color.lime)
+plotshape(shortCondition, title="Short Signal", location=location.abovebar, style=shape.triangledown, color=color.red)
+
+alertcondition(longCondition, title="Long Alert", message="Long scalp condition met")
+alertcondition(shortCondition, title="Short Alert", message="Short scalp condition met")

@@ -1,0 +1,92 @@
+//@version=6
+strategy("Backtest MA+MACD For BTC", overlay=true, pyramiding=0, margin_long=1, margin_short=1, default_qty_type = strategy.fixed, default_qty_value = 0.1, commission_type = strategy.commission.cash_per_contract, commission_value = 28.8)
+
+// ====== INPUTS ======
+// 1. Bộ lọc MA
+ma_filter_on    = input.bool(true, title="Bật Filter MA")
+use_ema         = input.bool(true, title="Sử dụng EMA (false = SMA)")
+fast_length     = input.int(4, title="Chu kỳ MA nhanh", minval=1)
+slow_length     = input.int(7, title="Chu kỳ MA chậm", minval=1)
+
+// 1.a. MA thứ 3: bật/tắt và cấu hình
+ma_third_on     = input.bool(true, title="Bật MA thứ 3")
+use_third_ema   = input.bool(true, title="Sử dụng EMA cho MA thứ 3")
+third_length    = input.int(28, title="Chu kỳ MA thứ 3", minval=1)
+
+// 2. Bộ lọc MACD
+macd_filter_on      = input.bool(true, title="Bật Filter MACD")
+macd_fast_length    = input.int(12, title="MACD Fast", minval=1)
+macd_slow_length    = input.int(26, title="MACD Slow", minval=1)
+macd_signal_length  = input.int(7,  title="MACD Signal", minval=1)
+
+// 3. Tham số chốt lệnh: số nến tính SL và hệ số Risk Reward Ratio
+lookback        = input.int(3, title="Số nến để xác định SL", minval=1)
+rr_ratio        = input.float(2.9, title="Risk Reward Ratio (RR)", step=0.1)
+
+// ====== TÍNH TOÁN CHỈ SỐ ======
+// Tính các đường MA theo lựa chọn kiểu EMA/SMA
+fast_ma = use_ema ? ta.ema(close, fast_length) : ta.sma(close, fast_length)
+slow_ma = use_ema ? ta.ema(close, slow_length) : ta.sma(close, slow_length)
+third_ma = ma_third_on ? (use_third_ema ? ta.ema(close, third_length) : ta.sma(close, third_length)) : na
+
+// Tính MACD
+[macdLine, signalLine, _] = ta.macd(close, macd_fast_length, macd_slow_length, macd_signal_length)
+
+// Tính toán các mức giá dùng cho SL/TP (luôn được tính mỗi bar)
+long_stop_price_val  = ta.lowest(low, lookback)
+short_stop_price_val = ta.highest(high, lookback)
+
+// ====== XÁC ĐỊNH ĐIỀU KIỆN VÀ VÀO LỆNH ======
+// Điều kiện dựa trên MA: crossover và crossunder giữa Fast MA và Slow MA
+long_ma_condition  = ma_filter_on ? ta.crossover(fast_ma, slow_ma) : true
+short_ma_condition = ma_filter_on ? ta.crossunder(fast_ma, slow_ma) : true
+
+// Nếu MA thứ 3 được bật, bổ sung thêm điều kiện:
+// Với tín hiệu mua: Fast MA phải nằm trên MA thứ 3
+// Với tín hiệu bán: Fast MA phải nằm dưới MA thứ 3
+if ma_third_on
+    long_ma_condition  := long_ma_condition and (fast_ma > third_ma)
+    short_ma_condition := short_ma_condition and (fast_ma < third_ma)
+    
+// Điều kiện dựa trên MACD
+long_macd_condition  = macd_filter_on ? (macdLine > signalLine) : true
+short_macd_condition = macd_filter_on ? (macdLine < signalLine) : true
+
+// Kết hợp điều kiện từ MA và MACD
+longCondition  = long_ma_condition and long_macd_condition
+shortCondition = short_ma_condition and short_macd_condition
+
+// Vẽ các đường MA trên chart
+plot(fast_ma, color=color.blue, title="Fast MA")
+plot(slow_ma, color=color.orange, title="Slow MA")
+plot(third_ma, color=color.purple, title="Third MA")
+
+// ====== LỆNH VÀO ======
+// Đối với lệnh Long, tính TP & SL dựa trên giá đóng cửa hiện tại
+if longCondition
+    risk   = close - long_stop_price_val
+    target_long = close + risk * rr_ratio
+    comment_long = "Symbol: " + syminfo.ticker + "| Type: Buy" + " | Entry: " + str.tostring(close) +" | TP: " + str.tostring(target_long) +" | SL: " + str.tostring(long_stop_price_val)
+    strategy.entry("Long", strategy.long, alert_message = comment_long)
+
+// Đối với lệnh Short
+if shortCondition
+    risk   = short_stop_price_val - close
+    target_short = close - risk * rr_ratio
+    comment_short = "Symbol: " + syminfo.ticker + "| Type: Sell" +" | Entry: " + str.tostring(close) +" | TP: " + str.tostring(target_short) +" | SL: " + str.tostring(short_stop_price_val)
+    strategy.entry("Short", strategy.short, alert_message = comment_short)
+
+// ====== XÁC ĐỊNH SL & TP KHI ĐÓNG LỆNH ======
+// Với lệnh Long: SL = giá thấp nhất của lookback nến, TP = giá vào lệnh + risk*RR
+if strategy.position_size > 0  // Vị thế Long
+    risk   = strategy.position_avg_price - long_stop_price_val
+    target = strategy.position_avg_price + risk * rr_ratio
+    exit_comment_long = "Exit - Symbol: " + syminfo.ticker
+    strategy.exit("Exit Long", from_entry="Long", stop=long_stop_price_val, limit=target, alert_message = exit_comment_long, oca_name="exit")
+    
+// Với lệnh Short: SL = giá cao nhất của lookback nến, TP = giá vào lệnh - risk*RR
+if strategy.position_size < 0  // Vị thế Short
+    risk   = short_stop_price_val - strategy.position_avg_price
+    target = strategy.position_avg_price - risk * rr_ratio
+    exit_comment_short = "Exit - Symbol: " + syminfo.ticker
+    strategy.exit("Exit Short", from_entry="Short", stop=short_stop_price_val, limit=target, alert_message=exit_comment_short, oca_name="exit")

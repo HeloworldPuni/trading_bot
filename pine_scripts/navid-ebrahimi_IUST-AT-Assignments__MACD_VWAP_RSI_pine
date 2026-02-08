@@ -1,0 +1,92 @@
+//@version=4
+strategy(title="MACD, RSI & VWAP", shorttitle="MACD, RSI & VWAP", overlay=true)
+
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+FromYear  = input(defval = 2023, title = "From Year", minval = 1900)
+ToMonth   = FromMonth + 1
+ToDay     = FromDay
+ToYear    = input(defval = 2023, title = "To Year", minval = 1900)
+
+FromTime = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+ToTime   = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+
+length = input(14, title="Length")
+overBought = input(70, title="Overbought Level")
+overSold = input(30, title="Oversold Level")
+
+[macdLine, signalLine, _] = macd(close, 12, 26, 9)
+rsi = rsi(close, length)
+VWAP = vwap(hlc3)
+
+if (time >= FromTime and time <= ToTime)
+    RPT = 0.01
+    positionSize = (strategy.equity * RPT) / atr(14)
+
+    buyCondition = (crossover(macdLine, signalLine) and (not crossunder(rsi, overBought)) and (not crossunder(close, VWAP))) or ((not crossunder(macdLine, signalLine)) and (crossover(rsi, overBought)) and (not crossunder(close, VWAP))) or ((not crossunder(macdLine, signalLine)) and (not crossunder(rsi, overBought)) and (crossover(close, VWAP)))
+    sellCondition = (crossunder(macdLine, signalLine) and (not crossover(rsi, overSold)) and (not crossover(close, VWAP))) or ((not crossover(macdLine, signalLine)) and (crossunder(rsi, overSold)) and (not crossover(close, VWAP))) or ((not crossover(macdLine, signalLine)) and (not crossover(rsi, overSold)) and (crossunder(close, VWAP)))
+
+    strategy.entry("Buy", strategy.long, when = buyCondition,qty=positionSize)
+    strategy.entry("Sell", strategy.short, when = sellCondition, qty=positionSize)
+
+    buyProfitLimit = close * 1.10
+    buyLossLimit = close * 0.98
+    sellProfitLimit = close * 0.9
+    sellLossLimit = close * 1.02
+
+    strategy.exit("Exit", "Buy", when = strategy.position_size > 0, stop=buyLossLimit, limit=buyProfitLimit)
+    strategy.exit("Exit", "Sell", when = strategy.position_size < 0, stop=sellLossLimit, limit=sellProfitLimit)
+
+------------------------------------------------------------------------------------------------------------------------------------------
+
+//@version=4
+strategy(title="MACD, RSI & VWAP", shorttitle="MACD, RSI & VWAP", overlay=true)
+
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+FromYear  = input(defval = 2023, title = "From Year", minval = 1900)
+ToMonth   = FromMonth + 1
+ToDay     = FromDay
+ToYear    = input(defval = 2023, title = "To Year", minval = 1900)
+
+FromTime = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+ToTime   = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+
+length = input(14, title="Length")
+overBought = input(70, title="Overbought Level")
+overSold = input(30, title="Oversold Level")
+
+higherTf = input("D", title="Higher Time Frame")
+lowerTf = input("60", title="Lower Time Frame")
+
+[higherTimeFrameMACDLine, higherTimeFrameSignalLine, _] = security(syminfo.tickerid, higherTf, macd(close, 12, 26, 9))
+higherTimeFrameRSI = security(syminfo.tickerid, higherTf, rsi(close, length))
+higherTimeFrameVWAP = security(syminfo.tickerid, higherTf, vwap(hlc3))
+
+[lowerTimeFrameMACDLine, lowerTimeFrameSignalLine, _] = security(syminfo.tickerid, lowerTf, macd(close, 12, 26, 9))
+lowerTimeFrameRSI = security(syminfo.tickerid, lowerTf, rsi(close, length))
+lowerTimeFrameVWAP = security(syminfo.tickerid, lowerTf, vwap(hlc3))
+
+if (time >= FromTime and time <= ToTime)
+    RPT = 0.01
+    positionSize = (strategy.equity * RPT) / atr(14)
+
+    higherTimeFrame_buyCondition = (crossover(higherTimeFrameMACDLine, higherTimeFrameSignalLine) and (not crossunder(higherTimeFrameRSI, overBought)) and (not crossunder(close, higherTimeFrameVWAP))) or ((not crossunder(higherTimeFrameMACDLine, higherTimeFrameSignalLine)) and (crossover(higherTimeFrameRSI, overBought)) and (not crossunder(close, higherTimeFrameVWAP))) or ((not crossunder(higherTimeFrameMACDLine, higherTimeFrameSignalLine)) and (not crossunder(higherTimeFrameRSI, overBought)) and (crossover(close, higherTimeFrameVWAP)))
+    lowerTimeFrame_buyCondition = (crossover(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine) and (not crossunder(lowerTimeFrameRSI, overBought)) and (not crossunder(close, lowerTimeFrameVWAP))) or ((not crossunder(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine)) and (crossover(lowerTimeFrameRSI, overBought)) and (not crossunder(close, lowerTimeFrameVWAP))) or ((not crossunder(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine)) and (not crossunder(lowerTimeFrameRSI, overBought)) and (crossover(close, lowerTimeFrameVWAP)))
+
+    higherTimeFrame_sellCondition = (crossunder(higherTimeFrameMACDLine, higherTimeFrameSignalLine) and (not crossover(higherTimeFrameRSI, overSold)) and (not crossover(close, higherTimeFrameVWAP))) or ((not crossover(higherTimeFrameMACDLine, higherTimeFrameSignalLine)) and (crossunder(higherTimeFrameRSI, overSold)) and (not crossover(close, higherTimeFrameVWAP))) or ((not crossover(higherTimeFrameMACDLine, higherTimeFrameSignalLine)) and (not crossover(higherTimeFrameRSI, overSold)) and (crossunder(close, higherTimeFrameVWAP)))
+    lowerTimeFrame_sellCondition = (crossunder(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine) and (not crossover(lowerTimeFrameRSI, overSold)) and (not crossover(close, lowerTimeFrameVWAP))) or ((not crossover(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine)) and (crossunder(lowerTimeFrameRSI, overSold)) and (not crossover(close, lowerTimeFrameVWAP))) or ((not crossover(lowerTimeFrameMACDLine, lowerTimeFrameSignalLine)) and (not crossover(lowerTimeFrameRSI, overSold)) and (crossunder(close, lowerTimeFrameVWAP)))
+
+    buyCondition = higherTimeFrame_buyCondition and lowerTimeFrame_buyCondition
+    sellCondition = higherTimeFrame_sellCondition and lowerTimeFrame_sellCondition
+
+    strategy.entry("Buy", strategy.long, when = buyCondition,qty=positionSize)
+    strategy.entry("Sell", strategy.short, when = sellCondition, qty=positionSize)
+
+    buyProfitLimit = close * 1.10
+    buyLossLimit = close * 0.98
+    sellProfitLimit = close * 0.9
+    sellLossLimit = close * 1.02
+
+    strategy.exit("Exit", "Buy", when = strategy.position_size > 0, stop=buyLossLimit, limit=buyProfitLimit)
+    strategy.exit("Exit", "Sell", when = strategy.position_size < 0, stop=sellLossLimit, limit=sellProfitLimit)

@@ -1,0 +1,37 @@
+//@version=5
+indicator("Module 5 - Volume and Volatility Statistics", overlay = true)
+
+// Input parameters
+lengthSMA = input(14, title="SMA Length")
+
+// Volume SMA
+volumeSMA = ta.sma(volume, lengthSMA)
+plot(volumeSMA, color=color.blue, title="Volume SMA")
+
+// Relative Volume
+relativeVolume = volume / volumeSMA
+plot(relativeVolume, color=color.red, title="Relative Volume")
+
+// Climax Volume Detection
+climaxVolumeThreshold = input(2.0, title="Climax Volume Multiplier")
+climaxVolume = relativeVolume > climaxVolumeThreshold ? volume : na
+plotshape(climaxVolume, style=shape.triangledown, location=location.belowbar, color=color.red, size=size.small, title="Climax Volume")
+
+// ATR (Average True Range)
+lengthATR = input(14, title="ATR Length")
+atrl = ta.atr(lengthATR)
+plot(atrl, color=color.yellow, title="ATR")
+
+// Spread Calculation
+spread = high - low
+plot(spread, color=color.green, title="Spread")
+
+// Relative Spread
+relativeSpread = spread / close
+plot(relativeSpread, color=color.purple, title="Relative Spread")
+
+// Big/Small Spread Flags
+bigSpreadFlag = relativeSpread > 0.02
+smallSpreadFlag = relativeSpread < 0.01
+plotshape(bigSpreadFlag, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, title="Big Spread")
+plotshape(smallSpreadFlag, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny, title="Small Spread")

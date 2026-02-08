@@ -1,0 +1,102 @@
+// This Pine Script™ source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradingView User
+
+//@version=5
+indicator("First HL After HH", overlay=true)
+
+// Input parameters
+pivotLength = input.int(5, "Pivot Length", minval=1, maxval=50, tooltip="Number of bars to look back/forward for pivot detection")
+showLabels = input.bool(true, "Show Labels")
+showLines = input.bool(true, "Show Connection Lines")
+alertOnSignal = input.bool(true, "Enable Alerts")
+
+// Colors
+hhColor = input.color(color.green, "HH Color")
+hlColor = input.color(color.blue, "HL Color (Signal)")
+lineColor = input.color(color.yellow, "Line Color")
+
+// Variables to track swing points
+var float lastHigh = na
+var float lastLow = na
+var float previousHigh = na
+var float previousLow = na
+var int lastHighBar = na
+var int lastLowBar = na
+var bool hadHH = false
+var bool signalTriggered = false
+
+// Detect pivot highs and lows
+pivotHigh = ta.pivothigh(high, pivotLength, pivotLength)
+pivotLow = ta.pivotlow(low, pivotLength, pivotLength)
+
+// Track Higher Highs (HH)
+isHH = false
+if not na(pivotHigh)
+    if not na(lastHigh) and pivotHigh > lastHigh
+        isHH := true
+        hadHH := true
+        signalTriggered := false  // Reset signal when new HH forms
+    previousHigh := lastHigh
+    lastHigh := pivotHigh
+    lastHighBar := bar_index - pivotLength
+
+// Track Higher Lows (HL) - Signal when it's the first HL after HH
+isHL = false
+isFirstHLAfterHH = false
+
+if not na(pivotLow)
+    if not na(lastLow) and pivotLow > lastLow
+        isHL := true
+        // Check if this is the first HL after a HH
+        if hadHH and not signalTriggered
+            isFirstHLAfterHH := true
+            signalTriggered := true  // Mark that we've found our signal
+    previousLow := lastLow
+    lastLow := pivotLow
+    lastLowBar := bar_index - pivotLength
+
+// Plot labels for HH
+if isHH and showLabels
+    label.new(bar_index - pivotLength, pivotHigh, "HH", 
+              style=label.style_label_down, 
+              color=hhColor, 
+              textcolor=color.white,
+              size=size.small)
+
+// Plot labels for first HL after HH (the signal)
+if isFirstHLAfterHH and showLabels
+    label.new(bar_index - pivotLength, pivotLow, "HL\n(Entry)", 
+              style=label.style_label_up, 
+              color=hlColor, 
+              textcolor=color.white,
+              size=size.normal)
+    
+    // Draw line connecting HH to HL
+    if showLines and not na(lastHighBar)
+        line.new(lastHighBar, lastHigh, bar_index - pivotLength, pivotLow,
+                 color=lineColor, width=2, style=line.style_dashed)
+
+// Plot shapes on chart for visual identification
+plotshape(isHH, title="Higher High", location=location.abovebar, 
+          color=hhColor, style=shape.triangledown, size=size.tiny, offset=-pivotLength)
+
+plotshape(isFirstHLAfterHH, title="First HL After HH", location=location.belowbar, 
+          color=hlColor, style=shape.triangleup, size=size.small, offset=-pivotLength)
+
+// Background highlight when signal occurs
+bgcolor(isFirstHLAfterHH ? color.new(hlColor, 90) : na, offset=-pivotLength)
+
+// Alert condition
+alertcondition(isFirstHLAfterHH, title="First HL After HH", message="First Higher Low detected after Higher High - Potential Entry!")
+
+// Information table
+var table infoTable = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Last HH:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, str.tostring(lastHigh, format.mintick), text_color=hhColor, text_size=size.small)
+    table.cell(infoTable, 0, 1, "Last HL:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(lastLow, format.mintick), text_color=hlColor, text_size=size.small)
+    table.cell(infoTable, 0, 2, "HH Active:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 2, hadHH and not signalTriggered ? "Yes" : "No", text_color=hadHH and not signalTriggered ? color.green : color.red, text_size=size.small)
+    table.cell(infoTable, 0, 3, "Signal:", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 3, signalTriggered ? "Triggered" : "Waiting", text_color=signalTriggered ? color.green : color.yellow, text_size=size.small)

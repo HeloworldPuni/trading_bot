@@ -1,0 +1,58 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © xichengjiang
+
+//@version=4
+study(title="MACD Fast", shorttitle="MACDF")
+
+// Getting inputs
+fast_length = input(title="Fast Length", type=input.integer, defval=12)
+slow_length = input(title="Slow Length", type=input.integer, defval=26)
+src = input(title="Source", type=input.source, defval=close)
+signal_length = input(title="Signal Smoothing", type=input.integer, minval=1, maxval=50, defval=9)
+sma_source = false
+sma_signal = false
+show_x = input(title="Show all crosses", type=input.bool, defval=true)
+show_x_only = input(title="Show crosses only with EMA trend", type=input.bool, defval=false)
+ema_length = input(title="EMA Length", type=input.integer, defval=55)
+show_key = input(title="Show key crosses only", type=input.bool, defval=true)
+
+// Plot colors
+col_grow_above = #26A69A
+col_grow_below = #FFCDD2
+col_fall_above = #B2DFDB
+col_fall_below = #EF5350
+col_macd = #0094FF
+col_signal = #FF6A00
+col_green = #4CAF50
+col_red = #F32024
+col_white = #FFFFFF
+
+// Calculating
+fast_ma1 = sma_source?sma(src, fast_length):ema(src,fast_length)
+fast_ma2 = sma_source?sma(fast_ma1,fast_length):ema(fast_ma1,fast_length)
+fast_ma = fast_ma1 * 2 - fast_ma2
+
+slow_ma1 = sma_source?sma(src,slow_length):ema(src,slow_length)
+slow_ma2 = sma_source?sma(slow_ma1,slow_length):ema(slow_ma1,slow_length)
+slow_ma = slow_ma1 * 2 - slow_ma2
+
+macd = fast_ma - slow_ma
+
+signal1 = sma_signal?sma(macd,signal_length):ema(macd,signal_length)
+signal2 = sma_signal?sma(signal1,signal_length):ema(signal1,signal_length)
+signal = signal1 * 2 -signal2
+
+hist = macd - signal
+trend_ema = ema(close, ema_length)
+show_cross_only_up = show_x_only?(close<trend_ema?true:false):true
+show_cross_only_down = show_x_only?(close>trend_ema?true:false):true
+
+show_key_up = show_key?(macd>0?true:false):true
+show_key_down = show_key?(macd<0?true:false):true
+
+plot(hist, title="Histogram", style=plot.style_columns, color=(hist>=0?(hist[1]<hist?col_grow_above:col_fall_above):(hist[1]<hist?col_grow_below:col_fall_below)),transp=0)
+plot(macd, title="MACD", color=col_macd, transp=0)
+plot(signal, title="Signal", color=col_signal, transp=0)
+plot(crossunder(macd,signal) and show_x and show_cross_only_up and show_key_up?signal:na, color=col_red, style=plot.style_circles, linewidth=3, transp=0, title="X MACD under signal")
+plot(crossover(macd,signal) and show_x and show_cross_only_down and show_key_down?signal:na, color=col_green, style=plot.style_circles,linewidth=3, transp=0, title="X MACD over signal")
+hline(0, title="Zero", color=color.gray, linestyle=hline.style_dashed)

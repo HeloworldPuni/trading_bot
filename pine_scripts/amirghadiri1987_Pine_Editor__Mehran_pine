@@ -1,0 +1,163 @@
+//@version=6
+indicator('xxx', 'KHAN SMC', true, max_bars_back = 5000, max_labels_count = 500, max_lines_count = 500)
+
+// [ _ ] creat and edit inputs symbols and timeframe and bool
+// [ _ ] edit function mnMark in the multisymbol
+// [ _ ] BoS_ChoCh
+// [ _ ] cfHL
+// [ _ ] sweep
+// [ _ ] IDM
+// [ ] ba_color
+// [ ] 
+// [ ] 
+// [ ] 
+// [ ] 
+
+
+// Symbol and Bool and timeframe
+// TODOO
+//--- symbol 2
+tim_frm2  = input.timeframe(defval='', title='Time Frame' , confirm = true, inline = "in_2",group="(( -------------------------- Symbol 2 -----------------------------))")
+sym2      = input.symbol("", title="Symbol", confirm = true, inline = "in_2", group="(( -------------------------- Symbol 2 -----------------------------))")
+OnOf2      = input.bool(true, "", inline = "in_2", group="(( -------------------------- Symbol 2 -----------------------------))")
+tmodify2 = ticker.modify(sym2, session.extended)
+
+//--- symbol 3
+tim_frm3  = input.timeframe(defval='1', title='Time Frame' , confirm = true, inline = "in_3",group="(( -------------------------- Symbol 3 -----------------------------))")
+sym3      = input.symbol("OANDA:XAUUSD", title="Symbol", confirm = true, inline = "in_3", group="(( -------------------------- Symbol 3 -----------------------------))")
+OnOf3      = input.bool(true, "", inline = "in_3", group="(( -------------------------- Symbol 3 -----------------------------))")
+
+
+//color
+color transp = color.new(#59ff62, 5)
+//drawing options
+equalHL = input.bool(bool(0), 'Use equal H/L', 'To calculate valid pullbacks and minor structure', group = 'Calculation method')
+showHL = input.bool(bool(1), 'Mark H/L', group = 'H/L marking options')
+HLcolor = input.color(color.rgb(0, 0, 0), 'H/L color', group = 'H/L marking options')
+showMn = input.bool(bool(0), 'Mark out internal structure', group = 'Internal structue')
+puUpco = input.color(color.rgb(255, 82, 82), 'High pivots', inline = 'mnco', group = 'Internal structue')
+puDnco = input.color(color.green, 'Low pivots', inline = 'mnco', group = 'Internal structue')
+showBC = input.bool(bool(1), 'Mark BoS/ChoCH', group = 'BoS/Choch')
+bull = input.color(color.green, 'Bull color', inline = 'BSclor', group = 'BoS/Choch')
+bear = input.color(color.red, 'Bear color', inline = 'BSclor', group = 'BoS/Choch')
+showbarcolor = input.bool(bool(0), 'Bar color', group = 'Bar color')
+showSCOB = input.bool(bool(1), 'Show SCOB pattern', group = 'Bar color')
+scobUp = input.color(color.aqua, 'Bullish SCOB', inline = 'scob', group = 'Bar color')
+scobDn = input.color(color.fuchsia, 'Bearish SCOB', inline = 'scob', group = 'Bar color')
+showIDM = input.bool(bool(1), 'Mark previous IDM', group = 'IDM')
+showliveIDM = input.bool(bool(1), 'Mark live IDM', group = 'IDM')
+idmColor = input.color(color.rgb(21, 6, 230), 'IDM color', group = 'IDM')
+showSw = input.bool(bool(1), 'Show H/L sweeping lines', group = 'H/L sweeps')
+markX = input.bool(bool(1), 'Mark "X"', group = 'H/L sweeps')
+swColor = input.color(color.white, 'Sweeping line color', group = 'H/L sweeps')
+
+
+
+//#region drawing functions
+//bar indexes
+// TODOO
+var int puUpbar = na
+var int puDnbar = na
+// var puUp = hg_s1
+// var puDn = lw_s1
+mnMark(bool UD, tmodify, timeframe) =>
+    [op_s1, cl_s1, puUp, puDn] = request.security(tmodify, timeframe, [open, close, high, low], lookahead = barmerge.lookahead_off, ignore_invalid_symbol = false, gaps = barmerge.gaps_off)
+    if showMn
+        label.new(x = UD ? puUpbar : puDnbar, y = UD ? puUp : puDn, yloc = UD ? yloc.abovebar : yloc.belowbar, text = '', color = UD ? puUpco : puDnco, style = UD ? label.style_arrowdown : label.style_arrowup, size = size.tiny)
+
+
+// TODOO
+//@version=5
+//@description Calculates ChoCH (BoS_ChoCh).
+//@param tmodify Input ticker modify.
+//@param timeframe Input timeframe.
+// op_s1, cl_s1, lastHH, lastH, puDn, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar, barX
+//   |      |       |       |     |     |       |        |          |         |         |         |
+// open, close,   high,    high, low,  low,    low,  bar_index,  bar_index, bar_index, bar_index, bar_index
+BoS_ChoCh(bool B_C, bool UpDn, tmodify, timeframe) =>
+    [op_s1, cl_s1, lastHH, lastH, puDn, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar, barX] = request.security(tmodify, timeframe, [open, close, high, high, low, low, low, bar_index, bar_index, bar_index, bar_index, bar_index], lookahead = barmerge.lookahead_off, ignore_invalid_symbol = false, gaps = barmerge.gaps_off)
+    [HLbarid, BCprc, BCcolor, BCtxt, BCstyle] = switch 
+        B_C == bool(1) and UpDn == bool(1) => [lastHHbar, lastHH, bull, 'BoS', label.style_label_down]
+        B_C == bool(0) and UpDn == bool(1) => [lastHbar, lastH, bull, 'ChoCh', label.style_label_down]
+        B_C == bool(0) and UpDn == bool(0) => [lastLbar, lastL, bear, 'ChoCh', label.style_label_up]
+        B_C == bool(1) and UpDn == bool(0) => [lastLLbar, lastLL, bear, 'BoS', label.style_label_up]
+    maxlen = barX - 500
+    HLbarid := HLbarid < maxlen ? maxlen : HLbarid
+    if showBC
+        line.new(HLbarid, BCprc, barX, BCprc, color = BCcolor, style = line.style_dashed)
+        label.new(int(math.avg(barX, HLbarid)), BCprc, BCtxt, color = transp, style = BCstyle, textcolor = BCcolor)
+
+// TODOO
+//@version=5
+//@description Calculates ? (cfHL).
+//@param tmodify Input ticker modify.
+//@param timeframe Input timeframe.
+// op_s1, cl_s1, hg_s1, lw_s1, barX,      H,      Hbar,      Lbar,      L,  lastHH,  lastLL
+//   |      |       |     |      |        |        |           |        |      |       |
+// open,   close,  high, low,  bar_index, high, bar_index, bar_index,  low,   high,   low
+cfHL(bool ifHL, tmodify, timeframe) =>
+    [op_s1, cl_s1, hg_s1, H, lastHH, lw_s1, lastLL, L, barX, Hbar, Lbar] = request.security(tmodify, timeframe, [open, close, high, high, low, low, low, bar_index], lookahead = barmerge.lookahead_off, ignore_invalid_symbol = false, gaps = barmerge.gaps_off)
+    [ifHLbarid, HLprc] = switch 
+        ifHL => 
+    	    if hg_s1 > H
+    	        [barX, hg_s1]
+    	    else
+    	        [Hbar, H]
+        => 
+    	    if low < L
+    	        [barX, lw_s1]
+    	    else
+    	        [Lbar, L]
+    ifHL_txt = if ifHL
+        if H == lastHH
+            'HH'
+        else
+            'LH'
+    else
+        if L == lastLL
+            'LL'
+        else
+            'HL'
+    cfHLStyle = ifHL ? label.style_label_down : label.style_label_up
+    if showHL
+        label.new(ifHLbarid, HLprc, ifHL_txt, color = transp, textcolor = HLcolor, style = cfHLStyle)
+
+// TODOO
+// op_s1, cl_s1, lastHH, lastH, puDn, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar,    barX
+//   |      |       |       |     |     |       |        |          |         |         |           |
+// open, close,   high,    high, low,  low,    low,  bar_index,  bar_index, bar_index, bar_index, bar_index
+sweep(bool swHL, bool swHrLr, tmodify, timeframe) =>
+    [op_s1, cl_s1, lastHH, lastH, puDn, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar, barX] = request.security(tmodify, timeframe, [open, close, high, high, low, low, low, bar_index, bar_index, bar_index, bar_index, bar_index], lookahead = barmerge.lookahead_off, ignore_invalid_symbol = false, gaps = barmerge.gaps_off)
+    swStyle = swHL ? label.style_label_down : label.style_label_up
+    [swHLbarid, swprc, swHL_txt] = switch 
+        swHL == bool(1) and swHrLr == bool(1) => [lastHHbar, lastHH, 'HH']
+        swHL == bool(1) and swHrLr == bool(0) => [lastHbar, lastH, 'LH']
+        swHL == bool(0) and swHrLr == bool(1) => [lastLbar, lastL, 'HL']
+        swHL == bool(0) and swHrLr == bool(0) => [lastLLbar, lastLL, 'LL']
+    maxlen = barX - 500
+    swHLbarid := swHLbarid < maxlen ? maxlen : swHLbarid
+    //draw sweeping line
+    if showSw
+        line.new(swHLbarid, swprc, barX, swprc, color = swColor, style = line.style_dotted)
+        if markX
+            label.new(int(math.avg(barX, swHLbarid)), swprc, 'X', color = transp, textcolor = swColor, style = swStyle, size = size.small)
+
+// op_s1, cl_s1, lastHH, lastH, puDn, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar,    barX,      idmB, idmS
+//   |      |       |       |     |     |       |        |          |         |         |           |          |     |
+// open, close,   high,    high, low,  low,    low,  bar_index,  bar_index, bar_index, bar_index, bar_index,  low,  high
+IDM(bool BS, idmB_bar, idmS_bar, tmodify, timeframe) =>
+    [op_s1, cl_s1, lastHH, idmS, lastH, puDn, idmB, lastL, lastLL, lastHHbar, lastHbar, lastLbar, lastLLbar, barX] = request.security(tmodify, timeframe, [open, close, high, high, low, low, low, low, bar_index, bar_index, bar_index, bar_index, bar_index], lookahead = barmerge.lookahead_off, ignore_invalid_symbol = false, gaps = barmerge.gaps_off)
+    IDMid = BS ? idmB_bar : idmS_bar
+    idmprc = BS ? idmB : idmS
+    idmStyle = BS ? label.style_label_up : label.style_label_down
+    maxlen = barX - 500
+    IDMid := IDMid < maxlen ? maxlen : IDMid
+    //draw idm takeout line
+    if showIDM
+        line.new(IDMid, idmprc, barX, idmprc, color = idmColor, style = line.style_dotted)
+        label.new(int(math.avg(barX, IDMid)), idmprc, 'IDM', color = transp, textcolor = idmColor, style = idmStyle, size = size.small)
+
+
+
+
+plot(close)

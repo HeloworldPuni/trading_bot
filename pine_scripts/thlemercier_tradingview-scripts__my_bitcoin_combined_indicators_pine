@@ -1,0 +1,348 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Thlem
+
+//@version=5
+indicator("My:Bitcoin Combined Indicators")
+
+mode = input.string('BEAM', 'Configuration mode :', options=['BEAM', 'Risk Metric #1', 'Risk Metric #2', 'NVT Ratio', 'Mayers Multiple', 'Fear & Greed', 'Difficulty & Hashrate'])
+
+///////////////////////////////////////////////////////////
+// Colors Config                                         //
+///////////////////////////////////////////////////////////
+darkRed     = #9F191E // SELL
+midRed      = #E3242B
+orange      = #E6910E
+blue        = #63C5DA
+lightGreen  = #C7EA46
+darkGreen   = #39FF14 // BUY
+white       = #FFFFFF
+black       = #000000
+
+show(bol, val) => bol ? val : na
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---BEAM indicator----------------------                           //
+// ---------------------------------------                           //
+// BEAM stands for "Bitcoin Economics Adaptive Multiple".            //
+// BEAM divides the price of bitcoin at any given moment             //
+// to a moving average of past prices.                               //
+// Like the Mayer multiple, the purpose of this chart is to          //
+// indicate if Bitcoin is under or overvalued at any given time.     //
+// 1. Green buy zone: value of 0.07 and lower - buy Bitcoin.         //
+// 2. Red sell zone: value of 0.96 or higher - sell Bitcoin.         //
+// 3. Gray hodl zone: begins 8 months before and ends 8 months after //
+//    each halving event - hodl Bitcoin.                             //
+///////////////////////////////////////////////////////////////////////
+isBeam = mode == "BEAM"
+beamBuy = 0.07
+beamSell = 0.96
+getBeamColor(value) =>
+    if (value <= beamBuy)
+        darkGreen
+    else if (value >= beamSell)
+        darkRed
+    else
+        white
+
+beamValue = math.log(close / ta.sma(close, 1400) ) / 2.5
+plot(show(isBeam, beamValue), color=getBeamColor(beamValue))
+plot(show(isBeam, beamBuy), color=getBeamColor(beamBuy))
+plot(show(isBeam, beamSell), color=getBeamColor(beamSell))
+showBeamBackground = beamValue <= beamBuy or beamValue >= beamSell
+bgcolor(show(isBeam and showBeamBackground, color.new(getBeamColor(beamValue), 80)))
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---Risk Metric Common------------------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+getRiskMetricColor(ratio, ar) =>
+    if (ratio > array.get(ar, 0))
+        darkRed
+    else if (ratio > array.get(ar, 1))
+        midRed
+    else if (ratio > array.get(ar, 2))
+        orange
+    else if (ratio > array.get(ar, 3))
+        blue
+    else if (ratio > array.get(ar, 4))
+        lightGreen
+    else
+        darkGreen
+
+getSMARatioNormalized(length) =>
+    sma1 = ta.sma(close, length)
+    sma2 = ta.sma(close, length)
+    dsma1 = request.security(syminfo.tickerid, "D", sma1)
+    dsma2 = request.security(syminfo.tickerid, "W", sma2)
+    SMARatio = dsma1 / dsma2
+    SMARatioMaxVal = 4
+    SMARatioNormalized = SMARatio / SMARatioMaxVal
+    SMARatioNormalized
+
+f_round( _val, _decimals) => 
+    // Rounds _val to _decimals places.
+    _p = math.pow(10,_decimals)
+    math.round(math.abs(_val)*_p)/_p*math.sign(_val)
+    
+
+// SMA Rationalized
+SMAR_21_raw = getSMARatioNormalized(21)
+SMAR_50_raw = getSMARatioNormalized(50)
+SMAR_100_raw = getSMARatioNormalized(100)
+SMAR_Average = (SMAR_21_raw + SMAR_50_raw + SMAR_100_raw) / 3
+
+ratio_Average = array.new_float()
+array.push(ratio_Average, 0.6)  // Dark Red above 0.6
+array.push(ratio_Average, 0.56) // Mid Red above 0.56
+array.push(ratio_Average, 0.5)  // Orange above 0.5
+array.push(ratio_Average, 0.3)  // Blue above 0.3
+array.push(ratio_Average, 0.2)  // Light Green above 0.2 and Dark Green below 0.2
+
+ratio_21 = array.new_float()
+array.push(ratio_21, 0.55)  // Dark Red above 0.55
+array.push(ratio_21, 0.45)  // Mid Red above 0.45
+array.push(ratio_21, 0.4)   // Orange above 0.4
+array.push(ratio_21, 0.25)  // Blue above 0.25
+array.push(ratio_21, 0.15)  // Light Green above 0.15 and Dark Green below 0.15
+
+ratio_50 = array.new_float()
+array.push(ratio_50, 0.62)  // Dark Red above 0.62
+array.push(ratio_50, 0.56)  // Mid Red above 0.56
+array.push(ratio_50, 0.52)  // Orange above 0.52
+array.push(ratio_50, 0.25)  // Blue above 0.25
+array.push(ratio_50, 0.15)  // Light Green above 0.15 and Dark Green below 0.15
+
+ratio_100 = array.new_float()
+array.push(ratio_100, 0.85)  // Dark Red above 0.85
+array.push(ratio_100, 0.56)  // Mid Red above 0.56
+array.push(ratio_100, 0.52)  // Orange above 0.52
+array.push(ratio_100, 0.25)  // Blue above 0.25
+array.push(ratio_100, 0.15)  // Light Green above 0.15 and Dark Green below 0.15
+
+// Bands color
+SMAR_21_color = getRiskMetricColor(SMAR_21_raw, ratio_21)
+SMAR_50_color = getRiskMetricColor(SMAR_50_raw, ratio_50)
+SMAR_100_color = getRiskMetricColor(SMAR_100_raw, ratio_100)
+SMAR_Average_color = getRiskMetricColor(SMAR_Average, ratio_Average)
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---Risk Metric #1 indicator------------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+isRisk1 = mode == 'Risk Metric #1'
+//
+// SMA 21 Rationalized Band
+//
+SMAR_21_top = plot(show(isRisk1, 20), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+SMAR_21_bottom = plot(show(isRisk1, 0), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+fill(SMAR_21_top, SMAR_21_bottom, color=color.new(SMAR_21_color, 0))
+
+//
+// SMA 50 Rationalized Band
+//
+SMAR_50_top = plot(show(isRisk1, 45), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+SMAR_50_bottom = plot(show(isRisk1, 25), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+fill(SMAR_50_top, SMAR_50_bottom, color=color.new(SMAR_50_color, 0))
+
+//
+// SMA 100 Rationalized Band
+//
+SMAR_100_top = plot(show(isRisk1, 70), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+SMAR_100_bottom = plot(show(isRisk1, 50), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+fill(SMAR_100_top, SMAR_100_bottom, color=color.new(SMAR_100_color, 0))
+
+//
+// SMA Average Rationalized Band
+//
+SMAR_Average_top = plot(show(isRisk1, 95), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+SMAR_Average_bottom = plot(show(isRisk1, 75), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+fill(SMAR_Average_top, SMAR_Average_bottom, color=color.new(SMAR_Average_color, 0))
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---Risk Metric #2 indicator------------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+isRisk2 = mode == 'Risk Metric #2'
+isRisk2SmaAbove(length) =>
+    sma1 = ta.sma(close, length)
+    sma2 = ta.sma(close, length)
+    dsma1 = request.security(syminfo.tickerid, "D", sma1)
+    dsma2 = request.security(syminfo.tickerid, "W", sma2)
+    close > dsma1 and close > dsma2
+
+isAboveSma21 = isRisk2SmaAbove(21)
+SMAR_21_waves = isAboveSma21 ? SMAR_21_raw : SMAR_21_raw*-1
+isAboveSma50 = isRisk2SmaAbove(50)
+SMAR_50_waves = isAboveSma50 ? SMAR_50_raw : SMAR_50_raw*-1
+isAboveSma100 = isRisk2SmaAbove(100)
+SMAR_100_waves = isAboveSma100 ? SMAR_100_raw : SMAR_100_raw*-1
+SMAR_Average_waves = (SMAR_21_waves + SMAR_50_waves + SMAR_100_waves) / 3
+SMAR_Average_waves_color = getRiskMetricColor(SMAR_Average_waves, ratio_Average)
+
+zero = plot(show(isRisk2, 0), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+
+buyZone = plot(show(isRisk2, -0.3), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+buyZone2 = plot(show(isRisk2, -0.35), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+
+fill(buyZone, buyZone2, color.new(color.green, 50))
+
+sellZone = plot(show(isRisk2, 0.55), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+sellZone2 = plot(show(isRisk2, 0.6), style=plot.style_line, linewidth=1, color=color.new(color.white, 100))
+sellZone3 = plot(show(isRisk2, 0.75), style=plot.style_line, linewidth=3, color=color.new(color.red, 0))
+fill(sellZone, sellZone2, color.new(color.red, 50))
+
+smaavg = plot(show(isRisk2, SMAR_Average_waves), color=color.new(SMAR_Average_waves_color, 100), linewidth=1, title="SMA 7 W")
+fill(smaavg, zero, color.new(SMAR_Average_waves_color, 50))
+
+// alertcondition(SMAR_Average_waves <= -0.3, title='Bitcoin Daily Buy Zone', message='Bitcoin Daily Buy Zone - RISK -0.3')
+// alertcondition(SMAR_Average_waves >= 0.55, title='Bitcoin Daily Sell Zone', message='Bitcoin Daily Sell Zone - RISK 0.55')
+// alertcondition(SMAR_Average_waves >= 0.75, title='Bitcoin Daily SellBullrun Top Zone', message='Bitcoin Daily SellBullrun Top Zone - RISK 0.75')
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---NVT Ratio indicator-----------------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+isNvtRatio = mode == 'NVT Ratio'
+etrvu = request.security("QUANDL:BCHAIN/ETRVU", "D", close)
+mktcp = request.security("QUANDL:BCHAIN/MKTCP", "D", close)
+nvt_not_medianed = mktcp / etrvu
+nvtratio = ta.percentile_nearest_rank(nvt_not_medianed, 14, 50)
+plot(show(isNvtRatio, nvtratio), "NVT Ratio", color=color.aqua, linewidth=1)
+ma90 = ta.sma(close, 90)
+etrvu_ma90 = request.security("QUANDL:BCHAIN/ETRVU", "D", ma90)
+nvtsRaw = mktcp/etrvu_ma90
+nvts = nvtsRaw
+nvts_rma = ta.rma(nvtsRaw, 90)
+nvts_ma_deviation = (nvtsRaw - nvts_rma) / nvts_rma
+isDerivation = nvts_ma_deviation > 0.35 or nvts_ma_deviation < -0.35
+signalColor = nvts_ma_deviation > 0.35 ? color.red : nvts_ma_deviation < -0.35 ? color.green : color.gray
+plot(show(isNvtRatio, nvts), "NVT Signal", color=signalColor, linewidth=1)
+plot(show(isNvtRatio, 150), "Mid", color=color.olive, style=plot.style_line)
+plot(show(isNvtRatio, 45), "Mid", color=color.olive, style=plot.style_line)
+bgcolor(show(isDerivation and isNvtRatio, color.new(signalColor, 60)))
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---Mayers Multiple indicator-----------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+isMayersMultiple = mode == 'Mayers Multiple'
+sma200_D = ta.sma(close, 200)
+mmValue = close / sma200_D
+plot(show(isMayersMultiple, mmValue), style=plot.style_line, linewidth=1, color=color.new(color.white, 0))
+deuxPointQuatre = plot(show(isMayersMultiple, 2.4), style=plot.style_line, linewidth=1, color=color.new(color.red, 0))
+zeroSept = plot(show(isMayersMultiple, 0.7), style=plot.style_line, linewidth=1, color=color.new(color.green, 0))
+bgcolor(show(isMayersMultiple and mmValue >= 2.4, color.new(color.red, 60)))
+bgcolor(show(isMayersMultiple and mmValue <= 0.7, color.new(color.green, 60)))
+
+///////////////////////////////////////////////////////////////////////
+// ---------------------------------------                           //
+// ---Fear & Greed indicator--------------                           //
+// ---------------------------------------                           //
+///////////////////////////////////////////////////////////////////////
+isFearAndGreed = mode == 'Fear & Greed'
+pmacd      = request.security(syminfo.tickerid, "D", (close/ta.ema(close, 89) - 1) * 100, barmerge.gaps_off, barmerge.lookahead_on)
+ror        = request.security(syminfo.tickerid, "D", (close - close[89])/close[89] * 100, barmerge.gaps_off, barmerge.lookahead_on)
+accDist    = request.security(syminfo.tickerid, "D", close==high and close==low or high==low ? 0 : ((2 * close - low - high) / (high - low)), barmerge.gaps_off, barmerge.lookahead_on)
+vol        = request.security(syminfo.tickerid, "D", volume, barmerge.gaps_off, barmerge.lookahead_on)
+moneyFlow  = if nz(vol) != 0
+    math.sum(accDist * vol, 13) / math.sum(vol, 13) * 100
+volatility = request.security("BVOL24H", "D", -(close/ta.ema(close, 89) - 1) * 100)
+btcdom     = request.security("BTC.D",   "D",  (1 - close[13] / close) * 100)
+
+val1 = volatility
+
+val2 = btcdom
+
+fearAndGreedValue = if nz(vol) == 0
+    ta.rma((pmacd + ror + val1 + val2) / 4, 1)
+else
+    ta.rma((pmacd + ror + moneyFlow + val1 + val2) / 5, 1)
+
+getFearGreedText(value) =>
+    if value > 50  
+        "Extreame Greed" 
+    else if value > 20
+        "Greed"
+    else if value < -25
+        "Fear" 
+    else if value < -40
+        "Extreame Fear"
+    else
+        "Neutral"
+
+getFearGreedColor(value) =>
+    if (value > 50)
+        midRed
+    else if (value > 20)
+        orange
+    else if (value > 0)
+        white
+    else if (value > -25)
+        lightGreen
+    else
+        darkGreen
+
+
+plot(show(isFearAndGreed, fearAndGreedValue), color=getFearGreedColor(fearAndGreedValue), linewidth=1, title="F&G", style=plot.style_area)
+plot(show(isFearAndGreed, 62), color=color.red, linewidth=2, title="extreme greed")
+plot(show(isFearAndGreed, -72), color=color.green, linewidth=2, title="extream fear")
+plot(show(isFearAndGreed, -22), color=color.yellow, linewidth=2, title="fear")
+
+///////////////////////////////////////////////////////////////////////
+// -------------------------------------------                       //
+// ---Mining Difficulty & Hashrate indicator--                       //
+// -------------------------------------------                       //
+///////////////////////////////////////////////////////////////////////
+isMiningDifficultyAndHashrate = mode == 'Difficulty & Hashrate'
+hashrate = request.security("QUANDL:BCHAIN/HRATE", "D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+previousHashrate = request.security("QUANDL:BCHAIN/HRATE", "D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+previous7Hashrate = request.security("QUANDL:BCHAIN/HRATE", "D", close[7], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+previous30Hashrate = request.security("QUANDL:BCHAIN/HRATE", "D", close[30], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+hashrate_mean_7 = request.security("QUANDL:BCHAIN/HRATE", "D", ta.sma(close, 30), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+hashrate_mean_21 = request.security("QUANDL:BCHAIN/HRATE", "D", ta.sma(close, 60),gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+hashrate_plot = plot(show(isMiningDifficultyAndHashrate, hashrate), "Hashrate", style=plot.style_line, color=color.teal)
+hashrate_mean_7_plot = plot(show(isMiningDifficultyAndHashrate, hashrate_mean_7), "Hashrate Mean 7", color=color.new(color.gray, 100), style=plot.style_line)
+hashrate_mean_21_plot = plot(show(isMiningDifficultyAndHashrate, hashrate_mean_21), style=plot.style_line, color=color.new(color.gray, 100), title='Hashrate Mean 21')
+fill(hashrate_mean_21_plot, hashrate_mean_7_plot, color=hashrate_mean_21 < hashrate_mean_7 ? color.new(color.green, 85) : color.new(color.red, 85))
+
+difficulty = request.security("QUANDL:BCHAIN/DIFF","D", close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on) / 60000
+previousDifficulty = request.security("QUANDL:BCHAIN/DIFF","D", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on) / 60000
+previous7Difficulty = request.security("QUANDL:BCHAIN/DIFF","D", close[7], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on) / 60000
+previous30Difficulty = request.security("QUANDL:BCHAIN/DIFF","D", close[30], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on) / 60000
+
+difficulty_plot = plot(show(isMiningDifficultyAndHashrate, difficulty), "Difficulty", color=#EAEAEA, style=plot.style_line, linewidth=3)
+
+if (isMiningDifficultyAndHashrate)
+    hashrateDailyChange = (hashrate - previousHashrate) / previousHashrate * 100
+    hashrateDailyChangePositive = hashrateDailyChange > 0 ? '+' : ''
+    hashrate7Change = (hashrate - previous7Hashrate) / previous7Hashrate * 100
+    hashrateSevenDayChangePositive = hashrate7Change > 0 ? '+' : ''
+    hashrate30Change = (hashrate - previous30Hashrate) / previous30Hashrate * 100
+    hashrateThirtyDayChangePositive = hashrate30Change > 0 ? '+' : ''
+
+    difficultyDailyChange = (difficulty - previousDifficulty) / previousDifficulty * 100
+    dailyChangePositive = difficultyDailyChange > 0 ? '+' : ''
+    difficulty7Change = (difficulty - previous7Difficulty) / previous7Difficulty * 100
+    sevenDayChangePositive = difficulty7Change > 0 ? '+' : ''
+    difficulty30Change = (difficulty - previous30Difficulty) / previous30Difficulty * 100
+    thirtyDayChangePositive = difficulty30Change > 0 ? '+' : ''
+
+    hashrateLabelText = '  -- Hashrate --  \n'
+    hashrateLabelText := hashrateLabelText + '1 Day : ' + hashrateDailyChangePositive + str.tostring(hashrateDailyChange, '#.#') + '%\n'
+    hashrateLabelText := hashrateLabelText + '7 Days : ' + hashrateSevenDayChangePositive + str.tostring(hashrate7Change, '#.#') + '%\n'
+    hashrateLabelText := hashrateLabelText + '30 Days : ' + hashrateThirtyDayChangePositive + str.tostring(hashrate30Change, '#.#') + '%'
+    hashrateLabel_xloc = time_close + (( time_close - time_close[1] ) * 6 )
+    hashrateLabelText := hashrateLabelText + '\n\n  -- Difficulty --  \n'
+    hashrateLabelText := hashrateLabelText + '1 Day : ' + dailyChangePositive + str.tostring(difficultyDailyChange, '#.#') + '%\n'
+    hashrateLabelText := hashrateLabelText + '7 Days : ' + sevenDayChangePositive + str.tostring(difficulty7Change, '#.#') + '%\n'
+    hashrateLabelText := hashrateLabelText + '30 Days : ' + thirtyDayChangePositive + str.tostring(difficulty30Change, '#.#') + '%'
+
+    hashrateLabel = label.new(hashrateLabel_xloc, hashrate, hashrateLabelText , xloc.bar_time, yloc.price, color=color.teal, style=label.style_label_left, textcolor=color.white, size=size.normal )
+    label.delete( hashrateLabel[1] )

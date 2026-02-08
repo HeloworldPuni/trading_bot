@@ -1,0 +1,221 @@
+//@version=6
+indicator("GemHunter v3 (EMA+RSI+MACD, Anti-Chop, MTF-Confirmed)", shorttitle="GemHunter v3", overlay=true, max_bars_back=5000)
+
+// ───────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ───────────────────────────────────────────────────────────────────────────────
+grp_trend    = "Trend Engine (RSI + MACD + EMA)"
+emaFastLen   = input.int(50,  "EMA Fast", minval=2, group=grp_trend)
+emaSlowLen   = input.int(200, "EMA Slow", minval=5, group=grp_trend)
+rsiLen       = input.int(14,  "RSI Length", minval=2, group=grp_trend)
+rsiBullTh    = input.int(55,  "RSI Bull Threshold", minval=1, maxval=99, group=grp_trend)
+rsiBearTh    = input.int(45,  "RSI Bear Threshold", minval=1, maxval=99, group=grp_trend)
+macdFast     = input.int(12,  "MACD Fast", minval=1, group=grp_trend)
+macdSlow     = input.int(26,  "MACD Slow", minval=1, group=grp_trend)
+macdSignal   = input.int(9,   "MACD Signal", minval=1, group=grp_trend)
+confirmBars  = input.int(3,   "Bars to Confirm Regime", minval=1, group=grp_trend)
+
+grp_filters  = "Noise Filters (Anti-Chop / Hysteresis)"
+emaAtrMult   = input.float(0.5, "Min EMA Separation (x ATR)", minval=0.0, step=0.05, group=grp_filters)
+slopeLb      = input.int(20, "EMA Slow Slope Lookback", minval=1, group=grp_filters)
+slopeMinRoc  = input.float(0.05, "Min EMA Slow ROC % (abs)", minval=0.0, step=0.01, group=grp_filters)
+rsiHyst      = input.int(2, "RSI Hysteresis (+/-)", minval=0, maxval=10, group=grp_filters)
+macdStdLen   = input.int(100, "MACD Hist Strength Window", minval=5, group=grp_filters)
+macdStdMult  = input.float(0.5, "MACD Hist Strength (x StDev)", minval=0.0, step=0.1, group=grp_filters)
+
+grp_htf      = "Higher Timeframe Confirmation"
+useHTF       = input.bool(true, "Enable HTF Confirmation", group=grp_htf)
+htfTF        = input.timeframe("240", "HTF (4H/D/W)", group=grp_htf)
+htfMode      = input.string("Filter", "HTF Mode", options=["Display Only","Filter","Strict"], group=grp_htf)
+
+grp_bg       = "Background Controls"
+bgSource     = input.string("Gated", "BG Uses", options=["LTF","Gated","HTF"], group=grp_bg)
+minHoldBars  = input.int(5, "Min Bars to Hold Trend", minval=0, group=grp_bg)
+
+grp_style    = "Style"
+showBG       = input.bool(true, "Background Tint", group=grp_style)
+showEMAs     = input.bool(true, "Plot EMAs", group=grp_style)
+showMACDZero = input.bool(false, "Show MACD Zero Dots", group=grp_style)
+
+// ───────────────────────────────────────────────────────────────────────────────
+// CORE (LTF)
+// ───────────────────────────────────────────────────────────────────────────────
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+rsiVal   = ta.rsi(close, rsiLen)
+
+// MACD (manual)
+macdLine   = ta.ema(close, macdFast) - ta.ema(close, macdSlow)
+signalLine = ta.ema(macdLine, macdSignal)
+macdHist   = macdLine - signalLine
+
+atr14      = ta.atr(14)
+emaSepOK   = not na(atr14) and math.abs(emaFast - emaSlow) > atr14 * emaAtrMult
+
+rocSlow    = ta.roc(emaSlow, slopeLb)
+slopeOKU   = not na(rocSlow) and rocSlow >  +slopeMinRoc
+slopeOKD   = not na(rocSlow) and rocSlow <  -slopeMinRoc
+
+macdStdev  = ta.stdev(macdHist, macdStdLen)
+macdStr    = not na(macdStdev) and math.abs(macdHist) > macdStdev * macdStdMult
+
+// Tighter EMA side condition (cuts edge flips)
+bullEMA  = close > emaFast and emaFast > emaSlow and emaSepOK and slopeOKU
+bearEMA  = close < emaFast and emaFast < emaSlow and emaSepOK and slopeOKD
+bullMACD = macdLine > 0 and macdLine > signalLine and macdStr
+bearMACD = macdLine < 0 and macdLine < signalLine and macdStr
+bullRSI  = rsiVal >= (rsiBullTh + rsiHyst)
+bearRSI  = rsiVal <= (rsiBearTh - rsiHyst)
+
+// votes (2 of 3)
+bullVotes = (bullEMA ? 1 : 0) + (bullMACD ? 1 : 0) + (bullRSI ? 1 : 0)
+bearVotes = (bearEMA ? 1 : 0) + (bearMACD ? 1 : 0) + (bearRSI ? 1 : 0)
+rawBull   = bullVotes >= 2
+rawBear   = bearVotes >= 2
+
+// debounce N bars
+var int bullRun = 0
+var int bearRun = 0
+bullRun := rawBull ? bullRun + 1 : 0
+bearRun := rawBear ? bearRun + 1 : 0
+ltfBull  = bullRun >= confirmBars
+ltfBear  = bearRun >= confirmBars
+
+// ───────────────────────────────────────────────────────────────────────────────
+// HTF confirmed only (no intra-HTF repaint)
+// ───────────────────────────────────────────────────────────────────────────────
+htfConfirmed(expr) =>
+    request.security(syminfo.tickerid, htfTF, barstate.isconfirmed ? expr : nz(expr[1]), barmerge.gaps_off, barmerge.lookahead_off)
+
+emaFastHTF = useHTF ? htfConfirmed(ta.ema(close, emaFastLen)) : na
+emaSlowHTF = useHTF ? htfConfirmed(ta.ema(close, emaSlowLen)) : na
+rsiHTF     = useHTF ? htfConfirmed(ta.rsi(close, rsiLen))      : na
+
+macdExprHTF = ta.ema(close, macdFast) - ta.ema(close, macdSlow)
+macdHTF     = useHTF ? htfConfirmed(macdExprHTF) : na
+sigHTF      = useHTF ? htfConfirmed(ta.ema(macdExprHTF, macdSignal)) : na
+histHTF     = useHTF ? (macdHTF - sigHTF) : na
+
+atrHTF      = useHTF ? htfConfirmed(ta.atr(14)) : na
+sepOKhtf    = useHTF ? (not na(atrHTF) and math.abs(emaFastHTF - emaSlowHTF) > atrHTF * emaAtrMult) : false
+rocSlowHTF  = useHTF ? ta.roc(emaSlowHTF, slopeLb) : na
+sOKUhtf     = useHTF ? (not na(rocSlowHTF) and rocSlowHTF >  +slopeMinRoc) : false
+sOKDhtf     = useHTF ? (not na(rocSlowHTF) and rocSlowHTF <  -slopeMinRoc) : false
+macdStdevHTF= useHTF ? ta.stdev(histHTF, macdStdLen) : na
+macdStrHTF  = useHTF ? (not na(macdStdevHTF) and math.abs(histHTF) > macdStdevHTF * macdStdMult) : false
+
+bullEMA_HTF  = useHTF and emaFastHTF > emaSlowHTF and sepOKhtf and sOKUhtf
+bearEMA_HTF  = useHTF and emaFastHTF < emaSlowHTF and sepOKhtf and sOKDhtf
+bullMACD_HTF = useHTF and macdHTF > 0 and macdHTF > sigHTF and macdStrHTF
+bearMACD_HTF = useHTF and macdHTF < 0 and macdHTF < sigHTF and macdStrHTF
+bullRSI_HTF  = useHTF and rsiHTF >= (rsiBullTh + rsiHyst)
+bearRSI_HTF  = useHTF and rsiHTF <= (rsiBearTh - rsiHyst)
+
+bullVotesHTF = (bullEMA_HTF ? 1 : 0) + (bullMACD_HTF ? 1 : 0) + (bullRSI_HTF ? 1 : 0)
+bearVotesHTF = (bearEMA_HTF ? 1 : 0) + (bearMACD_HTF ? 1 : 0) + (bearRSI_HTF ? 1 : 0)
+htfBull = useHTF and bullVotesHTF >= 2
+htfBear = useHTF and bearVotesHTF >= 2
+
+// Gate LTF by HTF mode
+bool gatedBull = ltfBull
+bool gatedBear = ltfBear
+if useHTF
+    if htfMode == "Filter"
+        gatedBull := ltfBull and not htfBear
+        gatedBear := ltfBear and not htfBull
+    if htfMode == "Strict"
+        gatedBull := ltfBull and htfBull
+        gatedBear := ltfBear and htfBear
+
+// ───────────────────────────────────────────────────────────────────────────────
+// REGIME with flip guard
+// ───────────────────────────────────────────────────────────────────────────────
+var string regime     = "Neutral"
+var int    startBarIx = na
+var int    lastFlip   = na
+var int    upDur      = 0
+var int    downDur    = 0
+var float  avgUp      = na
+var float  avgDown    = na
+var int    upCount    = 0
+var int    dnCount    = 0
+
+canFlip = na(lastFlip) or (bar_index - lastFlip >= minHoldBars)
+
+// use gated signals to advance regime, but protect with canFlip
+wantBull = gatedBull and (regime != "Uptrend")  and canFlip
+wantBear = gatedBear and (regime != "Downtrend") and canFlip
+
+if wantBull
+    if regime == "Downtrend" and not na(startBarIx)
+        downDur := bar_index - startBarIx
+        dnCount += 1
+        avgDown := na(avgDown) ? downDur : (avgDown * (dnCount - 1) + downDur) / dnCount
+    regime     := "Uptrend"
+    startBarIx := bar_index
+    lastFlip   := bar_index
+    upDur      := 0
+
+if wantBear
+    if regime == "Uptrend" and not na(startBarIx)
+        upDur   := bar_index - startBarIx
+        upCount += 1
+        avgUp   := na(avgUp) ? upDur : (avgUp * (upCount - 1) + upDur) / upCount
+    regime     := "Downtrend"
+    startBarIx := bar_index
+    lastFlip   := bar_index
+    downDur    := 0
+
+if regime == "Uptrend" and not na(startBarIx)
+    upDur := bar_index - startBarIx
+if regime == "Downtrend" and not na(startBarIx)
+    downDur := bar_index - startBarIx
+
+// ───────────────────────────────────────────────────────────────────────────────
+// TABLES
+// ───────────────────────────────────────────────────────────────────────────────
+var table tblTopRight  = table.new(position.top_right,    2, 2, bgcolor=color.new(color.white, 90), frame_color=color.new(color.black, 90))
+var table tblBotLeft   = table.new(position.bottom_left,  2, 2, bgcolor=color.new(color.white, 90), frame_color=color.new(color.black, 90))
+var table tblBotRight  = table.new(position.bottom_right, 2, 2, bgcolor=color.new(color.white, 90))
+
+shortTxt   = gatedBull ? "Bullish" : gatedBear ? "Bearish" : "Neutral"
+shortColor = gatedBull ? color.green : gatedBear ? color.red : color.gray
+longTxt    = useHTF ? (htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral") : "—"
+longColor  = useHTF ? (htfBull ? color.green : htfBear ? color.red : color.gray) : color.gray
+barsNow    = regime == "Uptrend" ? upDur : regime == "Downtrend" ? downDur : 0
+
+if barstate.islast
+    table.cell(tblTopRight, 0, 0, "Long:",  text_color=color.white, bgcolor=color.blue)
+    table.cell(tblTopRight, 0, 1, longTxt,  text_color=longColor,   bgcolor=color.white)
+    table.cell(tblTopRight, 1, 0, "Short:", text_color=color.white, bgcolor=color.blue)
+    table.cell(tblTopRight, 1, 1, shortTxt, text_color=shortColor,  bgcolor=color.white)
+
+    table.cell(tblBotLeft, 0, 0, "AVG UP:",   text_color=color.white, bgcolor=color.blue)
+    table.cell(tblBotLeft, 0, 1, na(avgUp)   ? "—" : str.tostring(math.round(avgUp)),   text_color=color.green, bgcolor=color.white)
+    table.cell(tblBotLeft, 1, 0, "AVG DOWN:", text_color=color.white, bgcolor=color.blue)
+    table.cell(tblBotLeft, 1, 1, na(avgDown) ? "—" : str.tostring(math.round(avgDown)), text_color=color.red,   bgcolor=color.white)
+
+    table.cell(tblBotRight, 0, 0, "Trend",     text_color=color.white, bgcolor=color.blue)
+    table.cell(tblBotRight, 0, 1, "Bars now:", text_color=color.white, bgcolor=color.blue)
+    table.cell(tblBotRight, 1, 0, regime,      text_color=color.black, bgcolor=color.white)
+    table.cell(tblBotRight, 1, 1, str.tostring(barsNow), text_color=color.black, bgcolor=color.white)
+
+// ───────────────────────────────────────────────────────────────────────────────
+// BACKGROUND (selectable source)
+// ───────────────────────────────────────────────────────────────────────────────
+bgBull = color.new(color.green, 85)
+bgBear = color.new(color.red,   85)
+bgNeu  = color.new(color.gray,  88)
+
+// choose the driver for BG
+bgBullSig = bgSource == "LTF"   ? ltfBull   : bgSource == "HTF" ? htfBull   : gatedBull
+bgBearSig = bgSource == "LTF"   ? ltfBear   : bgSource == "HTF" ? htfBear   : gatedBear
+
+bgColor = bgBullSig ? bgBull : bgBearSig ? bgBear : bgNeu
+bgcolor(showBG ? bgColor : na)
+
+// Visual EMAs and optional MACD dots
+plot(showEMAs ? emaFast : na, "EMA Fast", color=color.new(color.teal,  0), linewidth=2)
+plot(showEMAs ? emaSlow : na, "EMA Slow", color=color.new(color.yellow,0), linewidth=2)
+plotshape(showMACDZero and macdLine > 0, title="MACD>0", style=shape.circle, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny)
+plotshape(showMACDZero and macdLine < 0, title="MACD<0", style=shape.circle, location=location.abovebar, color=color.new(color.red,   0), size=size.tiny)

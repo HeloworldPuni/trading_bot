@@ -1,0 +1,53 @@
+//@version=5
+indicator("Daily Technical Analysis", overlay=true)
+
+// Moving averages
+shortMA = ta.sma(close, 5)
+mediumMA = ta.sma(close, 20)
+longMA = ta.sma(close, 50)
+longerMA = ta.sma(close, 100)
+longestMA = ta.sma(close, 200)
+
+plot(shortMA, color=color.blue, title="MA5")
+plot(mediumMA, color=color.orange, title="MA20")
+plot(longMA, color=color.green, title="MA50")
+plot(longerMA, color=color.red, title="MA100")
+plot(longestMA, color=color.purple, title="MA200")
+
+// RSI
+rsi = ta.rsi(close, 14)
+plot(rsi, color=color.yellow, title="RSI")
+
+hline(70, 'Overbought', color=color.red)
+hline(30, 'Oversold', color=color.green)
+
+// MACD
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+plot(macdLine, color=color.blue, title='MACD')
+plot(signalLine, color=color.orange, title='Signal')
+plot(histLine, color=color.red, style=plot.style_histogram, title='Histogram')
+
+// ATR for volatility
+atr = ta.atr(14)
+plot(atr, title='ATR', color=color.gray)
+
+// Stochastic Oscillator
+k = ta.stoch(close, high, low, 14)
+d = ta.sma(k, 3)
+plot(k, color=color.blue, title='Stoch %K')
+plot(d, color=color.orange, title='Stoch %D')
+
+hline(80, 'Stoch Overbought', color=color.red)
+hline(20, 'Stoch Oversold', color=color.green)
+
+// Pivot Points (Daily)
+[pivotHigh, pivotLow] = ta.pivothigh(high, 5, 5), ta.pivotlow(low, 5, 5)
+plotshape(pivotHigh, style=shape.triangledown, location=location.abovebar, color=color.red, title='Pivot High')
+plotshape(pivotLow, style=shape.triangleup, location=location.belowbar, color=color.green, title='Pivot Low')
+
+// Placeholder for fundamental data (requires manual updates or external data sources)
+// Example: use built-in economic calendar data if available
+// This section can be customized to fetch economic events related to the pair
+// fundamentalEvents = request.economic(syminfo.prefix, economic.event.GDP)
+// plot(fundamentalEvents, title='GDP Events')
+

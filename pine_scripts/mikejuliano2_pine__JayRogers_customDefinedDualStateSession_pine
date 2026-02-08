@@ -1,0 +1,185 @@
+// https://www.tradingview.com/script/gn7LfWxz-Example-Custom-Defined-Dual-State-Session/
+
+// This source code is free to use, copy, and alter in any way you choose.
+// ...just remember to drop some credit :)
+
+//@version=4
+//@author=JayRogers
+
+study("Example - Custom Defined Dual-State Session", "EXAMPLE - CDDSS", overlay = true)
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+// ====== ABOUT THIS INDICATOR                                                //
+//                                                                            //
+//  - This script example aims to cover the following:                        //
+//                                                                            //
+//    • setting up custom timeframe / session windows                         //
+//    • gather a price range from the custom period ( high/low values )       //
+//    • create a secondary "holding" period through which to display the      //
+//      data collected from the initial session                               //
+//    • simple method to shift times to re-align to preferred timezone        //
+//                                                                            //
+// ====== ARTICLES and FURTHER READING                                        //
+//                                                                            //
+//  - https://www.investopedia.com/terms/t/tradingsession.asp                 //
+//                                                                            //
+// ====== REASON FOR STUDY                                                    //
+//                                                                            //
+//  - Educational Purposes Only.                                              //
+//                                                                            //
+//    Before considering writing this example I had seen multiple similar     //
+//    questions asking how to go about creating custom timeframes or          //
+//    sessions, so it seemed this might be a useful topic to attempt to       //
+//    create a relatively generic example.                                    //
+//                                                                            //
+// ====== DISCLAIMER                                                          //
+//                                                                            //
+//    Any trade decisions you make are entirely your own responsibility.      //
+//    I've made an effort to squash all the bugs, but you never know!         //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                            ====== INPUTS ======                            //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+//  some descriptive tooltip strings for inputs
+string TT_PR = "Final time to which the High and Low of the session will be held"
+string TT_TZ = "Offsets all time inputs together to help align to preferred timezone"
+
+//  get the inputs set up, just using integer here as simpler to manage for the sake of example.
+i_timeStart  = input( 3,  "Session Hours  ", input.integer, minval = 0,   maxval = 23, inline = "sess" )
+i_timeEnd    = input( 9,  "-",               input.integer, minval = 0,   maxval = 23, inline = "sess" )
+i_timeHold   = input( 18, "Holding Time",    input.integer, minval = 0,   maxval = 23, tooltip = TT_PR )
+i_hourShift  = input( -2, "Timezone Adjust", input.integer, minval = -12, maxval = 14, tooltip = TT_TZ )
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                          ====== FUNCTIONS ======                           //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+//  `f_timeShift24()` helper function for timezone re-alignment.
+//
+//  Takes an expected input of 0-23, shifts the values based on the given
+//  offset, and then re-aligns to the proper 0-23 range.
+//
+f_timeShift24( _input, _offset ) =>
+    int _shift = _input + _offset
+    _return = _shift > 23 ? _shift - 24 :
+              _shift < 0  ? 24 + _shift : _shift
+
+//  `f_isTime()` helper function for boolean time checks.
+//
+//  Takes an input and checks against the built-in `hour` variable for a match.
+//  we force `int(hour)` here, because there can be preceeding zeros which can
+//  cause some oddities such as "07" not matching "7". `int()` fixes this.
+//
+f_isTime( _input ) => int( hour ) == _input
+
+//  `f_captureSessionHL()` gather our custom session high and low data
+//
+//  Requires 2 boolean inputs defining the active session and holding states
+//
+f_captureSessionHL( _session, _holding ) =>
+
+    //  Set up some variables to track the high and low
+    var float _sessionHigh = na
+    var float _sessionLow = na
+
+    //  if we are in session...
+    if _session
+        //  if it just started, set the initial values
+        if not _session[1]
+            _sessionHigh := high
+            _sessionLow  := low
+        //  otherwise we are checking for higher highs and lower lows to update
+        //  with and remembering the new levels
+        else
+            _sessionHigh := high > _sessionHigh ? high : _sessionHigh
+            _sessionLow  := low  < _sessionLow  ? low  : _sessionLow
+
+    //
+    //  else if we're in holding state...
+    else if _holding
+        //  just reference self to maintain the same levels
+        _sessionHigh := _sessionHigh
+        _sessionLow  := _sessionLow
+
+    //
+    //  not in session or holding, so we can reset.
+    else
+        _sessionHigh := na
+        _sessionLow  := na
+
+    //  finally return our results
+    [ _sessionHigh, _sessionLow ]
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                   ====== SERIES, LINES and LABELS ======                   //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+//  get our initial time booleans set up
+//
+//  feed the inputs through the shifter function first to do any required
+//  timezone related re-alignment before they get checked in `f_isTime()`
+//
+bool timeStart = f_isTime( f_timeShift24( i_timeStart, i_hourShift ) )
+bool timeEnd   = f_isTime( f_timeShift24( i_timeEnd,   i_hourShift ) )
+bool timeHold  = f_isTime( f_timeShift24( i_timeHold,  i_hourShift ) )
+
+//  **  Defining the Session and Holding periods **
+//
+//  Here I choose to use booleans ( true|false ) to define the periods due to
+//  the fact that `time >= time` or `time <= time` could return false positives.
+//
+//  so with that said, lets set up `inSession` and `inHolding`...
+
+//  `inSession`, are we in the initial session period or not?
+//  -   If we have hit the `_start` time, then we toggle to true.
+//  -   If we have hit the `_end` time, then we toggle to false.
+//  -   If neither condition is true, then we just maintain state.
+var bool inSession = false
+inSession  := timeStart and not timeStart[1] ? true  :
+              timeEnd[1] and not timeEnd     ? false : inSession
+
+//  `inHolding`, are we in the post-session holding period or not?
+//  -   If we have hit the `_end` time, then we toggle to true.
+//  -   If we have hit the `_hold` time, then we toggle to false.
+//  -   If neither condition is true, then we just maintain state.
+var bool inHolding = false
+inHolding  := timeEnd[1] and not timeEnd     ? true  :
+              timeHold[1] and not timeHold   ? false : inHolding
+
+//  get our custom session high low data with `f_captureSessionHL()`
+[ sessionHigh, sessionLow ] = f_captureSessionHL( inSession, inHolding )
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                     ====== DRAWING and PLOTTING ======                     //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+//  small helper function for colours.
+f_sessionColours( _a, _b, _t1, _t2 ) =>
+    _return = inSession ? color.new( _a, _t1 ) :
+              inHolding ? color.new( _b, _t2 ) : na
+
+//  set up some session based colours for plots/fill
+//
+color coloursHigh = f_sessionColours( color.silver, color.red,    50, 0 )
+color coloursLow  = f_sessionColours( color.silver, color.green,  50, 0 )
+color coloursFill = f_sessionColours( color.blue,   color.silver, 80, 80 )
+
+//  plot our results with `style_linebr` to clear cut between holding and new session
+//
+plot_high = plot( sessionHigh, "Session High", coloursHigh, 2, plot.style_linebr )
+plot_low  = plot( sessionLow,  "Session Low",  coloursLow,  2, plot.style_linebr )
+fill( plot_high, plot_low, coloursFill )
+
+// -- PEANUT

@@ -1,0 +1,156 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TemptingBeef
+//https://stackoverflow.com/questions/59765122/vwap-in-pine-script
+//@version=5
+strategy('VWAP example', overlay=true)
+// VWAP
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+computeVWAP(src, isNewPeriod, stDevMultiplier) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+    var float sumSrcSrcVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	// sumSrcSrcVol calculates the dividend of the equation that is later used to calculate the standard deviation
+	sumSrcSrcVol := isNewPeriod ? volume * math.pow(src, 2) : volume * math.pow(src, 2) + sumSrcSrcVol[1]
+
+	_vwap = sumSrcVol / sumVol
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+
+	lowerBand = _vwap - stDev * stDevMultiplier
+	upperBand = _vwap + stDev * stDevMultiplier
+
+	[_vwap, lowerBand, upperBand]
+
+hideonDWM = input(false, title="Hide VWAP on 1D or Above", group="VWAP Settings")
+var anchor = input.string(defval = "Session", title="Anchor Period",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
+src = input(title = "Source", defval = hlc3, group="VWAP Settings")
+offset = input(0, title="Offset", group="VWAP Settings")
+
+showBands = input(true, title="Calculate Bands", group="Standard Deviation Bands Settings")
+stdevMult = input(1.0, title="Bands Multiplier", group="Standard Deviation Bands Settings")
+
+timeChange(period) =>
+	ta.change(time(period))
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+	"Earnings" => not na(new_earnings)
+	"Dividends" => not na(new_dividends)
+	"Splits" => not na(new_split)
+	"Session" => timeChange("D")
+	"Week" => timeChange("W")
+	"Month" => timeChange("M")
+	"Quarter" => timeChange("3M")
+	"Year" => timeChange("12M")
+	"Decade" => timeChange("12M") and year % 10 == 0
+	"Century" => timeChange("12M") and year % 100 == 0
+	=> false
+
+isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+if na(src[1]) and not isEsdAnchor
+	isNewPeriod := true
+
+float vwapValue = na
+float std = na
+float upperBandValue = na
+float lowerBandValue = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, bottom, top] = computeVWAP(src, isNewPeriod, stdevMult)
+    vwapValue := _vwap
+    upperBandValue := showBands ? top : na
+    lowerBandValue := showBands ? bottom : na
+
+plot(vwapValue, title="VWAP", color=#2962FF, offset=offset)
+
+upperBand = plot(upperBandValue, title="Upper Band", color=color.green, offset=offset)
+lowerBand = plot(lowerBandValue, title="Lower Band", color=color.green, offset=offset)
+
+fill(upperBand, lowerBand, title="Bands Fill", color= showBands ? color.new(color.green, 95) : na)
+
+// longCondition = ta.crossunder(src, lowerBandValue)
+// if(longCondition)
+//     strategy.entry("Long it", strategy.long)
+// shortCondition = ta.crossover(src, upperBandValue)
+// if(shortCondition)
+//     strategy.entry("Short it", strategy.long)
+
+// if(ta.crossover(src, vwapValue))
+//     strategy.entry("Long it", strategy.long)
+// if(ta.crossunder(src, vwapValue))
+//     strategy.exit("Long it", "", profit = 1)
+
+TP1Perc = input.float(title='Long Take Profit (%)', minval=0.0, step=0.1, defval=2, group='TP & SL')
+TP2Perc = input.float(title='Long Take Profit (%)', minval=0.0, step=0.1, defval=4, group='TP & SL')
+SLPerc = input.float(title='Long Stop Loss (%)', minval=0.0, step=0.1, defval=2, group='TP & SL')
+
+TP1_Ratio = input.float(title='Sell Postion Size % @ TP1', defval=50, step=1, group='TP & SL', tooltip='Example: 50 closing 50% of the position once TP1 is reached') / 100
+
+y = input.int(2019, minval=1, maxval=2099, title='Year')
+m = input.int(1, minval=1, maxval=12, title='Month')
+d = input.int(1, minval=1, maxval=31, title='Day')
+h = input.int(0, minval=0, maxval=23, title='Hour')
+min = input.int(0, minval=0, maxval=59, title='Minute')
+
+t = timestamp(y, m, d, h, min)
+start = t
+rsiValue = ta.rsi(close, 14)
+
+// if time >= start
+//     if(src > vwapValue)
+//         strategy.entry("Long it", strategy.long)
+//     if(src < vwapValue)
+//         strategy.entry("Short it", strategy.short)
+
+longCondition_vwap = ta.crossover(close, vwapValue)
+shortCondition_vwap = ta.crossunder(close, vwapValue)
+
+longCondition_upperBand = ta.crossover(close, upperBandValue)
+shortCondition_upperBand = ta.crossunder(close, upperBandValue)
+
+longCondition_lowerBand = ta.crossover(close, lowerBandValue)
+shortCondition_lowerBand = ta.crossunder(close, lowerBandValue)
+
+
+// Figure out take profit price
+percentAsPoints(pcnt) =>
+    strategy.position_size != 0 ? math.round(pcnt / 100.0 * strategy.position_avg_price / syminfo.mintick) : float(na)
+
+percentAsPrice(pcnt) =>
+    strategy.position_size != 0 ? (pcnt / 100.0 + 1.0) * strategy.position_avg_price : float(na)
+
+current_position_size = math.abs(strategy.position_size)
+initial_position_size = math.abs(ta.valuewhen(strategy.position_size[1] == 0.0, strategy.position_size, 0))
+
+Long_TP1 = strategy.position_avg_price + percentAsPoints(TP1Perc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+Long_TP2 = strategy.position_avg_price + percentAsPoints(TP2Perc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+Long_SL = strategy.position_avg_price - percentAsPoints(SLPerc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+Short_TP1 = strategy.position_avg_price - percentAsPoints(TP1Perc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+Short_TP2 = strategy.position_avg_price - percentAsPoints(TP2Perc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+Short_SL = strategy.position_avg_price + percentAsPoints(SLPerc) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+
+if time >= start
+    if(longCondition_vwap)
+        strategy.entry("Long", strategy.long)
+    if(shortCondition_vwap)
+        strategy.entry("Short", strategy.short)
+
+// Submit exit orders based on take profit price
+if strategy.position_size > 0
+    //strategy.exit('TP1', from_entry='Long', qty=initial_position_size * TP1_Ratio, limit=TP1, stop=SL)
+    strategy.exit('TP2', from_entry='Long', limit=Long_TP2, stop=Long_SL)
+    //strategy.exit('TP1', from_entry='Short', qty=initial_position_size * TP1_Ratio, limit=TP1, stop=SL)
+    strategy.exit('TP2', from_entry='Short', limit=Short_TP2, stop=Short_SL)

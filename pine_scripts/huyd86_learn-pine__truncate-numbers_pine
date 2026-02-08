@@ -1,0 +1,31 @@
+//==============================
+// Example: truncate and plot the closing price
+//==============================
+//@version=5
+indicator(title='Truncate to whole number', overlay=false)
+
+// Truncate the closing price to an integer
+closeTrunc = int(close)
+
+// Output both the close and truncated close
+plot(series=close, title='Close')
+plot(series=closeTrunc, title='Truncated')
+//==============================
+
+//==============================
+// Example: truncate closing prices to 3 and 1 decimals
+//==============================
+//@version=5
+indicator(title='Truncate to decimal amount', overlay=false)
+
+// truncate() truncates a given number
+// to a certain number of decimals
+truncate(number, decimals) =>
+    factor = math.pow(10, decimals)
+    int(number * factor) / factor
+
+// Output original close and truncated values
+plot(series=close, title='Close', color=color.new(color.orange, 0))
+plot(series=truncate(close, 3), title='Truncate (3)')
+plot(series=truncate(close, 1), title='Truncate (1)')
+//==============================

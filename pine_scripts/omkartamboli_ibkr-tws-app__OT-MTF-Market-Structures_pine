@@ -1,0 +1,2941 @@
+//@version=6
+indicator("OT-MTF-Market-Structures", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500, max_bars_back=5000)
+
+// ═══════════════════════════════════════════════════════════════════════
+// INPUT PARAMETERS
+// ═══════════════════════════════════════════════════════════════════════
+
+// Swing High/Low Detection Settings
+swingGroup = "Swing High/Low Settings"
+leftBars = input.int(3, "Bars to Left", minval=1, maxval=50, group=swingGroup, tooltip="Number of bars to the left that must be lower/higher")
+rightBars = input.int(3, "Bars to Right", minval=1, maxval=50, group=swingGroup, tooltip="Number of bars to the right that must be lower/higher")
+swingMinMove = input.float(0.5, "Minimum Move (% for 1H TF)", minval=0.0, maxval=10.0, step=0.1, group=swingGroup, tooltip="Minimum percentage move from previous swing point to confirm new swing high/low.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+extremeSwingCount = input.int(3, "Swing Points for Extreme", minval=1, maxval=10, group=swingGroup, tooltip="Number of swing points before and after to check for Highest High / Lowest Low")
+
+// Fair Value Gap Settings
+fvgGroup = "Fair Value Gap Settings"
+showFVG = input.bool(true, "Show Fair Value Gaps", group=fvgGroup)
+fvgMinSize = input.float(0.05, "Minimum FVG Size (% for 1H TF)", minval=0.0, maxval=10.0, step=0.01, group=fvgGroup, tooltip="Minimum gap size as percentage of price.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+fvgMaxCount = input.int(20, "Maximum FVG Boxes", minval=1, maxval=100, group=fvgGroup, tooltip="Maximum number of unfilled FVG boxes to display")
+fvgExtendRight = input.bool(true, "Extend FVG Until Filled", group=fvgGroup, tooltip="Extend FVG boxes to the right until price fills the gap")
+fvgDeleteOnMitigate = input.bool(false, "Delete FVG When Mitigated", group=fvgGroup, tooltip="Remove FVG box when price enters the gap")
+fvgDeleteOnFill = input.bool(true, "Delete FVG When Filled", group=fvgGroup, tooltip="Remove FVG box when price completely fills the gap")
+
+// Order Block Settings
+obGroup = "Order Block Settings"
+showOB = input.bool(true, "Show Order Blocks", group=obGroup)
+showBB = input.bool(true, "Show Breaker Blocks", group=obGroup, tooltip="Breaker Blocks are created when Order Blocks break (close through zone).\nBB creation frequency is controlled by OB swing-based blocking:\n- Bullish BBs limited by Entry TF swing high requirement\n- Bearish BBs limited by Entry TF swing low requirement")
+obMinMove = input.float(0.5, "Minimum Move (% for 1H TF)", minval=0.1, maxval=10.0, step=0.1, group=obGroup, tooltip="Minimum percentage move to qualify as order block or breaker block.\nTimeframe Multipliers: 1m-5m: 0.15x | 5m-15m: 0.25x | 15m-1H: 0.5x | 1H-4H: 1x | 4H-1D: 2x | 1D-1W: 5x | 1W-1M: 10x | 1M+: 15x")
+obMaxCandles = input.int(5, "Maximum Candles", minval=2, maxval=20, group=obGroup, tooltip="Maximum number of candles to complete the move")
+skipOBsInSameWave = input.bool(true, "Skip OBs in Same Wave", group=obGroup, tooltip="When enabled, prevents multiple OBs from being detected in the same directional move.\nReset occurs when Entry TF swing point is formed:\n- Bullish OB → Blocks next bullish OB until Entry TF swing high forms\n- Bearish OB → Blocks next bearish OB until Entry TF swing low forms\nDisable this to see all OBs regardless of direction (useful for debugging).")
+obMaxCount = input.int(30, "Maximum OB Boxes", minval=1, maxval=100, group=obGroup, tooltip="Maximum number of unmitigated OB boxes to display")
+bbMaxCount = input.int(30, "Maximum BB Boxes", minval=1, maxval=100, group=obGroup, tooltip="Maximum number of unmitigated BB boxes to display")
+obExtendRight = input.bool(true, "Extend OB Until Mitigated", group=obGroup, tooltip="Extend OB boxes to the right until price mitigates them")
+obExtendAfterBroken = input.bool(false, "Extend OB After Broken", group=obGroup, tooltip="Continue extending broken OB (gray) until re-mitigated")
+obDeleteOnMitigate = input.bool(false, "Delete OB When Mitigated", group=obGroup, tooltip="Remove OB box when price mitigates the order block")
+obDeleteOnFill = input.bool(true, "Delete OB When Filled", group=obGroup, tooltip="Remove OB box when price completely fills the order block")
+bbDeleteOnMitigate = input.bool(false, "Delete BB When Mitigated", group=obGroup, tooltip="Remove BB box when price mitigates the breaker block")
+bbDeleteOnFill = input.bool(true, "Delete BB When Filled", group=obGroup, tooltip="Remove BB box when price completely fills the breaker block")
+
+// Market Structure Settings
+msGroup = "Market Structure Settings"
+showCHoCH = input.bool(true, "Show Change of Character", group=msGroup, tooltip="Show CHoCH when price breaks counter-trend swing")
+showBOS = input.bool(true, "Show Break of Structure", group=msGroup, tooltip="Show BOS when price breaks trend swing")
+msMaxCount = input.int(20, "Maximum MS Lines", minval=5, maxval=50, group=msGroup, tooltip="Maximum number of CHoCH/BOS lines to display")
+
+// Trading Alert Settings
+alertGroup = "Trading Alert Settings"
+showOBFVGConfluence = input.bool(false, "OB+FVG Confluence Alerts", group=alertGroup, tooltip="Alert when Order Block overlaps with FVG")
+showFVGSweep = input.bool(false, "FVG Sweep Alerts", group=alertGroup, tooltip="Alert when FVG is swept by opposing FVG within 10 candles")
+showLiquidityRunFVGAlert = input.bool(false, "Liquidity Run FVG Alerts", group=alertGroup, tooltip="Alert on Liquidity Run FVG formation with automated entry/exit parameters. Strong pattern: market runs through liquidity without fair value consolidation.")
+alertRiskRewardRatio = input.float(2.0, "Alert TP Risk:Reward Ratio", minval=1.0, maxval=10.0, step=0.5, group=alertGroup, tooltip="Risk-reward ratio for take profit when no opposite element found (e.g., 2.0 means TP is 2x the SL distance). Higher values = more aggressive TP targets. Industry standard: 2.0 (minimum for profitable trading).")
+useATRMinimumSL = input.bool(true, "Use ATR Minimum SL", group=alertGroup, tooltip="Apply ATR-based minimum stop loss distance. If calculated SL is closer than ATR(14), use ATR distance instead. Prevents tight stops in volatile markets.")
+atrLength = input.int(14, "ATR Length", minval=1, maxval=100, group=alertGroup, tooltip="Period for ATR calculation used as minimum SL distance")
+enableAlertTimeWindow = input.bool(true, "Enable Alert Time Window", group=alertGroup, tooltip="Only fire alerts during specified time window. Labels still show on chart, but alerts only fire during active hours. Uses chart timezone (not exchange timezone).")
+alertStartHour = input.int(8, "Start Hour", minval=0, maxval=23, group=alertGroup, inline="start", tooltip="Start hour for alert time window in chart timezone (0-23). Default: 8 AM")
+alertStartMinute = input.int(0, "Minute", minval=0, maxval=59, group=alertGroup, inline="start", tooltip="Start minute for alert time window. Default: 0 minutes")
+alertEndHour = input.int(22, "End Hour", minval=0, maxval=23, group=alertGroup, inline="end", tooltip="End hour for alert time window in chart timezone (0-23). Default: 10 PM")
+alertEndMinute = input.int(30, "Minute", minval=0, maxval=59, group=alertGroup, inline="end", tooltip="End minute for alert time window. Default: 30 minutes")
+minMAScoreForAlert = input.float(6.0, "Minimum MA_Score for Alert", minval=0.0, maxval=10.0, step=0.1, group=alertGroup, tooltip="Minimum MA_Score required to fire alerts (0.0-10.0). Score based on 9 parameters: EMA support (200/100/50), VWAP, Volume, Trend TF, Structure Confluence (OB/FVG), BOS Momentum, and Liquidity Events. If set to 0, all alerts fire. Labels show on chart for all patterns regardless. Default: 6.0 (60% threshold - requires strong institutional support plus additional confluence).")
+
+// Beta Calculation Settings
+betaGroup = "Beta Calculation Settings"
+showBeta = input.bool(true, "Show Beta", group=betaGroup, tooltip="Calculate and display beta relative to ES1! (S&P 500 E-mini futures)")
+useBetaMultiplier = input.bool(true, "Use Beta as Multiplier", group=betaGroup, tooltip="Apply beta as multiplier to all % config values (% value * TF multiplier * Beta)")
+betaLookback = input.int(500, "Beta Lookback Period", minval=50, maxval=5000, group=betaGroup, tooltip="Number of candles to use for beta calculation")
+
+// Display Settings
+displayGroup = "Display Settings"
+showMTFInfo = input.bool(true, "Show MTF Info", group=displayGroup, tooltip="Display Multi-Timeframe information table showing EntryTF, PatternTF, and TrendTF")
+minCandlesBeforeMitigation = input.int(5, "Min Candles Before Mitigation", minval=0, maxval=20, group=displayGroup, tooltip="Minimum candles (at Pattern TF) after structure creation before considering it mitigated. Prevents immediate false mitigations. Applies to OB, FVG, and BB. Set to 0 to disable. Automatically adjusted for Entry TF monitoring (e.g., 5 Pattern TF candles = 15 Entry TF candles if Entry TF is 3x faster).")
+showSwingHighs = input.bool(true, "Show Swing Highs", group=displayGroup)
+showSwingLows = input.bool(true, "Show Swing Lows", group=displayGroup)
+showLabels = input.bool(true, "Show Labels", group=displayGroup)
+showPriceInLabel = input.bool(false, "Show Price in Labels", group=displayGroup, tooltip="Display price values in swing point labels")
+showLines = input.bool(true, "Show Horizontal Lines", group=displayGroup)
+labelOffset = input.int(5, "Label Offset (Candles)", minval=0, maxval=100, group=displayGroup, tooltip="Offset labels to the right by this many candles for OB, BB, and FVG")
+opportunityLabelOffset = input.int(20, "Trading Opportunity Label Offset", minval=0, maxval=100, group=displayGroup, tooltip="Offset trading opportunity labels to the right by this many candles to avoid overlap with structure labels")
+showAlertPrices = input.bool(true, "Show Alert Prices (EN/SL/TP)", group=displayGroup, tooltip="Display entry, stop loss, and take profit prices on alert labels. Disable to reduce chart clutter while still getting full details in JSON alert messages.")
+
+// Style Settings
+styleGroup = "Style Settings"
+swingHighColor = input.color(color.new(color.red, 0), "Swing High Color", group=styleGroup)
+swingLowColor = input.color(color.new(color.green, 0), "Swing Low Color", group=styleGroup)
+bullishFVGColor = input.color(color.new(#00ff00, 85), "Bullish FVG Color", group=styleGroup)
+bearishFVGColor = input.color(color.new(#ff0000, 85), "Bearish FVG Color", group=styleGroup)
+bullishOBColor = input.color(color.new(#00cc00, 80), "Bullish OB Color", group=styleGroup)
+bearishOBColor = input.color(color.new(#cc0000, 80), "Bearish OB Color", group=styleGroup)
+bullishBBColor = input.color(color.new(#aa0000, 70), "Bullish Breaker Color", group=styleGroup, tooltip="Bullish Breaker (bearish phenomenon)")
+bearishBBColor = input.color(color.new(#00aa00, 70), "Bearish Breaker Color", group=styleGroup, tooltip="Bearish Breaker (bullish phenomenon)")
+mitigatedColor = input.color(color.new(color.yellow, 85), "Mitigated Structure Color", group=styleGroup, tooltip="Color for structures that are mitigated (one edge touched) but not yet filled")
+filledColor = input.color(color.new(color.gray, 90), "Filled Structure Color", group=styleGroup, tooltip="Color for structures that are completely filled (both edges touched) or broken")
+labelSizeInput = input.string("tiny", "Label Size", options=["tiny", "small", "normal", "large"], group=styleGroup)
+lineWidth = input.int(1, "Line Width", minval=1, maxval=4, group=styleGroup)
+lineStyleInput = input.string("Solid", "Line Style", options=["Solid", "Dashed", "Dotted"], group=styleGroup)
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+getLineStyle(style) =>
+    style == "Dashed" ? line.style_dashed : style == "Dotted" ? line.style_dotted : line.style_solid
+
+getLabelSize(size) =>
+    size == "tiny" ? size.tiny : size == "small" ? size.small : size == "large" ? size.large : size.normal
+
+currentLineStyle = getLineStyle(lineStyleInput)
+currentLabelSize = getLabelSize(labelSizeInput)
+swingHighColorTransparent = color.new(swingHighColor, 70)
+swingLowColorTransparent = color.new(swingLowColor, 70)
+
+rangesOverlap(top1, bottom1, top2, bottom2) =>
+    not (bottom1 > top2 or bottom2 > top1)
+
+proximityPercent(currentPrice, targetPrice) =>
+    math.abs((currentPrice - targetPrice) / targetPrice) * 100
+
+// Create arrow line from label to trigger bar (points to trigger candle)
+createArrowToLabel(triggerBar, labelBar, price, arrowColor) =>
+    line.new(x1=labelBar, y1=price, x2=triggerBar, y2=price, color=arrowColor, width=1, style=line.style_arrow_right, xloc=xloc.bar_index)
+
+// Check if current time is within alert active window (uses chart timezone)
+// Handles both same-day windows (e.g., 8:00-22:30) and overnight windows (e.g., 22:00-02:00)
+isWithinAlertTimeWindow() =>
+    if not enableAlertTimeWindow
+        true  // If time window disabled, always allow alerts
+    else
+        currentHour = hour(time)
+        currentMinute = minute(time)
+
+        // Convert times to minutes since midnight for easier comparison
+        currentTimeMinutes = currentHour * 60 + currentMinute
+        startTimeMinutes = alertStartHour * 60 + alertStartMinute
+        endTimeMinutes = alertEndHour * 60 + alertEndMinute
+
+        // Check if window crosses midnight (e.g., 22:00 to 02:00)
+        if startTimeMinutes > endTimeMinutes
+            // Overnight window: active if time >= start OR time <= end
+            currentTimeMinutes >= startTimeMinutes or currentTimeMinutes <= endTimeMinutes
+        else
+            // Same-day window: active if time >= start AND time <= end
+            currentTimeMinutes >= startTimeMinutes and currentTimeMinutes <= endTimeMinutes
+
+// Timeframe multiplier for percentage parameters
+// Base values are for 1H timeframe, multiplier adjusts for other timeframes
+getTimeframeMultiplier() =>
+    float multiplier = 1.0
+    int tfSeconds = timeframe.in_seconds(timeframe.period)
+
+    if tfSeconds < timeframe.in_seconds("5")
+        multiplier := 0.15
+    else if tfSeconds < timeframe.in_seconds("15")
+        multiplier := 0.25
+    else if tfSeconds < timeframe.in_seconds("60")
+        multiplier := 0.5
+    else if tfSeconds < timeframe.in_seconds("240")
+        multiplier := 1.0
+    else if tfSeconds < timeframe.in_seconds("1D")
+        multiplier := 2.0
+    else if tfSeconds < timeframe.in_seconds("1W")
+        multiplier := 5.0
+    else if tfSeconds < timeframe.in_seconds("1M")
+        multiplier := 10.0
+    else
+        multiplier := 15.0
+
+    multiplier
+
+tfMultiplier = getTimeframeMultiplier()
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME (MTF) SYSTEM
+// ═══════════════════════════════════════════════════════════════════════
+
+// Check if current timeframe is supported by this indicator
+// Supported timeframes: 1m, 5m, 15m, 1H, 4H, 1D, 1W, 1M
+// Returns true if supported, false if unsupported
+isSupportedTimeframe() =>
+    string currentTF = timeframe.period
+
+    // List of supported timeframes
+    bool isSupported = currentTF == "1" or currentTF == "5" or currentTF == "15" or
+                       currentTF == "60" or currentTF == "240" or
+                       currentTF == "D" or currentTF == "W" or currentTF == "M"
+
+    isSupported
+
+// Get timeframe hierarchy: [EntryTF, PatternTF, TrendTF]
+// EntryTF: Current timeframe (where entry signals are detected)
+// PatternTF: One level above (where patterns are identified)
+// TrendTF: Two levels above (where overall trend is determined)
+getTimeframeLevels() =>
+    string currentTF = timeframe.period
+    string entryTF = currentTF
+    string patternTF = ""
+    string trendTF = ""
+
+    // Timeframe sequence: 1m → 5m → 15m → 1H → 4H → 1D → 1W → 1M → 3M → 12M
+    if currentTF == "1"        // 1 minute
+        patternTF := "5"       // 5 minute
+        trendTF := "15"        // 15 minute
+    else if currentTF == "5"   // 5 minute
+        patternTF := "15"      // 15 minute
+        trendTF := "60"        // 1 hour
+    else if currentTF == "15"  // 15 minute
+        patternTF := "60"      // 1 hour
+        trendTF := "240"       // 4 hour
+    else if currentTF == "60"  // 1 hour
+        patternTF := "240"     // 4 hour
+        trendTF := "D"         // 1 day
+    else if currentTF == "240" // 4 hour
+        patternTF := "D"       // 1 day
+        trendTF := "W"         // 1 week
+    else if currentTF == "D"   // 1 day
+        patternTF := "W"       // 1 week
+        trendTF := "M"         // 1 month
+    else if currentTF == "W"   // 1 week
+        patternTF := "M"       // 1 month
+        trendTF := "3M"        // 3 months
+    else if currentTF == "M"   // 1 month
+        patternTF := "3M"      // 3 months
+        trendTF := "12M"       // 1 year (12 months)
+
+    [entryTF, patternTF, trendTF]
+
+// Get current MTF levels
+[entryTF, patternTF, trendTF] = getTimeframeLevels()
+isSupported = isSupportedTimeframe()
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME DATA FETCHING
+// ═══════════════════════════════════════════════════════════════════════
+
+// Fetch Trend TF data (for swing points, CHoCH/BOS, and higher TF context)
+// Using tuple return to fetch multiple values in single request.security call for performance
+[trendTF_close, trendTF_high, trendTF_low, trendTF_open, trendTF_ema200] = request.security(syminfo.tickerid, trendTF, [close, high, low, open, ta.ema(close, 200)], lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+// Fetch Pattern TF data (for OB detection - FVG now detected via dedicated function)
+// Pattern TF is where precise entry patterns are identified
+[patternTF_close, patternTF_high, patternTF_low, patternTF_open, patternTF_volume] = request.security(syminfo.tickerid, patternTF,
+ [close, high, low, open, volume], lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+// Entry TF data is native (current chart timeframe) - no request.security needed
+// Entry TF variables will reference native OHLC directly
+
+// ─────────────────────────────────────────────────────────────────────
+// TIMEFRAME CHANGE DETECTION
+// ─────────────────────────────────────────────────────────────────────
+// Detect when Trend TF or Pattern TF bar has just closed/changed
+// Critical for ensuring patterns are detected at the right moment
+trendTF_changed = timeframe.change(trendTF)
+patternTF_changed = timeframe.change(patternTF)
+
+// Helper function to get timeframe multiplier for any timeframe
+// Used to calculate appropriate multipliers for Trend TF, Pattern TF, Entry TF
+getTimeframeMultiplierForTF(string tf) =>
+    float multiplier = 1.0
+    int tfSeconds = timeframe.in_seconds(tf)
+
+    if tfSeconds < timeframe.in_seconds("5")
+        multiplier := 0.15
+    else if tfSeconds < timeframe.in_seconds("15")
+        multiplier := 0.25
+    else if tfSeconds < timeframe.in_seconds("60")
+        multiplier := 0.5
+    else if tfSeconds < timeframe.in_seconds("240")
+        multiplier := 1.0
+    else if tfSeconds < timeframe.in_seconds("1D")
+        multiplier := 2.0
+    else if tfSeconds < timeframe.in_seconds("1W")
+        multiplier := 5.0
+    else if tfSeconds < timeframe.in_seconds("1M")
+        multiplier := 10.0
+    else
+        multiplier := 15.0
+
+    multiplier
+
+// Calculate timeframe multipliers for all three timeframes
+trendTF_Multiplier = getTimeframeMultiplierForTF(trendTF)
+patternTF_Multiplier = getTimeframeMultiplierForTF(patternTF)
+entryTF_Multiplier = tfMultiplier  // Current timeframe multiplier (already calculated on line 167)
+
+// Calculate bar ratios between timeframes (how many Entry TF bars per Pattern/Trend TF bar)
+patternTF_barRatio = math.round(timeframe.in_seconds(patternTF) / timeframe.in_seconds(timeframe.period))
+trendTF_barRatio = math.round(timeframe.in_seconds(trendTF) / timeframe.in_seconds(timeframe.period))
+
+// Calculate adjusted minimum candles before mitigation (Pattern TF candles → Entry TF candles)
+// User configures in Pattern TF terms, but mitigation is checked at Entry TF frequency
+// Example: If config=10, Entry TF=5m, Pattern TF=15m → Adjusted = 10 × (15/5) = 30 Entry TF candles
+adjustedMinCandlesBeforeMitigation = math.round(minCandlesBeforeMitigation * patternTF_barRatio)
+
+// Helper function to format timeframe string for display
+// Used by MTF info table to convert Pine Script TF notation to readable format
+formatTimeframeForDisplay(string tf) =>
+    string displayTF = ""
+    if tf == "1"
+        displayTF := "1m"
+    else if tf == "5"
+        displayTF := "5m"
+    else if tf == "15"
+        displayTF := "15m"
+    else if tf == "60"
+        displayTF := "1H"
+    else if tf == "240"
+        displayTF := "4H"
+    else if tf == "D"
+        displayTF := "1D"
+    else if tf == "W"
+        displayTF := "1W"
+    else if tf == "M"
+        displayTF := "1M"
+    else if tf == "3M"
+        displayTF := "3M"
+    else if tf == "12M"
+        displayTF := "1Y"
+    else
+        displayTF := tf
+    displayTF
+
+// ═══════════════════════════════════════════════════════════════════════
+// BETA CALCULATION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Calculate beta ENTIRELY in Pattern TF context to ensure correct bar alignment
+// Beta = Covariance(Security, Market) / Variance(Market)
+// Uses ES1! (S&P 500 E-mini futures) as market benchmark
+calculateBetaInPatternTF(int lookback) =>
+    float beta = na
+
+    // Fetch ES1! close price at current timeframe (Pattern TF when called via request.security)
+    es1Close = request.security("ES1!", timeframe.period, close, lookahead=barmerge.lookahead_off)
+
+    if bar_index >= lookback
+        // Arrays to store returns
+        var array<float> securityReturns = array.new<float>()
+        var array<float> marketReturns = array.new<float>()
+
+        // Clear arrays
+        array.clear(securityReturns)
+        array.clear(marketReturns)
+
+        // Calculate returns for the lookback period
+        // Both security and ES1! are now in the same timeframe context (Pattern TF)
+        for i = 1 to lookback
+            if not na(close[i]) and not na(close[i+1]) and not na(es1Close[i]) and not na(es1Close[i+1])
+                secReturn = (close[i] - close[i+1]) / close[i+1]
+                mktReturn = (es1Close[i] - es1Close[i+1]) / es1Close[i+1]
+                array.push(securityReturns, secReturn)
+                array.push(marketReturns, mktReturn)
+
+        // Calculate means
+        if array.size(securityReturns) > 10
+            secMean = array.avg(securityReturns)
+            mktMean = array.avg(marketReturns)
+
+            // Calculate covariance and variance
+            float covariance = 0.0
+            float variance = 0.0
+
+            for i = 0 to array.size(securityReturns) - 1
+                secDev = array.get(securityReturns, i) - secMean
+                mktDev = array.get(marketReturns, i) - mktMean
+                covariance += secDev * mktDev
+                variance += mktDev * mktDev
+
+            // Calculate beta
+            if variance != 0
+                beta := covariance / variance
+    beta
+
+// Execute beta calculation in Pattern TF context via request.security
+betaValue = showBeta ? request.security(syminfo.tickerid, patternTF, calculateBetaInPatternTF(betaLookback), lookahead=barmerge.lookahead_off) : na
+
+// Calculate beta multiplier
+// If beta is not available or beta multiplier is disabled, use absolute value of 1.0
+betaMultiplier = useBetaMultiplier and not na(betaValue) ? math.abs(betaValue) : 1.0
+
+// Calculate final effective percentage values for each element based on its detection timeframe
+// Swing points: Use Entry TF (swing detection happens on Entry TF for this indicator)
+finalSwingMinMove = swingMinMove * entryTF_Multiplier * betaMultiplier
+// FVG: Use Pattern TF (FVG detection happens on Pattern TF)
+finalFvgMinSize = fvgMinSize * patternTF_Multiplier * betaMultiplier
+// OB: Use Pattern TF (OB detection happens on Pattern TF)
+finalObMinMove = obMinMove * patternTF_Multiplier * betaMultiplier
+
+// Calculate absolute values from percentages
+// Round to appropriate precision based on syminfo.mintick
+swingAbsValue = math.ceil((close * finalSwingMinMove / 100) / syminfo.mintick) * syminfo.mintick
+fvgAbsValue = math.ceil((close * finalFvgMinSize / 100) / syminfo.mintick) * syminfo.mintick
+obAbsValue = math.ceil((close * finalObMinMove / 100) / syminfo.mintick) * syminfo.mintick
+
+// Display beta and config values in table (merged with MTF info)
+var table betaTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 10), frame_width=1, frame_color=color.gray, border_width=1, border_color=color.gray)
+
+if showBeta
+    // Header row - Beta value
+    betaColor = not na(betaValue) ? (betaValue >= 0 ? color.new(color.green, 0) : color.new(color.red, 0)) : color.gray
+    betaText = not na(betaValue) ? str.tostring(betaValue, "#.##") : "N/A"
+    table.cell(betaTable, 0, 0, "β", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    table.cell(betaTable, 1, 0, betaText, text_color=betaColor, text_size=size.normal, bgcolor=color.new(color.black, 20))
+
+    // Multipliers info (Trend TF, Pattern TF, Entry TF)
+    table.cell(betaTable, 0, 1, "TF × β", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    // Show three multipliers: "T:2.0×1.5 | P:1.0×1.5 | E:0.5×1.5"
+    multiplierText = "T:" + str.tostring(trendTF_Multiplier, "#.##") + " | P:" + str.tostring(patternTF_Multiplier, "#.##") + " | E:" + str.tostring(entryTF_Multiplier, "#.##")
+    if useBetaMultiplier
+        multiplierText := multiplierText + "\n×" + str.tostring(betaMultiplier, "#.##") + " (β)"
+    table.cell(betaTable, 1, 1, multiplierText, text_color=color.white, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // Swing Min Move (Entry TF - swing detection on Entry TF)
+    table.cell(betaTable, 0, 2, "Swing (E)", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    swingText = str.tostring(finalSwingMinMove, "#.###") + "% (" + str.tostring(swingAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 2, swingText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // FVG Min Size (Pattern TF)
+    table.cell(betaTable, 0, 3, "FVG (P)", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    fvgText = str.tostring(finalFvgMinSize, "#.###") + "% (" + str.tostring(fvgAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 3, fvgText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // OB Min Move (Pattern TF)
+    table.cell(betaTable, 0, 4, "OB (P)", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 50))
+    obText = str.tostring(finalObMinMove, "#.###") + "% (" + str.tostring(obAbsValue, format.mintick) + ")"
+    table.cell(betaTable, 1, 4, obText, text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+    // MTF Info Rows (only show if supported timeframe and MTF display enabled)
+    if isSupported and showMTFInfo
+        // EntryTF row
+        table.cell(betaTable, 0, 5, "EntryTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 50))
+        table.cell(betaTable, 1, 5, formatTimeframeForDisplay(entryTF), text_color=color.aqua, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+        // PatternTF row
+        table.cell(betaTable, 0, 6, "PatternTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.purple, 50))
+        table.cell(betaTable, 1, 6, formatTimeframeForDisplay(patternTF), text_color=color.fuchsia, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+        // TrendTF row
+        table.cell(betaTable, 0, 7, "TrendTF", text_color=color.white, text_size=size.small, bgcolor=color.new(color.orange, 50))
+        table.cell(betaTable, 1, 7, formatTimeframeForDisplay(trendTF), text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.black, 20))
+
+// ═══════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME (MTF) DISPLAY TABLES
+// ═══════════════════════════════════════════════════════════════════════
+
+// Unsupported Timeframe Error Table (top-center position)
+var table errorTable = table.new(position.top_center, 1, 2, bgcolor=color.new(color.red, 20), frame_width=2, frame_color=color.red, border_width=1, border_color=color.red)
+
+if not isSupported
+    // Error header
+    table.cell(errorTable, 0, 0, "⚠️ UNSUPPORTED TIMEFRAME", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.red, 0))
+
+    // Instruction message
+    table.cell(errorTable, 0, 1, "Use: 1m, 5m, 15m, 1H, 4H, 1D, 1W, or 1M", text_color=color.white, text_size=size.small, bgcolor=color.new(color.orange, 0))
+
+// ═══════════════════════════════════════════════════════════════════════
+// ATR CALCULATION (Minimum SL Distance)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Calculate ATR for minimum stop loss distance using Pattern TF data
+// ATR calculated on Pattern TF for consistency with alert trigger timeframe
+atrValue_PatternTF = request.security(syminfo.tickerid, patternTF, ta.atr(atrLength), lookahead=barmerge.lookahead_off)
+
+// Helper function to apply ATR minimum SL
+// Returns adjusted SL price and a boolean indicating if ATR was used
+applyATRMinimumSL(float entryPrice, float calculatedSL, bool isBullishSetup) =>
+    float adjustedSL = calculatedSL
+    bool atrUsed = false
+
+    if useATRMinimumSL
+        calculatedDistance = math.abs(entryPrice - calculatedSL)
+
+        if calculatedDistance < atrValue_PatternTF
+            // ATR is larger than calculated SL, use ATR distance
+            if isBullishSetup
+                adjustedSL := entryPrice - atrValue_PatternTF  // Bullish: SL below entry
+            else
+                adjustedSL := entryPrice + atrValue_PatternTF  // Bearish: SL above entry
+            atrUsed := true
+
+    [adjustedSL, atrUsed]
+
+// ═══════════════════════════════════════════════════════════════════════
+// MA SCORE CALCULATION (Moving Average Support Score)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Calculate moving averages
+ema200 = ta.ema(close, 200)
+ema100 = ta.ema(close, 100)
+ema50 = ta.ema(close, 50)
+vwapValue = ta.vwap(close)
+
+// Volume calculation for MA_Score
+avgVolume21 = ta.sma(volume, 21)
+
+// ═══════════════════════════════════════════════════════════════════════
+// TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════
+
+type FVGBox
+    box boxDrawing
+    label labelDrawing
+    float top
+    float bottom
+    int startBar
+    bool isBullish
+    bool mitigated
+    bool filled
+    bool isLiquidityRun
+    bool alertSent
+    bool confluenceMarked
+    bool topTouched      // Track if top edge has been touched
+    bool bottomTouched   // Track if bottom edge has been touched
+
+type OrderBlock
+    box boxDrawing
+    label labelDrawing
+    float top
+    float bottom
+    int startBar
+    int endBar
+    bool isBullish
+    bool mitigated
+    bool filled
+    bool broken
+    bool confluenceMarked
+    bool topTouched      // Track if top edge has been touched
+    bool bottomTouched   // Track if bottom edge has been touched
+
+type BreakerBlock
+    box boxDrawing
+    label labelDrawing
+    float top
+    float bottom
+    int startBar
+    int brokenBar
+    bool isBullish
+    bool mitigated
+    bool filled
+    bool topTouched      // Track if top edge has been touched
+    bool bottomTouched   // Track if bottom edge has been touched
+
+type MarketStructure
+    line lineDrawing
+    label labelDrawing
+    float price
+    int startBar
+    int endBar
+    bool isBullish
+    bool isBOS
+
+type TradingOpportunity
+    label labelDrawing
+    line arrowDrawing
+    string patternType
+    float price
+    int detectionBar
+    bool alertSent
+    bool isValid
+    bool isBullish
+    float entryPrice
+    float stopLossPrice
+    float takeProfitPrice
+    float ltpAtAlert
+    string alertId
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE VARIABLES
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────
+// TREND TF SWING POINT STATE
+// ─────────────────────────────────────────────────────────────────────
+var float prevSwingHighPrice_TrendTF = na
+var float prevSwingLowPrice_TrendTF = na
+var array<float> swingHighHistory_TrendTF = array.new<float>()
+var array<int> swingHighBarHistory_TrendTF = array.new<int>()
+var array<int> swingHighBarHistory_TrendTF_Time = array.new<int>()  // Store time for bar mapping
+var array<bool> swingHighConfirmedAsExtreme_TrendTF = array.new<bool>()
+var array<label> swingHighLabels_TrendTF = array.new<label>()
+var array<line> swingHighLines_TrendTF = array.new<line>()
+var array<float> swingLowHistory_TrendTF = array.new<float>()
+var array<int> swingLowBarHistory_TrendTF = array.new<int>()
+var array<int> swingLowBarHistory_TrendTF_Time = array.new<int>()  // Store time for bar mapping
+var array<bool> swingLowConfirmedAsExtreme_TrendTF = array.new<bool>()
+var array<label> swingLowLabels_TrendTF = array.new<label>()
+var array<line> swingLowLines_TrendTF = array.new<line>()
+
+// Extreme points (XH/XL) - Trend TF only
+var array<line> highestHighLines_TrendTF = array.new<line>()
+var array<label> highestHighLabels_TrendTF = array.new<label>()
+var array<float> highestHighPrices_TrendTF = array.new<float>()
+var array<line> lowestLowLines_TrendTF = array.new<line>()
+var array<label> lowestLowLabels_TrendTF = array.new<label>()
+var array<float> lowestLowPrices_TrendTF = array.new<float>()
+
+// ─────────────────────────────────────────────────────────────────────
+// ENTRY TF SWING POINT STATE
+// ─────────────────────────────────────────────────────────────────────
+var float prevSwingHighPrice_EntryTF = na
+var float prevSwingLowPrice_EntryTF = na
+var array<float> swingHighHistory_EntryTF = array.new<float>()
+var array<int> swingHighBarHistory_EntryTF = array.new<int>()
+var array<bool> swingHighConfirmedAsExtreme_EntryTF = array.new<bool>()
+var array<label> swingHighLabels_EntryTF = array.new<label>()
+var array<line> swingHighLines_EntryTF = array.new<line>()
+var array<float> swingLowHistory_EntryTF = array.new<float>()
+var array<int> swingLowBarHistory_EntryTF = array.new<int>()
+var array<bool> swingLowConfirmedAsExtreme_EntryTF = array.new<bool>()
+var array<label> swingLowLabels_EntryTF = array.new<label>()
+var array<line> swingLowLines_EntryTF = array.new<line>()
+
+// ─────────────────────────────────────────────────────────────────────
+// PATTERN TF STRUCTURE STATE (FVG, OB, BB)
+// ─────────────────────────────────────────────────────────────────────
+var array<FVGBox> activeFVGs = array.new<FVGBox>()
+var array<OrderBlock> activeOBs = array.new<OrderBlock>()
+var int lastOBDirection = 0
+var array<BreakerBlock> activeBBs = array.new<BreakerBlock>()
+
+// ─────────────────────────────────────────────────────────────────────
+// MARKET STRUCTURE STATE (CHoCH/BOS) - Separate for Trend TF and Entry TF
+// ─────────────────────────────────────────────────────────────────────
+// Trend TF Market Structure
+var array<MarketStructure> activeMS_TrendTF = array.new<MarketStructure>()
+var float lastLH_TrendTF = na
+var float lastHL_TrendTF = na
+var float lastHH_TrendTF = na
+var float lastLL_TrendTF = na
+var int lastLHBar_TrendTF = na
+var int lastHLBar_TrendTF = na
+var int lastHHBar_TrendTF = na
+var int lastLLBar_TrendTF = na
+var int consecutiveLH_TrendTF = 0
+var int consecutiveHL_TrendTF = 0
+
+// Entry TF Market Structure
+var array<MarketStructure> activeMS_EntryTF = array.new<MarketStructure>()
+var float lastLH_EntryTF = na
+var float lastHL_EntryTF = na
+var float lastHH_EntryTF = na
+var float lastLL_EntryTF = na
+var int lastLHBar_EntryTF = na
+var int lastHLBar_EntryTF = na
+var int lastHHBar_EntryTF = na
+var int lastLLBar_EntryTF = na
+var int consecutiveLH_EntryTF = 0
+var int consecutiveHL_EntryTF = 0
+
+// ─────────────────────────────────────────────────────────────────────
+// TRADING OPPORTUNITIES (ALERTS)
+// ─────────────────────────────────────────────────────────────────────
+var array<TradingOpportunity> activeOpportunities = array.new<TradingOpportunity>()
+
+// ═══════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS (Alert Trading Parameters)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper function: Check if price is near an unmitigated structure (OB or FVG)
+// Used for Structure Confluence parameter in MA_Score
+// Returns true if price within 50% of any unmitigated same-direction structure
+isNearUnmitigatedStructure(bool isBullish, float price) =>
+    bool nearStructure = false
+    float proximityThreshold = 0.5  // 50% of zone height
+
+    // Check active FVGs for unmitigated zones
+    if array.size(activeFVGs) > 0
+        for i = 0 to array.size(activeFVGs) - 1
+            fvg = array.get(activeFVGs, i)
+            if not fvg.mitigated and fvg.isBullish == isBullish
+                zoneHeight = fvg.top - fvg.bottom
+                zoneMid = (fvg.top + fvg.bottom) / 2
+                if math.abs(price - zoneMid) <= (zoneHeight * proximityThreshold)
+                    nearStructure := true
+                    break
+
+    // Check active OBs if not found in FVGs
+    if not nearStructure and array.size(activeOBs) > 0
+        for i = 0 to array.size(activeOBs) - 1
+            ob = array.get(activeOBs, i)
+            if not ob.mitigated and ob.isBullish == isBullish
+                zoneHeight = ob.top - ob.bottom
+                zoneMid = (ob.top + ob.bottom) / 2
+                if math.abs(price - zoneMid) <= (zoneHeight * proximityThreshold)
+                    nearStructure := true
+                    break
+
+    nearStructure
+
+// Calculate MA Score (out of 10 points) - 9-Parameter Research-Based System
+// Weights based on institutional trading practices and SMC effectiveness research (2024-2025)
+//
+// TIER 1 - Institutional Trend Bias (48%): 4.8 points
+// 2.400 points: 200 EMA support (institutional "line in the sand")
+// 1.600 points: 100 EMA support (major trend identification, strong crossover signals)
+// 1.200 points: VWAP support (institutional execution benchmark, 69% follow rate)
+//
+// TIER 2 - Multi-Timeframe Context (24%): 2.4 points
+// 1.200 points: Trend TF Support (68% success rate with MTF alignment)
+// 0.600 points: Market Structure Momentum (recent BOS = trend continuation)
+// 0.600 points: Liquidity Event (70% reversion rate after sweeps/breaks)
+//
+// TIER 3 - Intermediate Confirmation (28%): 2.8 points
+// 0.800 points: 50 EMA support (swing trading key level)
+// 0.800 points: Volume confirmation (69% trend persistence when confirmed)
+// 0.800 points: Structure Confluence (alert near unmitigated OB/FVG)
+//
+// Returns: MA Score (0.0-10.0)
+calculateMAScore(bool isBullishSetup, float currentPrice) =>
+    float maScore = 0.0
+
+    if isBullishSetup
+        // Bullish trade: Price should be ABOVE MAs for support
+        if currentPrice > ema200
+            maScore := maScore + 2.400  // 200 EMA support (TIER 1)
+        if currentPrice > ema100
+            maScore := maScore + 1.600  // 100 EMA support (TIER 1)
+        if currentPrice > ema50
+            maScore := maScore + 0.800  // 50 EMA support (TIER 3)
+        if currentPrice > vwapValue
+            maScore := maScore + 1.200  // VWAP support (TIER 1)
+    else
+        // Bearish trade: Price should be BELOW MAs for support
+        if currentPrice < ema200
+            maScore := maScore + 2.400  // 200 EMA support (TIER 1)
+        if currentPrice < ema100
+            maScore := maScore + 1.600  // 100 EMA support (TIER 1)
+        if currentPrice < ema50
+            maScore := maScore + 0.800  // 50 EMA support (TIER 3)
+        if currentPrice < vwapValue
+            maScore := maScore + 1.200  // VWAP support (TIER 1)
+
+    // Volume parameter (0.800 points - TIER 3)
+    // If current volume > 21-period average volume, add 0.8 points
+    // Logic is same for both bullish and bearish (volume-agnostic)
+    if volume > avgVolume21
+        maScore := maScore + 0.800  // Volume confirmation
+
+    // Trend TF Support parameter (1.200 points - TIER 2)
+    // Bullish: Price above Trend TF 200 EMA = 1.2 points
+    // Bearish: Price below Trend TF 200 EMA = 1.2 points
+    if not na(trendTF_ema200)
+        if isBullishSetup
+            if currentPrice > trendTF_ema200
+                maScore := maScore + 1.200  // Bullish with higher TF support (TIER 2)
+        else
+            if currentPrice < trendTF_ema200
+                maScore := maScore + 1.200  // Bearish with higher TF support (TIER 2)
+
+    // Structure Confluence parameter (0.800 points - TIER 3)
+    // Alert near unmitigated Order Block or FVG in same direction
+    // Checks if price within 50% of any same-direction unmitigated structure
+    if isNearUnmitigatedStructure(isBullishSetup, currentPrice)
+        maScore := maScore + 0.800  // Structure confluence (OB or FVG)
+
+    // Market Structure Momentum parameter (0.600 points - TIER 2)
+    // Recent BOS (Break of Structure) in same direction (last 20 bars) on Entry TF
+    // BOS indicates trend continuation, increases setup confidence
+    int bosLookback = 20
+    if array.size(activeMS_EntryTF) > 0
+        for i = 0 to array.size(activeMS_EntryTF) - 1
+            ms = array.get(activeMS_EntryTF, i)
+            if ms.isBOS and (bar_index - ms.endBar) <= bosLookback
+                if ms.isBullish == isBullishSetup
+                    maScore := maScore + 0.600  // BOS momentum confirmation (Entry TF)
+                    break  // Only count once
+
+    // Liquidity Event parameter (0.600 points - TIER 2)
+    // Recent liquidity sweep or XH/XL break (last 10 bars)
+    // Sweeps often precede reversals (70% reversion rate)
+    int liquidityLookback = 10
+    if array.size(activeOpportunities) > 0
+        for i = 0 to array.size(activeOpportunities) - 1
+            opp = array.get(activeOpportunities, i)
+            if (bar_index - opp.detectionBar) <= liquidityLookback
+                if opp.patternType == "External Liquidity" or opp.patternType == "FVG Sweep"
+                    maScore := maScore + 0.600  // Liquidity event detected
+                    break  // Only count once
+
+    maScore
+
+// Generate unique alert ID using timestamp, bar index, and price
+// Format: YYYYMMDD-HHMMSS-BAR-PRICE (e.g., 20251008-143045-1234-17580)
+generateAlertId(barIndex, price) =>
+    // Get timestamp components
+    yearVal = year(time)
+    monthVal = month(time)
+    dayVal = dayofmonth(time)
+    hourVal = hour(time)
+    minuteVal = minute(time)
+    secondVal = second(time)
+
+    // Format with leading zeros
+    yearStr = str.tostring(yearVal)
+    monthStr = monthVal < 10 ? "0" + str.tostring(monthVal) : str.tostring(monthVal)
+    dayStr = dayVal < 10 ? "0" + str.tostring(dayVal) : str.tostring(dayVal)
+    hourStr = hourVal < 10 ? "0" + str.tostring(hourVal) : str.tostring(hourVal)
+    minuteStr = minuteVal < 10 ? "0" + str.tostring(minuteVal) : str.tostring(minuteVal)
+    secondStr = secondVal < 10 ? "0" + str.tostring(secondVal) : str.tostring(secondVal)
+
+    // Format price (remove decimal point, keep 2 digits)
+    priceInt = math.round(price * 100)
+
+    // Combine: YYYYMMDD-HHMMSS-BAR-PRICE
+    yearStr + monthStr + dayStr + "-" + hourStr + minuteStr + secondStr + "-" + str.tostring(barIndex) + "-" + str.tostring(priceInt)
+
+// Find next unmitigated opposite element for Take Profit
+// isBullishSetup: true = looking for bearish TP above, false = looking for bullish TP below
+// entryPrice: Entry price to search from
+// slPrice: Stop loss price (for fallback calculation)
+// rrRatio: Risk-reward ratio for fallback (user-configurable)
+// Returns: [TP price, TP criteria string]
+findTakeProfitPrice(bool isBullishSetup, float entryPrice, float slPrice, float rrRatio) =>
+    float tpPrice = na
+    string tpCriteria = ""
+
+    if isBullishSetup
+        // Bullish setup: Search for bearish elements above entry
+        // 1. Search bearish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if not fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.bottom > entryPrice
+                        if na(tpPrice) or fvg.bottom < tpPrice
+                            tpPrice := fvg.bottom
+                            tpCriteria := "FVG"
+
+        // 2. Search bearish OBs
+        if array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if not ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.bottom > entryPrice
+                        if na(tpPrice) or ob.bottom < tpPrice
+                            tpPrice := ob.bottom
+                            tpCriteria := "OB"
+
+        // 3. Enhanced Fallback: Try recent swing high first, then config RR
+        if na(tpPrice)
+            // Try to find recent swing high above entry (using Trend TF swings)
+            float swingTP = na
+            if array.size(swingHighHistory_TrendTF) > 0
+                for i = array.size(swingHighHistory_TrendTF) - 1 to 0
+                    swingHigh = array.get(swingHighHistory_TrendTF, i)
+                    if swingHigh > entryPrice
+                        swingTP := swingHigh
+                        break  // Use most recent swing high above entry
+
+            // Calculate RR for swing high vs config RR
+            float configTP = entryPrice + (entryPrice - slPrice) * rrRatio
+            float riskAmount = math.abs(entryPrice - slPrice)
+
+            if not na(swingTP) and riskAmount > 0
+                float swingReward = math.abs(swingTP - entryPrice)
+                float swingRR = swingReward / riskAmount
+                float configRR = rrRatio
+
+                // Use swing high if it gives better RR than config
+                if swingRR > configRR
+                    tpPrice := swingTP
+                    tpCriteria := "SwingHigh"
+                else
+                    tpPrice := configTP
+                    tpCriteria := "RR"
+            else
+                tpPrice := configTP
+                tpCriteria := "RR"
+    else
+        // Bearish setup: Search for bullish elements below entry
+        // 1. Search bullish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.top < entryPrice
+                        if na(tpPrice) or fvg.top > tpPrice
+                            tpPrice := fvg.top
+                            tpCriteria := "FVG"
+
+        // 2. Search bullish OBs
+        if array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.top < entryPrice
+                        if na(tpPrice) or ob.top > tpPrice
+                            tpPrice := ob.top
+                            tpCriteria := "OB"
+
+        // 3. Enhanced Fallback: Try recent swing low first, then config RR
+        if na(tpPrice)
+            // Try to find recent swing low below entry (using Trend TF swings)
+            float swingTP = na
+            if array.size(swingLowHistory_TrendTF) > 0
+                for i = array.size(swingLowHistory_TrendTF) - 1 to 0
+                    swingLow = array.get(swingLowHistory_TrendTF, i)
+                    if swingLow < entryPrice
+                        swingTP := swingLow
+                        break  // Use most recent swing low below entry
+
+            // Calculate RR for swing low vs config RR
+            float configTP = entryPrice - (slPrice - entryPrice) * rrRatio
+            float riskAmount = math.abs(slPrice - entryPrice)
+
+            if not na(swingTP) and riskAmount > 0
+                float swingReward = math.abs(entryPrice - swingTP)
+                float swingRR = swingReward / riskAmount
+                float configRR = rrRatio
+
+                // Use swing low if it gives better RR than config
+                if swingRR > configRR
+                    tpPrice := swingTP
+                    tpCriteria := "SwingLow"
+                else
+                    tpPrice := configTP
+                    tpCriteria := "RR"
+            else
+                tpPrice := configTP
+                tpCriteria := "RR"
+
+    [tpPrice, tpCriteria]
+
+// Enhanced TP finder for OB+FVG Confluence (minimum RR = 1.0)
+// Searches through ALL possible TP targets until finding one with RR >= 1.0
+// Priority: FVGs → OBs → BBs → Swing Points → RR Config
+findEnhancedTakeProfitPrice(bool isBullishSetup, float entryPrice, float slPrice, float rrRatio) =>
+    float tpPrice = na
+    string tpCriteria = ""
+    float riskAmount = math.abs(entryPrice - slPrice)
+    float minRR = 1.0  // Minimum acceptable RR for OB+FVG pattern
+
+    if isBullishSetup
+        // Bullish setup: Search for bearish elements above entry
+        // Priority 1: Search ALL bearish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if not fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.bottom > entryPrice
+                        potentialTP = fvg.bottom
+                        potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP < tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "FVG"
+
+        // Priority 2: Search ALL bearish OBs (if no valid FVG found)
+        if na(tpPrice) and array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if not ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.bottom > entryPrice
+                        potentialTP = ob.bottom
+                        potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP < tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "OB"
+
+        // Priority 3: Search ALL bearish BBs (if no valid OB found)
+        if na(tpPrice) and array.size(activeBBs) > 0
+            for i = array.size(activeBBs) - 1 to 0
+                bb = array.get(activeBBs, i)
+                // Bearish BB (bb.isBullish = false) acts as resistance (good for bullish TP)
+                if not bb.isBullish and not bb.mitigated and not bb.filled
+                    if bb.bottom > entryPrice
+                        potentialTP = bb.bottom
+                        potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP < tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "BB"
+
+        // Priority 4: Search swing highs (if no valid BB found) - using Trend TF swings
+        if na(tpPrice) and array.size(swingHighHistory_TrendTF) > 0
+            for i = array.size(swingHighHistory_TrendTF) - 1 to 0
+                swingHigh = array.get(swingHighHistory_TrendTF, i)
+                if swingHigh > entryPrice
+                    potentialTP = swingHigh
+                    potentialRR = riskAmount > 0 ? math.abs(potentialTP - entryPrice) / riskAmount : 0
+                    if potentialRR >= minRR
+                        tpPrice := potentialTP
+                        tpCriteria := "SwingHigh"
+                        break  // Use first valid swing high
+
+        // Priority 5: Fallback to config RR (guaranteed >= minRR if rrRatio >= 1.0)
+        if na(tpPrice)
+            tpPrice := entryPrice + (riskAmount * rrRatio)
+            tpCriteria := "RR"
+    else
+        // Bearish setup: Search for bullish elements below entry
+        // Priority 1: Search ALL bullish FVGs
+        if array.size(activeFVGs) > 0
+            for i = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, i)
+                if fvg.isBullish and not fvg.mitigated and not fvg.filled
+                    if fvg.top < entryPrice
+                        potentialTP = fvg.top
+                        potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP > tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "FVG"
+
+        // Priority 2: Search ALL bullish OBs (if no valid FVG found)
+        if na(tpPrice) and array.size(activeOBs) > 0
+            for i = array.size(activeOBs) - 1 to 0
+                ob = array.get(activeOBs, i)
+                if ob.isBullish and not ob.mitigated and not ob.filled and not ob.broken
+                    if ob.top < entryPrice
+                        potentialTP = ob.top
+                        potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP > tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "OB"
+
+        // Priority 3: Search ALL bullish BBs (if no valid OB found)
+        if na(tpPrice) and array.size(activeBBs) > 0
+            for i = array.size(activeBBs) - 1 to 0
+                bb = array.get(activeBBs, i)
+                // Bullish BB (bb.isBullish = true) acts as support (good for bearish TP)
+                if bb.isBullish and not bb.mitigated and not bb.filled
+                    if bb.top < entryPrice
+                        potentialTP = bb.top
+                        potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                        if potentialRR >= minRR
+                            if na(tpPrice) or potentialTP > tpPrice
+                                tpPrice := potentialTP
+                                tpCriteria := "BB"
+
+        // Priority 4: Search swing lows (if no valid BB found) - using Trend TF swings
+        if na(tpPrice) and array.size(swingLowHistory_TrendTF) > 0
+            for i = array.size(swingLowHistory_TrendTF) - 1 to 0
+                swingLow = array.get(swingLowHistory_TrendTF, i)
+                if swingLow < entryPrice
+                    potentialTP = swingLow
+                    potentialRR = riskAmount > 0 ? math.abs(entryPrice - potentialTP) / riskAmount : 0
+                    if potentialRR >= minRR
+                        tpPrice := potentialTP
+                        tpCriteria := "SwingLow"
+                        break  // Use first valid swing low
+
+        // Priority 5: Fallback to config RR (guaranteed >= minRR if rrRatio >= 1.0)
+        if na(tpPrice)
+            tpPrice := entryPrice - (riskAmount * rrRatio)
+            tpCriteria := "RR"
+
+    [tpPrice, tpCriteria]
+
+// ═══════════════════════════════════════════════════════════════════════
+// SWING POINT DETECTION (MULTI-TIMEFRAME)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Entry TF Swing Detection (uses native OHLC data)
+isSwingHigh_EntryTF(leftBars, rightBars) =>
+    pivotHigh = high[rightBars]
+    isHigh = true
+    for i = 1 to leftBars
+        if high[rightBars + i] >= pivotHigh
+            isHigh := false
+            break
+    if isHigh
+        for i = 0 to rightBars - 1
+            if high[i] > pivotHigh
+                isHigh := false
+                break
+    isHigh
+
+isSwingLow_EntryTF(leftBars, rightBars) =>
+    pivotLow = low[rightBars]
+    isLow = true
+    for i = 1 to leftBars
+        if low[rightBars + i] <= pivotLow
+            isLow := false
+            break
+    if isLow
+        for i = 0 to rightBars - 1
+            if low[i] < pivotLow
+                isLow := false
+                break
+    isLow
+
+// Trend TF Swing Detection (uses Trend TF OHLC data from request.security)
+// Detects swings on higher timeframe using request.security data
+isSwingHigh_TrendTF(leftBars, rightBars) =>
+    bool isHigh = false
+    if not na(trendTF_high)
+        pivotHigh = trendTF_high[rightBars]
+        isHigh := true
+        for i = 1 to leftBars
+            if not na(trendTF_high[rightBars + i]) and trendTF_high[rightBars + i] >= pivotHigh
+                isHigh := false
+                break
+        if isHigh
+            for i = 0 to rightBars - 1
+                if not na(trendTF_high[i]) and trendTF_high[i] > pivotHigh
+                    isHigh := false
+                    break
+    isHigh
+
+isSwingLow_TrendTF(leftBars, rightBars) =>
+    bool isLow = false
+    if not na(trendTF_low)
+        pivotLow = trendTF_low[rightBars]
+        isLow := true
+        for i = 1 to leftBars
+            if not na(trendTF_low[rightBars + i]) and trendTF_low[rightBars + i] <= pivotLow
+                isLow := false
+                break
+        if isLow
+            for i = 0 to rightBars - 1
+                if not na(trendTF_low[i]) and trendTF_low[i] < pivotLow
+                    isLow := false
+                    break
+    isLow
+
+// Helper function to determine combined swing label based on both timeframe detections
+// Returns label suffix: "-T" for Trend TF only, "-E" for Entry TF only, "-T, -E" for both
+determineSwingLabel(bool isTrendTFSwing, bool isEntryTFSwing, string swingType) =>
+    string labelSuffix = ""
+    if isTrendTFSwing and isEntryTFSwing
+        labelSuffix := swingType + "-T, " + swingType + "-E"
+    else if isTrendTFSwing
+        labelSuffix := swingType + "-T"
+    else if isEntryTFSwing
+        labelSuffix := swingType + "-E"
+    labelSuffix
+
+// Helper function to check if two swings are "the same" (within proximity threshold)
+// Used to determine if Trend TF and Entry TF swings should be combined into one label
+swingsAreSame(float price1, float price2) =>
+    float proximityThreshold = 0.001  // 0.1% threshold for "same" swing
+    math.abs((price1 - price2) / price2) <= proximityThreshold
+
+// ═══════════════════════════════════════════════════════════════════════
+// MAIN DETECTION LOGIC (Only runs on supported timeframes)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Entry TF swing detection (current chart timeframe)
+// Entry TF checks on every bar since it's the native timeframe
+swingHigh_EntryTF = isSupported ? isSwingHigh_EntryTF(leftBars, rightBars) : false
+swingLow_EntryTF = isSupported ? isSwingLow_EntryTF(leftBars, rightBars) : false
+
+// Trend TF swing detection (higher timeframe)
+// CRITICAL: Only check when Trend TF bar has changed to avoid stale data
+swingHigh_TrendTF_raw = isSwingHigh_TrendTF(leftBars, rightBars)
+swingLow_TrendTF_raw = isSwingLow_TrendTF(leftBars, rightBars)
+swingHigh_TrendTF = isSupported and trendTF_changed and swingHigh_TrendTF_raw
+swingLow_TrendTF = isSupported and trendTF_changed and swingLow_TrendTF_raw
+
+// ═══════════════════════════════════════════════════════════════════════
+// PATTERN TF DETECTION FUNCTIONS (Run in Pattern TF context via request.security)
+// ═══════════════════════════════════════════════════════════════════════
+
+// FVG Detection Function - Runs entirely in Pattern TF context
+// Returns: [bullishFound, bearishFound, bullTop, bullBottom, bearTop, bearBottom, currentBar]
+detectPatternTF_FVG() =>
+    // Detect bullish FVG (gap up): low[1] > high[3]
+    bullFound = not na(low[1]) and not na(high[3]) and (low[1] > high[3])
+    bullTop = bullFound ? low[1] : na
+    bullBottom = bullFound ? high[3] : na
+
+    // Detect bearish FVG (gap down): high[1] < low[3]
+    bearFound = not na(high[1]) and not na(low[3]) and (high[1] < low[3])
+    bearTop = bearFound ? low[3] : na
+    bearBottom = bearFound ? high[1] : na
+
+    // Return current bar_index for change detection
+    [bullFound, bearFound, bullTop, bullBottom, bearTop, bearBottom, bar_index]
+
+// Call FVG detection in Pattern TF context
+[fvg_bullish_raw, fvg_bearish_raw, fvg_bull_top, fvg_bull_bot, fvg_bear_top, fvg_bear_bot, fvg_bar] = request.security(syminfo.tickerid, patternTF, detectPatternTF_FVG(), lookahead=barmerge.lookahead_off)
+
+// Track last FVG bar_index to detect new patterns
+var int lastBullFVG_bar = -1
+var int lastBearFVG_bar = -1
+
+// Detect new FVG patterns (bar_index changed means new detection)
+newBullFVG = fvg_bullish_raw and fvg_bar != lastBullFVG_bar and fvg_bar > lastBullFVG_bar
+newBearFVG = fvg_bearish_raw and fvg_bar != lastBearFVG_bar and fvg_bar > lastBearFVG_bar
+
+// OB Detection Function - Runs entirely in Pattern TF context
+// Returns: [bullFound, bearFound, bullTop, bullBottom, bearTop, bearBottom, numCandles, currentBar]
+// NOTE: Cannot pass series parameters to functions in request.security(), so we fetch them inside
+// Entry TF swing detection results passed as boolean parameters to avoid nested request.security()
+detectPatternTF_OB(string tfString, float tfMult, bool entrySwingHigh, bool entrySwingLow) =>
+    // Track last OB direction and bar to prevent multiple OBs in single move (if enabled)
+    var int lastOBDir = 0  // 1=bullish, -1=bearish, 0=none
+    var int lastOBBar = 0  // Bar index when last OB was detected
+
+    // Fetch input parameters from Entry TF context (these become constants in Pattern TF)
+    maxCandles = obMaxCandles
+    minMove = obMinMove
+    skipSameWave = skipOBsInSameWave
+
+    // Use the Pattern TF multiplier passed in (calculated in Entry TF context)
+    // This ensures we use the correct multiplier for Pattern TF, not Entry TF
+    patternMultiplier = tfMult
+
+    // Fetch ES1! data at current timeframe to calculate beta
+    es1Close = request.security("ES1!", timeframe.period, close, lookahead=barmerge.lookahead_off)
+
+    // Calculate beta in Pattern TF context
+    float betaVal = na
+    if showBeta and bar_index >= betaLookback
+        var secReturns = array.new<float>()
+        var mktReturns = array.new<float>()
+        array.clear(secReturns)
+        array.clear(mktReturns)
+
+        for i = 1 to betaLookback
+            if not na(close[i]) and not na(close[i+1]) and not na(es1Close[i]) and not na(es1Close[i+1])
+                array.push(secReturns, (close[i] - close[i+1]) / close[i+1])
+                array.push(mktReturns, (es1Close[i] - es1Close[i+1]) / es1Close[i+1])
+
+        if array.size(secReturns) > 10
+            secMean = array.avg(secReturns)
+            mktMean = array.avg(mktReturns)
+            covar = 0.0
+            vari = 0.0
+            for i = 0 to array.size(secReturns) - 1
+                covar += (array.get(secReturns, i) - secMean) * (array.get(mktReturns, i) - mktMean)
+                vari += (array.get(mktReturns, i) - mktMean) * (array.get(mktReturns, i) - mktMean)
+            if vari != 0
+                betaVal := covar / vari
+
+    betaMult = useBetaMultiplier and not na(betaVal) ? math.abs(betaVal) : 1.0
+
+    // ─────────────────────────────────────────────────────────────────────
+    // RESET OB DIRECTION BASED ON ENTRY TF SWING POINTS
+    // ─────────────────────────────────────────────────────────────────────
+    // Reset logic (only if "Skip OBs in Same Wave" is enabled):
+    // Entry TF swing detection is done in main script and passed as parameters
+    // This avoids nested request.security() calls which fail in Replay mode
+    // - Bullish OB detected → Next bullish OB blocked until Entry TF swing high forms
+    // - Bearish OB detected → Next bearish OB blocked until Entry TF swing low forms
+    // - Opposite direction OBs are NOT blocked
+    // ─────────────────────────────────────────────────────────────────────
+
+    if skipSameWave
+        // Reset bullish OB direction when Entry TF swing high is detected
+        if lastOBDir == 1 and entrySwingHigh
+            lastOBDir := 0  // Reset - allow new bullish OB detection after swing high formed
+
+        // Reset bearish OB direction when Entry TF swing low is detected
+        if lastOBDir == -1 and entrySwingLow
+            lastOBDir := 0  // Reset - allow new bearish OB detection after swing low formed
+
+    // Now detect OBs using Pattern TF data
+    bullFound = false
+    bullTop = 0.0
+    bullBottom = 0.0
+    bullNumCandles = 0
+
+    bearFound = false
+    bearTop = 0.0
+    bearBottom = 0.0
+    bearNumCandles = 0
+
+    // Check for bullish OB (2-5 consecutive bullish candles)
+    // Only check lastOBDir blocking if "Skip OBs in Same Wave" is enabled
+    if not skipSameWave or lastOBDir != 1
+        for numCandles = 2 to maxCandles
+            if not na(close) and not na(close[numCandles]) and not na(open) and not na(open[numCandles])
+                movePercent = ((close - close[numCandles]) / close[numCandles]) * 100
+
+                if movePercent >= (minMove * patternMultiplier * betaMult)
+                    allBullish = true
+                    // Check consecutive higher closes (each close > previous close)
+                    for i = 1 to numCandles
+                        if not na(close[i]) and not na(close[i + 1])
+                            if close[i] <= close[i + 1]
+                                allBullish := false
+                                break
+
+                    if allBullish and not bullFound
+                        bullFound := true
+                        bullBottom := low[numCandles]
+                        bullTop := high[numCandles]
+                        bullNumCandles := numCandles
+                        if skipSameWave
+                            lastOBDir := 1  // Update direction (only if feature enabled)
+                            lastOBBar := bar_index  // Record bar where OB was detected
+                        break
+
+    // Check for bearish OB (2-5 consecutive bearish candles)
+    // Only check lastOBDir blocking if "Skip OBs in Same Wave" is enabled
+    if not skipSameWave or lastOBDir != -1
+        for numCandles = 2 to maxCandles
+            if not na(close) and not na(close[numCandles]) and not na(open) and not na(open[numCandles])
+                movePercent = ((close[numCandles] - close) / close[numCandles]) * 100
+
+                if movePercent >= (minMove * patternMultiplier * betaMult)
+                    allBearish = true
+                    // Check consecutive lower closes (each close < previous close)
+                    for i = 1 to numCandles
+                        if not na(close[i]) and not na(close[i + 1])
+                            if close[i] >= close[i + 1]
+                                allBearish := false
+                                break
+
+                    if allBearish and not bearFound
+                        bearFound := true
+                        bearBottom := low[numCandles]
+                        bearTop := high[numCandles]
+                        bearNumCandles := numCandles
+                        if skipSameWave
+                            lastOBDir := -1  // Update direction (only if feature enabled)
+                            lastOBBar := bar_index  // Record bar where OB was detected
+                        break
+
+    [bullFound, bearFound, bullTop, bullBottom, bearTop, bearBottom, bullNumCandles, bearNumCandles, bar_index]
+
+// Call OB detection in Pattern TF context (pass Pattern TF string, multiplier, and Entry TF swing states)
+// Entry TF swing detection (swingHigh_EntryTF, swingLow_EntryTF) calculated in main script (lines 1140-1141)
+// Passing as parameters avoids nested request.security() calls which fail in Replay mode
+[ob_bullish_raw, ob_bearish_raw, ob_bull_top, ob_bull_bot, ob_bear_top, ob_bear_bot, ob_bull_candles, ob_bear_candles, ob_bar] = request.security(syminfo.tickerid, patternTF, detectPatternTF_OB(patternTF, patternTF_Multiplier, swingHigh_EntryTF, swingLow_EntryTF), lookahead=barmerge.lookahead_off)
+
+// Track last OB bar_index to detect new patterns
+var int lastBullOB_bar = -1
+var int lastBearOB_bar = -1
+
+// Detect new OB patterns - ONLY when Pattern TF bar has closed
+newBullOB = patternTF_changed and ob_bullish_raw and ob_bar != lastBullOB_bar and ob_bar > lastBullOB_bar
+newBearOB = patternTF_changed and ob_bearish_raw and ob_bar != lastBearOB_bar and ob_bar > lastBearOB_bar
+
+// ═══════════════════════════════════════════════════════════════════════
+// FAIR VALUE GAP DRAWING (ENTRY TF)
+// ═══════════════════════════════════════════════════════════════════════
+
+if showFVG and isSupported
+    // Process new bullish FVG
+    if newBullFVG and not na(fvg_bull_top) and not na(fvg_bull_bot)
+        lastBullFVG_bar := fvg_bar
+
+        // Calculate FVG size using Pattern TF prices
+        bullishFVGTop = fvg_bull_top
+        bullishFVGBottom = fvg_bull_bot
+        bullishGapSize = ((bullishFVGTop - bullishFVGBottom) / bullishFVGBottom) * 100
+
+        // Use Pattern TF multiplier for sizing threshold
+        if bullishGapSize >= (fvgMinSize * patternTF_Multiplier * betaMultiplier)
+            if array.size(activeFVGs) >= fvgMaxCount
+                oldestFVG = array.shift(activeFVGs)
+                box.delete(oldestFVG.boxDrawing)
+                label.delete(oldestFVG.labelDrawing)
+            
+            // Check if FVG overlaps Trend TF swing high (liquidity run)
+            isLiquidityRunFVG = false
+            if not na(prevSwingHighPrice_TrendTF) and array.size(swingHighBarHistory_TrendTF) > 0
+                swingHighBar_T = array.get(swingHighBarHistory_TrendTF, array.size(swingHighBarHistory_TrendTF) - 1)
+                if not na(swingHighBar_T) and swingHighBar_T < bar_index - 2
+                    if bullishFVGBottom <= prevSwingHighPrice_TrendTF and bullishFVGTop >= prevSwingHighPrice_TrendTF
+                        isLiquidityRunFVG := true
+            
+            fvgLabelText = isLiquidityRunFVG ? "Bullish FVG\n(Liquidity Run)" : "Bullish FVG"
+            // Draw box at current Entry TF bar (Pattern TF just closed)
+            // Box starts 2 bars ago (covers the gap formation period)
+            fvgBox = box.new(left=bar_index - 2, top=bullishFVGTop, right=bar_index, bottom=bullishFVGBottom, border_color=bullishFVGColor, bgcolor=bullishFVGColor, border_width=1, extend=fvgExtendRight ? extend.right : extend.none)
+            fvgLabel = label.new(x=bar_index - 2 + labelOffset, y=(bullishFVGTop + bullishFVGBottom) / 2, text=fvgLabelText, style=label.style_label_left, color=bullishFVGColor, textcolor=color.white, size=size.small)
+            array.push(activeFVGs, FVGBox.new(fvgBox, fvgLabel, bullishFVGTop, bullishFVGBottom, bar_index - 2, true, false, false, isLiquidityRunFVG, false, false, false, false))
+            
+            if isLiquidityRunFVG and showLiquidityRunFVGAlert
+                // Calculate EN, SL, TP with enhanced TP logic
+                isBullishSetup = true
+                entryPrice = close[1]  // Entry at close of FVG confirmation candle (bar[1])
+                calculatedSL = bullishFVGBottom  // SL at bottom of FVG
+
+                // Apply ATR minimum SL
+                [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                // Use enhanced TP (search all structures until RR >= 1.0)
+                [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                // Calculate Risk-Reward ratio
+                riskAmount = math.abs(entryPrice - slPrice)
+                rewardAmount = math.abs(tpPrice - entryPrice)
+                tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                // Calculate MA Score (evaluate at confirmation candle)
+                maScore = calculateMAScore(isBullishSetup, close[1])
+
+                // Generate unique alert ID
+                alertId = generateAlertId(bar_index - 1, entryPrice)
+
+                // Determine if alert will be fired and reason if not
+                withinTimeWindow = isWithinAlertTimeWindow()
+                meetsMAScore = maScore >= minMAScoreForAlert
+                alertWillFire = withinTimeWindow and meetsMAScore
+
+                firedStatus = alertWillFire ? "True" : "False"
+                firedReason = ""
+                if not alertWillFire
+                    if not withinTimeWindow and not meetsMAScore
+                        firedReason := " (OTW, Low MAS)"
+                    else if not withinTimeWindow
+                        firedReason := " (OTW)"
+                    else if not meetsMAScore
+                        firedReason := " (Low MAS)"
+
+                // Create label with conditional prices (multi-line)
+                labelText = "Liquidity Run FVG\n(Bullish)"
+                if showAlertPrices
+                    slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                    tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                    labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                    labelText := labelText + "\nSL=" + slText
+                    labelText := labelText + "\nTP=" + tpText
+                    labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                    labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                    labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                oppLabel = label.new(x=bar_index - 1 + opportunityLabelOffset, y=close[1], text=labelText, style=label.style_label_left, color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
+                oppArrow = createArrowToLabel(bar_index - 2, bar_index - 1 + opportunityLabelOffset, close[1], color.new(color.green, 0))
+
+                // Create JSON alert message
+                ticker = syminfo.ticker
+                tf = timeframe.period
+                patternName = "Liquidity Run FVG Bullish"
+                timestamp = time[1]
+                alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"BUY","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close[1], format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                if alertWillFire
+                    alert(alertMsg, alert.freq_once_per_bar)
+
+                // Push to active opportunities with all trading parameters
+                array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "Liquidity Run FVG", close[1], bar_index - 2, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close[1], alertId))
+    
+    // Process new bearish FVG
+    if newBearFVG and not na(fvg_bear_top) and not na(fvg_bear_bot)
+        lastBearFVG_bar := fvg_bar
+
+        // Calculate FVG size using Pattern TF prices
+        bearishFVGTop = fvg_bear_top
+        bearishFVGBottom = fvg_bear_bot
+        bearishGapSize = ((bearishFVGTop - bearishFVGBottom) / bearishFVGBottom) * 100
+
+        // Use Pattern TF multiplier for sizing threshold
+        if bearishGapSize >= (fvgMinSize * patternTF_Multiplier * betaMultiplier)
+            if array.size(activeFVGs) >= fvgMaxCount
+                oldestFVG = array.shift(activeFVGs)
+                box.delete(oldestFVG.boxDrawing)
+                label.delete(oldestFVG.labelDrawing)
+            
+            // Check if FVG overlaps Trend TF swing low (liquidity run)
+            isLiquidityRunFVG = false
+            if not na(prevSwingLowPrice_TrendTF) and array.size(swingLowBarHistory_TrendTF) > 0
+                swingLowBar_T = array.get(swingLowBarHistory_TrendTF, array.size(swingLowBarHistory_TrendTF) - 1)
+                if not na(swingLowBar_T) and swingLowBar_T < bar_index - 2
+                    if bearishFVGBottom <= prevSwingLowPrice_TrendTF and bearishFVGTop >= prevSwingLowPrice_TrendTF
+                        isLiquidityRunFVG := true
+            
+            fvgLabelText = isLiquidityRunFVG ? "Bearish FVG\n(Liquidity Run)" : "Bearish FVG"
+            // Draw box at current Entry TF bar (Pattern TF just closed)
+            fvgBox = box.new(left=bar_index - 2, top=bearishFVGTop, right=bar_index, bottom=bearishFVGBottom, border_color=bearishFVGColor, bgcolor=bearishFVGColor, border_width=1, extend=fvgExtendRight ? extend.right : extend.none)
+            fvgLabel = label.new(x=bar_index - 2 + labelOffset, y=(bearishFVGTop + bearishFVGBottom) / 2, text=fvgLabelText, style=label.style_label_left, color=bearishFVGColor, textcolor=color.white, size=size.small)
+            array.push(activeFVGs, FVGBox.new(fvgBox, fvgLabel, bearishFVGTop, bearishFVGBottom, bar_index - 2, false, false, false, isLiquidityRunFVG, false, false, false, false))
+            
+            if isLiquidityRunFVG and showLiquidityRunFVGAlert
+                // Calculate EN, SL, TP with enhanced TP logic
+                isBullishSetup = false
+                entryPrice = close[1]  // Entry at close of FVG confirmation candle (bar[1])
+                calculatedSL = bearishFVGTop  // SL at top of FVG
+
+                // Apply ATR minimum SL
+                [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                // Use enhanced TP (search all structures until RR >= 1.0)
+                [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                // Calculate Risk-Reward ratio
+                riskAmount = math.abs(entryPrice - slPrice)
+                rewardAmount = math.abs(tpPrice - entryPrice)
+                tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                // Calculate MA Score (evaluate at confirmation candle)
+                maScore = calculateMAScore(isBullishSetup, close[1])
+
+                // Generate unique alert ID
+                alertId = generateAlertId(bar_index - 1, entryPrice)
+
+                // Determine if alert will be fired and reason if not
+                withinTimeWindow = isWithinAlertTimeWindow()
+                meetsMAScore = maScore >= minMAScoreForAlert
+                alertWillFire = withinTimeWindow and meetsMAScore
+
+                firedStatus = alertWillFire ? "True" : "False"
+                firedReason = ""
+                if not alertWillFire
+                    if not withinTimeWindow and not meetsMAScore
+                        firedReason := " (OTW, Low MAS)"
+                    else if not withinTimeWindow
+                        firedReason := " (OTW)"
+                    else if not meetsMAScore
+                        firedReason := " (Low MAS)"
+
+                // Create label with conditional prices (multi-line)
+                labelText = "Liquidity Run FVG\n(Bearish)"
+                if showAlertPrices
+                    slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                    tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                    labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                    labelText := labelText + "\nSL=" + slText
+                    labelText := labelText + "\nTP=" + tpText
+                    labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                    labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                    labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                oppLabel = label.new(x=bar_index - 1 + opportunityLabelOffset, y=close[1], text=labelText, style=label.style_label_left, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+                oppArrow = createArrowToLabel(bar_index - 2, bar_index - 1 + opportunityLabelOffset, close[1], color.new(color.red, 0))
+
+                // Create JSON alert message
+                ticker = syminfo.ticker
+                tf = timeframe.period
+                patternName = "Liquidity Run FVG Bearish"
+                timestamp = time[1]
+                alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"SELL","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close[1], format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                if alertWillFire
+                    alert(alertMsg, alert.freq_once_per_bar)
+
+                // Push to active opportunities with all trading parameters
+                array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "Liquidity Run FVG", close[1], bar_index - 2, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close[1], alertId))
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // FVG MITIGATION/FILL DETECTION (ENTRY TF)
+    // NOTE: FVGs are created on Pattern TF, but mitigation/fill is monitored
+    // continuously on Entry TF (every Entry TF bar) using native OHLC data
+    // ─────────────────────────────────────────────────────────────────────
+    if array.size(activeFVGs) > 0
+        for i = array.size(activeFVGs) - 1 to 0
+            fvg = array.get(activeFVGs, i)
+            if not fvg.filled
+                isMitigated = false
+                isFilled = false
+
+                // Check if minimum candles have passed since FVG creation
+                // Using adjusted count (Pattern TF candles converted to Entry TF candles)
+                candlesSinceCreation = bar_index - fvg.startBar
+                canCheckMitigation = candlesSinceCreation >= adjustedMinCandlesBeforeMitigation
+
+                if canCheckMitigation
+                    if fvg.isBullish
+                        // Bullish FVG: Gap below price
+                        // Track top edge touch (mitigation from above) using Entry TF data
+                        if low <= fvg.top
+                            isMitigated := true
+                            fvg.topTouched := true
+                        // Track bottom edge touch
+                        if low <= fvg.bottom
+                            fvg.bottomTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if fvg.topTouched and fvg.bottomTouched
+                            isFilled := true
+                    else
+                        // Bearish FVG: Gap above price
+                        // Track bottom edge touch (mitigation from below)
+                        if high >= fvg.bottom
+                            isMitigated := true
+                            fvg.bottomTouched := true
+                        // Track top edge touch
+                        if high >= fvg.top
+                            fvg.topTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if fvg.topTouched and fvg.bottomTouched
+                            isFilled := true
+
+                if isMitigated and fvg.isLiquidityRun and not fvg.alertSent
+                    fvg.alertSent := true
+                    if isWithinAlertTimeWindow()
+                        if fvg.isBullish
+                            alert("Bullish Liquidity Run FVG Mitigated at " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
+                        else
+                            alert("Bearish Liquidity Run FVG Mitigated at " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
+
+                if isFilled
+                    fvg.filled := true
+                    fvg.mitigated := true
+                    if fvgDeleteOnFill
+                        box.delete(fvg.boxDrawing)
+                        label.delete(fvg.labelDrawing)
+                        array.remove(activeFVGs, i)
+                    else
+                        box.set_right(fvg.boxDrawing, bar_index)
+                        box.set_extend(fvg.boxDrawing, extend.none)
+                        // Apply light gray for filled structures
+                        box.set_bgcolor(fvg.boxDrawing, filledColor)
+                        box.set_border_color(fvg.boxDrawing, filledColor)
+                        label.set_color(fvg.labelDrawing, filledColor)
+                else if isMitigated
+                    fvg.mitigated := true
+                    if fvgDeleteOnMitigate
+                        box.delete(fvg.boxDrawing)
+                        label.delete(fvg.labelDrawing)
+                        array.remove(activeFVGs, i)
+                    else
+                        // Apply light yellow for mitigated structures
+                        box.set_bgcolor(fvg.boxDrawing, mitigatedColor)
+                        box.set_border_color(fvg.boxDrawing, mitigatedColor)
+                        label.set_color(fvg.labelDrawing, mitigatedColor)
+                        // Extend if needed
+                        if fvgExtendRight
+                            box.set_right(fvg.boxDrawing, bar_index + 10)
+
+                else if fvgExtendRight
+                    box.set_right(fvg.boxDrawing, bar_index + 10)
+
+            // Re-apply colors for ALL mitigated/filled FVGs on every bar
+            if fvg.filled
+                // Light gray for filled structures
+                box.set_bgcolor(fvg.boxDrawing, filledColor)
+                box.set_border_color(fvg.boxDrawing, filledColor)
+                label.set_color(fvg.labelDrawing, filledColor)
+            else if fvg.mitigated
+                // Light yellow for mitigated structures
+                box.set_bgcolor(fvg.boxDrawing, mitigatedColor)
+                box.set_border_color(fvg.boxDrawing, mitigatedColor)
+                label.set_color(fvg.labelDrawing, mitigatedColor)
+
+// ═══════════════════════════════════════════════════════════════════════
+// SWING POINT PROCESSING (MULTI-TIMEFRAME)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Process Trend TF Swing Highs
+if swingHigh_TrendTF
+    swingHighPrice_TrendTF = trendTF_high[rightBars]
+    swingHighBar_TrendTF = bar_index[rightBars]  // Entry TF bar index for drawing
+    swingHighTime_TrendTF = time[rightBars]  // Store time for mapping
+
+    meetsMinMove_TrendTF = false
+    shouldReplacePrevious_TrendTF = false
+
+    if na(prevSwingHighPrice_TrendTF)
+        meetsMinMove_TrendTF := true
+    else
+        movePercent_TrendTF = math.abs((swingHighPrice_TrendTF - prevSwingHighPrice_TrendTF) / prevSwingHighPrice_TrendTF) * 100
+        if movePercent_TrendTF >= (swingMinMove * trendTF_Multiplier * betaMultiplier)
+            meetsMinMove_TrendTF := true
+        else if swingHighPrice_TrendTF > prevSwingHighPrice_TrendTF
+            shouldReplacePrevious_TrendTF := true
+            meetsMinMove_TrendTF := true
+
+    if meetsMinMove_TrendTF
+        if shouldReplacePrevious_TrendTF and array.size(swingHighHistory_TrendTF) > 0
+            removedPrice_TrendTF = array.pop(swingHighHistory_TrendTF)
+            removedBar_TrendTF = array.pop(swingHighBarHistory_TrendTF)
+            array.pop(swingHighBarHistory_TrendTF_Time)
+            array.pop(swingHighConfirmedAsExtreme_TrendTF)
+            if array.size(swingHighLabels_TrendTF) > 0
+                oldLabel_TrendTF = array.pop(swingHighLabels_TrendTF)
+                label.delete(oldLabel_TrendTF)
+            if array.size(swingHighLines_TrendTF) > 0
+                oldLine_TrendTF = array.pop(swingHighLines_TrendTF)
+                line.delete(oldLine_TrendTF)
+
+            if not na(lastHH_TrendTF) and lastHH_TrendTF == removedPrice_TrendTF and lastHHBar_TrendTF == removedBar_TrendTF
+                lastHH_TrendTF := na
+                lastHHBar_TrendTF := na
+            if not na(lastLH_TrendTF) and lastLH_TrendTF == removedPrice_TrendTF and lastLHBar_TrendTF == removedBar_TrendTF
+                lastLH_TrendTF := na
+                lastLHBar_TrendTF := na
+                consecutiveLH_TrendTF := 0
+
+            if array.size(activeMS_TrendTF) > 0
+                for i = array.size(activeMS_TrendTF) - 1 to 0
+                    ms_TrendTF = array.get(activeMS_TrendTF, i)
+                    if ms_TrendTF.price == removedPrice_TrendTF and ms_TrendTF.startBar == removedBar_TrendTF
+                        line.delete(ms_TrendTF.lineDrawing)
+                        label.delete(ms_TrendTF.labelDrawing)
+                        array.remove(activeMS_TrendTF, i)
+
+        array.push(swingHighHistory_TrendTF, swingHighPrice_TrendTF)
+        array.push(swingHighBarHistory_TrendTF, swingHighBar_TrendTF)
+        array.push(swingHighBarHistory_TrendTF_Time, swingHighTime_TrendTF)
+        array.push(swingHighConfirmedAsExtreme_TrendTF, false)
+
+        swingHighLabel_TrendTF = na(prevSwingHighPrice_TrendTF) ? "HH" : (swingHighPrice_TrendTF > prevSwingHighPrice_TrendTF ? "HH" : "LH")
+
+        if swingHighLabel_TrendTF == "HH"
+            lastHH_TrendTF := swingHighPrice_TrendTF
+            lastHHBar_TrendTF := swingHighBar_TrendTF
+            consecutiveLH_TrendTF := 0
+        else if swingHighLabel_TrendTF == "LH"
+            lastLH_TrendTF := swingHighPrice_TrendTF
+            lastLHBar_TrendTF := swingHighBar_TrendTF
+            consecutiveLH_TrendTF += 1
+
+        prevSwingHighPrice_TrendTF := swingHighPrice_TrendTF
+
+        // Store label text for potential dual-label combination
+        trendTF_LabelText = swingHighLabel_TrendTF + "-T"
+        if showPriceInLabel
+            trendTF_LabelText := trendTF_LabelText + "\n" + str.tostring(swingHighPrice_TrendTF, format.mintick)
+
+        if showSwingHighs and showLabels
+            newLabel_TrendTF = label.new(x=swingHighBar_TrendTF, y=swingHighPrice_TrendTF, text=trendTF_LabelText, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingHighLabels_TrendTF, newLabel_TrendTF)
+
+        if showSwingHighs and showLines
+            newLine_TrendTF = line.new(x1=swingHighBar_TrendTF, y1=swingHighPrice_TrendTF, x2=bar_index, y2=swingHighPrice_TrendTF, color=swingHighColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingHighLines_TrendTF, newLine_TrendTF)
+
+        // Auto-promote to XH if swing high exceeds most recent XH (Trend TF only for extremes)
+        if array.size(highestHighPrices_TrendTF) > 0
+            mostRecentXH_TrendTF = array.get(highestHighPrices_TrendTF, array.size(highestHighPrices_TrendTF) - 1)
+            if swingHighPrice_TrendTF > mostRecentXH_TrendTF
+                array.set(swingHighConfirmedAsExtreme_TrendTF, array.size(swingHighHistory_TrendTF) - 1, true)
+
+                if array.size(highestHighLines_TrendTF) > 0
+                    lastLine_TrendTF = array.get(highestHighLines_TrendTF, array.size(highestHighLines_TrendTF) - 1)
+                    line.set_x2(lastLine_TrendTF, swingHighBar_TrendTF)
+                    line.set_extend(lastLine_TrendTF, extend.none)
+
+                newXHLine_TrendTF = line.new(x1=swingHighBar_TrendTF, y1=swingHighPrice_TrendTF, x2=bar_index + 100, y2=swingHighPrice_TrendTF, color=color.red, width=2, style=line.style_solid, extend=extend.right)
+                array.push(highestHighLines_TrendTF, newXHLine_TrendTF)
+                array.push(highestHighPrices_TrendTF, swingHighPrice_TrendTF)
+
+                if showSwingHighs and showLabels and array.size(swingHighLabels_TrendTF) > 0
+                    oldLabel_TrendTF = array.pop(swingHighLabels_TrendTF)
+                    label.delete(oldLabel_TrendTF)
+                    xhLabelText_TrendTF = showPriceInLabel ? "XH-T\n" + str.tostring(swingHighPrice_TrendTF, format.mintick) : "XH-T"
+                    newXHLabel_TrendTF = label.new(x=swingHighBar_TrendTF, y=swingHighPrice_TrendTF, text=xhLabelText_TrendTF, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+                    array.push(swingHighLabels_TrendTF, newXHLabel_TrendTF)
+
+                if array.size(highestHighLabels_TrendTF) >= extremeSwingCount
+                    oldXHLabel_TrendTF = array.shift(highestHighLabels_TrendTF)
+                    label.delete(oldXHLabel_TrendTF)
+                    array.shift(highestHighPrices_TrendTF)
+
+                if array.size(highestHighLines_TrendTF) > extremeSwingCount
+                    oldXHLine_TrendTF = array.shift(highestHighLines_TrendTF)
+                    line.delete(oldXHLine_TrendTF)
+
+        if array.size(swingHighHistory_TrendTF) > 50
+            array.shift(swingHighHistory_TrendTF)
+            array.shift(swingHighBarHistory_TrendTF)
+            array.shift(swingHighBarHistory_TrendTF_Time)
+            array.shift(swingHighConfirmedAsExtreme_TrendTF)
+
+// Process Entry TF Swing Highs
+if swingHigh_EntryTF
+    swingHighPrice_EntryTF = high[rightBars]
+    swingHighBar_EntryTF = bar_index[rightBars]
+
+    meetsMinMove_EntryTF = false
+    shouldReplacePrevious_EntryTF = false
+
+    if na(prevSwingHighPrice_EntryTF)
+        meetsMinMove_EntryTF := true
+    else
+        movePercent_EntryTF = math.abs((swingHighPrice_EntryTF - prevSwingHighPrice_EntryTF) / prevSwingHighPrice_EntryTF) * 100
+        if movePercent_EntryTF >= (swingMinMove * entryTF_Multiplier * betaMultiplier)
+            meetsMinMove_EntryTF := true
+        else if swingHighPrice_EntryTF > prevSwingHighPrice_EntryTF
+            shouldReplacePrevious_EntryTF := true
+            meetsMinMove_EntryTF := true
+
+    if meetsMinMove_EntryTF
+        if shouldReplacePrevious_EntryTF and array.size(swingHighHistory_EntryTF) > 0
+            removedPrice_EntryTF = array.pop(swingHighHistory_EntryTF)
+            removedBar_EntryTF = array.pop(swingHighBarHistory_EntryTF)
+            array.pop(swingHighConfirmedAsExtreme_EntryTF)
+            if array.size(swingHighLabels_EntryTF) > 0
+                oldLabel_EntryTF = array.pop(swingHighLabels_EntryTF)
+                label.delete(oldLabel_EntryTF)
+            if array.size(swingHighLines_EntryTF) > 0
+                oldLine_EntryTF = array.pop(swingHighLines_EntryTF)
+                line.delete(oldLine_EntryTF)
+
+            if not na(lastHH_EntryTF) and lastHH_EntryTF == removedPrice_EntryTF and lastHHBar_EntryTF == removedBar_EntryTF
+                lastHH_EntryTF := na
+                lastHHBar_EntryTF := na
+            if not na(lastLH_EntryTF) and lastLH_EntryTF == removedPrice_EntryTF and lastLHBar_EntryTF == removedBar_EntryTF
+                lastLH_EntryTF := na
+                lastLHBar_EntryTF := na
+                consecutiveLH_EntryTF := 0
+
+            if array.size(activeMS_EntryTF) > 0
+                for i = array.size(activeMS_EntryTF) - 1 to 0
+                    ms_EntryTF = array.get(activeMS_EntryTF, i)
+                    if ms_EntryTF.price == removedPrice_EntryTF and ms_EntryTF.startBar == removedBar_EntryTF
+                        line.delete(ms_EntryTF.lineDrawing)
+                        label.delete(ms_EntryTF.labelDrawing)
+                        array.remove(activeMS_EntryTF, i)
+
+        array.push(swingHighHistory_EntryTF, swingHighPrice_EntryTF)
+        array.push(swingHighBarHistory_EntryTF, swingHighBar_EntryTF)
+        array.push(swingHighConfirmedAsExtreme_EntryTF, false)
+
+        swingHighLabel_EntryTF = na(prevSwingHighPrice_EntryTF) ? "HH" : (swingHighPrice_EntryTF > prevSwingHighPrice_EntryTF ? "HH" : "LH")
+
+        if swingHighLabel_EntryTF == "HH"
+            lastHH_EntryTF := swingHighPrice_EntryTF
+            lastHHBar_EntryTF := swingHighBar_EntryTF
+            consecutiveLH_EntryTF := 0
+        else if swingHighLabel_EntryTF == "LH"
+            lastLH_EntryTF := swingHighPrice_EntryTF
+            lastLHBar_EntryTF := swingHighBar_EntryTF
+            consecutiveLH_EntryTF += 1
+
+        prevSwingHighPrice_EntryTF := swingHighPrice_EntryTF
+
+        // Check if this Entry TF swing matches any recent Trend TF swing for dual-label
+        bool isDualLabel_High = false
+        if swingHigh_TrendTF and array.size(swingHighHistory_TrendTF) > 0
+            recentTrendSwing = array.get(swingHighHistory_TrendTF, array.size(swingHighHistory_TrendTF) - 1)
+            if swingsAreSame(swingHighPrice_EntryTF, recentTrendSwing)
+                isDualLabel_High := true
+                // Delete the Trend TF label since we'll create a combined one
+                if array.size(swingHighLabels_TrendTF) > 0
+                    label.delete(array.pop(swingHighLabels_TrendTF))
+
+        // Create label with appropriate suffix
+        entryTF_LabelText = isDualLabel_High ? (swingHighLabel_EntryTF + "-T, " + swingHighLabel_EntryTF + "-E") : (swingHighLabel_EntryTF + "-E")
+        if showPriceInLabel
+            entryTF_LabelText := entryTF_LabelText + "\n" + str.tostring(swingHighPrice_EntryTF, format.mintick)
+
+        if showSwingHighs and showLabels
+            newLabel_EntryTF = label.new(x=swingHighBar_EntryTF, y=swingHighPrice_EntryTF, text=entryTF_LabelText, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingHighLabels_EntryTF, newLabel_EntryTF)
+
+        if showSwingHighs and showLines
+            newLine_EntryTF = line.new(x1=swingHighBar_EntryTF, y1=swingHighPrice_EntryTF, x2=bar_index, y2=swingHighPrice_EntryTF, color=swingHighColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingHighLines_EntryTF, newLine_EntryTF)
+
+        // Note: XH/XL detection only on Trend TF (Entry TF swings are local structure only)
+
+        // Limit history to 50 items
+        if array.size(swingHighHistory_EntryTF) > 50
+            array.shift(swingHighHistory_EntryTF)
+            array.shift(swingHighBarHistory_EntryTF)
+            array.shift(swingHighConfirmedAsExtreme_EntryTF)
+
+// Process Trend TF Swing Lows
+if swingLow_TrendTF
+    swingLowPrice_TrendTF = trendTF_low[rightBars]
+    swingLowBar_TrendTF = bar_index[rightBars]
+    swingLowTime_TrendTF = time[rightBars]
+
+    meetsMinMove_TrendTF_Low = false
+    shouldReplacePrevious_TrendTF_Low = false
+
+    if na(prevSwingLowPrice_TrendTF)
+        meetsMinMove_TrendTF_Low := true
+    else
+        movePercent_TrendTF_Low = math.abs((swingLowPrice_TrendTF - prevSwingLowPrice_TrendTF) / prevSwingLowPrice_TrendTF) * 100
+        if movePercent_TrendTF_Low >= (swingMinMove * trendTF_Multiplier * betaMultiplier)
+            meetsMinMove_TrendTF_Low := true
+        else if swingLowPrice_TrendTF < prevSwingLowPrice_TrendTF
+            shouldReplacePrevious_TrendTF_Low := true
+            meetsMinMove_TrendTF_Low := true
+
+    if meetsMinMove_TrendTF_Low
+        if shouldReplacePrevious_TrendTF_Low and array.size(swingLowHistory_TrendTF) > 0
+            removedPrice_TrendTF_Low = array.pop(swingLowHistory_TrendTF)
+            removedBar_TrendTF_Low = array.pop(swingLowBarHistory_TrendTF)
+            array.pop(swingLowBarHistory_TrendTF_Time)
+            array.pop(swingLowConfirmedAsExtreme_TrendTF)
+            if array.size(swingLowLabels_TrendTF) > 0
+                label.delete(array.pop(swingLowLabels_TrendTF))
+            if array.size(swingLowLines_TrendTF) > 0
+                line.delete(array.pop(swingLowLines_TrendTF))
+
+            if not na(lastLL_TrendTF) and lastLL_TrendTF == removedPrice_TrendTF_Low and lastLLBar_TrendTF == removedBar_TrendTF_Low
+                lastLL_TrendTF := na
+                lastLLBar_TrendTF := na
+            if not na(lastHL_TrendTF) and lastHL_TrendTF == removedPrice_TrendTF_Low and lastHLBar_TrendTF == removedBar_TrendTF_Low
+                lastHL_TrendTF := na
+                lastHLBar_TrendTF := na
+                consecutiveHL_TrendTF := 0
+
+            if array.size(activeMS_TrendTF) > 0
+                for i = array.size(activeMS_TrendTF) - 1 to 0
+                    ms_TrendTF_Low = array.get(activeMS_TrendTF, i)
+                    if ms_TrendTF_Low.price == removedPrice_TrendTF_Low and ms_TrendTF_Low.startBar == removedBar_TrendTF_Low
+                        line.delete(ms_TrendTF_Low.lineDrawing)
+                        label.delete(ms_TrendTF_Low.labelDrawing)
+                        array.remove(activeMS_TrendTF, i)
+
+        array.push(swingLowHistory_TrendTF, swingLowPrice_TrendTF)
+        array.push(swingLowBarHistory_TrendTF, swingLowBar_TrendTF)
+        array.push(swingLowBarHistory_TrendTF_Time, swingLowTime_TrendTF)
+        array.push(swingLowConfirmedAsExtreme_TrendTF, false)
+
+        swingLowLabel_TrendTF = na(prevSwingLowPrice_TrendTF) ? "HL" : (swingLowPrice_TrendTF > prevSwingLowPrice_TrendTF ? "HL" : "LL")
+
+        if swingLowLabel_TrendTF == "HL"
+            lastHL_TrendTF := swingLowPrice_TrendTF
+            lastHLBar_TrendTF := swingLowBar_TrendTF
+            consecutiveHL_TrendTF += 1
+        else if swingLowLabel_TrendTF == "LL"
+            lastLL_TrendTF := swingLowPrice_TrendTF
+            lastLLBar_TrendTF := swingLowBar_TrendTF
+            consecutiveHL_TrendTF := 0
+
+        prevSwingLowPrice_TrendTF := swingLowPrice_TrendTF
+
+        trendTF_LabelText_Low = swingLowLabel_TrendTF + "-T"
+        if showPriceInLabel
+            trendTF_LabelText_Low := trendTF_LabelText_Low + "\n" + str.tostring(swingLowPrice_TrendTF, format.mintick)
+
+        if showSwingLows and showLabels
+            newLabel_TrendTF_Low = label.new(x=swingLowBar_TrendTF, y=swingLowPrice_TrendTF, text=trendTF_LabelText_Low, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingLowLabels_TrendTF, newLabel_TrendTF_Low)
+
+        if showSwingLows and showLines
+            newLine_TrendTF_Low = line.new(x1=swingLowBar_TrendTF, y1=swingLowPrice_TrendTF, x2=bar_index, y2=swingLowPrice_TrendTF, color=swingLowColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingLowLines_TrendTF, newLine_TrendTF_Low)
+
+        // Auto-promote to XL if swing low goes below most recent XL (Trend TF only)
+        if array.size(lowestLowPrices_TrendTF) > 0
+            mostRecentXL_TrendTF = array.get(lowestLowPrices_TrendTF, array.size(lowestLowPrices_TrendTF) - 1)
+            if swingLowPrice_TrendTF < mostRecentXL_TrendTF
+                array.set(swingLowConfirmedAsExtreme_TrendTF, array.size(swingLowHistory_TrendTF) - 1, true)
+
+                if array.size(lowestLowLines_TrendTF) > 0
+                    lastLine_TrendTF_Low = array.get(lowestLowLines_TrendTF, array.size(lowestLowLines_TrendTF) - 1)
+                    line.set_x2(lastLine_TrendTF_Low, swingLowBar_TrendTF)
+                    line.set_extend(lastLine_TrendTF_Low, extend.none)
+
+                newXLLine_TrendTF = line.new(x1=swingLowBar_TrendTF, y1=swingLowPrice_TrendTF, x2=bar_index + 100, y2=swingLowPrice_TrendTF, color=color.green, width=2, style=line.style_solid, extend=extend.right)
+                array.push(lowestLowLines_TrendTF, newXLLine_TrendTF)
+                array.push(lowestLowPrices_TrendTF, swingLowPrice_TrendTF)
+
+                if showSwingLows and showLabels and array.size(swingLowLabels_TrendTF) > 0
+                    oldLabel_TrendTF_Low = array.pop(swingLowLabels_TrendTF)
+                    label.delete(oldLabel_TrendTF_Low)
+                    xlLabelText_TrendTF = showPriceInLabel ? "XL-T\n" + str.tostring(swingLowPrice_TrendTF, format.mintick) : "XL-T"
+                    newXLLabel_TrendTF = label.new(x=swingLowBar_TrendTF, y=swingLowPrice_TrendTF, text=xlLabelText_TrendTF, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+                    array.push(swingLowLabels_TrendTF, newXLLabel_TrendTF)
+
+                if array.size(lowestLowLabels_TrendTF) >= extremeSwingCount
+                    oldXLLabel_TrendTF = array.shift(lowestLowLabels_TrendTF)
+                    label.delete(oldXLLabel_TrendTF)
+                    array.shift(lowestLowPrices_TrendTF)
+
+                if array.size(lowestLowLines_TrendTF) > extremeSwingCount
+                    line.delete(array.shift(lowestLowLines_TrendTF))
+
+        if array.size(swingLowHistory_TrendTF) > 50
+            array.shift(swingLowHistory_TrendTF)
+            array.shift(swingLowBarHistory_TrendTF)
+            array.shift(swingLowBarHistory_TrendTF_Time)
+            array.shift(swingLowConfirmedAsExtreme_TrendTF)
+
+// Process Entry TF Swing Lows
+if swingLow_EntryTF
+    swingLowPrice_EntryTF = low[rightBars]
+    swingLowBar_EntryTF = bar_index[rightBars]
+
+    meetsMinMove_EntryTF_Low = false
+    shouldReplacePrevious_EntryTF_Low = false
+
+    if na(prevSwingLowPrice_EntryTF)
+        meetsMinMove_EntryTF_Low := true
+    else
+        movePercent_EntryTF_Low = math.abs((swingLowPrice_EntryTF - prevSwingLowPrice_EntryTF) / prevSwingLowPrice_EntryTF) * 100
+        if movePercent_EntryTF_Low >= (swingMinMove * entryTF_Multiplier * betaMultiplier)
+            meetsMinMove_EntryTF_Low := true
+        else if swingLowPrice_EntryTF < prevSwingLowPrice_EntryTF
+            shouldReplacePrevious_EntryTF_Low := true
+            meetsMinMove_EntryTF_Low := true
+
+    if meetsMinMove_EntryTF_Low
+        if shouldReplacePrevious_EntryTF_Low and array.size(swingLowHistory_EntryTF) > 0
+            removedPrice_EntryTF_Low = array.pop(swingLowHistory_EntryTF)
+            removedBar_EntryTF_Low = array.pop(swingLowBarHistory_EntryTF)
+            array.pop(swingLowConfirmedAsExtreme_EntryTF)
+            if array.size(swingLowLabels_EntryTF) > 0
+                label.delete(array.pop(swingLowLabels_EntryTF))
+            if array.size(swingLowLines_EntryTF) > 0
+                line.delete(array.pop(swingLowLines_EntryTF))
+
+            if not na(lastLL_EntryTF) and lastLL_EntryTF == removedPrice_EntryTF_Low and lastLLBar_EntryTF == removedBar_EntryTF_Low
+                lastLL_EntryTF := na
+                lastLLBar_EntryTF := na
+            if not na(lastHL_EntryTF) and lastHL_EntryTF == removedPrice_EntryTF_Low and lastHLBar_EntryTF == removedBar_EntryTF_Low
+                lastHL_EntryTF := na
+                lastHLBar_EntryTF := na
+                consecutiveHL_EntryTF := 0
+
+            if array.size(activeMS_EntryTF) > 0
+                for i = array.size(activeMS_EntryTF) - 1 to 0
+                    ms_EntryTF_Low = array.get(activeMS_EntryTF, i)
+                    if ms_EntryTF_Low.price == removedPrice_EntryTF_Low and ms_EntryTF_Low.startBar == removedBar_EntryTF_Low
+                        line.delete(ms_EntryTF_Low.lineDrawing)
+                        label.delete(ms_EntryTF_Low.labelDrawing)
+                        array.remove(activeMS_EntryTF, i)
+
+        array.push(swingLowHistory_EntryTF, swingLowPrice_EntryTF)
+        array.push(swingLowBarHistory_EntryTF, swingLowBar_EntryTF)
+        array.push(swingLowConfirmedAsExtreme_EntryTF, false)
+
+        swingLowLabel_EntryTF = na(prevSwingLowPrice_EntryTF) ? "HL" : (swingLowPrice_EntryTF > prevSwingLowPrice_EntryTF ? "HL" : "LL")
+
+        if swingLowLabel_EntryTF == "HL"
+            lastHL_EntryTF := swingLowPrice_EntryTF
+            lastHLBar_EntryTF := swingLowBar_EntryTF
+            consecutiveHL_EntryTF += 1
+        else if swingLowLabel_EntryTF == "LL"
+            lastLL_EntryTF := swingLowPrice_EntryTF
+            lastLLBar_EntryTF := swingLowBar_EntryTF
+            consecutiveHL_EntryTF := 0
+
+        prevSwingLowPrice_EntryTF := swingLowPrice_EntryTF
+
+        // Check for dual-label
+        bool isDualLabel_Low = false
+        if swingLow_TrendTF and array.size(swingLowHistory_TrendTF) > 0
+            recentTrendSwing_Low = array.get(swingLowHistory_TrendTF, array.size(swingLowHistory_TrendTF) - 1)
+            if swingsAreSame(swingLowPrice_EntryTF, recentTrendSwing_Low)
+                isDualLabel_Low := true
+                if array.size(swingLowLabels_TrendTF) > 0
+                    label.delete(array.pop(swingLowLabels_TrendTF))
+
+        entryTF_LabelText_Low = isDualLabel_Low ? (swingLowLabel_EntryTF + "-T, " + swingLowLabel_EntryTF + "-E") : (swingLowLabel_EntryTF + "-E")
+        if showPriceInLabel
+            entryTF_LabelText_Low := entryTF_LabelText_Low + "\n" + str.tostring(swingLowPrice_EntryTF, format.mintick)
+
+        if showSwingLows and showLabels
+            newLabel_EntryTF_Low = label.new(x=swingLowBar_EntryTF, y=swingLowPrice_EntryTF, text=entryTF_LabelText_Low, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+            array.push(swingLowLabels_EntryTF, newLabel_EntryTF_Low)
+
+        if showSwingLows and showLines
+            newLine_EntryTF_Low = line.new(x1=swingLowBar_EntryTF, y1=swingLowPrice_EntryTF, x2=bar_index, y2=swingLowPrice_EntryTF, color=swingLowColorTransparent, width=lineWidth, style=currentLineStyle)
+            array.push(swingLowLines_EntryTF, newLine_EntryTF_Low)
+
+        if array.size(swingLowHistory_EntryTF) > 50
+            array.shift(swingLowHistory_EntryTF)
+            array.shift(swingLowBarHistory_EntryTF)
+            array.shift(swingLowConfirmedAsExtreme_EntryTF)
+
+// Bidirectional Extreme Confirmation for Trend TF (XH/XL with 3 swings before and after)
+if array.size(swingHighHistory_TrendTF) > 0
+    for i = 0 to array.size(swingHighHistory_TrendTF) - 1
+        if not array.get(swingHighConfirmedAsExtreme_TrendTF, i)
+            swingsBefore_TrendTF = i
+            swingsAfter_TrendTF = array.size(swingHighHistory_TrendTF) - 1 - i
+
+            if swingsBefore_TrendTF >= extremeSwingCount and swingsAfter_TrendTF >= extremeSwingCount
+                candidatePrice_TrendTF = array.get(swingHighHistory_TrendTF, i)
+                candidateBar_TrendTF = array.get(swingHighBarHistory_TrendTF, i)
+                isExtremeHigh_TrendTF = true
+
+                for j = 1 to extremeSwingCount
+                    if array.get(swingHighHistory_TrendTF, i - j) >= candidatePrice_TrendTF
+                        isExtremeHigh_TrendTF := false
+                        break
+
+                if isExtremeHigh_TrendTF
+                    for j = 1 to extremeSwingCount
+                        if array.get(swingHighHistory_TrendTF, i + j) >= candidatePrice_TrendTF
+                            isExtremeHigh_TrendTF := false
+                            break
+
+                if isExtremeHigh_TrendTF
+                    array.set(swingHighConfirmedAsExtreme_TrendTF, i, true)
+
+                    if array.size(highestHighLines_TrendTF) > 0
+                        lastLine_TrendTF_Bidirect = array.get(highestHighLines_TrendTF, array.size(highestHighLines_TrendTF) - 1)
+                        line.set_x2(lastLine_TrendTF_Bidirect, candidateBar_TrendTF)
+                        line.set_extend(lastLine_TrendTF_Bidirect, extend.none)
+
+                    newLine_TrendTF_XH = line.new(x1=candidateBar_TrendTF, y1=candidatePrice_TrendTF, x2=bar_index + 100, y2=candidatePrice_TrendTF, color=color.red, width=2, style=line.style_solid, extend=extend.right)
+                    array.push(highestHighLines_TrendTF, newLine_TrendTF_XH)
+                    array.push(highestHighPrices_TrendTF, candidatePrice_TrendTF)
+
+                    if showSwingHighs and showLabels
+                        labelText_XH_TrendTF = showPriceInLabel ? "XH-T\n" + str.tostring(candidatePrice_TrendTF, format.mintick) : "XH-T"
+                        newLabel_XH_TrendTF = label.new(x=candidateBar_TrendTF, y=candidatePrice_TrendTF, text=labelText_XH_TrendTF, style=label.style_label_down, color=swingHighColor, textcolor=color.white, size=currentLabelSize)
+                        array.push(highestHighLabels_TrendTF, newLabel_XH_TrendTF)
+
+                    if array.size(highestHighLines_TrendTF) > 3
+                        line.delete(array.shift(highestHighLines_TrendTF))
+                        array.shift(highestHighPrices_TrendTF)
+                        if array.size(highestHighLabels_TrendTF) > 0
+                            label.delete(array.shift(highestHighLabels_TrendTF))
+
+if array.size(swingLowHistory_TrendTF) > 0
+    for i = 0 to array.size(swingLowHistory_TrendTF) - 1
+        if not array.get(swingLowConfirmedAsExtreme_TrendTF, i)
+            swingsBefore_TrendTF_Low = i
+            swingsAfter_TrendTF_Low = array.size(swingLowHistory_TrendTF) - 1 - i
+
+            if swingsBefore_TrendTF_Low >= extremeSwingCount and swingsAfter_TrendTF_Low >= extremeSwingCount
+                candidatePrice_TrendTF_Low = array.get(swingLowHistory_TrendTF, i)
+                candidateBar_TrendTF_Low = array.get(swingLowBarHistory_TrendTF, i)
+                isExtremeLow_TrendTF = true
+
+                for j = 1 to extremeSwingCount
+                    if array.get(swingLowHistory_TrendTF, i - j) <= candidatePrice_TrendTF_Low
+                        isExtremeLow_TrendTF := false
+                        break
+
+                if isExtremeLow_TrendTF
+                    for j = 1 to extremeSwingCount
+                        if array.get(swingLowHistory_TrendTF, i + j) <= candidatePrice_TrendTF_Low
+                            isExtremeLow_TrendTF := false
+                            break
+
+                if isExtremeLow_TrendTF
+                    array.set(swingLowConfirmedAsExtreme_TrendTF, i, true)
+
+                    if array.size(lowestLowLines_TrendTF) > 0
+                        lastLine_TrendTF_Low_Bidirect = array.get(lowestLowLines_TrendTF, array.size(lowestLowLines_TrendTF) - 1)
+                        line.set_x2(lastLine_TrendTF_Low_Bidirect, candidateBar_TrendTF_Low)
+                        line.set_extend(lastLine_TrendTF_Low_Bidirect, extend.none)
+
+                    newLine_TrendTF_XL = line.new(x1=candidateBar_TrendTF_Low, y1=candidatePrice_TrendTF_Low, x2=bar_index + 100, y2=candidatePrice_TrendTF_Low, color=color.green, width=2, style=line.style_solid, extend=extend.right)
+                    array.push(lowestLowLines_TrendTF, newLine_TrendTF_XL)
+                    array.push(lowestLowPrices_TrendTF, candidatePrice_TrendTF_Low)
+
+                    if showSwingLows and showLabels
+                        labelText_XL_TrendTF = showPriceInLabel ? "XL-T\n" + str.tostring(candidatePrice_TrendTF_Low, format.mintick) : "XL-T"
+                        newLabel_XL_TrendTF = label.new(x=candidateBar_TrendTF_Low, y=candidatePrice_TrendTF_Low, text=labelText_XL_TrendTF, style=label.style_label_up, color=swingLowColor, textcolor=color.white, size=currentLabelSize)
+                        array.push(lowestLowLabels_TrendTF, newLabel_XL_TrendTF)
+
+                    if array.size(lowestLowLines_TrendTF) > 3
+                        line.delete(array.shift(lowestLowLines_TrendTF))
+                        array.shift(lowestLowPrices_TrendTF)
+                        if array.size(lowestLowLabels_TrendTF) > 0
+                            label.delete(array.shift(lowestLowLabels_TrendTF))
+
+// Extend Trend TF XH/XL lines to current bar
+if array.size(highestHighLines_TrendTF) > 0
+    line.set_x2(array.get(highestHighLines_TrendTF, array.size(highestHighLines_TrendTF) - 1), bar_index)
+
+if array.size(lowestLowLines_TrendTF) > 0
+    line.set_x2(array.get(lowestLowLines_TrendTF, array.size(lowestLowLines_TrendTF) - 1), bar_index)
+
+// ═══════════════════════════════════════════════════════════════════════
+// MARKET STRUCTURE (CHoCH & BOS) - MULTI-TIMEFRAME
+// ═══════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────
+// TREND TF CHoCH & BOS DETECTION
+// ─────────────────────────────────────────────────────────────────────
+// CRITICAL: Only check when Trend TF bar has changed to avoid false detections
+
+// Trend TF CHoCH (Bullish) - LH broken upward
+if showCHoCH and not na(lastLH_TrendTF) and not na(lastLHBar_TrendTF) and isSupported and trendTF_changed
+    if trendTF_close > lastLH_TrendTF and trendTF_close[1] <= lastLH_TrendTF
+        if array.size(activeMS_TrendTF) >= msMaxCount
+            oldestMS_TrendTF = array.shift(activeMS_TrendTF)
+            line.delete(oldestMS_TrendTF.lineDrawing)
+            label.delete(oldestMS_TrendTF.labelDrawing)
+
+        chochText_TrendTF = "CHoCH-T"
+        chochLineStyle_TrendTF = line.style_dashed
+        chochLineWidth_TrendTF = 1
+
+        if consecutiveLH_TrendTF >= 3
+            chochText_TrendTF := "Premium\nCHoCH-T"
+            chochLineStyle_TrendTF := line.style_solid
+            chochLineWidth_TrendTF := 2
+        else if consecutiveLH_TrendTF >= 2
+            chochText_TrendTF := "Better\nCHoCH-T"
+            chochLineStyle_TrendTF := line.style_solid
+            chochLineWidth_TrendTF := 1
+
+        msLine_TrendTF = line.new(x1=lastLHBar_TrendTF, y1=lastLH_TrendTF, x2=bar_index, y2=lastLH_TrendTF, color=color.green, width=chochLineWidth_TrendTF, style=chochLineStyle_TrendTF)
+        centerBar_TrendTF = math.round((lastLHBar_TrendTF + bar_index) / 2)
+        msLabel_TrendTF = label.new(x=centerBar_TrendTF, y=lastLH_TrendTF, text=chochText_TrendTF, style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS_TrendTF, MarketStructure.new(msLine_TrendTF, msLabel_TrendTF, lastLH_TrendTF, lastLHBar_TrendTF, bar_index, true, false))
+
+        lastLH_TrendTF := na
+        lastLHBar_TrendTF := na
+        consecutiveLH_TrendTF := 0
+
+// Trend TF CHoCH (Bearish) - HL broken downward
+if showCHoCH and not na(lastHL_TrendTF) and not na(lastHLBar_TrendTF) and isSupported and trendTF_changed
+    if trendTF_close < lastHL_TrendTF and trendTF_close[1] >= lastHL_TrendTF
+        if array.size(activeMS_TrendTF) >= msMaxCount
+            oldestMS_TrendTF_Bear = array.shift(activeMS_TrendTF)
+            line.delete(oldestMS_TrendTF_Bear.lineDrawing)
+            label.delete(oldestMS_TrendTF_Bear.labelDrawing)
+
+        chochText_TrendTF_Bear = "CHoCH-T"
+        chochLineStyle_TrendTF_Bear = line.style_dashed
+        chochLineWidth_TrendTF_Bear = 1
+
+        if consecutiveHL_TrendTF >= 3
+            chochText_TrendTF_Bear := "Premium\nCHoCH-T"
+            chochLineStyle_TrendTF_Bear := line.style_solid
+            chochLineWidth_TrendTF_Bear := 2
+        else if consecutiveHL_TrendTF >= 2
+            chochText_TrendTF_Bear := "Better\nCHoCH-T"
+            chochLineStyle_TrendTF_Bear := line.style_solid
+            chochLineWidth_TrendTF_Bear := 1
+
+        msLine_TrendTF_Bear = line.new(x1=lastHLBar_TrendTF, y1=lastHL_TrendTF, x2=bar_index, y2=lastHL_TrendTF, color=color.red, width=chochLineWidth_TrendTF_Bear, style=chochLineStyle_TrendTF_Bear)
+        centerBar_TrendTF_Bear = math.round((lastHLBar_TrendTF + bar_index) / 2)
+        msLabel_TrendTF_Bear = label.new(x=centerBar_TrendTF_Bear, y=lastHL_TrendTF, text=chochText_TrendTF_Bear, style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS_TrendTF, MarketStructure.new(msLine_TrendTF_Bear, msLabel_TrendTF_Bear, lastHL_TrendTF, lastHLBar_TrendTF, bar_index, false, false))
+
+        lastHL_TrendTF := na
+        lastHLBar_TrendTF := na
+        consecutiveHL_TrendTF := 0
+
+// Trend TF BOS (Bullish) - HH broken upward
+if showBOS and not na(lastHH_TrendTF) and not na(lastHHBar_TrendTF) and isSupported and trendTF_changed
+    if trendTF_close > lastHH_TrendTF and trendTF_close[1] <= lastHH_TrendTF
+        if array.size(activeMS_TrendTF) >= msMaxCount
+            oldestMS_TrendTF_BOS = array.shift(activeMS_TrendTF)
+            line.delete(oldestMS_TrendTF_BOS.lineDrawing)
+            label.delete(oldestMS_TrendTF_BOS.labelDrawing)
+
+        msLine_TrendTF_BOS = line.new(x1=lastHHBar_TrendTF, y1=lastHH_TrendTF, x2=bar_index, y2=lastHH_TrendTF, color=color.green, width=1, style=line.style_dashed)
+        centerBar_TrendTF_BOS = math.round((lastHHBar_TrendTF + bar_index) / 2)
+        msLabel_TrendTF_BOS = label.new(x=centerBar_TrendTF_BOS, y=lastHH_TrendTF, text="BOS-T", style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS_TrendTF, MarketStructure.new(msLine_TrendTF_BOS, msLabel_TrendTF_BOS, lastHH_TrendTF, lastHHBar_TrendTF, bar_index, true, true))
+
+        lastHH_TrendTF := na
+        lastHHBar_TrendTF := na
+
+// Trend TF BOS (Bearish) - LL broken downward
+if showBOS and not na(lastLL_TrendTF) and not na(lastLLBar_TrendTF) and isSupported and trendTF_changed
+    if trendTF_close < lastLL_TrendTF and trendTF_close[1] >= lastLL_TrendTF
+        if array.size(activeMS_TrendTF) >= msMaxCount
+            oldestMS_TrendTF_BOS_Bear = array.shift(activeMS_TrendTF)
+            line.delete(oldestMS_TrendTF_BOS_Bear.lineDrawing)
+            label.delete(oldestMS_TrendTF_BOS_Bear.labelDrawing)
+
+        msLine_TrendTF_BOS_Bear = line.new(x1=lastLLBar_TrendTF, y1=lastLL_TrendTF, x2=bar_index, y2=lastLL_TrendTF, color=color.red, width=1, style=line.style_dashed)
+        centerBar_TrendTF_BOS_Bear = math.round((lastLLBar_TrendTF + bar_index) / 2)
+        msLabel_TrendTF_BOS_Bear = label.new(x=centerBar_TrendTF_BOS_Bear, y=lastLL_TrendTF, text="BOS-T", style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS_TrendTF, MarketStructure.new(msLine_TrendTF_BOS_Bear, msLabel_TrendTF_BOS_Bear, lastLL_TrendTF, lastLLBar_TrendTF, bar_index, false, true))
+
+        lastLL_TrendTF := na
+        lastLLBar_TrendTF := na
+
+// ─────────────────────────────────────────────────────────────────────
+// ENTRY TF CHoCH & BOS DETECTION
+// ─────────────────────────────────────────────────────────────────────
+
+// Entry TF CHoCH (Bullish) - LH broken upward
+if showCHoCH and not na(lastLH_EntryTF) and not na(lastLHBar_EntryTF) and isSupported
+    if close > lastLH_EntryTF and close[1] <= lastLH_EntryTF
+        if array.size(activeMS_EntryTF) >= msMaxCount
+            oldestMS_EntryTF = array.shift(activeMS_EntryTF)
+            line.delete(oldestMS_EntryTF.lineDrawing)
+            label.delete(oldestMS_EntryTF.labelDrawing)
+
+        chochText_EntryTF = "CHoCH-E"
+        chochLineStyle_EntryTF = line.style_dashed
+        chochLineWidth_EntryTF = 1
+
+        if consecutiveLH_EntryTF >= 3
+            chochText_EntryTF := "Premium\nCHoCH-E"
+            chochLineStyle_EntryTF := line.style_solid
+            chochLineWidth_EntryTF := 2
+        else if consecutiveLH_EntryTF >= 2
+            chochText_EntryTF := "Better\nCHoCH-E"
+            chochLineStyle_EntryTF := line.style_solid
+            chochLineWidth_EntryTF := 1
+
+        msLine_EntryTF = line.new(x1=lastLHBar_EntryTF, y1=lastLH_EntryTF, x2=bar_index, y2=lastLH_EntryTF, color=color.green, width=chochLineWidth_EntryTF, style=chochLineStyle_EntryTF)
+        centerBar_EntryTF = math.round((lastLHBar_EntryTF + bar_index) / 2)
+        msLabel_EntryTF = label.new(x=centerBar_EntryTF, y=lastLH_EntryTF, text=chochText_EntryTF, style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS_EntryTF, MarketStructure.new(msLine_EntryTF, msLabel_EntryTF, lastLH_EntryTF, lastLHBar_EntryTF, bar_index, true, false))
+
+        lastLH_EntryTF := na
+        lastLHBar_EntryTF := na
+        consecutiveLH_EntryTF := 0
+
+// Entry TF CHoCH (Bearish) - HL broken downward
+if showCHoCH and not na(lastHL_EntryTF) and not na(lastHLBar_EntryTF) and isSupported
+    if close < lastHL_EntryTF and close[1] >= lastHL_EntryTF
+        if array.size(activeMS_EntryTF) >= msMaxCount
+            oldestMS_EntryTF_Bear = array.shift(activeMS_EntryTF)
+            line.delete(oldestMS_EntryTF_Bear.lineDrawing)
+            label.delete(oldestMS_EntryTF_Bear.labelDrawing)
+
+        chochText_EntryTF_Bear = "CHoCH-E"
+        chochLineStyle_EntryTF_Bear = line.style_dashed
+        chochLineWidth_EntryTF_Bear = 1
+
+        if consecutiveHL_EntryTF >= 3
+            chochText_EntryTF_Bear := "Premium\nCHoCH-E"
+            chochLineStyle_EntryTF_Bear := line.style_solid
+            chochLineWidth_EntryTF_Bear := 2
+        else if consecutiveHL_EntryTF >= 2
+            chochText_EntryTF_Bear := "Better\nCHoCH-E"
+            chochLineStyle_EntryTF_Bear := line.style_solid
+            chochLineWidth_EntryTF_Bear := 1
+
+        msLine_EntryTF_Bear = line.new(x1=lastHLBar_EntryTF, y1=lastHL_EntryTF, x2=bar_index, y2=lastHL_EntryTF, color=color.red, width=chochLineWidth_EntryTF_Bear, style=chochLineStyle_EntryTF_Bear)
+        centerBar_EntryTF_Bear = math.round((lastHLBar_EntryTF + bar_index) / 2)
+        msLabel_EntryTF_Bear = label.new(x=centerBar_EntryTF_Bear, y=lastHL_EntryTF, text=chochText_EntryTF_Bear, style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS_EntryTF, MarketStructure.new(msLine_EntryTF_Bear, msLabel_EntryTF_Bear, lastHL_EntryTF, lastHLBar_EntryTF, bar_index, false, false))
+
+        lastHL_EntryTF := na
+        lastHLBar_EntryTF := na
+        consecutiveHL_EntryTF := 0
+
+// Entry TF BOS (Bullish) - HH broken upward
+if showBOS and not na(lastHH_EntryTF) and not na(lastHHBar_EntryTF) and isSupported
+    if close > lastHH_EntryTF and close[1] <= lastHH_EntryTF
+        if array.size(activeMS_EntryTF) >= msMaxCount
+            oldestMS_EntryTF_BOS = array.shift(activeMS_EntryTF)
+            line.delete(oldestMS_EntryTF_BOS.lineDrawing)
+            label.delete(oldestMS_EntryTF_BOS.labelDrawing)
+
+        msLine_EntryTF_BOS = line.new(x1=lastHHBar_EntryTF, y1=lastHH_EntryTF, x2=bar_index, y2=lastHH_EntryTF, color=color.green, width=1, style=line.style_dashed)
+        centerBar_EntryTF_BOS = math.round((lastHHBar_EntryTF + bar_index) / 2)
+        msLabel_EntryTF_BOS = label.new(x=centerBar_EntryTF_BOS, y=lastHH_EntryTF, text="BOS-E", style=label.style_label_center, color=color.green, textcolor=color.white, size=size.normal)
+        array.push(activeMS_EntryTF, MarketStructure.new(msLine_EntryTF_BOS, msLabel_EntryTF_BOS, lastHH_EntryTF, lastHHBar_EntryTF, bar_index, true, true))
+
+        lastHH_EntryTF := na
+        lastHHBar_EntryTF := na
+
+// Entry TF BOS (Bearish) - LL broken downward
+if showBOS and not na(lastLL_EntryTF) and not na(lastLLBar_EntryTF) and isSupported
+    if close < lastLL_EntryTF and close[1] >= lastLL_EntryTF
+        if array.size(activeMS_EntryTF) >= msMaxCount
+            oldestMS_EntryTF_BOS_Bear = array.shift(activeMS_EntryTF)
+            line.delete(oldestMS_EntryTF_BOS_Bear.lineDrawing)
+            label.delete(oldestMS_EntryTF_BOS_Bear.labelDrawing)
+
+        msLine_EntryTF_BOS_Bear = line.new(x1=lastLLBar_EntryTF, y1=lastLL_EntryTF, x2=bar_index, y2=lastLL_EntryTF, color=color.red, width=1, style=line.style_dashed)
+        centerBar_EntryTF_BOS_Bear = math.round((lastLLBar_EntryTF + bar_index) / 2)
+        msLabel_EntryTF_BOS_Bear = label.new(x=centerBar_EntryTF_BOS_Bear, y=lastLL_EntryTF, text="BOS-E", style=label.style_label_center, color=color.red, textcolor=color.white, size=size.normal)
+        array.push(activeMS_EntryTF, MarketStructure.new(msLine_EntryTF_BOS_Bear, msLabel_EntryTF_BOS_Bear, lastLL_EntryTF, lastLLBar_EntryTF, bar_index, false, true))
+
+        lastLL_EntryTF := na
+        lastLLBar_EntryTF := na
+
+// ═══════════════════════════════════════════════════════════════════════
+// ORDER BLOCK & BREAKER BLOCK (PATTERN TF)
+// ═══════════════════════════════════════════════════════════════════════
+// ORDER BLOCK DRAWING (ENTRY TF)
+// OBs are detected in Pattern TF context via detectPatternTF_OB() and request.security()
+// Drawing happens on Entry TF using Pattern TF detection results
+// ═══════════════════════════════════════════════════════════════════════
+
+if showOB and isSupported
+    // Process new bullish OB
+    if newBullOB and not na(ob_bull_top) and not na(ob_bull_bot) and lastOBDirection != 1
+        lastBullOB_bar := ob_bar
+
+        if array.size(activeOBs) >= obMaxCount
+            oldestOB = array.shift(activeOBs)
+            box.delete(oldestOB.boxDrawing)
+            label.delete(oldestOB.labelDrawing)
+
+        // Calculate correct start bar in Entry TF
+        // OB formed over ob_bull_candles Pattern TF candles, need to convert to Entry TF
+        // Start from the first Entry TF candle within the Pattern TF candle where OB originated
+        obStartBar = bar_index - math.round(ob_bull_candles * patternTF_barRatio)
+
+        // Draw OB box starting from the correct Entry TF bar
+        obBox = box.new(left=obStartBar, top=ob_bull_top, right=bar_index, bottom=ob_bull_bot, border_color=bullishOBColor, bgcolor=bullishOBColor, border_width=2, extend=obExtendRight ? extend.right : extend.none)
+        obLabel = label.new(x=obStartBar + labelOffset, y=(ob_bull_top + ob_bull_bot) / 2, text="Bullish OB", style=label.style_label_left, color=bullishOBColor, textcolor=color.white, size=size.small)
+        array.push(activeOBs, OrderBlock.new(obBox, obLabel, ob_bull_top, ob_bull_bot, obStartBar, bar_index, true, false, false, false, false, false, false))
+        lastOBDirection := 1
+
+    // Process new bearish OB
+    if newBearOB and not na(ob_bear_top) and not na(ob_bear_bot) and lastOBDirection != -1
+        lastBearOB_bar := ob_bar
+
+        if array.size(activeOBs) >= obMaxCount
+            oldestOB = array.shift(activeOBs)
+            box.delete(oldestOB.boxDrawing)
+            label.delete(oldestOB.labelDrawing)
+
+        // Calculate correct start bar in Entry TF
+        // OB formed over ob_bear_candles Pattern TF candles, need to convert to Entry TF
+        // Start from the first Entry TF candle within the Pattern TF candle where OB originated
+        obStartBar = bar_index - math.round(ob_bear_candles * patternTF_barRatio)
+
+        // Draw OB box starting from the correct Entry TF bar
+        obBox = box.new(left=obStartBar, top=ob_bear_top, right=bar_index, bottom=ob_bear_bot, border_color=bearishOBColor, bgcolor=bearishOBColor, border_width=2, extend=obExtendRight ? extend.right : extend.none)
+        obLabel = label.new(x=obStartBar + labelOffset, y=(ob_bear_top + ob_bear_bot) / 2, text="Bearish OB", style=label.style_label_left, color=bearishOBColor, textcolor=color.white, size=size.small)
+        array.push(activeOBs, OrderBlock.new(obBox, obLabel, ob_bear_top, ob_bear_bot, obStartBar, bar_index, false, false, false, false, false, false, false))
+        lastOBDirection := -1
+
+    // ─────────────────────────────────────────────────────────────────────
+    // OB MITIGATION/FILL/BREAK DETECTION (ENTRY TF)
+    // NOTE: OBs are created on Pattern TF, but mitigation/fill/break is monitored
+    // continuously on Entry TF (every Entry TF bar) using native OHLC data
+    // ─────────────────────────────────────────────────────────────────────
+    if array.size(activeOBs) > 0
+        for i = array.size(activeOBs) - 1 to 0
+            ob = array.get(activeOBs, i)
+
+            if not ob.filled and not ob.broken
+                isMitigated = false
+                isFilled = false
+                isBroken = false
+
+                // Check if minimum candles have passed since OB creation
+                // Using adjusted count (Pattern TF candles converted to Entry TF candles)
+                candlesSinceCreation = bar_index - ob.startBar
+                canCheckMitigation = candlesSinceCreation >= adjustedMinCandlesBeforeMitigation
+
+                if canCheckMitigation
+                    if ob.isBullish
+                        // Bullish OB: Zone below price (support)
+                        // Track top edge touch (mitigation from above)
+                        if low <= ob.top
+                            isMitigated := true
+                            ob.topTouched := true
+                        // Track bottom edge touch
+                        if low <= ob.bottom
+                            // Check if close breaks through (broken OB)
+                            if close < ob.bottom
+                                isBroken := true
+                            else
+                                ob.bottomTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if ob.topTouched and ob.bottomTouched
+                            isFilled := true
+                    else
+                        // Bearish OB: Zone above price (resistance)
+                        // Track bottom edge touch (mitigation from below)
+                        if high >= ob.bottom
+                            isMitigated := true
+                            ob.bottomTouched := true
+                        // Track top edge touch
+                        if high >= ob.top
+                            // Check if close breaks through (broken OB)
+                            if close > ob.top
+                                isBroken := true
+                            else
+                                ob.topTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if ob.topTouched and ob.bottomTouched
+                            isFilled := true
+
+                if isBroken
+                    ob.broken := true
+
+                    // ─────────────────────────────────────────────────────────────────────
+                    // BREAKER BLOCK CREATION (Entry TF)
+                    // ─────────────────────────────────────────────────────────────────────
+                    // BBs created when Pattern TF OBs are broken (close through zone)
+                    // BB creation is indirectly controlled by OB swing-based blocking:
+                    // - Since bullish OBs require Entry TF swing high before next bullish OB,
+                    //   bullish BB creation is naturally limited to one per bullish wave
+                    // - Since bearish OBs require Entry TF swing low before next bearish OB,
+                    //   bearish BB creation is naturally limited to one per bearish wave
+                    // No additional BB-level blocking needed - controlled via OB blocking
+                    // ─────────────────────────────────────────────────────────────────────
+
+                    // Create Breaker Block first (if enabled)
+                    if showBB
+                        if array.size(activeBBs) >= bbMaxCount
+                            oldestBB = array.shift(activeBBs)
+                            box.delete(oldestBB.boxDrawing)
+                            label.delete(oldestBB.labelDrawing)
+
+                        bbColor = ob.isBullish ? bullishBBColor : bearishBBColor
+                        bbBox = box.new(left=bar_index, top=ob.top, right=bar_index + 10, bottom=ob.bottom, border_color=bbColor, bgcolor=bbColor, border_width=2, extend=extend.right)
+                        bbText = ob.isBullish ? "Bullish Breaker" : "Bearish Breaker"
+                        bbLabel = label.new(x=bar_index + labelOffset, y=(ob.top + ob.bottom) / 2, text=bbText, style=label.style_label_left, color=bbColor, textcolor=color.white, size=size.small)
+                        array.push(activeBBs, BreakerBlock.new(bbBox, bbLabel, ob.top, ob.bottom, ob.startBar, bar_index, ob.isBullish, false, false, false, false))
+
+                    // Delete broken OB if flag is enabled or if not extending after broken
+                    if obDeleteOnFill or not obExtendAfterBroken
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        // Keep broken OB and apply gray color
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+
+                else if isFilled
+                    ob.filled := true
+                    ob.mitigated := true
+                    if obDeleteOnFill
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        // Apply light gray for filled structures
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+
+                else if isMitigated
+                    ob.mitigated := true
+                    if obDeleteOnMitigate
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        // Apply light yellow for mitigated structures
+                        box.set_bgcolor(ob.boxDrawing, mitigatedColor)
+                        box.set_border_color(ob.boxDrawing, mitigatedColor)
+                        label.set_color(ob.labelDrawing, mitigatedColor)
+                        // Extend if needed
+                        if obExtendRight
+                            box.set_right(ob.boxDrawing, bar_index + 10)
+
+                else if obExtendRight
+                    box.set_right(ob.boxDrawing, bar_index + 10)
+
+            // Re-apply colors for ALL non-deleted mitigated/filled/broken OBs on every bar
+            // (Only runs if OB was not deleted above due to continue statements)
+            if ob.filled or ob.broken
+                // Light gray for filled or broken structures
+                box.set_bgcolor(ob.boxDrawing, filledColor)
+                box.set_border_color(ob.boxDrawing, filledColor)
+                label.set_color(ob.labelDrawing, filledColor)
+            else if ob.mitigated
+                // Light yellow for mitigated structures
+                box.set_bgcolor(ob.boxDrawing, mitigatedColor)
+                box.set_border_color(ob.boxDrawing, mitigatedColor)
+                label.set_color(ob.labelDrawing, mitigatedColor)
+            
+            if ob.broken and not ob.mitigated and not ob.filled and obExtendAfterBroken
+                isReMitigated = false
+                isReFilled = false
+
+                if ob.isBullish
+                    if high >= ob.bottom
+                        isReMitigated := true
+                        if high >= ob.top
+                            isReFilled := true
+                else
+                    if low <= ob.top
+                        isReMitigated := true
+                        if low <= ob.bottom
+                            isReFilled := true
+
+                if isReFilled
+                    ob.filled := true
+                    ob.mitigated := true
+                    if obDeleteOnFill
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+                else if isReMitigated
+                    ob.mitigated := true
+                    if obDeleteOnMitigate
+                        box.delete(ob.boxDrawing)
+                        label.delete(ob.labelDrawing)
+                        array.remove(activeOBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(ob.boxDrawing, bar_index)
+                        box.set_extend(ob.boxDrawing, extend.none)
+                        box.set_bgcolor(ob.boxDrawing, filledColor)
+                        box.set_border_color(ob.boxDrawing, filledColor)
+                        label.set_color(ob.labelDrawing, filledColor)
+                else
+                    box.set_right(ob.boxDrawing, bar_index + 10)
+                    // Keep gray color for broken OBs even while extending
+                    box.set_bgcolor(ob.boxDrawing, filledColor)
+                    box.set_border_color(ob.boxDrawing, filledColor)
+                    label.set_color(ob.labelDrawing, filledColor)
+
+    // ─────────────────────────────────────────────────────────────────────
+    // BB MITIGATION/FILL DETECTION (ENTRY TF)
+    // NOTE: BBs are created when Pattern TF OBs are broken, but mitigation/fill
+    // is monitored continuously on Entry TF using native OHLC data
+    // ─────────────────────────────────────────────────────────────────────
+    if array.size(activeBBs) > 0
+        for i = array.size(activeBBs) - 1 to 0
+            bb = array.get(activeBBs, i)
+
+            if not bb.filled
+                isMitigated = false
+                isFilled = false
+
+                // Check if minimum candles have passed since BB creation
+                // Using adjusted count (Pattern TF candles converted to Entry TF candles)
+                candlesSinceCreation = bar_index - bb.brokenBar
+                canCheckMitigation = candlesSinceCreation >= adjustedMinCandlesBeforeMitigation
+
+                if canCheckMitigation
+                    if bb.isBullish
+                        // Bullish Breaker (RED/resistance): Was bullish OB broken down, now resistance
+                        // Mitigation: Price comes UP and touches BOTTOM edge (entry from below)
+                        if high >= bb.bottom
+                            isMitigated := true
+                            bb.bottomTouched := true
+                        // Track top edge touch
+                        if high >= bb.top
+                            bb.topTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if bb.topTouched and bb.bottomTouched
+                            isFilled := true
+                    else
+                        // Bearish Breaker (GREEN/support): Was bearish OB broken up, now support
+                        // Mitigation: Price comes DOWN and touches TOP edge (entry from above)
+                        if low <= bb.top
+                            isMitigated := true
+                            bb.topTouched := true
+                        // Track bottom edge touch
+                        if low <= bb.bottom
+                            bb.bottomTouched := true
+                        // Fill: BOTH edges have been touched (can happen over multiple candles)
+                        if bb.topTouched and bb.bottomTouched
+                            isFilled := true
+
+                if isFilled
+                    bb.filled := true
+                    bb.mitigated := true
+                    if bbDeleteOnFill
+                        box.delete(bb.boxDrawing)
+                        label.delete(bb.labelDrawing)
+                        array.remove(activeBBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        box.set_right(bb.boxDrawing, bar_index)
+                        box.set_extend(bb.boxDrawing, extend.none)
+                        // Apply light gray for filled structures
+                        box.set_bgcolor(bb.boxDrawing, filledColor)
+                        box.set_border_color(bb.boxDrawing, filledColor)
+                        label.set_color(bb.labelDrawing, filledColor)
+                else if isMitigated
+                    bb.mitigated := true
+                    if bbDeleteOnMitigate
+                        box.delete(bb.boxDrawing)
+                        label.delete(bb.labelDrawing)
+                        array.remove(activeBBs, i)
+                        continue  // Skip to next iteration after deletion
+                    else
+                        // Apply light yellow for mitigated structures
+                        box.set_bgcolor(bb.boxDrawing, mitigatedColor)
+                        box.set_border_color(bb.boxDrawing, mitigatedColor)
+                        label.set_color(bb.labelDrawing, mitigatedColor)
+                        // Continue extending
+                        box.set_right(bb.boxDrawing, bar_index + 10)
+                else
+                    box.set_right(bb.boxDrawing, bar_index + 10)
+
+            // Re-apply colors on every bar for non-deleted mitigated/filled BBs (prevents visual reversion)
+            // (Only runs if BB was not deleted above due to continue statements)
+            if bb.filled
+                // Light gray for filled structures
+                box.set_bgcolor(bb.boxDrawing, filledColor)
+                box.set_border_color(bb.boxDrawing, filledColor)
+                label.set_color(bb.labelDrawing, filledColor)
+            else if bb.mitigated
+                // Light yellow for mitigated structures
+                box.set_bgcolor(bb.boxDrawing, mitigatedColor)
+                box.set_border_color(bb.boxDrawing, mitigatedColor)
+                label.set_color(bb.labelDrawing, mitigatedColor)
+
+// ═══════════════════════════════════════════════════════════════════════
+// ADVANCED TRADING ALERTS
+// ═══════════════════════════════════════════════════════════════════════
+
+if array.size(activeOpportunities) > 20
+    oldOpportunity = array.shift(activeOpportunities)
+    label.delete(oldOpportunity.labelDrawing)
+    line.delete(oldOpportunity.arrowDrawing)
+
+// Clean up and update alert labels based on underlying structure status
+if array.size(activeOpportunities) > 0
+    for i = array.size(activeOpportunities) - 1 to 0
+        opp = array.get(activeOpportunities, i)
+
+        shouldRemove = false
+        shouldMakeYellow = false
+        shouldMakeGray = false
+
+        // Check OB+FVG Confluence - yellow if either mitigated, gray if both mitigated, remove if any filled
+        if opp.patternType == "OB+FVG Confluence"
+            anyMitigated = false
+            allMitigated = true
+            anyFilled = false
+
+            // Check OBs
+            if array.size(activeOBs) > 0
+                for obIdx = 0 to array.size(activeOBs) - 1
+                    ob = array.get(activeOBs, obIdx)
+                    if math.abs((ob.top + ob.bottom) / 2 - opp.price) < (ob.top - ob.bottom) * 0.5
+                        if ob.filled
+                            anyFilled := true
+                        if ob.mitigated
+                            anyMitigated := true
+                        if not ob.mitigated and not ob.filled
+                            allMitigated := false
+                        break
+
+            // Check FVGs
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            anyFilled := true
+                        if fvg.mitigated
+                            anyMitigated := true
+                        if not fvg.mitigated and not fvg.filled
+                            allMitigated := false
+                        break
+
+            if anyFilled
+                shouldRemove := true  // Remove if any structure filled
+            else if allMitigated
+                shouldMakeGray := true  // Gray if both mitigated
+            else if anyMitigated
+                shouldMakeYellow := true  // Yellow if either mitigated
+
+        // Check FVG Sweep - yellow when sweeping FVG is mitigated, remove if filled
+        else if opp.patternType == "FVG Sweep"
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            shouldRemove := true  // Remove if filled
+                        else if fvg.mitigated
+                            shouldMakeYellow := true  // Yellow if mitigated
+                        break
+
+        // Check Liquidity Run FVG - yellow when FVG is mitigated, remove if filled
+        else if opp.patternType == "Liquidity Run FVG"
+            if array.size(activeFVGs) > 0
+                for fvgIdx = 0 to array.size(activeFVGs) - 1
+                    fvg = array.get(activeFVGs, fvgIdx)
+                    if fvg.isLiquidityRun and math.abs((fvg.top + fvg.bottom) / 2 - opp.price) < (fvg.top - fvg.bottom) * 0.5
+                        if fvg.filled
+                            shouldRemove := true  // Remove if filled
+                        else if fvg.mitigated
+                            shouldMakeYellow := true  // Yellow if mitigated
+                        break
+
+        // Apply state changes
+        if shouldRemove
+            label.delete(opp.labelDrawing)
+            line.delete(opp.arrowDrawing)
+            array.remove(activeOpportunities, i)
+        else if shouldMakeGray and opp.isValid
+            // Turn gray (both structures mitigated for confluence)
+            label.set_color(opp.labelDrawing, filledColor)
+            line.set_color(opp.arrowDrawing, filledColor)
+            opp.isValid := false
+        else if shouldMakeYellow and opp.isValid
+            // Turn yellow (at least one structure mitigated)
+            label.set_color(opp.labelDrawing, mitigatedColor)
+            line.set_color(opp.arrowDrawing, mitigatedColor)
+
+// 1. OB+FVG Confluence
+if showOBFVGConfluence and array.size(activeOBs) > 0 and array.size(activeFVGs) > 0 and isSupported
+    for obIdx = array.size(activeOBs) - 1 to 0
+        ob = array.get(activeOBs, obIdx)
+        if not ob.mitigated and not ob.filled and not ob.broken and not ob.confluenceMarked
+            for fvgIdx = array.size(activeFVGs) - 1 to 0
+                fvg = array.get(activeFVGs, fvgIdx)
+                if not fvg.filled and not fvg.confluenceMarked and ob.isBullish == fvg.isBullish
+                    if rangesOverlap(ob.top, ob.bottom, fvg.top, fvg.bottom)
+                        // Calculate EN, SL, TP
+                        // AGGRESSIVE ENTRY: Use close of FVG confirmation candle (3rd candle)
+                        // This allows entry before retracement to FVG zone
+                        // Bullish: Entry = Current close, SL = OB bottom, TP = bearish element above
+                        // Bearish: Entry = Current close, SL = OB top, TP = bullish element below
+                        isBullishSetup = ob.isBullish
+                        entryPrice = close  // Close of confirmation candle (aggressive entry)
+                        calculatedSL = isBullishSetup ? ob.bottom : ob.top
+
+                        // Apply ATR minimum SL
+                        [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                        // Use enhanced TP finder for OB+FVG (minimum RR = 1.0)
+                        [tpPrice, tpCriteria] = findEnhancedTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                        // Calculate Risk-Reward ratio
+                        riskAmount = math.abs(entryPrice - slPrice)
+                        rewardAmount = math.abs(tpPrice - entryPrice)
+                        tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                        // Calculate MA Score
+                        maScore = calculateMAScore(isBullishSetup, close)
+
+                        // Generate unique alert ID
+                        alertId = generateAlertId(bar_index, entryPrice)
+
+                        // Determine if alert will be fired and reason if not
+                        withinTimeWindow = isWithinAlertTimeWindow()
+                        meetsMAScore = maScore >= minMAScoreForAlert
+                        alertWillFire = withinTimeWindow and meetsMAScore
+
+                        firedStatus = alertWillFire ? "True" : "False"
+                        firedReason = ""
+                        if not alertWillFire
+                            if not withinTimeWindow and not meetsMAScore
+                                firedReason := " (OTW, Low MAS)"
+                            else if not withinTimeWindow
+                                firedReason := " (OTW)"
+                            else if not meetsMAScore
+                                firedReason := " (Low MAS)"
+
+                        // Calculate confluence price for label position (midpoint of EN and SL)
+                        confluencePrice = (entryPrice + slPrice) / 2
+
+                        // Create label with conditional prices (multi-line)
+                        labelText = ob.isBullish ? "Bullish OB+FVG\nConfluence" : "Bearish OB+FVG\nConfluence"
+                        if showAlertPrices
+                            slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                            tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                            labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                            labelText := labelText + "\nSL=" + slText
+                            labelText := labelText + "\nTP=" + tpText
+                            labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                            labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                            labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                        labelColor = ob.isBullish ? color.new(color.green, 0) : color.new(color.red, 0)
+                        oppLabel = label.new(x=bar_index + opportunityLabelOffset, y=confluencePrice, text=labelText, style=label.style_label_left, color=labelColor, textcolor=color.white, size=size.normal)
+                        oppArrow = createArrowToLabel(bar_index, bar_index + opportunityLabelOffset, confluencePrice, labelColor)
+
+                        // Create JSON alert message
+                        ticker = syminfo.ticker
+                        tf = timeframe.period
+                        orderType = isBullishSetup ? "BUY" : "SELL"
+                        patternName = "OB+FVG Confluence"
+                        timestamp = time
+                        alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"' + orderType + '","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close, format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                        if alertWillFire
+                            alert(alertMsg, alert.freq_once_per_bar)
+
+                        // Push to active opportunities with all trading parameters
+                        array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "OB+FVG Confluence", confluencePrice, bar_index, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close, alertId))
+
+                        ob.confluenceMarked := true
+                        fvg.confluenceMarked := true
+                        break
+
+// 3. FVG Sweep
+if showFVGSweep and array.size(activeFVGs) > 1 and (newBullFVG or newBearFVG) and isSupported
+    currentFVG = array.get(activeFVGs, array.size(activeFVGs) - 1)
+
+    if true
+        for i = array.size(activeFVGs) - 2 to 0
+            oldFVG = array.get(activeFVGs, i)
+            if currentFVG.isBullish != oldFVG.isBullish
+                if bar_index - oldFVG.startBar <= 10
+                    hasOverlap = false
+
+                    if currentFVG.isBullish and not oldFVG.isBullish
+                        if currentFVG.top >= oldFVG.bottom
+                            hasOverlap := true
+                    else if not currentFVG.isBullish and oldFVG.isBullish
+                        if currentFVG.bottom <= oldFVG.top
+                            hasOverlap := true
+
+                    if hasOverlap
+                        alreadyAlerted = false
+                        if array.size(activeOpportunities) > 0
+                            for k = 0 to array.size(activeOpportunities) - 1
+                                opp = array.get(activeOpportunities, k)
+                                if opp.patternType == "FVG Sweep" and bar_index - opp.detectionBar <= 5
+                                    alreadyAlerted := true
+                                    break
+
+                        if not alreadyAlerted
+                            // Calculate EN, SL, TP
+                            // Bullish FVG Sweep: Bullish FVG (currentFVG) sweeps bearish FVG (oldFVG) = BUY setup
+                            //   - Entry = Sweeping FVG top (bullish FVG top)
+                            //   - SL = Sweeping FVG bottom (bullish FVG bottom)
+                            //   - TP = Next bearish element above (resistance)
+                            // Bearish FVG Sweep: Bearish FVG (currentFVG) sweeps bullish FVG (oldFVG) = SELL setup
+                            //   - Entry = Sweeping FVG bottom (bearish FVG bottom)
+                            //   - SL = Sweeping FVG top (bearish FVG top)
+                            //   - TP = Next bullish element below (support)
+                            isBullishSetup = currentFVG.isBullish
+                            entryPrice = isBullishSetup ? currentFVG.top : currentFVG.bottom
+                            calculatedSL = isBullishSetup ? currentFVG.bottom : currentFVG.top
+
+                            // Apply ATR minimum SL
+                            [slPrice, atrUsed] = applyATRMinimumSL(entryPrice, calculatedSL, isBullishSetup)
+
+                            [tpPrice, tpCriteria] = findTakeProfitPrice(isBullishSetup, entryPrice, slPrice, alertRiskRewardRatio)
+
+                            // Calculate Risk-Reward ratio
+                            riskAmount = math.abs(entryPrice - slPrice)
+                            rewardAmount = math.abs(tpPrice - entryPrice)
+                            tradeRR = riskAmount > 0 ? rewardAmount / riskAmount : 0
+
+                            // Calculate MA Score
+                            maScore = calculateMAScore(isBullishSetup, close)
+
+                            // Generate unique alert ID
+                            alertId = generateAlertId(bar_index, entryPrice)
+
+                            // Determine if alert will be fired and reason if not
+                            withinTimeWindow = isWithinAlertTimeWindow()
+                            meetsMAScore = maScore >= minMAScoreForAlert
+                            alertWillFire = withinTimeWindow and meetsMAScore
+
+                            firedStatus = alertWillFire ? "True" : "False"
+                            firedReason = ""
+                            if not alertWillFire
+                                if not withinTimeWindow and not meetsMAScore
+                                    firedReason := " (OTW, Low MAS)"
+                                else if not withinTimeWindow
+                                    firedReason := " (OTW)"
+                                else if not meetsMAScore
+                                    firedReason := " (Low MAS)"
+
+                            // Calculate sweep price for label position
+                            sweepPrice = (currentFVG.top + currentFVG.bottom) / 2
+
+                            // Create label with conditional prices (multi-line)
+                            // Label describes the SWEEPING FVG (the one doing the sweeping)
+                            labelText = currentFVG.isBullish ? "Bullish FVG Sweep" : "Bearish FVG Sweep"
+                            if showAlertPrices
+                                slText = str.tostring(slPrice, format.mintick) + (atrUsed ? " (ATR)" : "")
+                                tpText = str.tostring(tpPrice, format.mintick) + " (" + tpCriteria + ")"
+                                labelText := labelText + "\nEN=" + str.tostring(entryPrice, format.mintick)
+                                labelText := labelText + "\nSL=" + slText
+                                labelText := labelText + "\nTP=" + tpText
+                                labelText := labelText + "\nRR=" + str.tostring(tradeRR, "#.##")
+                                labelText := labelText + "\nMA_Score=" + str.tostring(maScore) + "/10"
+                                labelText := labelText + "\nFired=" + firedStatus + firedReason
+
+                            // Color matches the setup direction
+                            labelColor = currentFVG.isBullish ? color.new(color.green, 0) : color.new(color.red, 0)
+                            oppLabel = label.new(x=bar_index + opportunityLabelOffset, y=sweepPrice, text=labelText, style=label.style_label_left, color=labelColor, textcolor=color.white, size=size.normal)
+                            oppArrow = createArrowToLabel(bar_index, bar_index + opportunityLabelOffset, sweepPrice, labelColor)
+
+                            // Create JSON alert message
+                            ticker = syminfo.ticker
+                            tf = timeframe.period
+                            orderType = isBullishSetup ? "BUY" : "SELL"
+                            patternName = currentFVG.isBullish ? "Bullish FVG Sweep" : "Bearish FVG Sweep"
+                            timestamp = time
+                            alertMsg = '{"id":"' + alertId + '","ticker":"' + ticker + '","orderType":"' + orderType + '","timeframe":"' + tf + '","pattern":"' + patternName + '","ltp":' + str.tostring(close, format.mintick) + ',"entry":' + str.tostring(entryPrice, format.mintick) + ',"stopLoss":' + str.tostring(slPrice, format.mintick) + ',"takeProfit":' + str.tostring(tpPrice, format.mintick) + ',"tradeRR":' + str.tostring(tradeRR, "#.##") + ',"maScore":' + str.tostring(maScore) + ',"timestamp":' + str.tostring(timestamp) + '}'
+                            if alertWillFire
+                                alert(alertMsg, alert.freq_once_per_bar)
+
+                            // Push to active opportunities with all trading parameters
+                            array.push(activeOpportunities, TradingOpportunity.new(oppLabel, oppArrow, "FVG Sweep", sweepPrice, bar_index, true, true, isBullishSetup, entryPrice, slPrice, tpPrice, close, alertId))
+                            break
+

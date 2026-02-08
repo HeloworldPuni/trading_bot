@@ -1,0 +1,61 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title     = "[Z] Neural Network Sub 34 - Volatility - Support and Resistance", 
+     shorttitle     = "N_SupportResist", 
+     overlay        = false, 
+     format         = format.inherit,
+     precision      = 2)
+
+//Support and Resistance
+left16 = 200
+right16 = 20
+quick_right16 = 5
+src16 = "Close"
+
+pivot_high16 = src16=="Close" ? ta.pivothigh(close,left16,right16) : ta.pivothigh(high,left16,right16)
+pivot_lows16 = src16=="Close" ? ta.pivotlow(close, left16,right16) : ta.pivotlow(low,left16,right16)
+
+quick_pivot_high16 = src16=="Close" ? ta.pivothigh(close,left16,quick_right16) : ta.pivothigh(high,left16,quick_right16)
+quick_pivot_lows16 = src16=="Close" ? ta.pivotlow(close, left16,quick_right16) : ta.pivotlow(low, left16,quick_right16)
+
+level1 = src16=="Close" ? ta.valuewhen(not na(quick_pivot_high16), close[quick_right16], 0) : ta.valuewhen(not na(quick_pivot_high16), high[quick_right16], 0)
+level2 = src16=="Close" ? ta.valuewhen(not na(quick_pivot_lows16), close[quick_right16], 0) : ta.valuewhen(not na(quick_pivot_lows16), low[quick_right16], 0)
+level3 = src16=="Close" ? ta.valuewhen(not na(pivot_high16), close[right16], 0) : ta.valuewhen(not na(pivot_high16), high[right16], 0)
+level4 = src16=="Close" ? ta.valuewhen(not na(pivot_lows16), close[right16], 0) : ta.valuewhen(not na(pivot_lows16), low[right16], 0)
+level5 = src16=="Close" ? ta.valuewhen(not na(pivot_high16), close[right16], 1) : ta.valuewhen(not na(pivot_high16), high[right16], 1)
+level6 = src16=="Close" ? ta.valuewhen(not na(pivot_lows16), close[right16], 1) : ta.valuewhen(not na(pivot_lows16), low[right16], 1)
+level7 = src16=="Close" ? ta.valuewhen(not na(pivot_high16), close[right16], 2) : ta.valuewhen(not na(pivot_high16), high[right16], 2)
+level8 = src16=="Close" ? ta.valuewhen(not na(pivot_lows16), close[right16], 2) : ta.valuewhen(not na(pivot_lows16), low[right16], 2)
+
+level1_col = close >= level1 ? color.green : color.red
+level2_col = close >= level2 ? color.green : color.red
+level3_col = close >= level3 ? color.green : color.red
+level4_col = close >= level4 ? color.green : color.red
+level5_col = close >= level5 ? color.green : color.red
+level6_col = close >= level6 ? color.green : color.red
+level7_col = close >= level7 ? color.green : color.red
+level8_col = close >= level8 ? color.green : color.red
+
+length17 = 9
+src17 = close
+hma17 = ta.wma(2*ta.wma(src17, length17/2)-ta.wma(src17, length17), math.floor(math.sqrt(length17)))
+
+buy1 = hma17 > level1 and hma17[1] < level1[1] and close > close[2]
+buy2 = hma17 > level2 and hma17[1] < level2[1] and close > close[2]
+buy3 = hma17 > level3 and hma17[1] < level3[1] and close > close[2]
+buy4 = hma17 > level4 and hma17[1] < level4[1] and close > close[2]
+buy5 = hma17 > level5 and hma17[1] < level5[1] and close > close[2]
+buy6 = hma17 > level6 and hma17[1] < level6[1] and close > close[2]
+buy7 = hma17 > level7 and hma17[1] < level7[1] and close > close[2]
+buy8 = hma17 > level8 and hma17[1] < level8[1] and close > close[2]
+
+sell1 = hma17 < level1 and hma17[1] > level1[1] and close < close[2]
+sell2 = hma17 < level2 and hma17[1] > level2[1] and close < close[2]
+sell3 = hma17 < level3 and hma17[1] > level3[1] and close < close[2]
+sell4 = hma17 < level4 and hma17[1] > level4[1] and close < close[2]
+sell5 = hma17 < level5 and hma17[1] > level5[1] and close < close[2]
+sell6 = hma17 < level6 and hma17[1] > level6[1] and close < close[2]
+sell7 = hma17 < level7 and hma17[1] > level7[1] and close < close[2]
+sell8 = hma17 < level8 and hma17[1] > level8[1] and close < close[2]

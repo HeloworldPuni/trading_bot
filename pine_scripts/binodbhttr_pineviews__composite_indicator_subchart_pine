@@ -1,0 +1,96 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BullBearWizard318
+//@version=5
+indicator("Composite Metric Subchart", overlay=false)
+
+// Parameters for the composite metric scaling (same as in the main script)
+vsa_weight = input.float(0.03, title="VSA Weight", minval=0, maxval=0.10, step=0.01)
+vsa_sma_length = input.int(50, title="SMA Length for VSA", minval=10, maxval=200, step=10)
+
+rsi_length = input.int(14, title="RSI Length")
+macd_short = input.int(12, title="MACD Short Length")
+macd_long = input.int(26, title="MACD Long Length")
+macd_signal = input.int(9, title="MACD Signal Length")
+stoch_length = input.int(14, title="Stochastic Length")
+boll_length = input.int(20, title="Bollinger Bands Length")
+sma_length = input.int(50, title="SMA Length")
+ema_length = input.int(50, title="EMA Length")
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+rsi_score = rsi / 100
+
+// MACD
+[macd_line, signal_line, _] = ta.macd(close, macd_short, macd_long, macd_signal)
+macd_diff = macd_line - signal_line
+macd_min = ta.lowest(macd_diff, 100)
+macd_max = ta.highest(macd_diff, 100)
+macd_score = (macd_diff - macd_min) / (macd_max - macd_min)
+
+// Bollinger Bands
+basis = ta.sma(close, boll_length)
+dev = ta.stdev(close, boll_length) * 2
+upper_band = basis + dev
+lower_band = basis - dev
+bb_position = (close - lower_band) / (upper_band - lower_band)
+bb_score = bb_position
+
+// Moving Averages
+sma = ta.sma(close, sma_length)
+ema = ta.ema(close, ema_length)
+price_min = ta.lowest(close, 100)
+price_max = ta.highest(close, 100)
+price_norm = (close - price_min) / (price_max - price_min)
+sma_cross = ta.crossover(close, sma) ? 1 : 0
+ema_cross = ta.crossover(close, ema) ? 1 : 0
+ma_score = price_norm * 0.5 + sma_cross * 0.25 + ema_cross * 0.25
+
+// Stochastic
+stochK = ta.stoch(close, high, low, stoch_length)
+stoch_score = stochK / 100
+
+// Volume Spread Analysis (VSA)
+avg_volume = ta.sma(volume, vsa_sma_length)
+vsa_score = (close > open and volume > avg_volume) ? vsa_weight : (close < open and volume > avg_volume) ? -vsa_weight : 0
+
+// Composite Metric
+composite_metric = (rsi_score + macd_score + bb_score + ma_score + stoch_score) / 5 + vsa_score
+
+// Rescale Composite Metric to 0-100
+composite_metric_scaled = composite_metric * 100
+
+// Smoothing option (optional)
+smoothed_composite_metric = ta.sma(composite_metric_scaled, 3)  // 3-period SMA smoothing (optional)
+
+
+// Plot Composite Metric on Subchart
+plot(composite_metric_scaled, color=color.blue, title="Composite Metric", linewidth=1)
+plot(smoothed_composite_metric, color=color.navy, title="Composite Metric Smoothed", linewidth=1)
+
+
+// Add horizontal lines at 10, 20, 30, 40, 50, 60, 70, 80, and 90
+hline_90=hline(90, "90", color=color.gray, linestyle=hline.style_dotted)
+hline(80, "80", color=color.gray, linestyle=hline.style_dotted)
+hline_70=hline(70, "70", color=color.gray, linestyle=hline.style_dotted)
+hline(60, "60", color=color.gray, linestyle=hline.style_dotted)
+hline(50, "50", color=color.gray, linestyle=hline.style_solid)
+hline(40, "40", color=color.gray, linestyle=hline.style_dotted)
+hline_30=hline(30, "30", color=color.gray, linestyle=hline.style_dotted)
+hline(20, "20", color=color.gray, linestyle=hline.style_dotted)
+hline_10=hline(10, "10", color=color.gray, linestyle=hline.style_dotted)
+
+// Add shading for the regions
+hline_100 = hline(100, color=color.green)
+hline_80 = hline(80, color=color.green)
+fill(hline_90, hline_100, color=color.new(color.green, 30))  // Shade the region 90-100
+fill(hline_80, hline_90, color=color.new(color.green, 60))  // Shade the region 80-90
+fill(hline_70, hline_80, color=color.new(color.green, 80))  // Shade the region 70-80
+
+
+hline_0 = hline(0, color=color.red)
+hline_20 = hline(20, color=color.red)
+fill(hline_0, hline_10, color=color.new(color.red, 30))  // Shade the region 0-10
+fill(hline_10, hline_20, color=color.new(color.red, 60))  // Shade the region 10-20
+fill(hline_20, hline_30, color=color.new(color.red, 80))  // Shade the region 20-30
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BullBearWizard318

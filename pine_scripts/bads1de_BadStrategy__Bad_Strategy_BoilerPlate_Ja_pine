@@ -1,0 +1,773 @@
+//@version=5
+strategy(title="Bad Strategy BoilerPlate", shorttitle="Bad Strategy BoilerPlate", overlay=true, pyramiding=1, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100.0, commission_type=strategy.commission.percent, commission_value=0.04, precision=6, max_lines_count=500, max_labels_count=500)
+
+//region - 入力変数 - セッション
+closeSession = input.bool(false, title='📅 セッション終了時にトレードを閉じる', group='セッション')
+tradeSession = input.session(title='取引セッション', defval='0000-2345', group='セッション')
+//endregion
+
+//region - 入力変数 - ストラテジーの方向
+enableLongStrategy = input.bool(true, title='ロングストラテジーを有効にする', group='ストラテジー')
+enableShortStrategy = input.bool(true, title='ショートストラテジーを有効にする', group='ストラテジー')
+closeOnOpposite = input.bool(false, title='反対シグナルで閉じる', group='ストラテジー')
+//endregion
+
+//region - 入力変数 - 日付と時間
+setCloseTime = input.bool(false, '📅 特定の時間に閉じる', group='日付')
+closeTimeHour = input.int(23, title='終了時間', group='日付')
+closeTimeMinute = input.int(00, title='終了分', group='日付')
+setTimeLimit = input.bool(false, '📅 ポジションの時間制限を設定する', group='日付')
+holdLongBars = input.int(60, title='ロング保持期間 (バー)', group='日付')
+holdShortBars = input.int(60, title='ショート保持期間 (バー)', group='日付')
+dateFilter = input.bool(false, '📅 日付範囲フィルター', group='日付')
+startTime = input.time(defval=timestamp('01 Jan 2000 13:30 +0000'), title='開始時間', group='日付')
+endTime = input.time(defval=timestamp('30 Dec 2077 23:30 +0000'), title='終了時間', group='日付')
+//endregion
+
+//region - 日付範囲関数
+tradeDateIsAllowed() =>
+    dateFilter ? time >= startTime and time <= endTime : true
+//endregion
+
+//region - 入力変数 - エントリーフィルター
+// ビッグブルフィルター
+filterBigMovesBull = input.bool(false, "📈 ビッグブルフィルターを有効にする", group="エントリーフィルター")
+filterBullBar = input.int(3, '強気期間 (バー)', group="エントリーフィルター")
+filterBigMovesValueBull = input.float(3.0, title="強気変動閾値 (%)", minval=0, maxval=100, step=0.1, group="エントリーフィルター") / 100
+
+// ビッグベアフィルター
+filterBigMovesBear = input.bool(false, "📈 ビッグベアフィルターを有効にする", group="エントリーフィルター")
+filterBearBar = input.int(2, '弱気期間 (バー)', group="エントリーフィルター")
+filterBigMovesValueBear = input.float(2, title="弱気変動閾値 (%)", minval=0, maxval=100, step=0.1, group="エントリーフィルター") / 100
+
+// ダブルディッピングフィルター
+noDoubleDipping = input.bool(false, "📈 ダブルディッピングフィルターを有効にする", group="エントリーフィルター")
+dipBars = input.int(6, "再エントリークールダウン (バー)", group="エントリーフィルター")
+
+// 移動平均 #1 フィルター
+useLongEmaFilter1 = input.bool(false, "📈 MA #1 より上でロングエントリー", group="エントリーフィルター", inline="MA#1")
+useShortEmaFilter1 = input.bool(false, "📈 MA #1 より下でショートエントリー", group="エントリーフィルター", inline="MA#1")
+maPeriod1 = input.int(21, "MA #1 期間", group="エントリーフィルター", inline="MA#1")
+typeMA1 = input.string(title="MA #1 タイプ", defval="SMA", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA", "DEMA", "HMA", "T3", "GMA", "KAMA", "VIDYA", "Karobein", "ELF", "SW-MA", "TRAMA", "McGinley", "LSMA", "Kijun"], group="エントリーフィルター", inline="MA#1")
+maExType1 = input.string(title="MA #1 ソース", defval="Close", options=["MA#1", "MA#2", "MA#3", "Close", "High", "Low", "Open"], group="エントリーフィルター", inline="MA#1")
+distanceToMa1 = input.float(0.0, title="MA #1 バッファ (%)", minval=-1, maxval=1, step=0.001, group="エントリーフィルター", inline="MA#1")
+
+// 移動平均 #2 フィルター
+useLongEmaFilter2 = input.bool(false, "📈 MA #2 より上でロングエントリー", group="エントリーフィルター", inline="MA#2")
+useShortEmaFilter2 = input.bool(false, "📈 MA #2 より下でショートエントリー", group="エントリーフィルター", inline="MA#2")
+maPeriod2 = input.int(55, "MA #2 期間", group="エントリーフィルター", inline="MA#2")
+typeMA2 = input.string(title="MA #2 タイプ", defval="SMA", options=["SMA", "EMA", "HMA", "T3",  "KAMA",  "McGinley", "LSMA", "Kijun"], group="エントリーフィルター", inline="MA#2")
+maExType2 = input.string(title="MA #2 ソース", defval="Close", options=["MA#1", "MA#2", "MA#3", "Close", "High", "Low", "Open"], group="エントリーフィルター", inline="MA#2")
+distanceToMa2 = input.float(0.0, title="MA #2 バッファ (%)", minval=-1, maxval=1, step=0.001, group="エントリーフィルター", inline="MA#2")
+
+// 移動平均 #3 フィルター
+useLongEmaFilter3 = input.bool(false, "📈 MA #3 より上でロングエントリー", group="エントリーフィルター", inline="MA#3")
+useShortEmaFilter3 = input.bool(false, "📈 MA #3 より下でショートエントリー", group="エントリーフィルター", inline="MA#3")
+maPeriod3 = input.int(200, "MA #3 期間", group="エントリーフィルター", inline="MA#3")
+typeMA3 = input.string(title="MA #3 タイプ", defval="SMA", options=["SMA", "EMA", "HMA", "T3",  "KAMA",  "McGinley", "LSMA", "Kijun"], group="エントリーフィルター", inline="MA#3")
+maExType3 = input.string(title="MA #3 ソース", defval="Close", options=["MA#1", "MA#2", "MA#3", "Close", "High", "Low", "Open"], group="エントリーフィルター", inline="MA#3")
+distanceToMa3 = input.float(0.0, title="MA #3 バッファ (%)", minval=-1, maxval=1, step=0.001, group="エントリーフィルター", inline="MA#3")
+
+// 平均方向性指数 (ADX) フィルター
+filterAdx = input.bool(false, "📈 ADXフィルターを有効にする", group='エントリーフィルター')
+adxLength = input.int(title='ADXの長さ', defval=14, group="エントリーフィルター")
+adxThreshold = input.int(title='ADXの閾値', defval=20, group="エントリーフィルター")
+typeMA2Adx = input.string(title="ADX MAタイプ", defval="SMA", options=["SMA", "EMA", "HMA", "T3",  "KAMA",  "McGinley", "LSMA", "Kijun"], group="エントリーフィルター")
+diCrossPoint = input.int(40, title="DIクロスポイント", group="エントリーフィルター")
+adxSlope = input.float(3.5, minval=0, maxval=300, title='ADXスロープ', step=0.5, group="エントリーフィルター")
+typeADX = input.string(title="ADXタイプ", defval="ADX", options=["ADX", "DI Cross", "ADX Slope"], group="エントリーフィルター")
+
+// レンジフローインデックス (RFI) フィルター
+filterRf = input.bool(false, '📈 RFIフィルターを有効にする', group='エントリーフィルター')
+rfSource = input.source(close, "RFIソース", group='エントリーフィルター')
+rfPeriod = input.int(defval=50, minval=1, title='RFIサンプリング期間', group='エントリーフィルター')
+rfMultiplier = input.float(defval=3.0, minval=0.1, title='RFIレンジ乗数', group='エントリーフィルター')
+
+// スーパートレンドフィルター
+filterSupertrend = input.bool(false, title="📈 スーパートレンドフィルターを有効にする", group='エントリーフィルター')
+supertrendLength = input.int(defval=8, title='スーパートレンドATR期間', group='エントリーフィルター')
+supertrendMultiplier = input.float(defval=1.8, title='スーパートレンドATR乗数', step=0.1, group='エントリーフィルター')
+//endregion
+
+//region - 入力変数 - 曜日フィルター
+// 曜日フィルター - ロング
+mondayLong = input.bool(true, "月曜日", group="ロング曜日エントリーフィルター", inline="week")
+tuesdayLong = input.bool(true, "火曜日", group="ロング曜日エントリーフィルター", inline="week")
+wednesdayLong = input.bool(true, "水曜日", group="ロング曜日エントリーフィルター", inline="week")
+thursdayLong = input.bool(true, "木曜日", group="ロング曜日エントリーフィルター", inline="week")
+fridayLong = input.bool(true, "金曜日", group="ロング曜日エントリーフィルター", inline="week")
+saturdayLong = input.bool(false, "土曜日", group="ロング曜日エントリーフィルター", inline="week")
+sundayLong = input.bool(false, "日曜日", group="ロング曜日エントリーフィルター", inline="week")
+
+// 曜日フィルター - ショート
+mondayShort = input.bool(true, "月曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+tuesdayShort = input.bool(true, "火曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+wednesdayShort = input.bool(true, "水曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+thursdayShort = input.bool(true, "木曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+fridayShort = input.bool(true, "金曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+saturdayShort = input.bool(false, "土曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+sundayShort = input.bool(false, "日曜日", group="ショート曜日エントリーフィルター", inline="week_S")
+//endregion
+
+//region - 入力変数 - ストップロス
+stopType = input.string(title='ストップロスタイプ', defval='ATR', options=['None', 'Percent', 'ATR', 'ATR Trailing'], inline="StopType", group="ストップロス")
+
+// パーセントストップロス
+lossPercentage = input.float(title='ストップロス (%)', minval=0.0, step=0.1, defval=1.8, inline="LOSS", group="ストップロス") * 0.01
+
+// ATRストップロス
+atrStopLength = input.int(title='ATR期間', defval=14, inline="ATR", group="ストップロス")
+riskRatioATR = input.float(defval=2.0, title='ATR乗数', step=0.10, inline="ATR", group="ストップロス")
+
+// ATRトレーリングストップロス
+atrTrailingLength = input.int(14, minval=1, title='トレーリング期間', inline="inputsATR", group="ストップロス")
+atrTrailingMultiplier = input.float(1.5, title='トレーリング乗数', step=0.1, inline="inputsATR", group="ストップロス")
+
+// ストップロスより下で終値が必要
+closeStop = input.bool(false, "ストップロスより下で終値が必要", inline="equire Close Below Stop Loss", group="ストップロス")
+emergencyStopPercentage = input.float(0.3, step=0.1, minval=0.0, title="緊急ストップロス (%)", group="ストップロス") * 0.01
+//endregion
+
+//region - 入力変数 - テイクプロフィット
+takeProfitType = input.string(title='テイクプロフィットタイプ', defval='RR', options=['None', 'Percent', 'RR', 'ATR'], inline="TakeProfitType", group="テイクプロフィット")
+
+// パーセントテイクプロフィット
+longProfitPercentage = input.float(title='ロングテイクプロフィット (%)', minval=0.0, step=0.1, defval=1.5, inline="TP", group="テイクプロフィット") * 0.01
+shortProfitPercentage = input.float(title='ショートテイクプロフィット (%)', minval=0.0, step=0.1, defval=1.5, inline="TP", group="テイクプロフィット") * 0.01
+
+// リスク/リワードテイクプロフィット
+longRiskRewardRatio = input.float(title="ロングリスク/リワードレシオ (1:x)", step=0.1, defval=1.5, minval=0, inline="RR", group="テイクプロフィット")
+shortRiskRewardRatio = input.float(title="ショートリスク/リワードレシオ (1:x)", step=0.1, defval=1.5, minval=0, inline="RR", group="テイクプロフィット")
+
+// ATRテイクプロフィット
+atrTakeProfitLength = input.int(defval=14, title='ATR期間', minval=1, inline='Take Profit ATR Multiplier', group="テイクプロフィット")
+longTakeProfitAtrMultiplier = input.float(defval=2.0, title='ロングATR乗数', minval=0.1, step=0.1, inline='Take Profit ATR Multiplier', group="テイクプロフィット")
+shortTakeProfitAtrMultiplier = input.float(defval=2.0, title='ショートATR乗数', minval=0.1, step=0.1, inline='Take Profit ATR Multiplier', group="テイクプロフィット")
+//endregion
+
+//region - 入力変数 - トレーリングテイクプロフィット
+takeProfitTrailingEnabled = input.bool(defval=false, title="⚠️トレーリングテイクプロフィット", tooltip='テイクプロフィットのトレーリングを有効または無効にします。警告！この機能はリペイントされます。「バー拡大鏡」と「ディープバックテスト」を使用して、現実的なバックテスト結果を得るようにしてください。', group="テイクプロフィット")
+deviationMethod = input.string(defval='PERC', title='偏差計算法', options=['PERC', 'ATR'], tooltip='トレーリングテイクプロフィットの偏差を計算する方法。', group="テイクプロフィット")
+trailingTakeProfitDeviationPerc = input.float(defval=1.0, title='トレーリングテイクプロフィット偏差 %', minval=0.01, maxval=100, step=0.01, tooltip='テイクプロフィットリミットに達したときに価格を追跡するステップ。', group="テイクプロフィット") / 100
+deviationAtrMultiplier = input.float(defval=1.0, title='偏差ATR乗数', minval=0.01, step=0.05, tooltip='テイクプロフィット目標に達したときに、価格を追跡するためのステップを計算するために、初期エントリーのATRに使用される乗数。', group="テイクプロフィット")
+//endregion
+
+
+//region - 入力変数 - 注文サイズ
+useStop = input.bool(false, "🏛️注文サイズを有効にする", group="🏛️注文サイズ")
+setRisk = input.string(title="注文サイズ計算方法", defval="リスクベース", options=["リスクベース", "タートル", "レバレッジ", "テクニカルアルゴ"], group="🏛️注文サイズ", inline="risk")
+riskValue = input.float(2.0, title="リスク (%)", inline="risk", group="🏛️注文サイズ")
+leverage = input.float(1, 'レバレッジ', step=.5, group="🏛️注文サイズ", inline="risk")
+lowZoneMultiplier = input.float(0.5, "低リスクゾーン乗数", step=0.1, minval=0, maxval=10, group="🏛️注文サイズ", inline="DA")
+midZoneMultiplier = input.float(1, "中リスクゾーン乗数", step=0.1, minval=0, maxval=10, group="🏛️注文サイズ", inline="DA")
+highZoneMultiplier = input.float(1.5, "高リスクゾーン乗数", step=0.1, minval=0, maxval=10, group="🏛️注文サイズ", inline="DA")
+riskSourceInput = input.string('ATR', '動的調整ソース', options=['close', 'volume', 'MA 5', 'MA 25', 'MACD', 'volume MA', 'ATR', 'VWAP', 'RSI', 'MFI', 'ADX'], group="🏛️注文サイズ", inline="DA2")
+riskBandwidth = input.float(3.1, "リスクバンド幅", step=0.01, minval=2, group="🏛️注文サイズ", inline="DA2")
+//endregion
+
+//region - テクニカル指標
+
+// T3 移動平均
+T3(float src, int len) =>
+    var float result = 0.0
+    xPrice = close
+    xe1 = ta.ema(xPrice, len)
+    xe2 = ta.ema(xe1, len)
+    xe3 = ta.ema(xe2, len)
+    xe4 = ta.ema(xe3, len)
+    xe5 = ta.ema(xe4, len)
+    xe6 = ta.ema(xe5, len)
+    b = 0.7
+    c1 = -b * b * b
+    c2 = 3 * b * b + 3 * b * b * b
+    c3 = -6 * b * b - 3 * b - 3 * b * b * b
+    c4 = 1 + 3 * b + b * b * b + 3 * b * b
+    result := c1 * xe6 + c2 * xe5 + c3 * xe4 + c4 * xe3
+    result
+
+
+// カウフマンの適応移動平均 (KAMA)
+KAMA(float _src, int _len) =>
+    tmpVal = 0.0
+    direction = math.abs(_src - _src[_len])
+    volatility = math.sum(math.abs(_src - _src[1]), _len)
+    er = volatility != 0 ? direction / volatility : 0
+    fastSC = 0.666
+    slowSC = 0.0645
+    sc = math.pow(er * (fastSC - slowSC) + slowSC, 2)
+    tmpVal := nz(tmpVal[1]) + sc * (_src - nz(tmpVal[1]))
+    tmpVal
+
+
+// マッギンレーダイナミック指標 (McGinley)
+Mc(float src, int length) =>
+    var float mg = 0.0
+    mg := na(mg[1]) ? ta.ema(src, length) : mg[1] + (src - mg[1]) / (length * math.pow(src / mg[1], 4))
+    mg
+
+// 線形回帰 (LSMA)
+lsma(float src, int len) =>
+    var float result = 0.0
+    result := ta.linreg(src, len, 0)
+    result
+
+// 基準線 (一目均衡表より)
+kj(float src, int len) =>
+    var float result = 0.0
+    kijun = math.avg(ta.lowest(len), ta.highest(len))
+    result := kijun
+    result
+
+// 一般化移動平均関数
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "HMA" => ta.hma(source, length)
+        "T3" => T3(source, length)
+        "KAMA" => KAMA(source, length)
+        "McGinley" => Mc(source, length)
+        "LSMA" => lsma(source, length)
+        "Kijun" => kj(source, length)
+        => na
+//endregion
+
+//region - ADX 計算
+trueRange = math.max(math.max(high - low, math.abs(high - nz(close[1]))), math.abs(low - nz(close[1])))
+directionalMovementPlus = high - nz(high[1]) > nz(low[1]) - low ? math.max(high - nz(high[1]), 0) : 0
+directionalMovementMinus = nz(low[1]) - low > high - nz(high[1]) ? math.max(nz(low[1]) - low, 0) : 0
+
+smoothedTrueRange = 0.0
+smoothedTrueRange := nz(smoothedTrueRange[1]) - nz(smoothedTrueRange[1]) / adxLength + trueRange
+smoothedDirectionalMovementPlus = 0.0
+smoothedDirectionalMovementPlus := nz(smoothedDirectionalMovementPlus[1]) - nz(smoothedDirectionalMovementPlus[1]) / adxLength + directionalMovementPlus
+smoothedDirectionalMovementMinus = 0.0
+smoothedDirectionalMovementMinus := nz(smoothedDirectionalMovementMinus[1]) - nz(smoothedDirectionalMovementMinus[1]) / adxLength + directionalMovementMinus
+
+diPlus = smoothedDirectionalMovementPlus / smoothedTrueRange * 100
+diMinus = smoothedDirectionalMovementMinus / smoothedTrueRange * 100
+dx = math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100
+adx = switch typeMA2Adx
+    "SMA" => ta.sma(dx, adxLength)
+    "EMA" => ta.ema(dx, adxLength)
+    "HMA" => ta.hma(dx, adxLength)
+    "T3" => T3(dx, adxLength)
+    "KAMA" => KAMA(dx, adxLength)
+    "McGinley" => Mc(dx, adxLength)
+    "LSMA" => lsma(dx, adxLength)
+    "Kijun" => kj(dx, adxLength)
+    => na
+
+// ADX フィルター条件
+setAdx = adx > adxThreshold
+setAdxBuy = switch typeADX
+    "ADX" => setAdx
+    "DI Cross" => diPlus >= diCrossPoint
+    "ADX Slope" => setAdx and (adx[2] + adxSlope < adx[1]) and (adx[1] + adxSlope < adx)
+    => na
+
+setAdxSell = switch typeADX
+    "ADX" => setAdx
+    "DI Cross" => diMinus >= diCrossPoint
+    "ADX Slope" => setAdx and (adx[2] + adxSlope < adx[1]) and (adx[1] + adxSlope < adx)
+    => na
+//endregion
+
+//region - レンジフィルター計算
+// スムーズ平均レンジ
+smoothrng(x, t, m) =>
+    wper = t * 2 - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    smoothrng = ta.ema(avrng, wper) * m
+    smoothrng
+
+smoothedRange = smoothrng(rfSource, rfPeriod, rfMultiplier)
+
+// レンジフィルター
+rngfilt(x, r) =>
+    rngfilt = x
+    rngfilt := x > nz(rngfilt[1]) ? x - r < nz(rngfilt[1]) ? nz(rngfilt[1]) : x - r : x + r > nz(rngfilt[1]) ? nz(rngfilt[1]) : x + r
+    rngfilt
+
+filt = rngfilt(rfSource, smoothedRange)
+
+// フィルター方向
+upward = 0.0
+upward := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+// ターゲットバンド
+hband = filt + smoothedRange
+lband = filt - smoothedRange
+
+// ブレイクアウト
+longCond = bool(na)
+shortCond = bool(na)
+longCond := rfSource > filt and rfSource > rfSource[1] and upward > 0 or rfSource > filt and rfSource < rfSource[1] and upward > 0
+shortCond := rfSource < filt and rfSource < rfSource[1] and downward > 0 or rfSource < filt and rfSource > rfSource[1] and downward > 0
+
+CondIni = 0
+CondIni := longCond ? 1 : shortCond ? -1 : CondIni[1]
+longRf = longCond
+shortRf = shortCond
+//endregion
+
+//region - 移動平均ソース選択
+maEx1 = (ma(close, maPeriod1, typeMA1) * (1 + distanceToMa1))
+maEx2 = (ma(close, maPeriod2, typeMA2) * (1 + distanceToMa2))
+maEx3 = (ma(close, maPeriod3, typeMA3) * (1 + distanceToMa3))
+
+// MAソースの選択をスイッチ文で実装
+maExTypeFinal1 = switch maExType1
+    "MA#1" => maEx1
+    "MA#2" => maEx2
+    "MA#3" => maEx3
+    "Close" => close
+    "High" => high
+    "Low" => low
+    "Open" => open
+    => na
+
+maExTypeFinal2 = switch maExType2
+    "MA#1" => maEx1
+    "MA#2" => maEx2
+    "MA#3" => maEx3
+    "Close" => close
+    "High" => high
+    "Low" => low
+    "Open" => open
+    => na
+
+maExTypeFinal3 = switch maExType3
+    "MA#1" => maEx1
+    "MA#2" => maEx2
+    "MA#3" => maEx3
+    "Close" => close
+    "High" => high
+    "Low" => low
+    "Open" => open
+    => na
+//endregion
+
+//region - スーパートレンド計算
+superTrendAtr = supertrendMultiplier * ta.atr(supertrendLength)
+
+superTrendLongStop = hl2 - superTrendAtr
+superTrendLongStopPrev = nz(superTrendLongStop[1], superTrendLongStop)
+superTrendLongStop := close[1] > superTrendLongStopPrev ? math.max(superTrendLongStop, superTrendLongStopPrev) : superTrendLongStop
+
+superTrendShortStop = hl2 + superTrendAtr
+superTrendShortStopPrev = nz(superTrendShortStop[1], superTrendShortStop)
+superTrendShortStop := close[1] < superTrendShortStopPrev ? math.min(superTrendShortStop, superTrendShortStopPrev) : superTrendShortStop
+
+superTrendDirection = 1
+superTrendDirection := nz(superTrendDirection[1], superTrendDirection)
+superTrendDirection := superTrendDirection == -1 and close > superTrendShortStopPrev ? 1 : superTrendDirection == 1 and close < superTrendLongStopPrev ? -1 : superTrendDirection
+
+//スーパートレンド条件
+superTrendLong = superTrendDirection == 1 ? superTrendLongStop : na
+superTrendShort = superTrendDirection == 1 ? na : superTrendShortStop
+
+superTrendLongCondition = close > superTrendLong
+superTrendShortCondition = close < superTrendShort
+//endregion
+
+//region - フィルター適用
+// フィルター変数の初期化 - 初期値をfalseに設定し、条件を満たした場合にtrueにする
+goForLong = false
+goForShort = false
+
+// ビッグムーブフィルター
+passBigMovesBullFilter = not filterBigMovesBull or (close / close[filterBullBar] - 1) <= filterBigMovesValueBull
+passBigMovesBearFilter = not filterBigMovesBear or (1 - close / close[filterBearBar]) <= filterBigMovesValueBear
+
+// ダブルディッピングフィルター
+passDoubleDippingFilter = not noDoubleDipping or ta.barssince(strategy.position_size > 0 or strategy.position_size < 0) >= dipBars
+
+// 移動平均フィルター - ロング
+passLongEmaFilter1 = not useLongEmaFilter1 or maEx1 < maExTypeFinal1
+passLongEmaFilter2 = not useLongEmaFilter2 or maEx2 < maExTypeFinal2
+passLongEmaFilter3 = not useLongEmaFilter3 or maEx3 < maExTypeFinal3
+
+// 移動平均フィルター - ショート
+passShortEmaFilter1 = not useShortEmaFilter1 or maEx1 > maExTypeFinal1
+passShortEmaFilter2 = not useShortEmaFilter2 or maEx2 > maExTypeFinal2
+passShortEmaFilter3 = not useShortEmaFilter3 or maEx3 > maExTypeFinal3
+
+// 曜日フィルター
+passDayOfWeekLongFilter = (dayofweek == dayofweek.monday and mondayLong) or
+                         (dayofweek == dayofweek.tuesday and tuesdayLong) or
+                         (dayofweek == dayofweek.wednesday and wednesdayLong) or
+                         (dayofweek == dayofweek.thursday and thursdayLong) or
+                         (dayofweek == dayofweek.friday and fridayLong) or
+                         (dayofweek == dayofweek.saturday and saturdayLong) or
+                         (dayofweek == dayofweek.sunday and sundayLong)
+
+passDayOfWeekShortFilter = (dayofweek == dayofweek.monday and mondayShort) or
+                          (dayofweek == dayofweek.tuesday and tuesdayShort) or
+                          (dayofweek == dayofweek.wednesday and wednesdayShort) or
+                          (dayofweek == dayofweek.thursday and thursdayShort) or
+                          (dayofweek == dayofweek.friday and fridayShort) or
+                          (dayofweek == dayofweek.saturday and saturdayShort) or
+                          (dayofweek == dayofweek.sunday and sundayShort)
+
+// ADX フィルター
+passAdxLongFilter = not filterAdx or setAdxBuy
+passAdxShortFilter = not filterAdx or setAdxSell
+
+// レンジフィルター
+passRfLongFilter = not filterRf or longRf
+passRfShortFilter = not filterRf or shortRf
+
+// スーパートレンドフィルター
+passSuperTrendLongFilter = not filterSupertrend or superTrendLongCondition
+passSuperTrendShortFilter = not filterSupertrend or superTrendShortCondition
+
+// すべてのフィルターを通過した場合にのみ取引を許可
+goForLong := passBigMovesBullFilter and
+             passDoubleDippingFilter and
+             passLongEmaFilter1 and
+             passLongEmaFilter2 and
+             passLongEmaFilter3 and
+             passDayOfWeekLongFilter and
+             passAdxLongFilter and
+             passRfLongFilter and
+             passSuperTrendLongFilter
+
+goForShort := passBigMovesBearFilter and
+              passDoubleDippingFilter and
+              passShortEmaFilter1 and
+              passShortEmaFilter2 and
+              passShortEmaFilter3 and
+              passDayOfWeekShortFilter and
+              passAdxShortFilter and
+              passRfShortFilter and
+              passSuperTrendShortFilter
+//endregion
+
+//region - メイン戦略ロジック
+mainStrategyEnabled = input.bool(true, '🟥 🟥 🟥  メイン戦略設定 🟥 🟥 🟥 ', inline="main_strategy")
+
+
+// エントリーシグナル
+bullSignal = ta.crossover(close, ta.sma(close, 30))
+bearSignal = ta.crossunder(close, ta.sma(close, 250))
+
+// イグジットシグナル (カスタムイグジット用)
+// 例: 移動平均の逆クロスでイグジット
+exitBullSignal = ta.crossunder(close, ta.sma(close, 15))  // ロングポジションのイグジット条件
+exitBearSignal = ta.crossover(close, ta.sma(close, 125))  // ショートポジションのイグジット条件
+
+// ポジションステータスチェック
+validOpenLongPosition = bullSignal and not (strategy.opentrades.size(strategy.opentrades - 1) > 0)
+validOpenShortPosition = bearSignal and not (strategy.opentrades.size(strategy.opentrades - 1) < 0)
+longIsActive = validOpenLongPosition or strategy.opentrades.size(strategy.opentrades - 1) > 0 and not exitBullSignal
+shortIsActive = validOpenShortPosition or strategy.opentrades.size(strategy.opentrades - 1) < 0 and not exitBearSignal
+
+// エントリー時のATR
+openAtr = ta.valuewhen(validOpenLongPosition or validOpenShortPosition, ta.atr(atrStopLength), 0)
+openAtrTakeProfit = ta.valuewhen(validOpenLongPosition or validOpenShortPosition, ta.atr(atrTakeProfitLength), 0)
+//endregion
+
+//region - ストップロス計算
+useStopLoss = stopType != 'None'
+usePercentageStopLoss = stopType == 'Percent'
+useAtrStopLoss = stopType == 'ATR'
+useAtrTrailingStopLoss = stopType == "ATR Trailing"
+
+// パーセントストップロス
+longPercentageStopLossPrice = strategy.position_avg_price * (1 - lossPercentage)
+shortPercentageStopLossPrice = strategy.position_avg_price * (1 + lossPercentage)
+
+// ATRストップロス
+atrLongStopLossPrice = strategy.position_avg_price - openAtr * riskRatioATR
+atrShortStopLossPrice = strategy.position_avg_price + openAtr * riskRatioATR
+
+// ATRトレーリングストップロス
+atrTrailing = ta.atr(atrTrailingLength)
+atrTrailingLoss = atrTrailingMultiplier * atrTrailing
+// ATRトレーリングストップロスの計算を簡素化
+var float atrTrailingLongStop = na
+var float atrTrailingShortStop = na
+
+// ロングポジションのトレーリングストップ
+if strategy.position_size > 0
+    atrTrailingLongStop := na(atrTrailingLongStop[1]) ? close - atrTrailingLoss : math.max(atrTrailingLongStop[1], close - atrTrailingLoss)
+    atrTrailingShortStop := na
+else if strategy.position_size < 0
+    atrTrailingShortStop := na(atrTrailingShortStop[1]) ? close + atrTrailingLoss : math.min(atrTrailingShortStop[1], close + atrTrailingLoss)
+    atrTrailingLongStop := na
+else
+    atrTrailingLongStop := na
+    atrTrailingShortStop := na
+
+// トレーリングストップロス価格の計算
+atrTrailingStopLossPrice = strategy.position_size > 0 ? atrTrailingLongStop : strategy.position_size < 0 ? atrTrailingShortStop : na
+
+// 最終的なストップロス価格
+finalLongStopLossPrice = 0.0
+finalShortStopLossPrice = 0.0
+
+finalLongStopLossPrice := if usePercentageStopLoss
+    longPercentageStopLossPrice
+else if useAtrStopLoss
+    atrLongStopLossPrice
+else if useAtrTrailingStopLoss
+    atrTrailingStopLossPrice
+
+finalShortStopLossPrice := if usePercentageStopLoss
+    shortPercentageStopLossPrice
+else if useAtrStopLoss
+    atrShortStopLossPrice
+else if useAtrTrailingStopLoss
+    atrTrailingStopLossPrice
+
+longStopLossPrice = useStopLoss ? finalLongStopLossPrice : na
+shortStopLossPrice = useStopLoss ? finalShortStopLossPrice : na
+
+// 緊急ストップロス
+emergencyLongStopLossPrice = finalLongStopLossPrice * (1 - emergencyStopPercentage)
+emergencyShortStopLossPrice = finalShortStopLossPrice * (1 + emergencyStopPercentage)
+//endregion
+
+//region - テイクプロフィット計算
+useTakeProfit = takeProfitType != 'None'
+
+// トレーリングベースの計算 (エントリー価格とストップロスの差)
+trailingBaseLong = strategy.position_avg_price - longStopLossPrice
+trailingBaseShort = shortStopLossPrice - strategy.position_avg_price
+
+// テイクプロフィット価格
+longTakeProfitPrice = switch takeProfitType
+    'Percent' => strategy.position_avg_price * (1 + longProfitPercentage)
+    'RR' => strategy.position_avg_price + (trailingBaseLong * longRiskRewardRatio)
+    'ATR' => close + longTakeProfitAtrMultiplier * openAtrTakeProfit
+    => na
+
+shortTakeProfitPrice = switch takeProfitType
+    'Percent' => strategy.position_avg_price * (1 - shortProfitPercentage)
+    'RR' => strategy.position_avg_price - (trailingBaseShort * shortRiskRewardRatio)
+    'ATR' => close - shortTakeProfitAtrMultiplier * openAtrTakeProfit
+    => na
+
+longTakeProfit = useTakeProfit ? longTakeProfitPrice : na
+shortTakeProfit = useTakeProfit ? shortTakeProfitPrice : na
+//endregion
+
+//region - トレーリングテイクプロフィットロジック
+// テイクプロフィット価格の初期化 (トレーリング用)
+var float longTrailingTakeProfitPrice = na
+longTrailingTakeProfitPrice := if (longIsActive)
+    if (validOpenLongPosition)
+        longTakeProfitPrice
+    else
+        nz(longTrailingTakeProfitPrice[1], longTakeProfitPrice)
+else
+    na
+
+longTrailingTakeProfitStepTicks = deviationMethod == 'PERC' ? longTrailingTakeProfitPrice * trailingTakeProfitDeviationPerc / syminfo.mintick : deviationMethod == 'ATR' ? deviationAtrMultiplier * openAtr / syminfo.mintick : na
+
+var float shortTrailingTakeProfitPrice = na
+shortTrailingTakeProfitPrice := if (shortIsActive)
+    if (validOpenShortPosition)
+        shortTakeProfitPrice
+    else
+        nz(shortTrailingTakeProfitPrice[1], shortTakeProfitPrice)
+else
+    na
+
+shortTrailingTakeProfitStepTicks = deviationMethod == 'PERC' ? shortTrailingTakeProfitPrice * trailingTakeProfitDeviationPerc / syminfo.mintick : deviationMethod == 'ATR' ? deviationAtrMultiplier * openAtr / syminfo.mintick : na
+//endregion
+
+
+//region - 注文サイズ計算
+// ヘルパー関数: パーセンテージを金額に変換
+percent2money(price, percent) =>
+    price * percent / 100 * syminfo.pointvalue
+
+// ヘルパー関数: リスクとストップロスに基づいてポジションサイズを計算
+calcPositionSize(entryPrice, stopLossPercentage) =>
+    riskAmount = strategy.equity * riskValue / 100
+    riskAmount / percent2money(entryPrice, stopLossPercentage)
+
+// ストップロス額 (リスク計算用)
+stopLossAmount = stopType == 'ATR' ? openAtr * riskRatioATR : stopType == "ATR Trailing" ? atrTrailingMultiplier * atrTrailing : na
+stopLossPercentage = math.abs((1 - (close - stopLossAmount) / close) * 100)
+riskAmount = strategy.equity * riskValue / 100  // 合計リスク額
+entryQuantity = math.abs(riskAmount / stopLossPercentage * 100) / close // リスクに基づく数量
+
+// 動的リスク調整 (DA)
+riskSource = switch riskSourceInput
+    'close' => close
+    'volume' => volume
+    'MA 5' => ta.sma(close, 5)
+    'MA 25' => ta.sma(close, 25)
+    'MACD' => ta.sma(close, 5) - ta.sma(close, 25)
+    'volume MA' => ta.sma(volume, 25)
+    'ATR' => ta.rma(ta.tr(true), 14)
+    'VWAP' => ta.vwap(close)
+    'RSI' => ta.rsi(close, 14)
+    'MFI' => ta.mfi(close, 14)
+    'ADX' => ta.sma(dx, adxLength)
+    => close
+
+riskHighest = ta.highest(riskSource, 100)
+riskLowest = ta.lowest(riskSource, 100)
+riskThird = (riskHighest - riskLowest) / riskBandwidth
+riskZone1 = riskLowest + riskThird
+riskZone2 = riskHighest - riskThird
+
+volumeMultiplier = 1.0
+
+if riskLowest <= riskSource and riskSource <= riskZone1
+    volumeMultiplier := lowZoneMultiplier
+if riskZone1 < riskSource and riskSource <= riskZone2
+    volumeMultiplier := midZoneMultiplier
+if riskZone2 < riskSource and riskSource <= riskHighest
+    volumeMultiplier := highZoneMultiplier
+
+orderSize = (strategy.equity / close)
+orderSize := (strategy.equity / close * volumeMultiplier)
+
+// ポジションサイズ計算をスイッチ文で実装
+riskBasedQuantity = switch stopType
+    'Percent' => calcPositionSize(close, (lossPercentage * 100))
+    'ATR' => math.abs(riskAmount / stopLossPercentage * 100) / close
+    'ATR Trailing' => math.abs(riskAmount / stopLossPercentage * 100) / close
+    => na
+
+finalQuantity = switch setRisk
+    "リスクベース" => riskBasedQuantity
+    "レバレッジ" => math.min(math.max(.000001, strategy.equity / close * leverage), 1000000000)
+    "テクニカルアルゴ" => orderSize
+    => na
+//endregion
+
+//region - セッションと時間管理
+// バーインセッション関数
+barInSession(sessionString) =>
+    time(timeframe.period, sessionString, "Asia/Tokyo") != 0
+
+inSession = barInSession(tradeSession)
+okToTradeInSession = closeSession ? inSession : true
+newSession = inSession and not inSession[1]
+
+// 特定の時間に閉じる
+var int closeTimeCounter = 0
+closeTimeCondition = hour[closeTimeCounter] == closeTimeHour
+closeTimeMinuteCondition = minute[closeTimeCounter] == closeTimeMinute
+
+// ポジション保持期限
+barsSinceLastEntry() =>
+    strategy.opentrades > 0 ? bar_index - strategy.opentrades.entry_bar_index(strategy.opentrades - 1) : na
+//endregion
+
+//region - 統合された条件
+okToTrade = tradeDateIsAllowed() and okToTradeInSession
+//endregion
+
+//region - ストラテジー実行
+// エントリー条件
+// ロングエントリー
+if bullSignal and okToTrade and okToTradeInSession and enableLongStrategy and goForLong 
+    strategy.entry('ロング', strategy.long, qty=useStopLoss ? finalQuantity : na)
+
+// ショートエントリー
+if bearSignal and okToTrade and okToTradeInSession and enableShortStrategy and goForShort 
+    strategy.entry('ショート', strategy.short, qty=useStopLoss ? finalQuantity : na)
+
+// テイクプロフィットとストップロスの設定
+// ロングポジション
+if strategy.position_size > 0
+    if takeProfitTrailingEnabled
+        // トレーリングテイクプロフィットを使用
+        strategy.exit(id='ロングTP/SL', from_entry='ロング',
+                     stop=closeStop ? na : longStopLossPrice,
+                     trail_price=longTrailingTakeProfitPrice,
+                     trail_offset=longTrailingTakeProfitStepTicks)
+    else
+        // 通常のテイクプロフィットを使用
+        strategy.exit(id='ロングTP/SL', from_entry='ロング',
+                     limit=longTakeProfit,
+                     stop=closeStop ? na : longStopLossPrice)
+
+// ショートポジション
+if strategy.position_size < 0
+    if takeProfitTrailingEnabled
+        // トレーリングテイクプロフィットを使用
+        strategy.exit(id='ショートTP/SL', from_entry='ショート',
+                     stop=closeStop ? na : shortStopLossPrice,
+                     trail_price=shortTrailingTakeProfitPrice,
+                     trail_offset=shortTrailingTakeProfitStepTicks)
+    else
+        // 通常のテイクプロフィットを使用
+        strategy.exit(id='ショートTP/SL', from_entry='ショート',
+                     limit=shortTakeProfit,
+                     stop=closeStop ? na : shortStopLossPrice)
+
+// 反対シグナルで閉じる
+if closeOnOpposite and strategy.position_size > 0 and bearSignal
+    strategy.close(id='ロング', comment='ショートシグナル\nロングクローズ')
+if closeOnOpposite and strategy.position_size < 0 and bullSignal
+    strategy.close(id='ショート', comment='ロングシグナル\nショートクローズ')
+
+// カスタムクローズシグナル (プレースホルダーを使用)
+if strategy.position_size > 0 and exitBullSignal
+    strategy.close(id='ロング', comment='カスタムクローズシグナル\nロングクローズ')
+if strategy.position_size < 0 and exitBearSignal
+    strategy.close(id='ショート', comment='カスタムクローズシグナル\nショートクローズ')
+
+// 特定の時間に閉じる
+if setCloseTime and closeTimeCondition and closeTimeMinuteCondition and strategy.position_size > 0
+    strategy.close(id='ロング', comment='ロングクローズ時間')
+if setCloseTime and closeTimeCondition and closeTimeMinuteCondition and strategy.position_size < 0
+    strategy.close(id='ショート', comment='ショートクローズ時間')
+
+// 時間制限イグジット
+if setTimeLimit and barsSinceLastEntry() >= holdLongBars and strategy.position_size > 0
+    strategy.close(id='ロング', comment='ロング時間制限')
+if setTimeLimit and barsSinceLastEntry() >= holdShortBars and strategy.position_size < 0
+    strategy.close(id='ショート', comment='ショート時間制限')
+
+// 緊急ストップロスイグジット
+if closeStop and strategy.position_size > 0 and close <= emergencyLongStopLossPrice
+    strategy.close(id='ロング', comment='緊急ストップロング')
+if closeStop and strategy.position_size < 0 and close >= emergencyShortStopLossPrice
+    strategy.close(id='ショート', comment='緊急ストップショート')
+
+// 許可された取引期間の終了時にストラテジーを閉じる
+closeStrategy = not tradeDateIsAllowed()
+
+if closeStrategy
+    strategy.close_all()
+//endregion
+
+//region - プロット
+plotStopLossTakeProfit = input.bool(true, title="📊 TP/SLプロットを表示", group="📊ダッシュボード")
+
+// ストップロスプロット - ロング
+plotLongStopLoss = plot(plotStopLossTakeProfit and strategy.position_size > 0 ? longStopLossPrice : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=3, title="ロングSL")
+plotEmergencyLongStopLoss = plot(closeStop and plotStopLossTakeProfit and strategy.position_size > 0 ? emergencyLongStopLossPrice : na, style=plot.style_linebr, color=color.new(color.orange, 0), linewidth=3, title="ロング緊急SL")
+
+// ストップロスプロット - ショート
+plotShortStopLoss = plot(plotStopLossTakeProfit and strategy.position_size < 0 ? shortStopLossPrice : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=3, title="ショートSL")
+plotEmergencyShortStopLoss = plot(closeStop and plotStopLossTakeProfit and strategy.position_size < 0 ? emergencyShortStopLossPrice : na, style=plot.style_linebr, color=color.new(color.orange, 0), linewidth=3, title="ショート緊急SL")
+
+// テイクプロフィットプロット - ロング
+plotLongTakeProfit = plot(plotStopLossTakeProfit and strategy.position_size > 0 ? longTakeProfit : na, style=plot.style_linebr, color=color.new(color.green, 0), linewidth=3, title="ロングテイクプロフィット")
+
+// テイクプロフィットプロット - ショート
+plotShortTakeProfit = plot(plotStopLossTakeProfit and strategy.position_size < 0 ? shortTakeProfit : na, style=plot.style_linebr, color=color.new(color.green, 0), linewidth=3, title="ショートテイクプロフィット")
+
+// エントリー価格プロット
+plotEntryPrice = plot(plotStopLossTakeProfit ? strategy.position_avg_price : na, color=color.new(color.white, 50), style=plot.style_linebr, linewidth=3, title="エントリー価格 ")
+
+// 塗りつぶし
+fill(plotEntryPrice, plotLongStopLoss, color.new(color.red, 80))
+fill(plotEntryPrice, plotShortStopLoss, color.new(color.red, 80))
+fill(plotEntryPrice, plotLongTakeProfit, color.new(color.green, 80))
+fill(plotEntryPrice, plotShortTakeProfit, color.new(color.green, 80))
+fill(plotLongStopLoss, plotEmergencyLongStopLoss, color.new(color.orange, 80))
+fill(plotShortStopLoss, plotEmergencyShortStopLoss, color.new(color.orange, 80))
+//endregion

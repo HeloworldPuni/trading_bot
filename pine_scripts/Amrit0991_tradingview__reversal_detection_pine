@@ -1,0 +1,90 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Amrit0991
+
+//@version=4
+study("1-2-3 The Strat", overlay = true)
+
+is_inside_bar(start) => high[start + 1] > high[start] and low[start + 1] < low[start]
+is_bullish_directional_bar(start) => high[start] >= high[start + 1] and low[start] >= low[start + 1]
+is_bearish_directional_bar(start) => high[start] <= high[start + 1] and low[start] <= low[start + 1]
+is_outside_bar(start) => high[start] > high[start + 1] and low[start ] < low[start + 1]
+
+is_bullish_bar(start) => close[start] > open[start]
+is_bearish_bar(start) => close[start] < open[start]
+
+
+get_candle_type(index)=>
+    candle_type = 1
+    if is_bullish_directional_bar(index) or is_bearish_directional_bar(index)
+        candle_type := 2
+    else if is_outside_bar(index)
+        candle_type := 3
+    candle_type
+
+get_candle_sentiment(index)=>
+    candle_type = "bullish"
+    if is_bearish_bar(index)
+        candle_type := "bearish"
+    candle_type
+    
+
+// Get the numbers
+current_candle = get_candle_type(0)
+t_minus_one_candle = get_candle_type(1)
+t_minus_two_candle = get_candle_type(3)
+
+
+// 2-2 reversal
+two_two_reversal()=>
+    is_continuation = get_candle_sentiment(0) == get_candle_sentiment(1)
+    current_candle == 2 and t_minus_one_candle == 2 and not is_continuation
+    
+// 2-3 reversal
+two_three_reversal()=>
+    is_continuation = get_candle_sentiment(0) == get_candle_sentiment(1)
+    current_candle == 3 and t_minus_one_candle == 2 and not is_continuation
+
+// 2-1-2 reversal
+two_one_two_reversal()=>
+    is_continuation = get_candle_sentiment(0) == get_candle_sentiment(2)
+    current_candle == 2 and t_minus_one_candle == 1 and t_minus_two_candle == 2 and not is_continuation
+
+// 3-1-2 reversal
+three_one_two_reversal()=>
+    is_continuation = get_candle_sentiment(0) == get_candle_sentiment(2)
+    current_candle == 2 and t_minus_one_candle == 1 and t_minus_two_candle == 3 and not is_continuation
+    
+
+bar_sentiment = is_bullish_bar(0) ? "bullish" : "bearish"
+
+
+is_two_two_reversal = two_two_reversal()
+is_two_three_reversal = two_three_reversal()
+is_two_one_two_reversal = two_one_two_reversal()
+is_three_one_two_reversal = three_one_two_reversal()
+
+// Bullish 2-2
+plotshape(is_two_two_reversal and bar_sentiment == "bullish", "2-2 Reversal", location=location.belowbar, style=shape.circle, size=size.tiny, color=color.green)
+// Bearish 2-2
+plotshape(is_two_two_reversal and bar_sentiment == "bearish", "2-2 Reversal", location=location.abovebar, style=shape.circle, size=size.tiny, color=color.red)
+
+// Bullish 2-3
+plotshape(is_two_three_reversal and bar_sentiment == "bullish", "2-3 Reversal", location=location.belowbar, style=shape.circle, size=size.tiny, color=color.green)
+// Bearish 2-3
+plotshape(is_two_three_reversal and bar_sentiment == "bearish", "2-3 Reversal", location=location.abovebar, style=shape.circle, size=size.tiny, color=color.red)
+
+// Bullish 2-1-2
+plotshape(is_two_one_two_reversal and bar_sentiment == "bullish", "2-1-2 Reversal", location=location.belowbar, style=shape.circle, size=size.tiny, color=color.green)
+// Bearish 2-1-2
+plotshape(is_two_one_two_reversal and bar_sentiment == "bearish", "2-1-2 Reversal", location=location.abovebar, style=shape.circle, size=size.tiny, color=color.red)
+
+// Bullish 3-1-2
+plotshape(is_three_one_two_reversal and bar_sentiment == "bullish", "3-1-2 Reversal", location=location.belowbar, style=shape.circle, size=size.tiny, color=color.green)
+// Bearish 3-1-2
+plotshape(is_three_one_two_reversal and bar_sentiment == "bearish", "3-1-2 Reversal", location=location.abovebar, style=shape.circle, size=size.tiny, color=color.red)
+
+
+bgcolor(color=is_inside_bar(0) ? color.yellow : na)
+bgcolor(color=is_bullish_directional_bar(0) ? color.green : na)
+bgcolor(color=is_bearish_directional_bar(0) ? color.red : na)
+bgcolor(color=is_outside_bar(0) ? color.blue : na)

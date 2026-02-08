@@ -1,0 +1,277 @@
+//@version=6
+indicator("[PP] Osc Pro V1.4", shorttitle="[PP]Osc Pro", overlay=false, max_lines_count=500, max_labels_count=500)
+
+//───────────────────────────────────────────────
+// DROPDOWN SELECTORoscillator
+oscillator = input.string("RSI Pro", options=["RSI Pro", "Stoch Pro", "MACD Pro"], title="Oscillator Type")
+
+//───────────────────────────────────────────────
+// INPUTS FOR RSI MODULE
+len     = input.int(14,       "RSI period",      group="RSI")
+src     = input.source(close, "Source",          group="RSI")
+
+showPivots      = input.bool(true,  "Plot: Hi/Lo pivot arrows", group="Pivot")
+pivotArrowColor = input.color(color.white, "Arrow color", group="Pivot")
+lbL             = input.int(5, "Look-back left",  minval=1, group="Pivot")
+lbR             = input.int(5, "Look-back right", minval=1, group="Pivot")
+
+maxD = input.int(60, "Max bars between pivots", group="Divergences")
+minD = input.int(5,  "Min bars between pivots", group="Divergences")
+showRB = input.bool(true,  "Regular bullish", group="Divergences")
+showHB = input.bool(true,  "Hidden bullish",  group="Divergences")
+showRS = input.bool(true,  "Regular bearish", group="Divergences")
+showHS = input.bool(true,  "Hidden bearish",  group="Divergences")
+showLn = input.bool(false, "Connector lines", group="Divergences")
+gapB  = input.int(0, "Bull marker gap", 0,20, group="Divergences")
+gapS  = input.int(0, "Bear marker gap", 0,20, group="Divergences")
+
+showSig = input.bool(true, "Show signal line", group="Signal")
+sigLen  = input.int(12, "Signal period", group="Signal")
+sigType = input.string("EMA", "Signal type", options=["EMA", "SMA", "RMA", "WMA"], group="Signal")
+
+showZones = input.bool(true, "Show zones", group="Zones")
+fillZones = input.bool(true, "Fill zones", group="Zones")
+critBull  = input.int(80, "Critical Bull", group="Zones")
+ctlBull   = input.int(62, "Control Bull",  group="Zones")
+ctlBear   = input.int(38, "Control Bear",  group="Zones")
+critBear  = input.int(20, "Critical Bear", group="Zones")
+
+projCritBull = input.int(80, "Proj: Critical Bull", group="Projection")
+projCtlBull  = input.int(62, "Proj: Control Bull",  group="Projection")
+projMid      = input.int(50, "Proj: Midline 50",    group="Projection")
+projCtlBear  = input.int(38, "Proj: Control Bear",  group="Projection")
+projCritBear = input.int(20, "Proj: Critical Bear", group="Projection")
+
+colRSI = input.color(color.new(#A0C8FF, 0), "RSI colour")
+colRegB  = input.color(color.new(#A0A0A0,0), "Regular Bull")
+colHidB  = input.color(color.new(#71C8FF,0), "Hidden Bull")
+colRegS  = input.color(color.new(#FF7979,0), "Regular Bear")
+colHidS  = input.color(color.new(#FFC26E,0), "Hidden Bear")
+colNone  = color.new(color.white,100)
+//───────────────────────────────────────────────
+// INPUTS FOR STOCH PRO MODULE
+stoch_kLen          = input.int(14, "%K Length",         minval=1, group="Stoch Pro")
+stoch_kSmoothLen    = input.int(6,  "%K Smooth Length",  minval=1, group="Stoch Pro")
+stoch_kSmoothType   = input.string("SMA", "%K Smooth Type", options=["SMA","EMA","RMA","WMA"], group="Stoch Pro")
+stoch_colorK        = input.color(color.white, "%K Color", group="Stoch Pro")
+stoch_showK         = input.bool(true, "%K Display",     group="Stoch Pro")
+
+stoch_dLen          = input.int(3,  "%D Length",         minval=1, group="Stoch Pro")
+stoch_dSmoothLen    = input.int(3,  "%D Smooth Length",  minval=1, group="Stoch Pro")
+stoch_dSmoothType   = input.string("SMA", "%D Smooth Type", options=["SMA","EMA","RMA","WMA"], group="Stoch Pro")
+stoch_colorD        = input.color(color.new(#A0C8FF,0), "%D Color", group="Stoch Pro")
+stoch_showD         = input.bool(true, "%D Display",     group="Stoch Pro")
+
+stochUpper    = input.int(80, "Upper Band",       group="Stoch Pro")
+stochLower    = input.int(20, "Lower Band",       group="Stoch Pro")
+stoch_showFill = input.bool(true, "%Zone Fill",   group="Stoch Pro")
+stoch_fillColor = input.color(color.new(color.gray, 80), "Zone Color", group="Stoch Pro")
+
+//───────────────────────────────────────────────
+// DMI + ADX Inputs
+stoch_dmiLen        = input.int(14, "%DI Length",        minval=1, group="Stoch Pro")
+stoch_dmiSmoothLen  = input.int(3,  "%DI Smooth Length", minval=1, group="Stoch Pro")
+stoch_dmiSmoothType = input.string("EMA", "%DI Smooth Type", options=["SMA","EMA","RMA","WMA"], group="Stoch Pro")
+stoch_showDMI       = input.bool(true,  "Show DMI",      group="Stoch Pro")
+stoch_colorPlusDI   = input.color(#99FF99, "+DI Color",   group="Stoch Pro")
+stoch_colorMinusDI  = input.color(#FF9999, "-DI Color",   group="Stoch Pro")
+
+stoch_adxLen        = input.int(14, "%ADX Length",       minval=1, group="Stoch Pro")
+stoch_showADX       = input.bool(true,  "Show ADX",      group="Stoch Pro")
+stoch_weakThr       = input.int(1,   "Weak >",           minval=0, group="Stoch Pro")
+stoch_weakColor     = input.color(color.new(#99FF99,0),   "Weak Color",    group="Stoch Pro")
+stoch_strongThr     = input.int(20,  "Strong >",         minval=0, group="Stoch Pro")
+stoch_strongColor   = input.color(color.new(#FFFF99,0),   "Strong Color",  group="Stoch Pro")
+stoch_veryStrongThr = input.int(50,  "VeryStrong >",     minval=0, group="Stoch Pro")
+stoch_veryStrongColor= input.color(color.new(#FF9999,0),  "VeryStrongColor", group="Stoch Pro")
+stoch_extremeThr    = input.int(75,  "Extreme >",        minval=0, group="Stoch Pro")
+stoch_extremeColor  = input.color(color.white,           "Extreme Color", group="Stoch Pro")
+//───────────────────────────────────────────────
+//───────────────────────────────────────────────
+// [MACD Pro] INPUTS & CORE
+macdPrice = input.source(close, "MACD Source", group="MACD Pro")
+macdFast = input.int(12, "Fast EMA", group="MACD Pro")
+macdSlow = input.int(26, "Slow EMA", group="MACD Pro")
+macdSignal = input.int(9, "Signal EMA", group="MACD Pro")
+macdShowHist = input.bool(true, "Show Histogram", group="MACD Pro")
+macdShowProj = input.bool(false, "Show Projection Lines", group="MACD Pro")
+macdShowTable = input.bool(true, "Show Table", group="MACD Pro")
+
+macdFastEMA = ta.ema(macdPrice, macdFast)
+macdSlowEMA = ta.ema(macdPrice, macdSlow)
+macd = macdFastEMA - macdSlowEMA
+macdSig = ta.ema(macd, macdSignal)
+macdHist = macd - macdSig
+
+alphaMACD(len) => 2.0 / (len + 1)
+macd_eq(price, f, s) => (alphaMACD(f) * ta.ema(price, f)[1] - alphaMACD(s) * ta.ema(price, s)[1]) / (alphaMACD(f) - alphaMACD(s))
+macd_level(level, price, f, s) => (level + (1 - alphaMACD(s)) * ta.ema(price, s)[1] - (1 - alphaMACD(f)) * ta.ema(price, f)[1]) / (alphaMACD(f) - alphaMACD(s))
+macd_cross_ema(P, M, X, Y, Z) =>
+    px = ta.ema(P, X)[1], py = ta.ema(P, Y)[1], pz = ta.ema(M, Z)[1]
+    n = px * alphaMACD(X) * alphaMACD(Z) - py * alphaMACD(Y) * alphaMACD(Z) - px * alphaMACD(X) + py * alphaMACD(Y)
+    n := n + py * alphaMACD(Z) + pz * alphaMACD(Z) - px * alphaMACD(Z) - py - pz + px
+    d = alphaMACD(X) * alphaMACD(Z) - alphaMACD(Y) * alphaMACD(Z) - alphaMACD(X) + alphaMACD(Y)
+    n / d
+
+macdEq = macd_eq(macdPrice, macdFast, macdSlow)
+macdZero = macd_level(0, macdPrice, macdFast, macdSlow)
+macdProjUp = macd < macdSig ? macd_cross_ema(macdPrice, macd, macdFast, macdSlow, macdSignal) : na
+macdProjDn = macd > macdSig ? macd_cross_ema(macdPrice, macd, macdFast, macdSlow, macdSignal) : na
+macdPct(t) => not na(t) ? ((t - close) / close) * 100 : na
+// HELPERS for STOCH
+_stochClamp100(x) => math.max(0.0, math.min(100.0, x))
+maSwitchStoch(src,len,typ) =>
+    switch typ
+        "SMA" => ta.sma(src,len)
+        "EMA" => ta.ema(src,len)
+        "WMA" => ta.wma(src,len)
+        "RMA" => ta.rma(src,len)
+        "HMA" => ta.hma(src,len)
+        => ta.vwma(src,len)
+
+//────── RSI Zones Fill with fill()
+pCritBull = plot(oscillator == "RSI Pro" and showZones ? critBull : na, title="Crit Bull", color=color.new(colRegS, 20))
+pCtlBull  = plot(oscillator == "RSI Pro" and showZones ? ctlBull : na,  title="Ctl Bull",  color=color.new(colRegS, 60))
+pCtlBear  = plot(oscillator == "RSI Pro" and showZones ? ctlBear : na,  title="Ctl Bear",  color=color.new(colRegB, 60))
+pCritBear = plot(oscillator == "RSI Pro" and showZones ? critBear : na, title="Crit Bear", color=color.new(colRegB, 20))
+
+fill(pCritBull, pCtlBull, color=fillZones ? color.new(colRegS, 90) : na)
+fill(pCritBear, pCtlBear, color=fillZones ? color.new(colRegB, 90) : na)
+
+//───────────────────────────────────────────────
+// CALCULATE RSI + SIGNAL
+rsi = ta.rsi(src, len)
+sig = sigType == "SMA" ? ta.sma(rsi, sigLen) :
+      sigType == "RMA" ? ta.rma(rsi, sigLen) :
+      sigType == "WMA" ? ta.wma(rsi, sigLen) :
+                         ta.ema(rsi, sigLen)
+
+plot(oscillator == "RSI Pro" ? rsi : na, "RSI", color=colRSI, linewidth=2)
+plot(oscillator == "RSI Pro" and showSig ? sig : na, "Signal", color=color.white, linewidth=1)
+
+//───────────────────────────────────────────────
+// PIVOTS + DIVERGENCES
+plRaw = ta.pivotlow(rsi, lbL, lbR)
+phRaw = ta.pivothigh(rsi, lbL, lbR)
+pL = not na(plRaw)
+pH = not na(phRaw)
+
+plotshape(oscillator == "RSI Pro" and showPivots and pL ? rsi[lbR] : na, offset=-lbR, style=shape.triangleup, location=location.absolute, size=size.tiny, color=pivotArrowColor)
+plotshape(oscillator == "RSI Pro" and showPivots and pH ? rsi[lbR] : na, offset=-lbR, style=shape.triangledown, location=location.absolute, size=size.tiny, color=pivotArrowColor)
+
+barsPL = ta.barssince(pL[1])
+barsPH = ta.barssince(pH[1])
+inRPL = minD <= barsPL and barsPL <= maxD
+inRPH = minD <= barsPH and barsPH <= maxD
+
+prevRsiPL = ta.valuewhen(pL, rsi[lbR], 1)
+prevLow   = ta.valuewhen(pL, low[lbR],  1)
+prevRsiPH = ta.valuewhen(pH, rsi[lbR],  1)
+prevHigh  = ta.valuewhen(pH, high[lbR], 1)
+
+regBull = oscillator == "RSI Pro" and showRB and pL and inRPL and (rsi[lbR] > prevRsiPL) and (low[lbR]  < prevLow)
+hidBull = oscillator == "RSI Pro" and showHB and pL and inRPL and (rsi[lbR] < prevRsiPL) and (low[lbR]  > prevLow)
+regBear = oscillator == "RSI Pro" and showRS and pH and inRPH and (rsi[lbR] < prevRsiPH) and (high[lbR] > prevHigh)
+hidBear = oscillator == "RSI Pro" and showHS and pH and inRPH and (rsi[lbR] > prevRsiPH) and (high[lbR] < prevHigh)
+
+plotshape(regBull ? rsi[lbR] + gapB : na, offset=-lbR, style=shape.circle, location=location.absolute, size=size.tiny, color=colRegB)
+plotshape(hidBull ? rsi[lbR] + gapB : na, offset=-lbR, style=shape.circle, location=location.absolute, size=size.tiny, color=colHidB)
+plotshape(regBear ? rsi[lbR] - gapS : na, offset=-lbR, style=shape.circle, location=location.absolute, size=size.tiny, color=colRegS)
+plotshape(hidBear ? rsi[lbR] - gapS : na, offset=-lbR, style=shape.circle, location=location.absolute, size=size.tiny, color=colHidS)
+
+plot(pL ? rsi[lbR] : na, offset=-lbR, color=regBull ? colRegB : colNone, linewidth=1)
+plot(pL ? rsi[lbR] : na, offset=-lbR, color=hidBull ? colHidB : colNone, linewidth=1)
+plot(pH ? rsi[lbR] : na, offset=-lbR, color=regBear ? colRegS : colNone, linewidth=1)
+plot(pH ? rsi[lbR] : na, offset=-lbR, color=hidBear ? colHidS : colNone, linewidth=1)
+
+//───────────────────────────────────────────────
+// STOCH PRO CALC + PLOT
+rawK      = ta.stoch(close, high, low, stoch_kLen)
+smK       = maSwitchStoch(rawK, stoch_kSmoothLen, stoch_kSmoothType)
+stoch_fastK = _stochClamp100(smK)
+smD       = maSwitchStoch(stoch_fastK, stoch_dSmoothLen, stoch_dSmoothType)
+stochD    = _stochClamp100(smD)
+
+plot(oscillator == "Stoch Pro" and stoch_showK ? stoch_fastK : na, "%K", color=stoch_colorK, linewidth=2)
+plot(oscillator == "Stoch Pro" and stoch_showD ? stochD : na, "%D", color=stoch_colorD, linewidth=2)
+
+h1_stoch  = hline(stochUpper, "Upper", color.new(color.gray,90), linestyle=hline.style_dashed)
+h2_stoch  = hline(stochLower, "Lower", color.new(color.gray,90), linestyle=hline.style_dashed)
+hMid_stoch= hline(50, "Middle", color.new(color.gray,70), linestyle=hline.style_dotted)
+fill(h1_stoch, h2_stoch, oscillator == "Stoch Pro" and stoch_showFill ? stoch_fillColor : na)
+
+//───────────────────────────────────────────────
+// STOCH DMI HISTOGRAM
+[plusDI_stoch,minusDI_stoch,adxVal_stoch] = ta.dmi(stoch_dmiLen,stoch_adxLen)
+smPlus_stoch  = maSwitchStoch(plusDI_stoch, stoch_dmiSmoothLen, stoch_dmiSmoothType)
+smMinus_stoch = maSwitchStoch(minusDI_stoch, stoch_dmiSmoothLen, stoch_dmiSmoothType)
+histVal_stoch = smPlus_stoch - smMinus_stoch
+plot(oscillator == "Stoch Pro" and stoch_showDMI ? histVal_stoch : na, "DMI", color=(histVal_stoch >= 0 ? stoch_colorPlusDI : stoch_colorMinusDI), style=plot.style_histogram)
+
+//───────────────────────────────────────────────
+// STOCH ADX PLOT
+adxColor_stoch = adxVal_stoch > stoch_extremeThr ? stoch_extremeColor :
+                 adxVal_stoch > stoch_veryStrongThr ? stoch_veryStrongColor :
+                 adxVal_stoch > stoch_strongThr ? stoch_strongColor :
+                 adxVal_stoch > stoch_weakThr ? stoch_weakColor : na
+
+plot(oscillator == "Stoch Pro" and stoch_showADX ? adxVal_stoch : na, "ADX", color=adxColor_stoch, style=plot.style_circles, linewidth=1)
+
+//───────────────────────────────────────────────
+// [MACD Pro] PLOTS & TABLE
+plot(oscillator == "MACD Pro" ? macd : na, "MACD", color=color.new(#A0C8FF, 0), linewidth=2)
+plot(oscillator == "MACD Pro" ? macdSig : na, "Signal", color=color.white, linewidth=1)
+hline(0, "MACD Zero", color=color.gray)
+plot(oscillator == "MACD Pro" and macdShowHist ? macdHist : na, "Histogram", style=plot.style_columns, color=macdHist >= 0 ? color.new(color.white, 50) : color.new(#A0C8FF, 50))
+
+plot(oscillator == "MACD Pro" and macdShowProj and not na(macdProjUp) ? macdProjUp : na, "Proj ↑", color=color.green, style=plot.style_linebr)
+plot(oscillator == "MACD Pro" and macdShowProj and not na(macdProjDn) ? macdProjDn : na, "Proj ↓", color=color.red, style=plot.style_linebr)
+plot(oscillator == "MACD Pro" and macdShowProj and not na(macdEq) ? macdEq : na, "EQ", color=color.orange, style=plot.style_linebr)
+
+if oscillator == "MACD Pro" and macdShowTable
+    var table macdTable = table.new(position.bottom_right, 1, 4, border_width=1)
+    macdUp = macd > macd[1]
+    tbg = macdUp ? color.new(#26A69A, 50) : color.new(#EF5350, 50)
+    table.cell(macdTable, 0, 0, "MACD: " + (macdUp ? "↑ " : "↓ ") + str.tostring(macdEq, format.mintick), bgcolor=tbg, text_color=color.white)
+    table.cell(macdTable, 0, 1, "↑: " + (na(macdProjUp) ? "–" : str.tostring(macdProjUp, format.mintick) + " (" + str.tostring(macdPct(macdProjUp), "#.##") + "%)"), text_color=color.white)
+    table.cell(macdTable, 0, 2, "↓: " + (na(macdProjDn) ? "–" : str.tostring(macdProjDn, format.mintick) + " (" + str.tostring(macdPct(macdProjDn), "#.##") + "%)"), text_color=color.white)
+    table.cell(macdTable, 0, 3, "↓0: " + str.tostring(macdZero, format.mintick) + " (" + str.tostring(macdPct(macdZero), "#.##") + "%)", text_color=color.white)
+//───────────────────────────────────────────────
+// PRICE PROJECTION TABLE
+priceForRSI(target) =>
+    up = math.max(src - src[1], 0)
+    dn = math.max(src[1] - src, 0)
+    uAvg = ta.rma(up, len)
+    dAvg = ta.rma(dn, len)
+    RS_t = 100 / (100 - target) - 1
+    L = len - 1
+    uPrev = uAvg[1]
+    dPrev = dAvg[1]
+    cPrev = close[1]
+    pUp = cPrev + (RS_t * dPrev * L - uPrev * L)
+    pDown = cPrev - (uPrev * L / RS_t - dPrev * L)
+    pUp >= cPrev ? pUp : pDown
+
+showTable = input.bool(false, "Show RSI Table", group="Projection")
+projUp = priceForRSI(projCtlBull)
+projDn = priceForRSI(projCtlBear)
+
+var table infoTable = table.new(position.middle_right, 1, 2, frame_color=color.new(color.gray, 50), border_width=1)
+
+if showTable
+    trendUp = rsi > sig
+    table.cell(infoTable, 0, 0, "", bgcolor=trendUp ? color.new(#00FF88, 70) : color.new(#FF5566, 70))
+    table.cell(infoTable, 0, 1, str.tostring("Trend: " + (trendUp ? "↑" : "↓") + " " + str.tostring(rsi, format.mintick)), text_color=color.white)
+    table.cell(infoTable, 1, 0, "Overbought", text_color=color.red)
+    table.cell(infoTable, 1, 1, str.tostring(projCritBull, format.mintick), text_color=color.white)
+    table.cell(infoTable, 2, 0, "Bull", text_color=color.red)
+    table.cell(infoTable, 2, 1, str.tostring(projCtlBull, format.mintick), text_color=color.white)
+    table.cell(infoTable, 3, 0, "Mid 50", text_color=color.gray)
+    table.cell(infoTable, 3, 1, str.tostring(projMid, format.mintick), text_color=color.white)
+    table.cell(infoTable, 4, 0, "Bear", text_color=color.teal)
+    table.cell(infoTable, 4, 1, str.tostring(projCtlBear, format.mintick), text_color=color.white)
+    table.cell(infoTable, 5, 0, "Oversold", text_color=color.teal)
+    table.cell(infoTable, 5, 1, str.tostring(projCritBear, format.mintick), text_color=color.white)
+
+//───────────────────────────────────────────────
+// NEXT MODULE STUB HERE

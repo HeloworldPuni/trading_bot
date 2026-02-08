@@ -1,0 +1,62 @@
+//Welcome to © Tuisku Trading Strategy, a sophisticated and optimised solution created by the experienced team at Tuisku.eu. Our team of experts specialise in random forest AI, harnessing its powerful capabilities to improve trading performance.
+//Tuisku's commitment to quality and innovation shines through in every aspect of this strategy.
+
+
+// Technical base pattern: Wave_Trend_Calculation
+// ID_model: FFIV_1Min_1WAV_398cbc00 Date Creation: 2024/10/18 Recommended expiry date : 2025/06/18
+//@version=5
+strategy("Tuisku_FFIV_1Min_1WAV_398cbc00", overlay=true, margin_long=1000, margin_short=1000, pyramiding=1)
+//RANDOM FOREST AI 
+decision_tree_0_FFIV_1Min_398cbc00(d, esa, d_tci, ci_wt2, wt2, ci, ap, tci)=>
+	var float ret = 0  // # DecisionTreeRegressor(criterion=friedman_mse, max_depth=6, max_features=0.9,min_samples_leaf=7, random_state=843828734)
+	if( ci <= 11.5181 )
+		if( esa <= 165.584 )
+			if( ci <= 3.38637 )
+				if( d_tci <= -28.6156 )
+					ret := -0.210526
+				if( d_tci > -28.6156 )
+					if( ci <= -79.7111 )
+						if( ci_wt2 <= -119.548 )
+							ret := 0.833333 // buy
+						if( ci_wt2 > -119.548 )
+							ret := 0.088235
+					if( ci > -79.7111 )
+						if( d_tci <= 64.1302 )
+							ret := 0.638070
+						if( d_tci > 64.1302 )
+							ret := 0.000000
+			if( ci > 3.38637 )
+				if( ap <= 165.401 )
+					if( ci <= 8.10966 )
+						ret := -0.818182 // sell
+					if( ci > 8.10966 )
+						ret := -0.200000
+				if( ap > 165.401 )
+					ret := 0.200000
+		if( esa > 165.584 )
+			if( tci <= -71.9293 )
+				if( esa <= 176.276 )
+					if( wt2 <= -75.9006 )
+						if( esa <= 167.068 )
+							ret := -0.913043 // sell
+						if( esa > 167.068 )
+							ret := 0.405405
+					if( wt2 > -75.9006 )
+						if( d <= 0.39856 )
+							ret := -0.856061 // sell
+						if( d > 0.39856 )
+							ret := 0.000000
+				if( esa > 176.276 )
+					if( d <= 0.378555 )
+						if( ci <= -63.6912 )
+							ret := 0.104167
+						if( ci > -63.6912 )
+							ret := -0.823529 // sell
+					if( d > 0.378555 )
+						if( ci <= -85.3665 )
+							ret := 0.090909
+						if( ci > -85.3665 )
+							ret := 0.833333 // buy
+
+	...
+The rest of this Pine script is part of the paid version. Visit the website for more info.

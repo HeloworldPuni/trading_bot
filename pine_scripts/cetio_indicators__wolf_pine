@@ -1,0 +1,60 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © cetios
+
+// REMARKS:
+// The Wolf-Sheep Trend Aptitude indicator assesses trend strength and potential direction changes
+// based on the Awesome Oscillator (AO) and SuperTrend methodology. This indicator helps visualize
+// trend performance and predict trend continuation likelihood. 
+// 
+// - The 'lag' parameter defines the period for lagging calculations, affecting trend strength evaluation.
+// - The 'lead' parameter determines the period for short-term leading calculations, impacting trend
+//   direction predictions and trend strength support.
+// 
+// This indicator combines turnover and volatility metrics to calculate the weighted volatility oscillator
+// (wvola), which is then used to derive trend strength (wolf) and trend confidence (sheep). The trend
+// strength support (hunter) provides a baseline to evaluate if the trend strength is adequate for
+// continuation. Signals are generated based on these calculations to indicate potential trend changes.
+
+import TradingView/ta/7
+import mentalRock19315/Slope_TK/1 as TK
+
+//@version=5
+indicator("Wolf-Sheep Trend Aptitude", "WOLF", overlay = false)
+
+lag = input.int(34, title = "Lagging Period")
+lead = input.int(5, title = "Leading Period")
+//gap = input.float(0.1, title = "Threshold Bearish Gap")
+
+turnover = volume * close
+
+diff = ta.sma(close, lag) - ta.sma(close, lead)
+svola = ta.sma(diff / ta.sma(ta.tr, lead), lag)
+// Turnover-volatility weighted oscillator value.
+wvola = math.abs(-ta.sma(svola, lead) * ta.sma(turnover, lag)) / 1000000
+
+// Trend strength.
+wolf = ta.linreg(wvola, lead, 0)
+// Trend confidence.
+sheep = TK.slope(wvola, lead) * math.log10(ta.wma(turnover, lead)) / 2
+// Trend strength support, this is a historical base line to determine
+// if a trend has too little strength to continue on.
+hunter = ta.sma(wolf, lead) / lead
+
+plot(wolf, color = #0c9982, style = plot.style_area, title = "Wolf")
+plot(sheep, color = color.rgb(242, 41, 69, 40), style = plot.style_area, title = "Sheep")
+
+// This code came to me in a dream, take its effectiveness with a grain of salt.
+squeeze = ta.change(diff, lead) - ta.change(close, lead)
+fit = ta.sma(ta.change(diff, lead) - ta.change(close, lead), lag)
+bear = (squeeze > 0 and squeeze <= 0.3) or (squeeze < 0 and squeeze >= -0.3) or fit < 0
+signal = 0
+
+// Only draw the signal if trend strength dropped under the strength support.
+if (ta.crossunder(hunter, wolf))
+    signal := 1
+
+if (signal and fit < 0)
+    signal := 2
+    
+plotshape(signal == 1 ? 1 : na, style = shape.circle, force_overlay = true, size = size.tiny, color = bear ? #f22945 : #0c9982)
+plotshape(signal == 2 ? 1 : na, style = shape.diamond, force_overlay = true, size = size.tiny, color = bear ? #f22945 : #0c9982)

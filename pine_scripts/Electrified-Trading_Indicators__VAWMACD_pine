@@ -1,0 +1,84 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified (electrifiedtrading)
+
+//@version=4
+study(title='VAWMACD', resolution='')
+
+// VAWMA Function
+vawma(src, len) =>
+    sum = 0.0
+    vol = 0.0
+    for m = 1 to len // m = triangular multiple
+        i = len - m
+        v = volume[i] * m
+        vol := vol + v
+        sum := sum + src[i] * v
+    sum/vol
+////
+
+// Getting inputs
+src          = input(title='Source', type=input.source, defval=close)
+fast_len     = input(title='Fast Length', type=input.integer, defval=12)
+slow_len     = input(title='Slow Length', type=input.integer, defval=26)
+signal_len   = input(title='Signal Smoothing', type=input.integer, minval = 1, maxval = 50)
+
+// Plot colors
+col_grow_above = #26A69A
+col_grow_below = #FFCDD2
+col_fall_above = #B2DFDB
+col_fall_below = #EF5350
+col_macd = #0094ff
+col_signal = #ff6a00
+
+// Calculation
+fast_ma = vawma(src, fast_len) 
+slow_ma =vawma(src, slow_len)
+macd = fast_ma - slow_ma
+signal = sma(macd, signal_len) 
+hist = macd - signal
+
+// Plotting
+
+// Plot the fill first so it is behind the histogram..
+macdPlot = plot(macd, color=na, display=display.none, title='Fill Line Top')
+signalPlot = plot(signal, color=na, display=display.none, title='Fill Line Bottom')
+fill(macdPlot, signalPlot, hist > 0 ? col_macd : hist < 0 ? col_signal : color.gray, 75, 'Fill', true)
+
+plot(hist, title='Histogram', style=plot.style_columns, color=(hist>=0 ? (hist[1] < hist ? col_grow_above : col_fall_above) : (hist[1] < hist ? col_grow_below : col_fall_below) ), transp=0 )
+plot(macd, title='MACD', color=col_macd, transp=0)
+plot(signal, title='Signal', color=col_signal, transp=0)
+
+hist_c = change(hist,2)
+macd_c = change(macd)
+signal_c = change(signal)
+
+
+d = if(signal>0 and (macd_c<0 or signal_c<0))
+    hist<0?-2:-1
+else if(signal>hist and (hist_c<0 or macd_c<0))
+    -1
+else if(signal<0 and (macd_c>0 or signal_c>0))
+    hist>0?+2:+1
+else if(signal<hist and (hist_c>0 or macd_c>0))
+    +1
+else
+    0
+
+color c = na
+if(d==-2)
+    c := color.new(color.red, 50)
+else if(d==-1)
+    c := color.new(color.red, 80)
+else if(d==+2)
+    c := color.new(color.green, 50)
+else if(d==+1)
+    c := color.new(color.green, 80)
+
+
+alertcondition(d==-1, 'Risky Long', '{{ticker}}: Avoid entering long.')
+alertcondition(d==-2, 'Negative Momentum ▼ (-)', '{{ticker}}: Overbought with negative momentum.')
+alertcondition(d==+1, 'Risky Short', '{{ticker}}: Avoid entering short.')
+alertcondition(d==+2, 'Postitive Momentum ▲ (+)', '{{ticker}}: Oversold with positive momentum.')
+
+bgcolor(c)
+

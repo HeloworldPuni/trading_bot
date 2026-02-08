@@ -1,0 +1,120 @@
+//@version=5
+
+indicator("ATR Fib", "ATR Fib", true, max_lines_count=500)
+
+oTime    = '0000-0001:1234567'
+Range    = input.session ('0000-0700:1234567',"Set Fib Range", group="SETTINGS")
+
+ATR      = input.float   (250, "ATR", group = "SETTINGS")
+
+Fib1     = input.float   (-0.111,">",group="Fibs",inline = "fib1")
+Color1   = input.color   (color.red, " = ", group="Fibs",inline = "fib1")
+Style1   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib1")
+
+Fib2     = input.float   (0,">",group="Fibs",inline = "fib2")
+Color2   = input.color   (color.black, " = ", group="Fibs",inline = "fib2")
+Style2   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib2")
+
+Fib3     = input.float   (0.2,">",group="Fibs",inline = "fib3")
+Color3   = input.color   (color.gray, " = ", group="Fibs",inline = "fib3")
+Style3   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib3")
+
+Fib4     = input.float   (0.618,">",group="Fibs",inline = "fib4")
+Color4   = input.color   (color.orange, " = ", group="Fibs",inline = "fib4")
+Style4   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib4")
+
+Fib5     = input.float   (0.8,">",group="Fibs",inline = "fib5")
+Color5   = input.color   (color.gray, " = ", group="Fibs",inline = "fib5")
+Style5   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib5")
+
+Fib6     = input.float   (1,">",group="Fibs",inline = "fib6")
+Color6   = input.color   (color.black, " = ", group="Fibs",inline = "fib6")
+Style6   = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib6")
+
+Fib7     = input.float   (1.111,">",group="Fibs",inline = "fib7")
+Color7   = input.color   (color.red, " = ", group="Fibs",inline = "fib7")
+Style7  = input.string  ("Solid", " = ", options=["Solid", "Dotted", "Dashed"], group="Fibs",inline = "fib7")
+
+//===============================================
+
+inSession = not na(time(timeframe.period, Range))
+
+tOpen = 0
+tOpen := inSession and not inSession[1] ? time : tOpen[1]
+
+OpenTime = time          ("1", oTime)
+
+//===============================================
+
+_1Style   = Style1 ==    "Solid" ? line.style_solid : Style1 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_2Style   = Style2 ==    "Solid" ? line.style_solid : Style2 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_3Style   = Style3 ==    "Solid" ? line.style_solid : Style3 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_4Style   = Style4 ==    "Solid" ? line.style_solid : Style4 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_5Style   = Style5 ==    "Solid" ? line.style_solid : Style5 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_6Style   = Style6 ==    "Solid" ? line.style_solid : Style6 == "Dotted" ? line.style_dotted : line.style_dashed
+
+_7Style   = Style7 ==    "Solid" ? line.style_solid : Style7 == "Dotted" ? line.style_dotted : line.style_dashed
+
+//===============================================
+
+var line Line1 = na
+
+var line Line2 = na
+
+var line Line3 = na
+
+var line Line4 = na
+
+var line Line5 = na
+
+var line Line6 = na
+
+var line Line7 = na
+
+//===============================================
+
+var Open  = 0.0
+
+if OpenTime
+    if not OpenTime[1]
+        Open  := open
+    else
+        Open := math.max(open, Open)
+        
+
+if inSession and timeframe.isintraday
+    if inSession[1]
+        line.delete(Line1)
+        line.delete(Line2)
+        line.delete(Line3)
+        line.delete(Line4)
+        line.delete(Line5)
+        line.delete(Line6)
+        line.delete(Line7)
+        
+    //Draw open line
+    Line1 := line.new(tOpen, Open - ATR + ATR * Fib1, time, Open - ATR + ATR * Fib1, xloc.bar_time, extend.none, Color1, _1Style, 1)
+    Line1 := line.new(tOpen, Open + ATR - ATR * Fib1, time, Open + ATR - ATR * Fib1, xloc.bar_time, extend.none, Color1, _1Style, 1)
+
+    Line2 := line.new(tOpen, Open - ATR + ATR * Fib2, time, Open - ATR + ATR * Fib2, xloc.bar_time, extend.none, Color2, _2Style, 1)
+    Line2 := line.new(tOpen, Open + ATR - ATR * Fib2, time, Open + ATR - ATR * Fib2, xloc.bar_time, extend.none, Color2, _2Style, 1)
+
+    Line3 := line.new(tOpen, Open - ATR + ATR * Fib3, time, Open - ATR + ATR * Fib3, xloc.bar_time, extend.none, Color3, _3Style, 1)
+    Line3 := line.new(tOpen, Open + ATR - ATR * Fib3, time, Open + ATR - ATR * Fib3, xloc.bar_time, extend.none, Color3, _3Style, 1)
+
+    Line4 := line.new(tOpen, Open - ATR + ATR * Fib4, time, Open - ATR + ATR * Fib4, xloc.bar_time, extend.none, Color4, _4Style, 1)
+    Line4 := line.new(tOpen, Open + ATR - ATR * Fib4, time, Open + ATR - ATR * Fib4, xloc.bar_time, extend.none, Color4, _4Style, 1)
+
+    Line5 := line.new(tOpen, Open - ATR + ATR * Fib5, time, Open - ATR + ATR * Fib5, xloc.bar_time, extend.none, Color5, _5Style, 1)
+    Line5 := line.new(tOpen, Open + ATR - ATR * Fib5, time, Open + ATR - ATR * Fib5, xloc.bar_time, extend.none, Color5, _5Style, 1)
+
+    Line6 := line.new(tOpen, Open - ATR + ATR * Fib6, time, Open - ATR + ATR * Fib6, xloc.bar_time, extend.none, Color6, _6Style, 1)
+    Line6 := line.new(tOpen, Open + ATR - ATR * Fib6, time, Open + ATR - ATR * Fib6, xloc.bar_time, extend.none, Color6, _6Style, 1)
+
+    Line7 := line.new(tOpen, Open - ATR + ATR * Fib7, time, Open - ATR + ATR * Fib7, xloc.bar_time, extend.none, Color7, _7Style, 1)
+    Line7 := line.new(tOpen, Open + ATR - ATR * Fib7, time, Open + ATR - ATR * Fib7, xloc.bar_time, extend.none, Color7, _7Style, 1)

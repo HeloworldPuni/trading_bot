@@ -1,0 +1,31 @@
+//@version=6
+indicator("Aceleração do MACD", overlay=false)
+
+// Inputs do MACD
+fastLen = input.int(12, title="Período EMA Rápida")
+slowLen = input.int(26, title="Período EMA Lenta")
+signalLen = input.int(9, title="Período Linha de Sinal")
+
+// Suavização da derivada
+smoothingLen = input.int(3, title="Suavização da Derivada", minval=1)
+
+// MACD básico
+[macdLine, signalLine, _] = ta.macd(close, fastLen, slowLen, signalLen)
+
+// Derivada do MACD
+macdDelta = macdLine - macdLine[1]
+
+// Derivada suavizada
+macdAccel = ta.sma(macdDelta, smoothingLen)
+
+// Sinais de entrada
+bullish = ta.crossover(macdAccel, 0)
+bearish = ta.crossunder(macdAccel, 0)
+
+// Plots
+plot(macdAccel, title="Aceleração do MACD (suavizada)", color=color.blue, linewidth=2, style=plot.style_columns)
+hline(0, "Zero", color=color.gray, linestyle=hline.style_dotted)
+
+// Sinais visuais
+plotshape(bullish, title="Sinal de Compra", location=location.bottom, color=color.green, style=shape.labelup)
+plotshape(bearish, title="Sinal de Venda", location=location.top, color=color.red, style=shape.labeldown)

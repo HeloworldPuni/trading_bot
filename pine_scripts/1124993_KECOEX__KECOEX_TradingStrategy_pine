@@ -1,0 +1,477 @@
+//@version=6
+strategy("KECOEX", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=1000, margin_long = 0, margin_short = 0)
+
+// === User Inputs ===
+isVolEnabled = input.bool(false, title = "", inline = "vol ma")
+multiplier = input.float(1.0, title="Vol", step= 0.1 , minval=0, inline = "vol ma")
+maPeriod   = input.int(20, title="MA", minval=1, step= 5 , inline = "vol ma")
+// === Indicator Logic ===
+volMA = ta.sma(volume, maPeriod)
+volCondition = isVolEnabled? (volume > volMA * multiplier) : true 
+
+// === Session Filter Inputs ===
+enableSYD = input.bool(false, title="SYD", group="Sessions", inline="Asia")
+enableTOK = input.bool(false, title="TOK", group="Sessions", inline="Asia")
+enableLON = input.bool(false, title="LON", group="Sessions", inline="West")
+enableNY  = input.bool(false, title="NY",  group="Sessions", inline="West")
+
+// === Define sessions (UTC) ===
+inSYD = (hour >= 22 or hour < 7)
+inTOK = (hour >= 0 and hour < 9)
+inLON = (hour >= 7 and hour < 16)
+inNY  = (hour >= 12 and hour < 21)
+
+// === Check if any session is selected
+anySessionSelected = enableSYD or enableTOK or enableLON or enableNY
+
+// === Allow trading if:
+// 1. No sessions selected → unrestricted
+// 2. At least one selected → restrict to active session(s)
+sessionCond =
+     not anySessionSelected or
+     (enableSYD and inSYD) or
+     (enableTOK and inTOK) or
+     (enableLON and inLON) or
+     (enableNY and inNY)
+
+// Input checkboxes for each day of the week
+mon = input.bool(defval = true, title = 'Mon', inline = 'Days', group = "Day Filter")
+tue = input.bool(defval = true, title = 'Tue', inline = 'Days', group = "Day Filter")
+wed = input.bool(defval = true, title = 'Wed', inline = 'Days', group = "Day Filter")
+thu = input.bool(defval = true, title = 'Thu', inline = 'Days', group = "Day Filter")
+fri = input.bool(defval = true, title = 'Fri', inline = 'Days', group = "Day Filter")
+sat = input.bool(defval = true, title = 'Sat', inline = 'Days', group = "Day Filter")
+sun = input.bool(defval = true, title = 'Sun', inline = 'Days', group = "Day Filter")
+// Get the current day of the week (1 = Sunday, 2 = Monday, ..., 7 = Saturday)
+currentDay = dayofweek
+// Define the day filter condition
+dayCond = (mon and currentDay == dayofweek.monday) or
+                     (tue and currentDay == dayofweek.tuesday) or
+                     (wed and currentDay == dayofweek.wednesday) or
+                     (thu and currentDay == dayofweek.thursday) or
+                     (fri and currentDay == dayofweek.friday) or
+                     (sat and currentDay == dayofweek.saturday) or
+                     (sun and currentDay == dayofweek.sunday)
+// Only apply dayFilterCondition if the session day filter is enabled
+dayCond := dayCond
+
+
+// === Utility Function: Return selected moving average ===
+// Function: getMA(source, length, type)
+// Purpose: Returns the moving average of `source` over `length` using the
+//          user-selected `type` ("EMA", "SMA", "WMA", "HMA", "SMMA", "TMA").
+// Returns: float series representing the requested MA; `na` if type is unknown.
+getMA(_source, _length, _type) => _type == "EMA" ? ta.ema(_source, _length) : _type == "SMA" ? ta.sma(_source, _length) : _type == "WMA" ? ta.wma(_source, _length) : _type == "HMA" ? ta.hma(_source, _length) : _type == "SMMA" ? ta.rma(_source, _length) : _type == "TMA" ? ta.sma(ta.sma(_source, _length), _length) : na
+
+
+// === MA 1 Filter ===
+ma1Enabled = input.bool(false, title="", group="MA 1 Filter", inline="MA1")
+ma1Length = input.int(50, minval=1, title="Length", group="MA 1 Filter", inline="MA1")
+ma1TF = input.timeframe("", title="Timeframe", group="MA 1 Filter", inline="MA1")
+ma1Source = input.source(close, title="Source", group="MA 1 Filter", inline="MA1")
+ma1Type = input.string("EMA", options=["EMA", "SMA", "WMA", "HMA", "SMMA", "TMA"], title="Type", group="MA 1 Filter", inline="MA1")
+
+ma1Value = request.security(syminfo.tickerid, ma1TF, getMA(ma1Source, ma1Length, ma1Type))
+ma1Cond = ma1Enabled ? close < ma1Value : true
+
+// === MA 2 Filter ===
+ma2Enabled = input.bool(false, title="", group="MA 2 Filter", inline="MA2")
+ma2Length = input.int(100, minval=1, title="Length", group="MA 2 Filter", inline="MA2")
+ma2TF = input.timeframe("", title="Timeframe", group="MA 2 Filter", inline="MA2")
+ma2Source = input.source(close, title="Source", group="MA 2 Filter", inline="MA2")
+ma2Type = input.string("EMA", options=["EMA", "SMA", "WMA", "HMA", "SMMA", "TMA"], title="Type", group="MA 2 Filter", inline="MA2")
+
+ma2Value = request.security(syminfo.tickerid, ma2TF, getMA(ma2Source, ma2Length, ma2Type))
+ma2Cond = ma2Enabled ? close > ma2Value : true
+
+// === MA 3 Filter ===
+ma3Enabled = input.bool(false, title="", group="MA 3 Filter", inline="MA3")
+ma3Length = input.int(200, minval=1, title="Length", group="MA 3 Filter", inline="MA3")
+ma3TF = input.timeframe("", title="Timeframe", group="MA 3 Filter", inline="MA3")
+ma3Source = input.source(close, title="Source", group="MA 3 Filter", inline="MA3")
+ma3Type = input.string("EMA", options=["EMA", "SMA", "WMA", "HMA", "SMMA", "TMA"], title="Type", group="MA 3 Filter", inline="MA3")
+
+ma3Value = request.security(syminfo.tickerid, ma3TF, getMA(ma3Source, ma3Length, ma3Type))
+ma3Cond = ma3Enabled ? close > ma3Value : true
+
+
+
+// This filter checks if the bar body is at least 50% of the whole bar
+isStrongCloseEnabled = input.bool(false, title="", group="Filters", inline="strong close")
+strongClosePercent = input.float(0.5, minval=0.0, maxval=0.99, step = 0.1, title="Candle Body", group="Filters", inline="strong close")
+strongClose = close > open and close - open > (high - low) * strongClosePercent
+strongCloseCond = isStrongCloseEnabled ? strongClose : true
+
+isOpenNearLowEnabled = input.bool(false, title="", group="Filters", inline="open near low")
+openNearLowPercent = input.float(0.2, minval=0.0, maxval=1.0, step=0.05, title="Open-to-Low %", group="Filters", inline="open near low")
+candleRange = high - low
+distanceOpenToLow = open - low
+openNearLow = candleRange > 0 and distanceOpenToLow < (candleRange * openNearLowPercent)
+openNearLowCond = isOpenNearLowEnabled ? openNearLow : true
+
+
+// This filter checks if the upper bar tail is less than 20% of the bar
+isCloseNearHighEnabled = input.bool(false, title="", group="Filters", inline="close near high")
+closeNearHighPercent = input.float(0.2, minval=0.0, maxval=1.0, step=0.05, title="Close-to-High %", group="Filters", inline="close near high")
+bodySize = math.abs(close - open)
+distanceToHigh = high - close
+closeNearHigh = bodySize > 0 and distanceToHigh < (bodySize * closeNearHighPercent)
+closeNearHighCond = isCloseNearHighEnabled ? closeNearHigh : true
+
+
+isRsiFilterEnabled = input.bool(false, title="", group="Filters", inline="RSI Filter")
+rsiMin = input.int(0, title="RSI >", minval=0, maxval=100, group="Filters", inline="RSI Filter")
+rsiMax = input.int(100, title="<", minval=0, maxval=100, group="Filters", inline="RSI Filter")
+rsiLength = input.int(14, title="", minval=0, maxval=100, group="Filters", inline="RSI Filter")
+rsiValue = ta.rsi(close, rsiLength)  // You can also make the period configurable
+rsiCond = isRsiFilterEnabled ? (rsiValue > rsiMin and rsiValue < rsiMax) : true
+
+
+isStochRsiFilterEnabled = input.bool(false, title="", group="Filters", inline="Stoch RSI Filter")
+stochRsiMin = input.int(0, title="Stoch RSI >", minval=0, maxval=100, group="Filters", inline="Stoch RSI Filter")
+stochRsiMax = input.int(100, title="<", minval=0, maxval=100, group="Filters", inline="Stoch RSI Filter")
+// Stoch RSI Calculation (fixed 14-period base RSI, optional to make configurable)
+rsiSource = ta.rsi(close, 14)
+stochRsi = 100 * (rsiSource - ta.lowest(rsiSource, 14)) / (ta.highest(rsiSource, 14) - ta.lowest(rsiSource, 14))
+stochRsiCond = isStochRsiFilterEnabled ? (stochRsi > stochRsiMin and stochRsi < stochRsiMax) : true
+
+
+// Trend Strength Condition
+uptrendFilterEnabled  = input.bool(false, title="Enable Uptrend Filter", group="Filters", inline="uptrend")
+uniqueEmaLength       = input.int(10, minval=1, title="EMA Length", group="Filters", inline="uptrend")
+uniqueEmaSource       = input.source(close, title="EMA Source", group="Filters", inline="uptrend")
+uniqueEmaTimeframe    = input.timeframe("", title="Higher Timeframe", group="Filters", inline="uptrend")
+uniqueLookback        = input.int(15, minval=1, title="Lookback Bars", group="Filters", inline="uptrend")
+uniqueThreshold       = input.float(0.7, title="Threshold %", group="Filters", inline="uptrend")
+// Function: calcUptrend()
+// Purpose: Measures how often the EMA rises over the last `uniqueLookback` bars
+//          (optionally on a higher timeframe) and checks if that rising ratio
+//          meets or exceeds `uniqueThreshold`.
+// Returns: bool — true when uptrend strength ≥ threshold.
+calcUptrend() =>
+    // Compute EMA on the series available in the current timeframe context
+    emaVal    = ta.ema(uniqueEmaSource, uniqueEmaLength)
+    // Check if the EMA is rising compared to the previous bar
+    isRising  = emaVal > emaVal[1] ? 1 : 0
+    // Sum the number of rising bars over the lookback period
+    risingCnt = math.sum(isRising, uniqueLookback)
+    // Calculate the ratio of rising bars
+    risingPct = risingCnt / uniqueLookback
+    // Return true if the percentage meets or exceeds the threshold
+    risingPct >= uniqueThreshold
+// If a higher timeframe is selected, compute the uptrend condition on that timeframe.
+// Otherwise, compute it on the current chart timeframe.
+uniqueEmaIsRising = uniqueEmaTimeframe == "" ? calcUptrend() : request.security(syminfo.tickerid, uniqueEmaTimeframe, calcUptrend(), lookahead=barmerge.lookahead_on)
+// Final condition for filtering trades
+uptrendCond = uptrendFilterEnabled ? uniqueEmaIsRising : true
+
+
+// === Inputs ===
+ciFilterEnabled = input.bool(false, title="Enable CI Filter", group="Filters", inline="CI")
+ciThresholdInput = input.float(50.0, minval=0.001, title="CI Threshold", group="Filters", inline="CI")
+chopLength = input.int(14, minval=1, title="Length", group="Filters", inline="CI")
+offset = input.int(0, title="Offset", minval=-500, maxval=500, group="Filters", inline="CI")
+ciTF = input.timeframe("", title="Choppiness Index Timeframe (blank = current)", group="Filters")
+
+// === Choppiness Index Calculation ===
+// Function: chopFunc()
+// Purpose: Computes the Choppiness Index over `chopLength` based on ATR(1)
+//          accumulation and the price range to quantify trendiness vs. chop.
+// Returns: float CI value (0–100 scale).
+chopFunc() =>
+    atrSum = math.sum(ta.atr(1), chopLength)
+    highMax = ta.highest(high, chopLength)
+    lowMin = ta.lowest(low, chopLength)
+    priceRange = highMax - lowMin
+    ciVal = 100 * math.log10(atrSum / priceRange) / math.log10(chopLength)
+    ciVal
+
+ci = ciTF == "" ? chopFunc() : request.security(syminfo.tickerid, ciTF, chopFunc())
+
+// === CI Filter Condition ===
+ciCond = ciFilterEnabled ? ci < ciThresholdInput : true
+
+
+// === StdDev Volatility Filter Inputs ===
+volatilityFilterInput = input.bool(false, title="Enable StdDev Filter", group="Filters", inline="Vol")
+volatilityFilterStDevLength = input.int(15, title="", group="Filters", inline="Vol")
+volatilityStDevMaLength = input.int(15, title=">MA", group="Filters", inline="Vol")
+volatilityTF = input.timeframe("", title="StdDev Timeframe (blank = current)", group="Filters", inline="Vol")
+
+// === Function to calculate StdDev condition ===
+// Function: volatilityConditionFunc()
+// Purpose: Measures volatility via StdDev(close, L) and confirms it's above its
+//          own moving average over `volatilityStDevMaLength`.
+// Returns: bool — true when stddev > stddev MA.
+volatilityConditionFunc() =>
+    stdDev = ta.stdev(close, volatilityFilterStDevLength)
+    stdDevMA = ta.sma(stdDev, volatilityStDevMaLength)
+    stdDev > stdDevMA
+
+// === Final condition using optional timeframe ===
+volaCond = volatilityFilterInput ? (volatilityTF == "" ? volatilityConditionFunc() : request.security(syminfo.tickerid, volatilityTF, volatilityConditionFunc())) : true
+
+
+// OBV Condition
+obvFilterInput = input.bool(false,title="", group = "Filters", inline="OBV")
+obvFilterLength = input(200,title="OBV",group = "Filters", inline="OBV")
+changesrc = ta.change(close)
+obv = ta.cum(changesrc > 0 ? volume : changesrc < 0 ? -volume : 0 * volume)
+ema = ta.ema(obv, obvFilterLength)
+obvCond = obvFilterInput? (obv > ema) : true
+
+
+// Bollinger BandWidth Confirmation Condition
+bbwFilterEnabled = input.bool(false, title="", group="Filters", inline="BBW")
+bbwThresholdInput = input.float(10.0, minval=0.001, title="BBW > ", group="Filters", inline="BBW")
+length = input.int(20, minval=1, title="BB", group="Filters", inline="BBW")
+src = close
+mult = input.float(2.0, minval=1, maxval=50, title="StdDev", group="Filters", inline="BBW")
+basis = ta.sma(src, length)
+dev = mult * ta.stdev(src, length)
+upper = basis + dev
+lower = basis - dev
+bbw = ((upper - lower) / basis) * 100
+// BBW Confirmation Condition
+bbwCond = bbwFilterEnabled ? bbw > bbwThresholdInput : true
+
+isEmaTrendEnabled = input.bool(false, title="", group="Filters", inline="EMA Trend")
+emaShortLen = input.int(9, minval=1, title="Short EMA", group="Filters", inline="EMA Trend")
+emaLongLen  = input.int(21, minval=1, title="Long EMA", group="Filters", inline="EMA Trend")
+emaShort = ta.ema(close, emaShortLen)
+emaLong  = ta.ema(close, emaLongLen)
+emaTrendCond = isEmaTrendEnabled ? (emaShort > emaLong) : true
+
+// Tight Range Filter Condition
+tightRangeInput = input.bool(false, title="", group="Filters", inline="TightRange")
+tightRangeLen = input.int(20, title="Length", group="Filters", inline="TightRange")
+tightRangePct = input.float(10.0, title="% Range Max",step = 1.0, group="Filters", inline="TightRange")  // Max % range
+// Highest high and lowest low of last N bars
+tightHigh = ta.highest(high, tightRangeLen)
+tightLow = ta.lowest(low, tightRangeLen)
+// Percent range between high and low
+rangePct = ((tightHigh - tightLow) / tightLow) * 100
+// Final condition: range must be smaller than threshold
+tightRangeCond = tightRangeInput ? rangePct < tightRangePct : true
+
+// ADX Condition
+adxFilterInput = input.bool(false,title="", group = "Filters", inline="ADX")
+adxlen = input(14,title="ADX",group = "Filters", inline="ADX")
+dilen = input(14,title="DI",group = "Filters", inline="ADX")
+adxlevel = input(30,title="< Value",group = "Filters", inline="ADX")
+// Helper function to calculate directional movement
+// Function: dirmov(len)
+// Purpose: Computes +DI and -DI components over `len` using smoothed DM and TR.
+// Returns: [plus, minus] — the +DI and -DI values.
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+    minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+// Helper function to calculate ADX
+// Function: adx(dilen, adxlen)
+// Purpose: Calculates ADX from +DI and -DI using the standard formula and
+//          smoothing over `adxlen`.
+// Returns: float — ADX value.
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+// ADX value
+sig = adx(dilen, adxlen)
+// adxCond = adxFilterInput? (sig > adxlevel) : true
+adxMaLength = input(30,title="adx ma",group = "Filters", inline="ADX")
+adxMa = ta.ema(sig, adxMaLength)
+
+adxCond = adxFilterInput? (sig < adxlevel) : true
+
+
+// === Inputs for bar body size filter (entered as percentages, not decimals) ===
+isBodySizeFilterEnabled = input.bool(false, title="Enable Body Size Filter", group="Filters", inline="body size")
+minBodyPercentInput = input.float(1.0, title="Min %", minval=0.0, step=0.5, group="Filters", inline="body size")
+maxBodyPercentInput = input.float(20.0, title="Max %", minval=0.0, step=0.5, group="Filters", inline="body size")
+
+// === Convert to decimal (e.g. 1% → 0.01)
+minBodyPercent = minBodyPercentInput / 100
+maxBodyPercent = maxBodyPercentInput / 100
+
+// === Body size filter calculation (using unique variable name) ===
+barBodySize = math.abs(close - open)
+barBodyPct = barBodySize / close
+
+barBodyCond = barBodyPct >= minBodyPercent and barBodyPct <= maxBodyPercent
+barBodyFilterCond = isBodySizeFilterEnabled ? barBodyCond : true
+
+
+
+// === Input for green bars filter ===
+isGreenBarsFilterEnabled = input.bool(false, title="Enable All Green Bars Filter", group="Filters", inline="green")
+greenBarsCount = input.int(5, minval=1, title="Bars", group="Filters", inline="green")
+
+// === Function to check if last N bars were all green ===
+allGreen = true
+for i = 0 to greenBarsCount - 1
+    allGreen := allGreen and (close[i] > open[i])
+
+greenBarsCond = isGreenBarsFilterEnabled ? not allGreen : true
+
+
+// === VWAP Filter Inputs ===
+isVWAPFilterEnabled = input.bool(false, title="Enable VWAP Filter", group="Filters", inline="VWAP")
+vwapTF = input.timeframe("", title="VWAP Timeframe (blank = current)", group="Filters", inline="VWAP")
+// === VWAP Condition with Optional Timeframe ===
+vwapValue = vwapTF == "" ? ta.vwap : request.security(syminfo.tickerid, vwapTF, ta.vwap)
+vwapCond = isVWAPFilterEnabled ? close > vwapValue : true
+
+
+// === Break of Previous High Filter Inputs ===
+isBreakPrevHighEnabled = input.bool(false, title="Enable Break of Previous High", group="Filters", inline="BreakHigh")
+breakHighLength = input.int(20, minval=1, title="Length", group="Filters", inline="BreakHigh")
+// === Break of High Condition (current close breaks past high)
+prevHigh = ta.highest(high[1], breakHighLength)
+breaksPrevHigh = close > prevHigh
+breakPrevHighCond = isBreakPrevHighEnabled ? breaksPrevHigh : true
+
+
+volRising = volume > volume[1] and volume[1] > volume[2]
+
+
+longCondition = dayCond and sessionCond and  breakPrevHighCond and vwapCond and greenBarsCond and barBodyFilterCond and adxCond and tightRangeCond and stochRsiCond and emaTrendCond and volaCond and obvCond and bbwCond and ciCond and uptrendCond and volCondition and strategy.position_size == 0 and close > close[1] and ma1Cond and ma2Cond and ma3Cond and strongCloseCond and closeNearHighCond and rsiCond and openNearLowCond
+
+// Method selection input 
+methodSelection = input.string("ATR", title="Method", options=["ATR", "Dynamic", "Fixed", "EMA", "Breakout Body", "Vol. down"], group="SL & TP", inline = "Method")
+
+// Common Take Profit Multiplier input
+tpMultiplier = input.float(1.0, title="RRR", step=0.1, group="SL & TP", inline = "Method")
+
+// Input Parameters
+smoothingMethod = input.string("RMA", title="ATR", options=["RMA", "SMA", "EMA", "WMA"], group="SL & TP", inline = "ATR")
+calcMethod = input.string("HL", title="", options=["HL", "Close"], group="SL & TP", inline = "ATR")
+atrLength = input(14, title="", group="SL & TP", inline = "ATR")
+atrMultiplier = input.float(2.5, title="", step = 0.1, group="SL & TP", inline = "ATR")
+
+// Function to Calculate Moving Average
+// Function: get_ma(source, length)
+// Purpose: Generic MA helper used for ATR smoothing based on the selected
+//          `smoothingMethod` ("RMA","SMA","EMA","WMA").
+// Returns: float series MA.
+get_ma(source, length) =>
+    if smoothingMethod == "RMA"
+        ta.rma(source, length)
+    else if smoothingMethod == "SMA"
+        ta.sma(source, length)
+    else if smoothingMethod == "EMA"
+        ta.ema(source, length)
+    else
+        ta.wma(source, length)
+
+// ATR Calculation
+var float atrUpperBand = na
+var float atrLowerBand = na
+
+atrValue = get_ma(ta.tr(true), atrLength)
+if calcMethod == "Close"
+    atrUpperBand := close + (atrValue * atrMultiplier * tpMultiplier)
+    atrLowerBand := close - (atrValue * atrMultiplier)
+    
+if calcMethod == "HL"
+    atrUpperBand := high + (atrValue * atrMultiplier * tpMultiplier)
+    atrLowerBand := low - (atrValue * atrMultiplier)
+
+plot(atrUpperBand, title="ATR Upper Band", color=color.green, linewidth=1, style=plot.style_line , display = display.none)
+plot(atrLowerBand, title="ATR Lower Band", color=color.red, linewidth=1, style=plot.style_line , display = display.none)
+
+// Method 1: Dynamic Take Profit and Stop Loss (don't change it)
+if methodSelection == "Dynamic"
+    userDefinedLowestLowPeriod = input.int(10, title="Lowest", minval=0, group="SL & TP" , inline = "LL")
+    lowestLow = ta.lowest(low, userDefinedLowestLowPeriod)
+    
+    if (longCondition)
+        stopLossLevel = lowestLow
+        slDistance = close - stopLossLevel
+        slDistancePercent = (slDistance / close) * 100
+        // Define minSLDistancePercent here
+        minSLDistancePercent = input.float(0.7, title="Min %", step=0.1, group="SL & TP" , inline = "LL")
+        maxSLDistancePercent = input.float(20.0, title="Max %", step=0.1, group="SL & TP" , inline = "LL") // Maximum Stop Loss Distance (don't change it)
+        if (slDistancePercent > minSLDistancePercent and slDistancePercent < maxSLDistancePercent)
+            strategy.entry("Long", strategy.long)
+            takeProfitLevel = close + slDistance * tpMultiplier
+            strategy.exit("Exit Long", "Long", stop=stopLossLevel, limit=takeProfitLevel)
+
+// Method 2: Fixed Take Profit and Stop Loss
+if methodSelection == "Fixed"
+    stopLossPct = input.float(1.8, title="Fixed %", step=0.1, group="SL & TP", inline = "Method") / 100
+    if (longCondition)
+        strategy.entry("Long", strategy.long)
+        entryPrice = close
+        stopLossLevel = entryPrice * (1 - stopLossPct)
+        takeProfitLevel = entryPrice * (1 + (tpMultiplier * stopLossPct))  // Calculate take profit based on multiplier
+        strategy.exit("Exit Long", "Long", stop=stopLossLevel, limit=takeProfitLevel)
+
+
+// Method 3: ATR Take Profit and Stop Loss 
+if methodSelection == "ATR"
+    stopLoss = atrLowerBand
+    takeProfit = atrUpperBand
+    if (longCondition)
+        strategy.entry("Long", strategy.long)
+        strategy.exit("Exit", "Long", stop=stopLoss, limit=takeProfit)
+
+
+// Method 4: EMA SL & TP
+exitEmaInput = input.int(7, "EMA", group="SL & TP", inline = "exitEma")
+exitEmaSource = input.source(close, "", group="SL & TP",  inline = "exitEma")
+exitEmaTF = input.timeframe("", title="", group="SL & TP",  inline="exitEma")
+exitEma = request.security(syminfo.tickerid, exitEmaTF, ta.ema(exitEmaSource, exitEmaInput))
+exitCondition = ta.crossunder(close, exitEma)
+
+
+if methodSelection == "EMA"
+    if longCondition
+        strategy.entry("Long", strategy.long)
+        entryPrice = close
+    if exitCondition
+        strategy.close("Long", comment = "Exit")   
+
+
+// Method 5: Breakout Candle-Based SL & TP (Custom Reference Point)
+slReference = input.string("Midpoint", title="SL Reference Point", options=["Midpoint", "Lower Qrtr", "Upper Qrtr", "Open", "Low"], group="SL & TP")
+if methodSelection == "Breakout Body"
+    if longCondition
+        strategy.entry("Long", strategy.long)
+
+        float slReferenceValue = na
+        float candleBody = close - open
+
+        if slReference == "Midpoint"
+            slReferenceValue := (open + close) / 2
+        else if slReference == "Lower Qrtr"
+            slReferenceValue := open + candleBody * 0.25
+        else if slReference == "Upper Qrtr"
+            slReferenceValue := close - candleBody * 0.25
+        else if slReference == "Open"
+            slReferenceValue := open
+        else if slReference == "Low"
+            slReferenceValue := low
+
+        stop_loss = math.abs(close - slReferenceValue)
+        take_profit = stop_loss * tpMultiplier
+        stopLevel = close - stop_loss
+        tpLevel = close + take_profit
+
+        strategy.exit("Exit", from_entry="Long", stop=stopLevel, limit=tpLevel)
+
+
+
+// Method 6: Close below Vol. down band
+bbExit = volume < volume[1]
+
+if methodSelection == "Vol. down"
+    if longCondition
+        strategy.entry("Long", strategy.long)
+    if bbExit
+        strategy.close("Long", comment = "Exit")

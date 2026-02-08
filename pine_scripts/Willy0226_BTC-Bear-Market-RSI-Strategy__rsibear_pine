@@ -1,0 +1,24 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © chienwade5960
+
+//@version=4
+strategy("Chicken Stock Bear Market RSI Strategy", overlay=true, default_qty_type = strategy.percent_of_equity, default_qty_value = 30)
+
+rsi = rsi(close,14)
+
+// Drawdown time
+drawdown_y = input(title="year",type=input.integer,defval=2021)
+drawdown_m = input(title="month",type=input.integer,defval=11)
+drawdown_d = input(title="date",type=input.integer,defval=20)
+drawdown_start_time = timestamp(drawdown_y,drawdown_m,drawdown_d,0,0,0)
+
+// condition
+shortCondition = rsi > 75
+longCondition = rsi < 20
+
+// short in/out
+if time >= drawdown_start_time
+    strategy.entry("Open short", false,comment="Open",when=shortCondition)
+    strategy.close("Open short", comment = "Close", when=longCondition)
+    strategy.exit("Close short","Open short",limit=0.87*strategy.position_avg_price, stop=1.06*strategy.position_avg_price, comment="13% profit/6%lose")
+

@@ -1,0 +1,63 @@
+//@version=5
+// =============================================================================
+// INDICATOR: reversal-gemini
+// FILENAME: reversal_v1.0.1.pine
+// Version: v1.0.1
+// DATE:     2026-01-09
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.1 - Manual edit via web interface
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+strategy("High-Frequency Swing Reversal", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// --- Sensitivity Inputs ---
+sensitivity = input.string("Normal", "Sensitivity", options=["Conservative", "Normal", "Aggressive"])
+bbMult      = sensitivity == "Aggressive" ? 1.5 : sensitivity == "Normal" ? 1.8 : 2.2
+rsiLen      = sensitivity == "Aggressive" ? 7 : 10 // Faster RSI for more signals
+
+// --- Indicators ---
+ema20   = ta.ema(close, 20)
+vwapVal = ta.vwap(close)
+rsiVal  = ta.rsi(close, rsiLen)
+[bbUpper, bbBasis, bbLower] = ta.bb(close, 20, bbMult)
+
+// --- Scoring Logic (0-100) ---
+float score = 0.0
+
+// 1. BB Distance (40 points max)
+score += (close < bbLower) ? 40 : (close < bbLower * 1.01) ? 20 : 0
+score += (close > bbUpper) ? 40 : (close > bbUpper * 0.99) ? 20 : 0
+
+// 2. RSI Exhaustion (40 points max)
+score += (rsiVal < 35) ? 40 : (rsiVal < 45) ? 20 : 0
+score += (rsiVal > 65) ? 40 : (rsiVal > 55) ? 20 : 0
+
+// 3. Candle Rejection (20 points max)
+isHammer = (low < open and low < close and (math.min(open, close) - low) > (math.abs(open - close) * 2))
+isStar   = (high > open and high > close and (high - math.max(open, close)) > (math.abs(open - close) * 2))
+score += (isHammer or isStar) ? 20 : 0
+
+// --- Entry Logic ---
+// We fire on a score of 50+ instead of requiring all conditions to be perfect
+longSignal  = score >= 50 and close < bbBasis and rsiVal < 50
+shortSignal = score >= 50 and close > bbBasis and rsiVal > 50
+
+if (longSignal)
+    strategy.entry("Long", strategy.long)
+    label.new(bar_index, low, "SCORE: " + str.tostring(score) + "%", color=color.green, style=label.style_label_up, textcolor=color.white)
+
+if (shortSignal)
+    strategy.entry("Short", strategy.short)
+    label.new(bar_index, high, "SCORE: " + str.tostring(score) + "%", color=color.red, style=label.style_label_down, textcolor=color.white)
+
+// --- Exit: Close at VWAP or Opposite Signal ---
+strategy.close("Long", when=ta.crossover(close, vwapVal) or shortSignal)
+strategy.close("Short", when=ta.crossunder(close, vwapVal) or longSignal)
+
+// Visuals
+plot(vwapVal, color=color.orange, title="VWAP")
+plot(bbUpper, color=color.gray, transp=70)
+plot(bbLower, color=color.gray, transp=70)

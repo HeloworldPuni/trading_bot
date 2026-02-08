@@ -1,0 +1,20 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Thomas Jung
+
+//@version=5
+indicator(title="My Test for empty string", overlay=true)
+
+// Make a text input for the signal message
+signalText = input.string("", title="Signal Message")
+
+// Calculate and plot two Exponential Moving Average
+emaFast = ta.ema(close, 20)
+emaSlow = ta.ema(close, 50)
+
+plot(emaFast, color=color.orange, title="EMA Fast")
+plot(emaSlow, color=color.teal, linewidth=2, title="EMA Slow")
+
+// When the signal text input isn't an empty string, and the fast
+// average crossed the slow one, highlight the signal with a label
+if signalText != "test" and ta.cross(emaFast, emaSlow)
+    label.new(bar_index, high, signalText, color=color.black, textcolor=color.white, size=size.large)

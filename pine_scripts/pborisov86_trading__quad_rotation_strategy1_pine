@@ -1,0 +1,276 @@
+//@version=5
+strategy("Quad Rotation Stochastics Strategy", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+/// Configurable Inputs for K Length & Smoothing
+kLen1 = input.int(9, title="%K Length 1", minval=1)
+smoothK1 = input.int(1, title="%K Smoothing 1", minval=1)
+dLen1 = input.int(3, title="%D Length 1", minval=1)
+
+kLen2 = input.int(14, title="%K Length 2", minval=1)
+smoothK2 = input.int(1, title="%K Smoothing 2", minval=1)
+dLen2 = input.int(3, title="%D Length 2", minval=1)
+
+kLen3 = input.int(40, title="%K Length 3", minval=1)
+smoothK3 = input.int(1, title="%K Smoothing 3", minval=1)
+dLen3 = input.int(4, title="%D Length 3", minval=1)
+
+kLen4 = input.int(60, title="%K Length 4", minval=1)
+smoothK4 = input.int(1, title="%K Smoothing 4", minval=1)
+dLen4 = input.int(10, title="%D Length 4", minval=1)
+
+// Calculate Stochastic %D values
+k1 = ta.sma(ta.stoch(close, high, low, kLen1), smoothK1)
+d1 = ta.sma(k1, dLen1)
+
+k2 = ta.sma(ta.stoch(close, high, low, kLen2), smoothK2)
+d2 = ta.sma(k2, dLen2)
+
+k3 = ta.sma(ta.stoch(close, high, low, kLen3), smoothK3)
+d3 = ta.sma(k3, dLen3)
+
+k4 = ta.sma(ta.stoch(close, high, low, kLen4), smoothK4)
+d4 = ta.sma(k4, dLen4)
+
+// Offsets for stacking
+offset1 = d1 + 300
+offset2 = d2 + 200
+offset3 = d3 + 100
+offset4 = d4
+
+// Plot %D lines with corresponding colors
+plot(offset1, title="D 9", color=color.white, linewidth=2)
+plot(offset2, title="D 14", color=color.green, linewidth=2)
+plot(offset3, title="D 40", color=color.red, linewidth=2)
+plot(offset4, title="D 60", color=color.yellow, linewidth=2)
+
+// Stochastic 60 (Yellow)
+//hline(0, "Separator (D60)", color=color.gray, linestyle=hline.style_solid)
+hline(10, "Extreme Oversold (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(20, "Oversold (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(80, "Overbought (D60)", color=color.yellow, linestyle=hline.style_dotted)
+hline(90, "Extreme Overbought (D60)", color=color.yellow, linestyle=hline.style_dotted)
+//hline(99, "Separator (D60)", color=color.yellow, linestyle=hline.style_solid)
+
+// Stochastic 40 (Red)
+//hline(101, "Separator (D40)", color=color.red, linestyle=hline.style_solid)
+hline(110, "Extreme Oversold (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(120, "Oversold (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(180, "Overbought (D40)", color=color.red, linestyle=hline.style_dotted)
+hline(190, "Extreme Overbought (D40)", color=color.red, linestyle=hline.style_dotted)
+//hline(199, "Separator (D40)", color=color.red, linestyle=hline.style_solid)
+
+// Stochastic 14 (Green)
+//hline(201, "Separator (D14)", color=color.green, linestyle=hline.style_solid)
+hline(210, "Extreme Oversold (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(220, "Oversold (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(280, "Overbought (D14)", color=color.green, linestyle=hline.style_dotted)
+hline(290, "Extreme Overbought (D14)", color=color.green, linestyle=hline.style_dotted)
+//hline(299, "Separator (D14)", color=color.green, linestyle=hline.style_solid)
+
+// Stochastic 9 (White)
+//hline(301, "Separator (D9)", color=color.white, linestyle=hline.style_solid)
+hline(310, "Extreme Oversold (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(320, "Oversold (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(380, "Overbought (D9)", color=color.white, linestyle=hline.style_dotted)
+hline(390, "Extreme Overbought (D9)", color=color.white, linestyle=hline.style_dotted)
+//hline(400, "Separator (D9)", color=color.gray, linestyle=hline.style_solid)
+
+// Signal conditions based on stacked levels
+signalOverbought = offset1 > 380 and offset2 > 280 and offset3 > 180 and offset4 > 80
+signalSold = offset1 < 320 and offset2 < 220 and offset3 < 120 and offset4 < 20
+
+// Plot dots for buy (0 line) and sell (400 line) signals
+plot(signalOverbought ? 410 : na, title="Sell Signal", color=color.rgb(5, 247, 13), style=plot.style_circles, linewidth=3)
+plot(signalSold ? -10 : na, title="Buy Signal", color=color.rgb(252, 6, 6), style=plot.style_circles, linewidth=3)
+
+// Notifications
+alertcondition(signalOverbought, title="Overbought Alert", message="Quad Stochastic Overbought!")
+alertcondition(signalSold, title="Oversold Alert", message="Quad Stochastic Oversold!")
+
+// === State Variables ===
+var bool trackingLowPeriod = false
+var float lowestLow = na
+var int lowestLowBarIndex = na
+var label low1Label = na
+
+var float low1Low = na
+var float low1High = na
+var float low1Middle = na
+var float low1Open = na
+var float low1Close = na
+var float low1BodyBottom = na
+
+var label low2Label = na
+var bool canCheckForLow2 = false
+var int low1BarIndex = na
+var float lowestD1ValueSinceLow1 = na
+
+var float low2Low = na
+var float low2High = na
+var int low2BarIndex = na
+var int low2CandleCounter = 0
+var bool canCheckForLow3 = false
+var label low3Label = na
+
+var bool d1ValidSinceCross = true
+entrySignal = false
+var float entryPrice = na
+var float entryLow = na
+
+// === NEW EXIT LOGIC VARIABLES ===
+var float entryCandleOpen = na
+var float entryCandleClose = na
+var float entryCandleHigh = na
+var float entryCandleLow = na
+var float stopLossPrice = na
+var bool inPosition = false
+
+var float low2Open = na
+var float low2Close = na
+var float low2BodyTop = na
+var float low2BodyBottom = na
+
+// === MODIFIED LOW1 LOGIC ===
+// Start tracking when offset1 first goes below 309
+
+if not trackingLowPeriod and offset1 < 309 //and offset2 < 220 //and offset3 < 120 and offset4 < 20 
+    trackingLowPeriod := true
+    lowestLow := low
+    lowestLowBarIndex := bar_index
+
+// Continue tracking lowest low during entire period from below 309 until cross above 322
+if trackingLowPeriod
+    if low < lowestLow
+        lowestLow := low
+        lowestLowBarIndex := bar_index
+
+// When offset1 crosses above 322, capture the Low1 from the entire tracked period
+crossAbove322 = ta.crossover(offset1, 322)
+if crossAbove322 and trackingLowPeriod
+    // Capture Low1 data from the lowest point during the entire tracking period
+    low1Low := low[bar_index - lowestLowBarIndex]
+    low1High := high[bar_index - lowestLowBarIndex]
+    low1Middle := (low1Low + low1High) / 2
+    low1Open := open[bar_index - lowestLowBarIndex]
+    low1Close := close[bar_index - lowestLowBarIndex]
+    low1BodyBottom := math.min(low1Open, low1Close)
+    
+    canCheckForLow2 := true
+    low1BarIndex := lowestLowBarIndex
+    lowestD1ValueSinceLow1 := offset1
+    d1ValidSinceCross := true
+
+    low1Label := label.new(x=lowestLowBarIndex, y=-20, style=label.style_label_up, color=color.red, size=size.tiny, text="1")
+
+    // Reset tracking variables
+    trackingLowPeriod := false
+    lowestLow := na
+    lowestLowBarIndex := na
+
+// === Track d1 Validity ===
+if not na(low1BarIndex) and offset1 < 320
+    d1ValidSinceCross := false
+
+// === Detect Low2 ===
+if canCheckForLow2 and not na(low1BarIndex)
+    candleDistance = bar_index - low1BarIndex
+
+    if candleDistance > 12
+        canCheckForLow2 := false
+        low1BarIndex := na
+        d1ValidSinceCross := true
+
+    else if candleDistance >= 4 and low <= low1BodyBottom and offset1 > 320 and d1ValidSinceCross and offset1 < 370 
+        low2Label := label.new(x=bar_index, y=-20, style=label.style_label_up, color=color.yellow, size=size.tiny, text="2")
+        canCheckForLow2 := false
+        canCheckForLow3 := true
+        low2BarIndex := bar_index
+        low2High := high
+        low2Low := low
+        low2Open := open
+        low2Close := close
+        low2BodyBottom := math.min(open, close)
+        low2BodyTop := math.max(open, close)
+        low2CandleCounter := 0
+
+// === Detect Low3 ===
+if canCheckForLow3
+    low2CandleCounter += 1
+
+    if close > low2BodyTop and offset1 > 320 and d1ValidSinceCross and offset1 < 356
+        low3Label := label.new(x=bar_index, y=-20, style=label.style_label_up, color=color.green, size=size.tiny, text="3")
+        
+        entrySignal := true  // <-- Entry signal on green label print        
+
+        entryPrice := close
+        entryLow := low
+
+        // === NEW: Capture entry candle data ===
+        entryCandleOpen := open
+        entryCandleClose := close
+        entryCandleHigh := high
+        entryCandleLow := low
+        
+        // Calculate 30% stop loss based on candle range
+        candleRange = entryCandleHigh - entryCandleLow
+        stopLossAmount = candleRange * 1.6
+        stopLossPrice := entryCandleLow - stopLossAmount
+
+        // Reset tracking
+        canCheckForLow3 := false
+
+        low1BarIndex := na
+        low2BarIndex := na
+        low2High := na
+        low2Low := na
+        lowestD1ValueSinceLow1 := na
+        d1ValidSinceCross := true
+
+    else if low2CandleCounter >= 4
+        canCheckForLow3 := false
+        canCheckForLow2 := false
+        low1BarIndex := na
+        low2BarIndex := na
+        low2High := na
+        lowestD1ValueSinceLow1 := na
+        d1ValidSinceCross := true
+
+// Strategy entry and exit logic
+if entrySignal
+    strategy.entry("Long", strategy.long)
+    inPosition := true
+    entrySignal := false  // reset after entry
+
+// === NEW EXIT CONDITIONS ===
+// Track if d1 has crossed above 380 since entry
+var bool d1CrossedAbove80 = false
+
+// Reset the flag when entering a new position
+if entrySignal
+    d1CrossedAbove80 := false
+
+// Update the flag when d1 crosses above 380 while in position
+if inPosition and ta.crossover(offset1, 382)
+    d1CrossedAbove80 := true
+
+exitCondition = false
+
+if inPosition
+    // Stop loss: price drops to calculated stop loss level
+    stopLossHit = low <= stopLossPrice //or ta.crossunder(offset1, 320)
+    
+    // Take profit: d1 has crossed above 80 before, and now crosses under 60
+    takeProfitHit = d1CrossedAbove80 and ta.crossunder(offset1, 350)
+    exitCondition := stopLossHit or takeProfitHit
+
+if exitCondition and inPosition
+    strategy.close("Long")
+    inPosition := false
+    d1CrossedAbove80 := false  // Reset the flag after exit
+    
+    // Reset exit variables
+    entryCandleOpen := na
+    entryCandleClose := na
+    entryCandleHigh := na
+    entryCandleLow := na
+    stopLossPrice := na

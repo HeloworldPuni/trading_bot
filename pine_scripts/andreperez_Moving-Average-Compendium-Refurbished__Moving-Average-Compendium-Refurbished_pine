@@ -1,0 +1,138 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © andre_007
+
+//@version=5
+indicator("Moving Average Compendium Refurbished", shorttitle='MA Compendium Refurbished', format=format.price, precision=2, overlay=true)
+
+import andre_007/MovingAveragesProxy/1 as MaProxy
+
+// ———————————————————————————————————————— Constants {
+var string AARMA    = 'Adaptive Autonomous Recursive Moving Average'
+var string ADEMA    = '* Alpha-Decreasing Exponential Moving Average'
+var string AHMA     = 'Ahrens Moving Average'
+var string ALMA     = 'Arnaud Legoux Moving Average'
+var string ALSMA    = 'Adaptive Least Squares'
+var string AUTOL    = 'Auto-Line'
+var string CMA      = 'Corrective Moving average'
+var string CORMA    = 'Correlation Moving Average Price'
+var string COVWEMA  = 'Coefficient of Variation Weighted Exponential Moving Average'
+var string COVWMA   = 'Coefficient of Variation Weighted Moving Average'
+var string DEMA     = 'Double Exponential Moving Average'
+var string DONCHIAN = 'Donchian Middle Channel'
+var string EDMA     = 'Exponentially Deviating Moving Average'
+var string EDSMA    = 'Ehlers Dynamic Smoothed Moving Average'
+var string EFRAMA   = '* Ehlrs Modified Fractal Adaptive Moving Average'
+var string EHMA     = 'Exponential Hull Moving Average'
+var string EMA      = 'Exponential Moving Average'
+var string EPMA     = 'End Point Moving Average'
+var string ETMA     = 'Exponential Triangular Moving Average'
+var string EVWMA    = 'Elastic Volume Weighted Moving Average'
+var string FAMA     = 'Following Adaptive Moving Average'
+var string FIBOWMA  = 'Fibonacci Weighted Moving Average'
+var string FISHLSMA = 'Fisher Least Squares Moving Average'
+var string FRAMA    = 'Fractal Adaptive Moving Average'
+var string GMA      = 'Geometric Moving Average'
+var string HKAMA    = 'Hilbert based Kaufman\'s Adaptive Moving Average'
+var string HMA      = 'Hull Moving Average'
+var string JURIK    = 'Jurik Moving Average'
+var string KAMA     = 'Kaufman\'s Adaptive Moving Average'
+var string LC_LSMA  = '1LC-LSMA (1 line code lsma with 3 functions)'
+var string LEOMA    = 'Leo Moving Average'
+var string LINWMA   = 'Linear Weighted Moving Average'
+var string LSMA     = 'Least Squares Moving Average'
+var string MAMA     = 'MESA Adaptive Moving Average'
+var string MCMA     = 'McNicholl Moving Average'
+var string MEDIAN   = 'Median'
+var string REGMA    = 'Regularized Exponential Moving Average'
+var string REMA     = 'Range EMA'
+var string REPMA    = 'Repulsion Moving Average'
+var string RMA      = 'Relative Moving Average'
+var string RSIMA    = 'RSI Moving average'
+var string RVWAP    = '* Rolling VWAP'
+var string SMA      = 'Simple Moving Average'
+var string SMMA     = 'Smoothed Moving Average'
+var string SRWMA    = 'Square Root Weighted Moving Average'
+var string SW_MA    = 'Sine-Weighted Moving Average'
+var string SWMA     = '* Symmetrically Weighted Moving Average'
+var string TEMA     = 'Triple Exponential Moving Average'
+var string THMA     = 'Triple Hull Moving Average'
+var string TREMA    = 'Triangular Exponential Moving Average'
+var string TRSMA    = 'Triangular Simple Moving Average'
+var string TT3      = 'Tillson T3'
+var string VAMA     = 'Volatility Adjusted Moving Average'
+var string VIDYA    = 'Variable Index Dynamic Average'
+var string VWAP     = '* VWAP'
+var string VWMA     = 'Volume-weighted Moving Average'
+var string WMA      = 'Weighted Moving Average'
+var string WWMA     = 'Welles Wilder Moving Average'
+var string XEMA     = 'Optimized Exponential Moving Average'
+var string ZEMA     = 'Zero-Lag Exponential Moving Average'
+var string ZSMA     = 'Zero-Lag Simple Moving Average'
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Inputs {
+string inputTypeMa = input.string(SMA, 'Type', 
+  options=[AARMA,ALSMA,AHMA,ADEMA,ALMA,AUTOL,COVWEMA,COVWMA,CMA,CORMA,DEMA,DONCHIAN,EFRAMA,EDSMA,EVWMA,EPMA,EDMA,EHMA,EMA,ETMA,FIBOWMA,FISHLSMA,FAMA,FRAMA,GMA,HKAMA,HMA,JURIK,KAMA,LC_LSMA,LEOMA,LSMA,LINWMA,MEDIAN,MAMA,MCMA,XEMA,REMA,REGMA,RMA,REPMA,RVWAP,RSIMA,SMA,SW_MA,SRWMA,SMMA,SWMA,TT3,TREMA,TRSMA,TEMA,THMA,VIDYA,VAMA,VWAP,WMA,WWMA,ZEMA,ZSMA])
+int inputLengthMa = input.int(55, minval=1, title='Length')
+float inputSourceMa = input.source(close, title='Source')
+int inputOffsetMa = input.int(title='Offset', defval=0, minval=-500, maxval=500)
+
+var string GRP_VWMA = 'Volume Weighted Moving Average'
+var string GRP_VWMA_TOOLTIP = 'The most common "Volume Weighted Moving Average" is a Simple Moving Average of Price x Volume, divided by Simple Moving Average of Volume. \n' + 
+  'Enabling this checkbox, it\'s possible to have other types and less common moving averages weighted by volume, for example, Exponencial Volume Weighted Moving Average, Alma Volume Weighted Moving Average, etc...'
+applyVolumeWeighted = input.bool(title="Volume Weighted Moving Average?", defval=false, group=GRP_VWMA, tooltip=GRP_VWMA_TOOLTIP)
+
+var string GROUP_COLORS = 'Colors'
+
+var inputLineColors         = input.bool(title="Change line colors when moving average is below or above source?", defval=true, group=GROUP_COLORS)
+var inputLineBull           = input.color(#3af13c, 'Bullish', inline='A', group=GROUP_COLORS)
+var inputLineBear           = input.color(#bd0000, 'Bearish', inline='A', group=GROUP_COLORS)
+var inputLineDefault        = input.color(color.white, 'Neutral', inline='A', group=GROUP_COLORS)
+
+var inputBarColors          = input.bool(title="Change bar colors when source are bellow or above MA?", defval=true, group=GROUP_COLORS)
+var inputBarBull            = input.color(#3af13c, 'Bullish', inline='B', group=GROUP_COLORS)
+var inputBarBear            = input.color(#bd0000, 'Bearish', inline='B', group=GROUP_COLORS)
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Functions {
+// @function applyBarColor
+// @description Returns a bull color if price source is greater than a moving average.
+//   Otherwise returns a bear color.
+// @returns Color
+applyBarColor(series float src, series float avg) =>
+
+    _barColor = if inputBarColors
+        if src >= nz(avg)
+            inputBarBull
+        else
+            inputBarBear
+    else
+        na
+            
+// @function applyLineColor
+// @description Returns a bull color if moving average is greater than price source.
+//   Otherwise returns a bear color.
+// @returns Color
+applyLineColor(series float src, series float avg) =>
+
+    _lineColor = if inputLineColors
+        if src >= nz(avg)
+            inputLineBull
+        else
+            inputLineBear
+    else
+        inputLineDefault
+// ———————————————————————————————————————— }            
+
+// ———————————————————————————————————————— Calcs {
+movingAverage = MaProxy.getMovingAverage(type=inputTypeMa, src=inputSourceMa, len=inputLengthMa, volumeWeighted=applyVolumeWeighted)
+// ———————————————————————————————————————— }
+
+// ———————————————————————————————————————— Graphics {
+plot = plot(movingAverage, title="Moving Average",
+  color=applyLineColor(inputSourceMa, movingAverage),
+  offset=inputOffsetMa, 
+  linewidth=1)
+
+barcolor( applyBarColor(inputSourceMa, movingAverage) )
+// ———————————————————————————————————————— }

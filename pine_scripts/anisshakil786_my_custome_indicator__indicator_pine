@@ -1,0 +1,446 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Muhammad_Anis
+
+//@version=5
+indicator("ICT Killzones + Pivots + EMA", "ICT Killzones + Pivots + EMA", true, max_lines_count = 500, max_boxes_count = 500)
+
+// ---------------------------------------- Constant Functions --------------------------------------------------
+get_line_type(_style) =>
+    switch _style
+        'Solid' => line.style_solid
+        'Dotted' => line.style_dotted
+        'Dashed' => line.style_dashed
+
+get_size(x) =>
+    switch x
+        'Auto' => size.auto
+        'Tiny' => size.tiny
+        'Small' => size.small
+        'Normal' => size.normal
+        'Large' => size.large
+        'Huge' => size.huge
+
+// ---------------------------------------- Constant Functions --------------------------------------------------
+
+// ---------------------------------------- Inputs --------------------------------------------------
+var g_SETTINGS = "Settings"
+
+enable_killzone = input.bool(true, "Enable Killzone", group = g_SETTINGS)
+enable_dwm = input.bool(true, "Enable Day - Week - Month", group = g_SETTINGS)
+enable_ma = input.bool(true, "Enable MA", group = g_SETTINGS)
+enable_extra_options = input.bool(true, "Enable Extra Options", group = g_SETTINGS)
+
+tf_limit = input.timeframe("30", "Timeframe Limit", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_SETTINGS)
+gmt_tz = input.string('America/New_York', "Timezone", options = ['America/New_York', 'GMT-12', 'GMT-11', 'GMT-10', 'GMT-9', 'GMT-8', 'GMT-7', 'GMT-6', 'GMT-5', 'GMT-4', 'GMT-3', 'GMT-2', 'GMT-1', 'GMT+0', 'GMT+1', 'GMT+2', 'GMT+3', 'GMT+4', 'GMT+5', 'GMT+6', 'GMT+7', 'GMT+8', 'GMT+9', 'GMT+10', 'GMT+11', 'GMT+12', 'GMT+13', 'GMT+14'], tooltip = "Note GMT is not adjusted to reflect Daylight Saving Time changes", group = g_SETTINGS)
+lbl_size = get_size(input.string('Small', "Label Size", options = ['Auto', 'Tiny', 'Small', 'Normal', 'Large', 'Huge'], tooltip = "The size of all labels", group = g_SETTINGS))
+txt_color = input.color(color.black, "Text Color", tooltip = "The color of all label and table text", group = g_SETTINGS)
+use_cutoff = input.bool(false, "Drawing Cutoff Time", inline = "CO", tooltip = "When enabled, all pivots and open price lines will stop extending at this time", group = g_SETTINGS)
+cutoff = input.session("1800-1801", "", inline = "CO", group = g_SETTINGS)
+
+var g_KZ = "Killzones"
+
+show_kz = input.bool(true, "Show Killzone Boxes", inline = "KZ", group = g_KZ)
+show_kz_text = input.bool(true, "Display Text", inline = "KZ", group = g_KZ)
+show_pivots = input.bool(true, "Show Pivots", inline = "PV", group = g_KZ)
+use_alerts = input.bool(true, "Alert Broken Pivots", inline = "PV", tooltip = "The desired killzones must be enabled at the time that an alert is created, along with the show pivots option, in order for alerts to work", group = g_KZ)
+show_midpoints = input.bool(true, "Show Pivot Midpoints", inline = "mp", group = g_KZ)
+stop_midpoints = input.bool(true, "Stop Once Mitigated", inline = "mp", group = g_KZ)
+ext_pivots = input.string("Until Mitigated", "Extend Pivots...", options = ['Until Mitigated', 'Past Mitigation'], group = g_KZ)
+ext_which = input.string("Most Recent", "...From Which Sessions", options = ['Most Recent', 'All'], group = g_KZ)
+
+use_asian_session = input.bool(true, "", inline = "ASIAN_SESSION", group = g_KZ)
+ss_txt = input.string("", "", inline = "ASIAN_SESSION", group = g_KZ)
+asian_session = input.session("1800-0200", "", inline = "ASIAN_SESSION", group = g_KZ)
+ss_color = input.color(color.aqua, "", inline = "ASIAN_SESSION", group = g_KZ)
+
+use_asia = input.bool(true, "", inline = "ASIA", group = g_KZ)
+as_txt = input.string("Asia", "", inline = "ASIA", group = g_KZ)
+asia = input.session("2000-0000", "", inline = "ASIA", group = g_KZ)
+as_color = input.color(color.blue, "", inline = "ASIA", group = g_KZ)
+
+use_london = input.bool(true, "", inline = "LONDON", group = g_KZ)
+lo_txt = input.string("London", "", inline = "LONDON", group = g_KZ)
+london = input.session("0200-0500", "", inline = "LONDON", group = g_KZ)
+lo_color = input.color(color.red, "", inline = "LONDON", group = g_KZ)
+
+use_nyam = input.bool(true, "", inline = "NYAM", group = g_KZ)
+na_txt = input.string("NY AM", "", inline = "NYAM", group = g_KZ)
+nyam = input.session("0930-1100", "", inline = "NYAM", group = g_KZ)
+na_color = input.color(#089981, "", inline = "NYAM", group = g_KZ)
+
+use_nylu = input.bool(true, "", inline = "NYLU", group = g_KZ)
+nl_txt = input.string("NY Lunch", "", inline = "NYLU", group = g_KZ)
+nylu = input.session("1200-1300", "", inline = "NYLU", group = g_KZ)
+nl_color = input.color(color.yellow, "", inline = "NYLU", group = g_KZ)
+
+use_nypm = input.bool(true, "", inline = "NYPM", group = g_KZ)
+np_txt = input.string("NY PM", "", inline = "NYPM", group = g_KZ)
+nypm = input.session("1330-1600", "", inline = "NYPM", group = g_KZ)
+np_color = input.color(color.purple, "", inline = "NYPM", group = g_KZ)
+
+box_transparency = input.int(90, "Box Transparency", 0, 100, group = g_KZ)
+text_transparency = input.int(90, "Text Transparency", 0, 100, group = g_KZ)
+kzp_style = get_line_type(input.string(defval = 'Solid', title = "Pivot Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "KZP", group = g_KZ))
+kzp_width = input.int(1, "", inline = "KZP", group = g_KZ)
+kzm_style = get_line_type(input.string(defval = 'Dotted', title = "Midpoint Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "KZM", group = g_KZ))
+kzm_width = input.int(1, "", inline = "KZM", group = g_KZ)
+
+var g_DWM = "Day - Week - Month"
+
+alert_HL = input.bool(true, "Alert High/Low Break", tooltip = "Alert when any selected highs and lows are traded through. The desired timeframe's high/low option must be enabled at the time that an alert is created", group = g_DWM)
+
+show_d_open = input.bool(false, "D Open", inline = "DO", group = g_DWM)
+dhl = input.bool(true, "High/Low", inline = "DO", tooltip = "", group = g_DWM)
+ds = input.bool(false, "Separators", inline = "DO", tooltip = "Mark where a new day begins", group = g_DWM)
+tf_limit_daily = input.timeframe("240", "", inline = "DO", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_DWM)
+d_color = input.color(color.purple, "", inline = "DO", group = g_DWM)
+
+show_w_open = input.bool(false, "W Open", inline = "WO", group = g_DWM)
+whl = input.bool(true, "High/Low", inline = "WO", tooltip = "", group = g_DWM)
+ws = input.bool(false, "Separators", inline = "WO", tooltip = "Mark where a new week begins", group = g_DWM)
+tf_limit_weekly = input.timeframe("D", "", inline = "WO", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_DWM)
+w_color = input.color(color.purple, "", inline = "WO", group = g_DWM)
+
+show_m_open = input.bool(false, "M Open", inline = "MO", group = g_DWM)
+mhl = input.bool(true, "High/Low", inline = "MO", tooltip = "", group = g_DWM)
+ms = input.bool(false, "Separators", inline = "MO", tooltip = "Mark where a new month begins", group = g_DWM)
+tf_limit_monthly = input.timeframe("W", "", inline = "MO", tooltip = "Drawings will not appear on timeframes greater than or equal to this", group = g_DWM)
+m_color = input.color(color.purple, "", inline = "MO", group = g_DWM)
+
+htf_style = get_line_type(input.string(defval = 'Solid', title = "Style", options = ['Solid', 'Dotted', 'Dashed'], inline = "D0", group = g_DWM))
+htf_width = input.int(2, "", inline = "D0", group = g_DWM)
+
+var g_MA = "MA"
+
+use_ma1 = input.bool(true, "MA 1", inline="MA1", group=g_MA)
+type_ma1 = input.string("EMA", "", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], inline="MA1", group=g_MA)
+source_ma1 = input.string("close", "", options=["open", "high", "low", "close", "hl2", "hlc3", "ohlc4", "hlcc4"], inline="MA1", group=g_MA)
+length_ma1 = input.int(5, "", inline="MA1", group=g_MA)
+color_ma1 = input.color(color.blue, "", inline="MA1", group=g_MA)
+
+use_ma2 = input.bool(true, "MA 2", inline="MA2", group=g_MA)
+type_ma2 = input.string("EMA", "", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], inline="MA2", group=g_MA)
+source_ma2 = input.string("close", "", options=["open", "high", "low", "close", "hl2", "hlc3", "ohlc4", "hlcc4"], inline="MA2", group=g_MA)
+length_ma2 = input.int(50, "", inline="MA2", group=g_MA)
+color_ma2 = input.color(color.black, "", inline="MA2", group=g_MA)
+
+use_ma3 = input.bool(false, "MA 3", inline="MA3", group=g_MA)
+type_ma3 = input.string("EMA", "", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], inline="MA3", group=g_MA)
+source_ma3 = input.string("close", "", options=["open", "high", "low", "close", "hl2", "hlc3", "ohlc4", "hlcc4"], inline="MA3", group=g_MA)
+length_ma3 = input.int(100, "", inline="MA3", group=g_MA)
+color_ma3 = input.color(color.green, "", inline="MA3", group=g_MA)
+
+use_ma4 = input.bool(true, "MA 4", inline="MA4", group=g_MA)
+type_ma4 = input.string("EMA", "", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], inline="MA4", group=g_MA)
+source_ma4 = input.string("close", "", options=["open", "high", "low", "close", "hl2", "hlc3", "ohlc4", "hlcc4"], inline="MA4", group=g_MA)
+length_ma4 = input.int(200, "", inline="MA4", group=g_MA)
+color_ma4 = input.color(color.red, "", inline="MA4", group=g_MA)
+
+var g_Extra_Options = "Extra Options"
+
+use_true_day_open = input.bool(true, "True Day Open", inline="TDO", group = g_Extra_Options)
+true_day_open_style = get_line_type(input.string(defval='Solid', title="", options=['Solid', 'Dotted', 'Dashed'], inline="TDO", group = g_Extra_Options))
+true_day_open_width = input.int(1, "", inline="TDO", group = g_Extra_Options)
+true_day_open_color = input.color(color.rgb(54, 58, 69, 70), "", inline="TDO", group = g_Extra_Options)
+
+// ---------------------------------------- Inputs --------------------------------------------------
+
+// ---------------------------------------- Variables & Constants --------------------------------------------------
+type kz
+    string _title
+    box[] _box
+    line[] _hi_line
+    line[] _md_line
+    line[] _lo_line
+    bool[] _hi_valid
+    bool[] _md_valid
+    bool[] _lo_valid
+
+type hz
+    line[] LN
+    label[] LB
+    bool[] CO
+
+type dwm_hl
+    line[] hi_line
+    line[] lo_line
+    label[] hi_label
+    label[] lo_label
+    bool hit_high = false
+    bool hit_low = false
+
+type dwm_info
+    string tf
+    float o = na
+    float h = na
+    float l = na
+    float ph = na
+    float pl = na
+
+var ss_kz = kz.new(ss_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+var as_kz = kz.new(as_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+var lo_kz = kz.new(lo_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+var na_kz = kz.new(na_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+var nl_kz = kz.new(nl_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+var np_kz = kz.new(np_txt, array.new_box(), array.new_line(), array.new_line(), array.new_line(), array.new_bool(), array.new_bool(), array.new_bool())
+
+var hz_tdo = hz.new(array.new_line(), array.new_label(), array.new_bool())
+var float true_day_open_price = na
+
+var d_hl = dwm_hl.new(array.new_line(), array.new_line(), array.new_label(), array.new_label())
+var w_hl = dwm_hl.new(array.new_line(), array.new_line(), array.new_label(), array.new_label())
+var m_hl = dwm_hl.new(array.new_line(), array.new_line(), array.new_label(), array.new_label())
+
+var d_info = dwm_info.new("D")
+var w_info = dwm_info.new("W")
+var m_info = dwm_info.new("M")
+
+t_ss = not na(time("", asian_session, gmt_tz))
+t_as = not na(time("", asia, gmt_tz))
+t_lo = not na(time("", london, gmt_tz))
+t_na = not na(time("", nyam, gmt_tz))
+t_nl = not na(time("", nylu, gmt_tz))
+t_np = not na(time("", nypm, gmt_tz))
+t_co = not na(time("", cutoff, gmt_tz))
+
+t_tdo = not na(time("", "0000-0001", gmt_tz))
+
+var d_sep_line = array.new_line()
+var w_sep_line = array.new_line()
+var m_sep_line = array.new_line()
+
+var d_line = array.new_line()
+var w_line = array.new_line()
+var m_line = array.new_line()
+
+var d_label = array.new_label()
+var w_label = array.new_label()
+var m_label = array.new_label()
+
+var float ma1 = na
+var float ma2 = na
+var float ma3 = na
+var float ma4 = na
+
+var transparent = #ffffff00
+var ext_current = ext_which == 'Most Recent'
+var ext_past = ext_pivots == 'Past Mitigation'
+
+update_dwm_info(dwm_info n) =>
+    if timeframe.change(n.tf)
+        n.ph := n.h
+        n.pl := n.l
+        n.o := open
+        n.h := high
+        n.l := low
+    else
+        n.h := math.max(high, n.h)
+        n.l := math.min(low, n.l)
+
+if dhl or show_d_open
+    update_dwm_info(d_info)
+if whl or show_w_open
+    update_dwm_info(w_info)
+if mhl or show_m_open
+    update_dwm_info(m_info)
+// ---------------------------------------- Variables & Constants --------------------------------------------------
+
+// ---------------------------------------- Functions --------------------------------------------------
+
+get_box_color(color c) =>
+    color.new(c, box_transparency)
+
+get_text_color(color c) =>
+    color.new(c, text_transparency)
+
+get_source(source) =>
+    switch source
+        "open" => open
+        "high" => high
+        "low" => low
+        "close" => close
+        "hl2" => hl2
+        "hlc3" => hlc3
+        "ohlc4" => ohlc4
+        "hlcc4" => hlcc4
+
+get_ma(type, source, length) =>
+    type == 'SMA' ? ta.sma(source, length) : type == 'EMA' ? ta.ema(source, length) : type == 'SMMA (RMA)' ? ta.rma(source, length) : type == 'WMA' ? ta.wma(source, length) : ta.vwma(source, length)
+
+// ---------------------------------------- Functions --------------------------------------------------
+
+// ---------------------------------------- Core Logic --------------------------------------------------
+dwm_sep(string tf, bool use, line[] arr, color col) =>
+    if use and timeframe.change(tf)
+        arr.unshift(line.new(bar_index, high * 1.0001, bar_index, low, style = htf_style, width = htf_width, extend = extend.both, color = col))
+
+dwm_open(string tf, bool use, line[] lns, label[] lbls, dwm_info n, color col, string tf_limit) =>
+    if use and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        if lns.size() > 0
+            lns.get(0).set_x2(time)
+            lbls.get(0).set_x(time)
+        if timeframe.change(tf)
+            if lns.size() > 0
+                lns.get(0).delete()
+                lbls.get(0).delete()
+            lns.unshift(line.new(time, n.o, time, n.o, xloc = xloc.bar_time, style = htf_style, width = htf_width, color = col))
+            lbls.unshift(label.new(time, n.o, tf + " OPEN", xloc = xloc.bar_time, style = label.style_label_left, color = transparent, textcolor = txt_color, size = lbl_size))
+        if lns.size() > 0
+            lns.get(0).set_x2(time)
+            lbls.get(0).set_x(time)
+
+dwm_hl(string tf, bool use, dwm_hl hl, dwm_info n, color col, string tf_limit) =>
+    if use and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        if hl.hi_line.size() > 0
+            hl.hi_line.get(0).set_x2(time)
+            hl.lo_line.get(0).set_x2(time)
+            hl.hi_label.get(0).set_x(time)
+            hl.lo_label.get(0).set_x(time)
+        if timeframe.change(tf)
+            if hl.hi_line.size() > 0
+                hl.hi_line.get(0).delete()
+                hl.lo_line.get(0).delete()
+                hl.hi_label.get(0).delete()
+                hl.lo_label.get(0).delete()
+            hl.hi_line.unshift(line.new(time, n.ph, time, n.ph, xloc = xloc.bar_time, style = htf_style, width = htf_width, color = col))
+            hl.lo_line.unshift(line.new(time, n.pl, time, n.pl, xloc = xloc.bar_time, style = htf_style, width = htf_width, color = col))
+            hl.hi_label.unshift(label.new(time, n.ph, "P" + tf + "H", xloc = xloc.bar_time, style = label.style_label_left, color = transparent, textcolor = txt_color, size = lbl_size))
+            hl.lo_label.unshift(label.new(time, n.pl, "P" + tf + "L", xloc = xloc.bar_time, style = label.style_label_left, color = transparent, textcolor = txt_color, size = lbl_size))
+            hl.hit_high := false
+            hl.hit_low := false
+        if hl.hi_line.size() > 0
+            hl.hi_line.get(0).set_x2(time)
+            hl.lo_line.get(0).set_x2(time)
+            hl.hi_label.get(0).set_x(time)
+            hl.lo_label.get(0).set_x(time)
+
+dwm() =>
+    // DWM - Open Lines
+    dwm_open("D", show_d_open, d_line, d_label, d_info, d_color, tf_limit_daily)
+    dwm_open("W", show_w_open, w_line, w_label, w_info, w_color, tf_limit_weekly)
+    dwm_open("M", show_m_open, m_line, m_label, m_info, m_color, tf_limit_monthly)
+
+    // DWM - Highs and Lows
+    dwm_hl("D", dhl, d_hl, d_info, d_color, tf_limit_daily)
+    dwm_hl("W", whl, w_hl, w_info, w_color, tf_limit_weekly)
+    dwm_hl("M", mhl, m_hl, m_info, m_color, tf_limit_monthly)
+
+hz_line(bool use, bool t, hz hz, string txt, color col) =>
+    if use and timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit)
+        if t and not t[1]
+            hz.LN.unshift(line.new(bar_index, open, bar_index, open, style = true_day_open_style, width = true_day_open_width, color = col))
+            hz.LB.unshift(label.new(bar_index, open, txt, style = label.style_label_left, color = transparent, textcolor = txt_color, size = lbl_size))
+            array.unshift(hz.CO, false)
+        if not t and hz.CO.size() > 0
+            if not hz.CO.get(0)
+                hz.LN.get(0).set_x2(bar_index)
+                hz.LB.get(0).set_x(bar_index)
+                if (use_cutoff ? t_co : false)
+                    hz.CO.set(0, true)
+
+adjust_in_kz(kz kz, bool t) =>
+    if t
+        kz._box.get(0).set_right(time)
+        kz._box.get(0).set_top(math.max(kz._box.get(0).get_top(), high))
+        kz._box.get(0).set_bottom(math.min(kz._box.get(0).get_bottom(), low))
+
+        if show_pivots and kz._hi_line.size() > 0
+            kz._hi_line.get(0).set_x2(time)
+            if high > kz._hi_line.get(0).get_y1()
+                kz._hi_line.get(0).set_xy1(time, high)
+                kz._hi_line.get(0).set_xy2(time, high)
+
+            kz._lo_line.get(0).set_x2(time)
+            if low < kz._lo_line.get(0).get_y1()
+                kz._lo_line.get(0).set_xy1(time, low)
+                kz._lo_line.get(0).set_xy2(time, low)
+
+            if show_midpoints
+                kz._md_line.get(0).set_x2(time)
+                kz._md_line.get(0).set_xy1(time, math.avg(kz._hi_line.get(0).get_y2(), kz._lo_line.get(0).get_y2()))
+                kz._md_line.get(0).set_xy2(time, math.avg(kz._hi_line.get(0).get_y2(), kz._lo_line.get(0).get_y2()))
+
+adjust_out_kz(kz kz, bool t) =>
+    if kz._box.size() > 0 and show_pivots
+        for i = 0 to kz._box.size() - 1
+            if not ext_current or (ext_current and i == 0)
+                if ext_past or kz._hi_valid.get(i)
+                    kz._hi_line.get(i).set_x2(time)
+                if high > kz._hi_line.get(i).get_y1() and kz._hi_valid.get(i)
+                    if use_alerts and i == 0
+                        alert("Broke " + kz._title + " High", alert.freq_once_per_bar)
+                    kz._hi_valid.set(i, false)
+                else if use_cutoff and t_co
+                    kz._hi_valid.set(i, false)
+
+                if ext_past or kz._lo_valid.get(i)
+                    kz._lo_line.get(i).set_x2(time)
+                if low < kz._lo_line.get(i).get_y1() and kz._lo_valid.get(i)
+                    if use_alerts and i == 0
+                        alert("Broke " + kz._title + " Low", alert.freq_once_per_bar)
+                    kz._lo_valid.set(i, false)
+                else if use_cutoff and t_co
+                    kz._lo_valid.set(i, false)
+
+                if show_midpoints and not t
+                    if stop_midpoints ? kz._md_valid.get(i) : true
+                        kz._md_line.get(i).set_x2(time)
+                        if kz._md_valid.get(i) and low <= kz._md_line.get(i).get_y1() and high >= kz._md_line.get(i).get_y1()
+                            kz._md_valid.set(i, false)
+            else
+                break
+
+manage_kz(kz kz, bool use, bool t, color c, string box_txt) =>
+    if timeframe.in_seconds("") <= timeframe.in_seconds(tf_limit) and use
+        if t and not t[1]
+            _c = get_box_color(c)
+            _t = get_text_color(c)
+            kz._box.unshift(box.new(time, high, time, low, xloc = xloc.bar_time, border_color = show_kz ? _c : na, bgcolor = show_kz ? _c : na, text = (show_kz and show_kz_text) ? box_txt : na, text_color = _t))
+
+            if show_pivots
+                kz._hi_line.unshift(line.new(time, high, time, high, xloc = xloc.bar_time, style = kzp_style, color = c, width = kzp_width))
+                kz._lo_line.unshift(line.new(time, low, time, low, xloc = xloc.bar_time, style = kzp_style, color = c, width = kzp_width))
+                if show_midpoints
+                    kz._md_line.unshift(line.new(time, math.avg(high, low), time, math.avg(high, low), xloc = xloc.bar_time, style = kzm_style, color = c, width = kzm_width))
+                    array.unshift(kz._md_valid, true)
+
+                array.unshift(kz._hi_valid, true)
+                array.unshift(kz._lo_valid, true)
+
+        adjust_in_kz(kz, t)
+        adjust_out_kz(kz, t)
+
+if enable_killzone
+    manage_kz(ss_kz, use_asian_session, t_ss, ss_color, ss_txt)
+    manage_kz(as_kz, use_asia, t_as, as_color, as_txt)
+    manage_kz(lo_kz, use_london, t_lo, lo_color, lo_txt)
+    manage_kz(na_kz, use_nyam, t_na, na_color, na_txt)
+    manage_kz(nl_kz, use_nylu, t_nl, nl_color, nl_txt)
+    manage_kz(np_kz, use_nypm, t_np, np_color, np_txt)
+
+if enable_dwm
+    dwm()
+
+if enable_extra_options
+    hz_line(use_true_day_open, t_tdo, hz_tdo, "True Day Open", true_day_open_color)
+
+if enable_ma
+    if use_ma1
+        source1 = get_source(source_ma1)
+        ma1 := get_ma(type_ma1, source1, length_ma1)
+    if use_ma2
+        source2 = get_source(source_ma2)
+        ma2 := get_ma(type_ma2, source2, length_ma2)
+    if use_ma3
+        source3 = get_source(source_ma3)
+        ma3 := get_ma(type_ma3, source3, length_ma3)
+    if use_ma4
+        source4 = get_source(source_ma4)
+        ma4 := get_ma(type_ma4, source4, length_ma4)
+
+plot(use_ma1 ? ma1 : na, title="MA 1", color=color_ma1, linewidth=1)
+plot(use_ma2 ? ma2 : na, title="MA 2", color=color_ma2, linewidth=1)
+plot(use_ma3 ? ma3 : na, title="MA 3", color=color_ma3, linewidth=1)
+plot(use_ma4 ? ma4 : na, title="MA 4", color=color_ma4, linewidth=1)
+
+// ---------------------------------------- Core Logic --------------------------------------------------

@@ -1,0 +1,349 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Mehdi Hesami (hesami13@yahoo.com)
+
+//@version=5
+indicator("Advanced Scalping EMA & RSI Strategy", overlay=true)
+
+// گروه‌بندی تنظیمات EMA سریع‌تر (Quick EMA)
+group_fastEma = "Quick EMA Settings"
+fastEmaSource = input.source(ohlc4, title="Source", group=group_fastEma, tooltip="The price data source for calculating the quick EMA.")
+fastEmaLength = input.int(9, title="Length", group=group_fastEma, tooltip="The number of periods used for the quick EMA calculation.")
+fastEmaMethod = input.string("VWMA", title="Method", options=["SMA", "EMA", "WMA", "VWMA"], group=group_fastEma, tooltip="The method used for calculating the quick EMA.")
+
+// تابع انتخاب متد برای EMA سریع‌تر
+fastEma = switch fastEmaMethod
+    "SMA" => ta.sma(fastEmaSource, fastEmaLength)
+    "EMA" => ta.ema(fastEmaSource, fastEmaLength)
+    "WMA" => ta.wma(fastEmaSource, fastEmaLength)
+    "VWMA" => ta.vwma(fastEmaSource, fastEmaLength)
+
+// گروه‌بندی تنظیمات EMA نرم‌تر (Smooth EMA)
+group_smoothEma = "Smooth EMA Settings"
+smoothEmaSource = input.source(ohlc4, title="Source", group=group_smoothEma, tooltip="The price data source for calculating the smooth EMA.")
+smoothEmaLength = input.int(21, title="Length", group=group_smoothEma, tooltip="The number of periods used for the smooth EMA calculation.")
+smoothEmaMethod = input.string("VWMA", title="Method", options=["SMA", "EMA", "WMA", "VWMA"], group=group_smoothEma, tooltip="The method used for calculating the smooth EMA.")
+
+// تابع انتخاب متد برای EMA نرم‌تر
+smoothEma = switch smoothEmaMethod
+    "SMA" => ta.sma(smoothEmaSource, smoothEmaLength)
+    "EMA" => ta.ema(smoothEmaSource, smoothEmaLength)
+    "WMA" => ta.wma(smoothEmaSource, smoothEmaLength)
+    "VWMA" => ta.vwma(smoothEmaSource, smoothEmaLength)
+
+// گروه‌بندی تنظیمات RSI
+group_rsi = "RSI Settings"
+rsiLength = input.int(14, title="RSI Length", group=group_rsi, tooltip="The number of periods used for the RSI calculation.")
+rsiSource = input.source(close, title="RSI Source", group=group_rsi, tooltip="The price data source for calculating the RSI.")
+rsiOverbought = input.int(70, title="RSI Overbought Level", group=group_rsi, tooltip="The RSI level above which the market is considered overbought.")
+rsiOverboughtBuffer = input.int(60, title="RSI Overbought Buffer Level", group=group_rsi, tooltip="A buffer level for additional overbought flexibility.")
+rsiOversold = input.int(30, title="RSI Oversold Level", group=group_rsi, tooltip="The RSI level below which the market is considered oversold.")
+rsiOversoldBuffer = input.int(40, title="RSI Oversold Buffer Level", group=group_rsi, tooltip="A buffer level for additional oversold flexibility.")
+
+// محاسبه RSI
+rsi = ta.rsi(rsiSource, rsiLength)
+rsiLag = ta.rsi(rsiSource, rsiLength)[2]
+
+// گروه‌بندی تنظیمات ATR
+group_scalping = "Scalping Settings"
+useAtrFilter = input.bool(false, title="Use ATR Filter for Scalping", group=group_scalping, tooltip="Enable or disable the ATR filter for scalping trades.")
+atrLength = input.int(14, title="ATR Length", group=group_scalping, tooltip="The number of periods used for the ATR calculation.")
+atrMultiplier = input.float(0.35, title="ATR Multiplier", group=group_scalping, tooltip="The multiplier applied to the ATR for filtering scalping trades.")
+atrAdaptive = input.bool(false, title="Adaptive ATR Multiplier", group=group_scalping, tooltip="Enable dynamic ATR multiplier based on market conditions.")
+
+// محاسبه ATR
+atr = ta.atr(atrLength)
+multiplier = useAtrFilter and atrAdaptive ? atrMultiplier * (atr / ta.ema(atr, atrLength)) : atrMultiplier
+
+// محاسبه روند (صعودی یا نزولی)
+trendCondition = fastEma > smoothEma ? "Bullish" : "Bearish"
+
+// قوانین ورود Long
+longCondition = ta.crossover(fastEma, smoothEma) and close > fastEma and (rsi < rsiOversold or rsiLag < rsiOversoldBuffer)
+
+// قوانین ورود Short
+shortCondition = ta.crossunder(fastEma, smoothEma) and close < fastEma and (rsi > rsiOverbought or rsiLag > rsiOverboughtBuffer)
+
+
+
+
+// اعمال فیلتر ATR برای معاملات اسکالپی
+if useAtrFilter
+    longCondition := longCondition and close - fastEma > atr * multiplier
+    shortCondition := shortCondition and fastEma - close > atr * multiplier
+
+// تنظیمات ADX
+group_adx = "ADX Settings"
+useAdxFilter = input.bool(false, title="Use ADX Filter", group=group_adx, tooltip="Enable or disable the ADX filter for trade entries.")
+adxLength = input.int(14, title="ADX Length", group=group_adx, tooltip="The number of periods used for the ADX calculation.")
+adxThreshold = input.float(25, title="ADX Threshold", group=group_adx, tooltip="The ADX threshold for identifying strong trends.")
+
+// محاسبه DI+ و DI-
+plusDI = ta.rma(math.max(high - high[1], 0), adxLength)
+minusDI = ta.rma(math.max(low[1] - low, 0), adxLength)
+sumDI = plusDI + minusDI
+dx = sumDI != 0 ? 100 * math.abs(plusDI - minusDI) / sumDI : 0
+
+// محاسبه ADX
+adxValue = ta.rma(dx, adxLength)
+
+// افزودن شرط ADX به سیگنال‌ها
+if useAdxFilter
+    longCondition := longCondition and adxValue > adxThreshold
+    shortCondition := shortCondition and adxValue > adxThreshold
+
+
+
+
+
+
+
+// Grouping for Candlestick Patterns Confirmation (Bullish)
+group_patternConfirmationBullish = "Candlestick Patterns Confirmation (Bullish)"
+// Grouping for Candlestick Patterns Confirmation (Bearish)
+group_patternConfirmationBearish = "Candlestick Patterns Confirmation (Bearish)"
+
+// Individual pattern activations for Bullish signals
+useCustomBullishPattern = input.bool(true, title="Use Custom Bullish Candle Pattern", group=group_patternConfirmationBullish, tooltip="Enable or disable the recognition of custom bullish candle patterns.")
+useHammer = input.bool(false, title="Use Hammer Pattern", group=group_patternConfirmationBullish, tooltip="Enable or disable the recognition of bullish hammer patterns.")
+useBullishEngulfing = input.bool(false, title="Use Bullish Engulfing Pattern", group=group_patternConfirmationBullish, tooltip="Enable or disable the recognition of bullish engulfing patterns.")
+useMorningStar = input.bool(false, title="Use Morning Star Pattern", group=group_patternConfirmationBullish, tooltip="Enable or disable the recognition of bullish morning star patterns.")
+
+// Individual pattern activations for Bearish signals
+useCustomBearishPattern = input.bool(true, title="Use Custom Bearish Candle Pattern", group=group_patternConfirmationBearish, tooltip="Enable or disable the recognition of custom bearish candle patterns.")
+useShootingStar = input.bool(false, title="Use Shooting Star Pattern", group=group_patternConfirmationBearish, tooltip="Enable or disable the recognition of bearish shooting star patterns.")
+useBearishEngulfing = input.bool(false, title="Use Bearish Engulfing Pattern", group=group_patternConfirmationBearish, tooltip="Enable or disable the recognition of bearish engulfing patterns.")
+useEveningStar = input.bool(false, title="Use Evening Star Pattern", group=group_patternConfirmationBearish, tooltip="Enable or disable the recognition of bearish evening star patterns.")
+
+// Custom Bullish Pattern Logic
+isCustomBullishPattern = useCustomBullishPattern and (close > open) and ((high - close) < 2 * (close - open)) and ((open - low) > 2 * (close - open))
+
+// Custom Bearish Pattern Logic
+isCustomBearishPattern = useCustomBearishPattern and (close < open) and ((open - low) < 2 * (open - close)) and ((high - open) > 2 * (open - close))
+
+// Candlestick Patterns Recognition for Bullish signals
+isHammer = useHammer and (close > open) and ((high - close) < 2 * (close - open)) and ((open - low) > 2 * (close - open))
+isBullishEngulfing = useBullishEngulfing and (close > open) and (close > high[1]) and (open < low[1])
+isMorningStar = useMorningStar and (open[2] > close[2]) and (math.abs(open[1] - close[1]) < (high[1] - low[1]) * 0.3) and (close > open)
+
+// Candlestick Patterns Recognition for Bearish signals
+isShootingStar = useShootingStar and (open > close) and ((open - low) < 2 * (open - close)) and ((high - open) > 2 * (open - close))
+isBearishEngulfing = useBearishEngulfing and (close < open) and (close < low[1]) and (open > high[1])
+isEveningStar = useEveningStar and (close[2] > open[2]) and (math.abs(open[1] - close[1]) < (high[1] - low[1]) * 0.3) and (close < open)
+
+// Check which bullish patterns are active and confirmed
+bullishPatternConfirmed = false
+bearishPatternConfirmed = false
+
+candlesToCheck = 3
+
+// Bullish Patterns Confirmation
+for i = 0 to candlesToCheck - 1
+    if (useHammer and isHammer[i]) or 
+       (useBullishEngulfing and isBullishEngulfing[i]) or 
+       (useMorningStar and isMorningStar[i]) or 
+       (useCustomBullishPattern and isCustomBullishPattern[i])
+        bullishPatternConfirmed := true
+
+// Bearish Patterns Confirmation
+for i = 0 to candlesToCheck - 1
+    if (useShootingStar and isShootingStar[i]) or 
+       (useBearishEngulfing and isBearishEngulfing[i]) or 
+       (useEveningStar and isEveningStar[i]) or 
+       (useCustomBearishPattern and isCustomBearishPattern[i])
+        bearishPatternConfirmed := true
+
+// Default behavior: If no patterns are enabled, skip confirmation
+bullishCandleConfirmation = (useHammer or useBullishEngulfing or useMorningStar or useCustomBullishPattern) ? bullishPatternConfirmed : true
+bearishCandleConfirmation = (useShootingStar or useBearishEngulfing or useEveningStar or useCustomBearishPattern) ? bearishPatternConfirmed : true
+
+// Combine pattern confirmation with existing conditions for buy/sell signals
+longCondition := longCondition and bullishCandleConfirmation
+shortCondition := shortCondition and bearishCandleConfirmation
+
+
+
+
+
+
+
+
+
+
+
+
+
+// تنظیمات برای فعال/غیرفعال کردن شرط قدرت نزولی
+enableBearishStrengthCondition = input.bool(false, title="Exclude Strong Downtrends Signals", tooltip="This strategy involves avoiding investments in assets that are experiencing a significant and sustained price decline. It is based on the premise that it is generally more prudent to wait for a market to stabilize or reverse its downward trend before considering new purchases.", group="Trend Strength Settings")
+
+// تنظیمات برای قدرت نزولی
+bearishStrengthThreshold = input.float(0.5, title="Bearish Strength Threshold", tooltip="The threshold for bearish strength, to avoid signals when the bearish momentum is too strong.", group="Trend Strength Settings")
+
+// محاسبه قدرت نزولی (مجموع تغییرات نزولی قیمت)
+bearishStrength = math.sum(close - open < 0 ? math.abs(close - open) : 0, 5) / math.sum(math.abs(close - open), 5)
+
+// افزودن شرط قدرت نزولی به سیگنال فروش با توجه به فعال/غیرفعال بودن شرط
+shortCondition := shortCondition and (not enableBearishStrengthCondition or bearishStrength < bearishStrengthThreshold)
+
+
+// تنظیمات برای فعال/غیرفعال کردن شرط قدرت صعودی
+enableBullishStrengthCondition = input.bool(false, title="Exclude Strong Uptrends Signals", tooltip="This strategy involves avoiding investments in assets that are experiencing a significant and sustained price increase. It is often based on the belief that markets that have risen rapidly may be due for a correction and that it is better to wait for a more favorable entry point.", group="Trend Strength Settings")
+
+// تنظیمات برای قدرت صعودی
+bullishStrengthThreshold = input.float(0.5, title="Bullish Strength Threshold", tooltip="The threshold for bullish strength, to avoid signals when the bullish momentum is too strong.", group="Trend Strength Settings")
+
+// محاسبه قدرت صعودی (مجموع تغییرات صعودی قیمت)
+bullishStrength = math.sum(close - open > 0 ? math.abs(close - open) : 0, 5) / math.sum(math.abs(close - open), 5)
+
+// افزودن شرط قدرت صعودی به سیگنال خرید با توجه به فعال/غیرفعال بودن شرط
+longCondition := longCondition and (not enableBullishStrengthCondition or bullishStrength > bullishStrengthThreshold)
+
+
+
+
+
+
+// تنظیمات برای فعال/غیرفعال کردن شرط اصلاح قیمت
+enableRetracementCondition = input.bool(false, title="Retracement Condition", tooltip="Toggle the retracement condition on/off for signal confirmation.", group="Retracement Settings")
+
+// تنظیمات تعداد کندل‌های اخیر برای شناسایی اصلاح قیمت
+retracementPeriod = input.int(20, title="Retracement Period", tooltip="Number of candles to look back for retracement.", group="Retracement Settings")
+
+// محاسبه بالاترین و پایین‌ترین قیمت‌های اخیر
+highestPrice = ta.highest(high, retracementPeriod)
+lowestPrice = ta.lowest(low, retracementPeriod)
+
+// شناسایی اصلاح قیمت
+isRetracing = close > lowestPrice + (highestPrice - lowestPrice) * 0.382  // مثلاً اصلاح 38.2% فیبوناچی
+
+// افزودن شرط اصلاح قیمت به سیگنال خرید با توجه به فعال/غیرفعال بودن شرط
+longCondition := longCondition and (not enableRetracementCondition or isRetracing)
+
+// افزودن شرط اصلاح قیمت به سیگنال فروش با توجه به فعال/غیرفعال بودن شرط
+shortCondition := shortCondition and (not enableRetracementCondition or not isRetracing)
+
+
+
+
+
+
+
+
+
+
+// تنظیمات برای فعال/غیرفعال کردن بررسی تعداد کندل‌های نزولی پی‌درپی
+enableConsecutiveCandleCheck = input.bool(false, title="Exclude Consecutive Bearish & Bullish Candles", tooltip="Toggle the condition for ignoring consecutive bearish and bullish candles on/off.", group="Consecutive Settings")
+
+// تنظیمات تعداد کندل‌های نزولی مجاز
+maxConsecutiveCandles = input.int(3, title="Allowed Candles", tooltip="The maximum number of consecutive candles before filtering the signal.", group="Consecutive Settings")
+
+avgConsecutivesBodySizelength = input.int(5, minval=1, title="Before Length", group="Consecutive Settings", tooltip="Sets the length for the EMA calculation of the average candle body size.")
+
+// تنظیمات برای حداقل اندازه بدنه کندل‌ها (بر اساس درصدی از میانگین)
+minCandleBodyPct = input.float(0.5, title="Minimum Body Size (% of average)", tooltip="The minimum size of a candle body as a percentage of the average candle body size.", group="Consecutive Settings")
+
+// محاسبه میانگین اندازه بدنه کندل‌ها
+avgCandleBody = ta.ema(math.abs(close - open), avgConsecutivesBodySizelength)
+
+// شمارش کندل‌های نزولی پی‌درپی با توجه به اندازه بدنه کندل‌ها
+consecutiveBearish = 0
+for i = 1 to maxConsecutiveCandles + 1
+    if close[i] < open[i] and math.abs(close[i] - open[i]) > (minCandleBodyPct / 100) * avgCandleBody
+        consecutiveBearish := consecutiveBearish + 1
+    else
+        break
+
+// شمارش کندل‌های صعودی پی‌درپی با توجه به اندازه بدنه کندل‌ها
+consecutiveBullish = 0
+for i = 1 to maxConsecutiveCandles + 1
+    if close[i] > open[i] and math.abs(close[i] - open[i]) > (minCandleBodyPct / 100) * avgCandleBody
+        consecutiveBullish := consecutiveBullish + 1
+    else
+        break
+
+// منطق شرط‌ها برای سیگنال فروش
+shortCondition := shortCondition and (not enableConsecutiveCandleCheck or consecutiveBearish < maxConsecutiveCandles)
+
+// منطق شرط‌ها برای سیگنال خرید
+longCondition := longCondition and (not enableConsecutiveCandleCheck or consecutiveBullish < maxConsecutiveCandles)
+
+
+
+
+// نمایش سیگنال Buy
+plotshape(series=longCondition, title="Buy Signal", location=location.belowbar, color=#34ba3f, textcolor=color.white, style=shape.labelup, text="BUY")
+
+// نمایش سیگنال Sell
+plotshape(series=shortCondition, title="Sell Signal", location=location.abovebar, color=#ef3345, textcolor=color.white, style=shape.labeldown, text="SELL")
+
+// نمایش EMAها
+plot(fastEma, title="Quick EMA", color=#03cf62, linewidth=2)
+plot(smoothEma, title="Smooth EMA", color=#ff0450, linewidth=2)
+
+
+
+
+
+// --- تنظیمات و محاسبات مربوط به تشخیص روند کلی بازار ---
+// تنظیمات EMA برای روند کلی بازار
+groupTrendSettings = "Market Trend Direction And Strength" // گروه تنظیمات
+trendFastEMA = input.int(150, title="Trend Fast EMA", group=groupTrendSettings, tooltip="Fast EMA used for detecting the overall market trend.")
+trendMediumEMA = input.int(200, title="Trend Medium EMA", group=groupTrendSettings, tooltip="Medium EMA used for detecting the overall market trend.")
+trendSlowEMA = input.int(250, title="Trend Slow EMA", group=groupTrendSettings, tooltip="Slow EMA used for detecting the overall market trend.")
+
+// تنظیمات ADX برای تشخیص قدرت روند
+trendAdxLength = input.int(14, title="Trend ADX Length", group=groupTrendSettings, tooltip="Length of ADX used to measure the strength of the market trend.")
+
+// محاسبه EMA‌ها برای روند کلی بازار
+trendEmaFast = ta.ema(close, trendFastEMA)
+trendEmaMedium = ta.ema(close, trendMediumEMA)
+trendEmaSlow = ta.ema(close, trendSlowEMA)
+
+// محاسبه DM+ و DM- برای DX
+dmPlus = ta.change(high) > ta.change(low) ? math.max(ta.change(high), 0) : 0
+dmMinus = ta.change(low) > ta.change(high) ? math.max(ta.change(low), 0) : 0
+// محاسبه True Range (TR)
+tr1 = high - low
+tr2 = math.abs(high - close[1])
+tr3 = math.abs(low - close[1])
+tr = math.max(math.max(tr1, tr2), tr3)
+
+// محاسبه DI+ و DI-
+diPlus = 100 * ta.ema(dmPlus / tr, trendAdxLength)
+diMinus = 100 * ta.ema(dmMinus / tr, trendAdxLength)
+
+// محاسبه DX
+trendDx = math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100
+trendAdx = ta.ema(trendDx, trendAdxLength)
+
+// رسم خطوط EMA برای روند کلی بازار
+plotTrendFast = plot(trendEmaFast, title = "Trend Fast EMA", color=#009b5d, linewidth=2)
+plotTrendMedium = plot(trendEmaMedium, title = "Trend Medium EMA", color=#ffffffe2, linewidth=1)
+plotTrendSlow = plot(trendEmaSlow, title = "Trend Slow EMA", color=#a10043, linewidth=2)
+
+// تعیین وضعیت روند (صعودی یا نزولی)
+trendUp = trendEmaFast > trendEmaSlow
+trendDown = trendEmaFast < trendEmaSlow
+
+// تابع تعیین شدت رنگ براساس ADX و روند کلی بازار
+getColorForTrend(up, adxValue) =>
+    if up
+        if adxValue > 30
+            #003923 // سبز پررنگ
+        else if adxValue > 20
+            #00903a // سبز معمولی
+        else
+            #7cffa5d6 // سبز کم‌رنگ
+    else
+        if adxValue > 30
+            #a00a2dfe // قرمز پررنگ
+        else if adxValue > 20
+            #ff003cd3 // قرمز معمولی
+        else
+            #ff5a80f6 // قرمز کم‌رنگ
+            
+
+// رنگ ابر براساس ADX و روند کلی بازار
+trendCloudColor = trendUp ? getColorForTrend(true, trendAdx) : trendDown ? getColorForTrend(false, trendAdx) : na
+
+// پر کردن ناحیه بین EMA سریع و آهسته برای نمایش روند کلی بازار
+fill(plotTrendFast, plotTrendSlow, color=trendCloudColor, title="Trend Background with ADX Strength")

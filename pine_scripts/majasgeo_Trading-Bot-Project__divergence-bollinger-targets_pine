@@ -1,0 +1,356 @@
+//@version=5
+indicator("Multi-Timeframe Divergences + BB SMA20/58 Target System", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// MULTI-TIMEFRAME DIVERGENCES + BOLLINGER BANDS TARGET SYSTEM
+// Βασισμένο στην κύρια συλλογιστική από Chat 16, 18 και άλλα
+// Χρησιμοποιεί "Divergences for Many Indicators v.4" ως foundation
+// ============================================================================
+
+// === CORE SETTINGS ===
+// Divergence Detection Settings (από v.4 foundation)
+prd = input.int(5, "Pivot Lookback Period", minval=2, maxval=50)
+source = input(close, "Divergence Source")
+searchdiv = input.string("All", "Divergence Type", options=["Regular", "Hidden", "All"])
+showlimit = input.int(1, "Show Last N Divergences", minval=1, maxval=10)
+maxpp = input.int(10, "Max Pivot Points", minval=1, maxval=20)
+maxbars = input.int(100, "Max Bars Back", minval=30, maxval=300)
+
+// Bollinger Bands Settings (SMA20 και SMA58)
+bb_sma20_length = input.int(20, "BB SMA20 Length", minval=5, maxval=50)
+bb_sma58_length = input.int(58, "BB SMA58 Length", minval=20, maxval=100)
+bb_std_multiplier = input.float(2.0, "BB Standard Deviation", minval=0.5, maxval=5.0, step=0.1)
+
+// Visual Settings
+show_vertical_lines = input.bool(true, "Show Vertical Lines at Divergence Points")
+show_target_labels = input.bool(true, "Show BB Target Price Labels")
+show_divergence_lines = input.bool(true, "Show Divergence Lines")
+
+// === BOLLINGER BANDS CALCULATION (SMA20 & SMA58) ===
+// SMA20 Bollinger Bands
+sma20 = ta.sma(close, bb_sma20_length)
+std20 = ta.stdev(close, bb_sma20_length)
+bb20_upper = sma20 + (std20 * bb_std_multiplier)
+bb20_middle = sma20
+bb20_lower = sma20 - (std20 * bb_std_multiplier)
+
+// SMA58 Bollinger Bands
+sma58 = ta.sma(close, bb_sma58_length)
+std58 = ta.stdev(close, bb_sma58_length)
+bb58_upper = sma58 + (std58 * bb_std_multiplier)
+bb58_middle = sma58
+bb58_lower = sma58 - (std58 * bb_std_multiplier)
+
+// === RSI CALCULATION FOR DIVERGENCES ===
+rsi_length = 14
+rsi = ta.rsi(source, rsi_length)
+
+// === DIVERGENCE DETECTION (Βασισμένο στο v.4) ===
+// Pivot Detection
+ph = ta.pivothigh(rsi, prd, prd)
+pl = ta.pivotlow(rsi, prd, prd)
+phv = ta.pivothigh(source, prd, prd)
+plv = ta.pivotlow(source, prd, prd)
+
+// Variables για divergence tracking
+var line[] divergence_lines = array.new<line>()
+var line[] vertical_lines = array.new<line>()
+var label[] target_labels = array.new<label>()
+var label[] divergence_labels = array.new<label>()
+
+// Cleanup function
+cleanup_old_elements() =>
+    // Clear divergence lines
+    for i = 0 to array.size(divergence_lines) - 1
+        line.delete(array.get(divergence_lines, i))
+    array.clear(divergence_lines)
+    
+    // Clear vertical lines
+    for i = 0 to array.size(vertical_lines) - 1
+        line.delete(array.get(vertical_lines, i))
+    array.clear(vertical_lines)
+    
+    // Clear target labels
+    for i = 0 to array.size(target_labels) - 1
+        label.delete(array.get(target_labels, i))
+    array.clear(target_labels)
+    
+    // Clear divergence labels
+    for i = 0 to array.size(divergence_labels) - 1
+        label.delete(array.get(divergence_labels, i))
+    array.clear(divergence_labels)
+
+// === DIVERGENCE ANALYSIS FUNCTION ===
+detect_divergence() =>
+    var float last_rsi_high = na
+    var float last_rsi_low = na
+    var float last_price_high = na
+    var float last_price_low = na
+    var int last_high_bar = na
+    var int last_low_bar = na
+    var int current_high_bar = na
+    var int current_low_bar = na
+    
+    bullish_regular = false
+    bullish_hidden = false
+    bearish_regular = false
+    bearish_hidden = false
+    
+    start_bar = 0
+    end_bar = 0
+    
+    // RSI High Detection
+    if not na(ph)
+        current_high_bar := bar_index - prd
+        if not na(last_rsi_high) and not na(last_price_high)
+            // Regular Bearish Divergence: Price Higher High, RSI Lower High
+            if phv > last_price_high and ph < last_rsi_high
+                bearish_regular := true
+                start_bar := last_high_bar
+                end_bar := current_high_bar
+            
+            // Hidden Bearish Divergence: Price Lower High, RSI Higher High
+            if phv < last_price_high and ph > last_rsi_high
+                bearish_hidden := true
+                start_bar := last_high_bar
+                end_bar := current_high_bar
+        
+        last_rsi_high := ph
+        last_price_high := phv
+        last_high_bar := current_high_bar
+    
+    // RSI Low Detection
+    if not na(pl)
+        current_low_bar := bar_index - prd
+        if not na(last_rsi_low) and not na(last_price_low)
+            // Regular Bullish Divergence: Price Lower Low, RSI Higher Low
+            if plv < last_price_low and pl > last_rsi_low
+                bullish_regular := true
+                start_bar := last_low_bar
+                end_bar := current_low_bar
+            
+            // Hidden Bullish Divergence: Price Higher Low, RSI Lower Low
+            if plv > last_price_low and pl < last_rsi_low
+                bullish_hidden := true
+                start_bar := last_low_bar
+                end_bar := current_low_bar
+        
+        last_rsi_low := pl
+        last_price_low := plv
+        last_low_bar := current_low_bar
+    
+    [bullish_regular, bullish_hidden, bearish_regular, bearish_hidden, start_bar, end_bar]
+
+// === MAIN DIVERGENCE DETECTION ===
+[bull_reg, bull_hid, bear_reg, bear_hid, div_start, div_end] = detect_divergence()
+
+// === VISUAL ELEMENTS CREATION ===
+if bull_reg or bull_hid or bear_reg or bear_hid
+    // Cleanup old elements
+    cleanup_old_elements()
+    
+    // Determine divergence type and colors
+    div_color = color.gray
+    div_style = line.style_solid
+    div_text = ""
+    
+    if bull_reg
+        div_color := color.green
+        div_style := line.style_solid
+        div_text := "Bullish Regular"
+    else if bull_hid
+        div_color := color.green
+        div_style := line.style_dashed
+        div_text := "Bullish Hidden"
+    else if bear_reg
+        div_color := color.red
+        div_style := line.style_solid
+        div_text := "Bearish Regular"
+    else if bear_hid
+        div_color := color.red
+        div_style := line.style_dashed
+        div_text := "Bearish Hidden"
+    
+    // Create Vertical Lines at Start and End of Divergence
+    if show_vertical_lines and div_start > 0 and div_end > 0
+        // Start vertical line
+        start_line = line.new(div_start, low[bar_index - div_start] * 0.99, 
+                             div_start, high[bar_index - div_start] * 1.01,
+                             color=div_color, style=line.style_dotted, width=2)
+        array.push(vertical_lines, start_line)
+        
+        // End vertical line
+        end_line = line.new(div_end, low[bar_index - div_end] * 0.99,
+                           div_end, high[bar_index - div_end] * 1.01,
+                           color=div_color, style=line.style_dotted, width=2)
+        array.push(vertical_lines, end_line)
+    
+    // Create BB Target Labels at Intersection Points
+    if show_target_labels and div_start > 0 and div_end > 0
+        // Get BB values at start and end points
+        start_bb20_upper = bb20_upper[bar_index - div_start]
+        start_bb20_middle = bb20_middle[bar_index - div_start]
+        start_bb20_lower = bb20_lower[bar_index - div_start]
+        start_bb58_upper = bb58_upper[bar_index - div_start]
+        start_bb58_middle = bb58_middle[bar_index - div_start]
+        start_bb58_lower = bb58_lower[bar_index - div_start]
+        
+        end_bb20_upper = bb20_upper[bar_index - div_end]
+        end_bb20_middle = bb20_middle[bar_index - div_end]
+        end_bb20_lower = bb20_lower[bar_index - div_end]
+        end_bb58_upper = bb58_upper[bar_index - div_end]
+        end_bb58_middle = bb58_middle[bar_index - div_end]
+        end_bb58_lower = bb58_lower[bar_index - div_end]
+        
+        // Create target labels για start point
+        start_label_text = "START TARGETS:\n" +
+                          "BB20 Upper: $" + str.tostring(start_bb20_upper, "#.2") + "\n" +
+                          "BB20 Middle: $" + str.tostring(start_bb20_middle, "#.2") + "\n" +
+                          "BB20 Lower: $" + str.tostring(start_bb20_lower, "#.2") + "\n" +
+                          "BB58 Upper: $" + str.tostring(start_bb58_upper, "#.2") + "\n" +
+                          "BB58 Middle: $" + str.tostring(start_bb58_middle, "#.2") + "\n" +
+                          "BB58 Lower: $" + str.tostring(start_bb58_lower, "#.2")
+        
+        start_label = label.new(div_start, high[bar_index - div_start] * 1.02,
+                               start_label_text, color=color.new(div_color, 80),
+                               textcolor=color.white, size=size.small,
+                               style=label.style_label_down)
+        array.push(target_labels, start_label)
+        
+        // Create target labels για end point  
+        end_label_text = "END TARGETS:\n" +
+                        "BB20 Upper: $" + str.tostring(end_bb20_upper, "#.2") + "\n" +
+                        "BB20 Middle: $" + str.tostring(end_bb20_middle, "#.2") + "\n" +
+                        "BB20 Lower: $" + str.tostring(end_bb20_lower, "#.2") + "\n" +
+                        "BB58 Upper: $" + str.tostring(end_bb58_upper, "#.2") + "\n" +
+                        "BB58 Middle: $" + str.tostring(end_bb58_middle, "#.2") + "\n" +
+                        "BB58 Lower: $" + str.tostring(end_bb58_lower, "#.2")
+        
+        end_label = label.new(div_end, high[bar_index - div_end] * 1.02,
+                             end_label_text, color=color.new(div_color, 80),
+                             textcolor=color.white, size=size.small,
+                             style=label.style_label_down)
+        array.push(target_labels, end_label)
+    
+    // Create Divergence Line
+    if show_divergence_lines and div_start > 0 and div_end > 0
+        // Get price points for divergence line
+        start_price = source[bar_index - div_start]
+        end_price = source[bar_index - div_end]
+        
+        // Create divergence line
+        if bull_reg or bull_hid
+            // Bullish divergence line (underline)
+            div_line = line.new(div_start, start_price * 0.995,
+                               div_end, end_price * 0.995,
+                               color=div_color, style=div_style, width=2)
+        else
+            // Bearish divergence line (overline)
+            div_line = line.new(div_start, start_price * 1.005,
+                               div_end, end_price * 1.005,
+                               color=div_color, style=div_style, width=2)
+        
+        array.push(divergence_lines, div_line)
+        
+        // Add divergence type label
+        mid_bar = math.round((div_start + div_end) / 2)
+        mid_price = (source[bar_index - div_start] + source[bar_index - div_end]) / 2
+        
+        div_label = label.new(mid_bar, mid_price,
+                             div_text, color=div_color,
+                             textcolor=color.white, size=size.normal)
+        array.push(divergence_labels, div_label)
+
+// === BOLLINGER BANDS VISUAL DISPLAY ===
+// Plot BB20 Bands
+plot(bb20_upper, "BB20 Upper", color=color.red, linewidth=1)
+plot(bb20_middle, "BB20 Middle", color=color.blue, linewidth=1)
+plot(bb20_lower, "BB20 Lower", color=color.green, linewidth=1)
+
+// Plot BB58 Bands
+plot(bb58_upper, "BB58 Upper", color=color.new(color.red, 50), linewidth=1, style=plot.style_circles)
+plot(bb58_middle, "BB58 Middle", color=color.new(color.blue, 50), linewidth=1, style=plot.style_circles)
+plot(bb58_lower, "BB58 Lower", color=color.new(color.green, 50), linewidth=1, style=plot.style_circles)
+
+// BB Fills
+fill_bb20_upper = plot(bb20_upper, color=na)
+fill_bb20_lower = plot(bb20_lower, color=na)
+fill(fill_bb20_upper, fill_bb20_lower, color=color.new(color.blue, 95), title="BB20 Fill")
+
+fill_bb58_upper = plot(bb58_upper, color=na)
+fill_bb58_lower = plot(bb58_lower, color=na)
+fill(fill_bb58_upper, fill_bb58_lower, color=color.new(color.orange, 98), title="BB58 Fill")
+
+// === INFORMATION TABLE ===
+var table info_table = table.new(position.top_right, 3, 10, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "DIVERGENCE TARGETS", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 0, "SMA20 BB", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 2, 0, "SMA58 BB", text_color=color.white, text_size=size.small)
+    
+    table.cell(info_table, 0, 1, "Upper Band", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 1, str.tostring(bb20_upper, "#.2"), text_color=color.red, text_size=size.tiny)
+    table.cell(info_table, 2, 1, str.tostring(bb58_upper, "#.2"), text_color=color.red, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 2, "Middle Band", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 2, str.tostring(bb20_middle, "#.2"), text_color=color.blue, text_size=size.tiny)
+    table.cell(info_table, 2, 2, str.tostring(bb58_middle, "#.2"), text_color=color.blue, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 3, "Lower Band", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 3, str.tostring(bb20_lower, "#.2"), text_color=color.green, text_size=size.tiny)
+    table.cell(info_table, 2, 3, str.tostring(bb58_lower, "#.2"), text_color=color.green, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 4, "RSI", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 4, str.tostring(rsi, "#.1"), 
+               text_color=rsi > 70 ? color.red : rsi < 30 ? color.green : color.gray, text_size=size.tiny)
+    table.cell(info_table, 2, 4, rsi > 70 ? "OVERBOUGHT" : rsi < 30 ? "OVERSOLD" : "NEUTRAL", 
+               text_color=rsi > 70 ? color.red : rsi < 30 ? color.green : color.gray, text_size=size.tiny)
+    
+    // Current divergence status
+    current_div_text = bull_reg ? "BULL REG" : bull_hid ? "BULL HID" : bear_reg ? "BEAR REG" : bear_hid ? "BEAR HID" : "NONE"
+    current_div_color = (bull_reg or bull_hid) ? color.green : (bear_reg or bear_hid) ? color.red : color.gray
+    
+    table.cell(info_table, 0, 5, "Divergence", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 5, current_div_text, text_color=current_div_color, text_size=size.tiny)
+    table.cell(info_table, 2, 5, "ACTIVE", text_color=current_div_color, text_size=size.tiny)
+
+// === ALERTS ===
+alertcondition(bull_reg, title="Bullish Regular Divergence", 
+               message="🚀 BULLISH REGULAR DIVERGENCE: Price targets at BB intersection points!")
+
+alertcondition(bull_hid, title="Bullish Hidden Divergence",
+               message="📈 BULLISH HIDDEN DIVERGENCE: Continuation signal - targets at BB levels!")
+
+alertcondition(bear_reg, title="Bearish Regular Divergence",
+               message="🔻 BEARISH REGULAR DIVERGENCE: Price targets at BB intersection points!")
+
+alertcondition(bear_hid, title="Bearish Hidden Divergence", 
+               message="📉 BEARISH HIDDEN DIVERGENCE: Continuation signal - targets at BB levels!")
+
+// === TARGET ACHIEVEMENT ALERTS ===
+// Check if price hits any of the BB target levels
+bb20_upper_hit = ta.crossover(close, bb20_upper) or ta.crossunder(close, bb20_upper)
+bb20_middle_hit = ta.crossover(close, bb20_middle) or ta.crossunder(close, bb20_middle)
+bb20_lower_hit = ta.crossover(close, bb20_lower) or ta.crossunder(close, bb20_lower)
+bb58_upper_hit = ta.crossover(close, bb58_upper) or ta.crossunder(close, bb58_upper)
+bb58_middle_hit = ta.crossover(close, bb58_middle) or ta.crossunder(close, bb58_middle)
+bb58_lower_hit = ta.crossover(close, bb58_lower) or ta.crossunder(close, bb58_lower)
+
+alertcondition(bb20_upper_hit, title="BB20 Upper Target Hit",
+               message="🎯 TARGET HIT: Price reached BB20 Upper Band at $" + str.tostring(bb20_upper, "#.2"))
+
+alertcondition(bb20_middle_hit, title="BB20 Middle Target Hit", 
+               message="🎯 TARGET HIT: Price reached BB20 Middle Band at $" + str.tostring(bb20_middle, "#.2"))
+
+alertcondition(bb20_lower_hit, title="BB20 Lower Target Hit",
+               message="🎯 TARGET HIT: Price reached BB20 Lower Band at $" + str.tostring(bb20_lower, "#.2"))
+
+alertcondition(bb58_upper_hit, title="BB58 Upper Target Hit",
+               message="🎯 TARGET HIT: Price reached BB58 Upper Band at $" + str.tostring(bb58_upper, "#.2"))
+
+alertcondition(bb58_middle_hit, title="BB58 Middle Target Hit",
+               message="🎯 TARGET HIT: Price reached BB58 Middle Band at $" + str.tostring(bb58_middle, "#.2"))
+
+alertcondition(bb58_lower_hit, title="BB58 Lower Target Hit", 
+               message="🎯 TARGET HIT: Price reached BB58 Lower Band at $" + str.tostring(bb58_lower, "#.2"))

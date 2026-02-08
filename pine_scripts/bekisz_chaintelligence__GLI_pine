@@ -1,0 +1,29 @@
+//@version=5
+indicator('Global Liquidity Index', overlay=true, scale=scale.left)
+fed_active = input(true, title = "FED (Federal Reserve System)")
+tga_active = input(true, title = "TGA (Treasury General Account)")
+rrp_active = input(true, title = "RRP (Reverse Repurchase Agreements)")
+ecb_active = input(true, title = "ECB (European Central Bank)")
+pbc_active = input(true, title = "PBC (People's Bank of China)")
+boj_active = input(true, title = "BOJ (Bank of Japan)")
+boe_active = input(true, title = "BOE (Bank of England)")
+other_active = input(true, title = "Other Central Banks")
+fed = fed_active ? request.security("USCBBS", "D", close, currency=currency.USD) : 0
+rrp = rrp_active ? request.security("RRPONTSYD", "D", close, currency=currency.USD) : 0
+tga = tga_active ? request.security("WTREGEN", "D", close, currency=currency.USD) : 0
+ecb = ecb_active ? request.security("EUCBBS * EURUSD", "D", close, currency=currency.USD) : 0
+pbc = pbc_active ? request.security("CNCBBS * CNYUSD", "D", close, currency=currency.USD) : 0
+boj = boj_active ? request.security("JPCBBS * JPYUSD", "D", close, currency=currency.USD) : 0
+boe = boe_active ? request.security("GBCBBS * GBPUSD", "D", close, currency=currency.USD) : 0
+boc = other_active ? request.security("CACBBS * CADUSD", "D", close, currency=currency.USD) : 0
+rba = other_active ? request.security("AUCBBS * AUDUSD", "D", close, currency=currency.USD) : 0
+rbi = other_active ? request.security("INCBBS * INRUSD", "D", close, currency=currency.USD) : 0
+snb = other_active ? request.security("CHCBBS * CHFUSD", "D", close, currency=currency.USD) : 0
+cbr = other_active ? request.security("RUCBBS * RUBUSD", "D", close, currency=currency.USD) : 0
+bcb = other_active ? request.security("BRCBBS * BRLUSD", "D", close, currency=currency.USD) : 0
+bok = other_active ? request.security("KRCBBS * KRWUSD", "D", close, currency=currency.USD) : 0
+rbzn = other_active ? request.security("NZCBBS * NZDUSD", "D", close, currency=currency.USD) : 0
+sr = other_active ? request.security("SECBBS * SEKUSD", "D", close, currency=currency.USD) : 0
+bnm = other_active ? request.security("MYCBBS * MYRUSD", "D", close, currency=currency.USD) : 0
+cbbs = (fed - rrp - tga + boj + pbc + boe + ecb + rbi + boc + rba + snb + cbr + bcb + bok + rbzn + sr + bnm) / 1000000000000
+plot(cbbs, color=color.yellow, linewidth=2)

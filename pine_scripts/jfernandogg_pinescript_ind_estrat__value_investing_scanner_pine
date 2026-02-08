@@ -1,0 +1,114 @@
+// Value Investing Scanner
+// This Pine Script indicator helps identify potentially undervalued and overvalued stocks
+// based on fundamental analysis metrics.
+//
+// How to use for scanning multiple stocks:
+// 1. Add this indicator to a chart in TradingView
+// 2. Create a watchlist with the stocks you want to scan
+// 3. In TradingView, use the "Indicator Values" feature in the Data Window (View -> Data Window)
+// 4. The indicator will automatically populate a table in the bottom-right corner with:
+//    - Undervalued stocks (green background)
+//    - Overvalued stocks (red background)
+//
+// The scanner evaluates:
+// - P/E Ratio (Price to Earnings)
+// - P/B Ratio (Price to Book)
+// - Dividend Yield
+// - Debt to Equity Ratio
+//
+// Value Score Calculation (0-100):
+// - Each metric contributes up to 25 points to the total score
+// - Scores >= 75 indicate potentially undervalued stocks (green triangle)
+// - Scores <= 25 indicate potentially overvalued stocks (red triangle)
+//
+// Note: Make sure to adjust the threshold inputs according to your investment criteria
+// and the specific sector/industry you're analyzing.
+
+//@version=5
+indicator("Value Investing Scanner", overlay=false)
+
+// Input parameters for thresholds
+pe_threshold = input.float(15.0, "P/E Ratio Threshold", minval=0.0)
+pb_threshold = input.float(1.5, "P/B Ratio Threshold", minval=0.0)
+div_yield_min = input.float(2.0, "Minimum Dividend Yield %", minval=0.0)
+debt_equity_max = input.float(1.0, "Maximum Debt/Equity Ratio", minval=0.0)
+
+// Get fundamental data
+EPS = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM")
+pe_ratio = close / EPS
+
+BVPS = request.financial(syminfo.tickerid, "BOOK_VALUE_PER_SHARE", "FQ")
+pb_ratio = close / BVPS
+
+dividend_yield = request.financial(syminfo.tickerid, "DIVIDENDS_YIELD","FY")
+debt_equity = request.financial(syminfo.tickerid, "DEBT_TO_EQUITY","FY")
+
+// Calculate value score (0-100)
+value_score = 0.0
+
+// P/E Score (0-25)
+pe_score = pe_ratio < pe_threshold ? 25 : math.max(0, 25 * (1 - (pe_ratio - pe_threshold) / pe_threshold))
+
+// P/B Score (0-25)
+pb_score = pb_ratio < pb_threshold ? 25 : math.max(0, 25 * (1 - (pb_ratio - pb_threshold) / pb_threshold))
+
+// Dividend Yield Score (0-25)
+div_score = dividend_yield > div_yield_min ? 25 : math.max(0, 25 * (dividend_yield / div_yield_min))
+
+// Debt/Equity Score (0-25)
+de_score = debt_equity < debt_equity_max ? 25 : math.max(0, 25 * (1 - (debt_equity - debt_equity_max) / debt_equity_max))
+
+// Calculate total value score
+value_score := pe_score + pb_score + div_score + de_score
+
+// Plot results
+plot(value_score, "Value Score", color=color.blue, linewidth=2)
+hline(75, "Overvalued", color=color.green)
+hline(25, "Undervalued", color=color.red)
+
+// Generate signals
+is_undervalued = value_score >= 75
+is_overvalued = value_score <= 25
+
+plotshape(is_undervalued, "Undervalued", shape.triangleup, location.bottom, color.green, size=size.small)
+plotshape(is_overvalued, "Overvalued", shape.triangledown, location.top, color.red, size=size.small)
+
+// Add value score label
+label.new(bar_index, value_score, str.tostring(value_score, "#.##"), color=color.blue, style=label.style_label_down)
+
+// Create background table for scanner results
+var int tableRows = 10
+var table scannerTable = table.new(position.bottom_right, 2, tableRows, border_width=1)
+var int[] filledRows = array.new_int(tableRows, 0)
+
+// Añadir tabla de datos fundamentales
+var table fundamentalsTable = table.new(position.top_right, 2, 4, border_width=1)
+
+if barstate.islast
+    // Títulos de las métricas
+    table.cell(fundamentalsTable, 0, 0, "P/E Ratio", bgcolor=color.gray, text_color=color.white)
+    table.cell(fundamentalsTable, 0, 1, "P/B Ratio", bgcolor=color.gray, text_color=color.white)
+    table.cell(fundamentalsTable, 0, 2, "Div Yield", bgcolor=color.gray, text_color=color.white)
+    table.cell(fundamentalsTable, 0, 3, "Debt/Equity", bgcolor=color.gray, text_color=color.white)
+    
+    // Valores actuales
+    table.cell(fundamentalsTable, 1, 0, str.tostring(pe_ratio, "#.##"), text_color=pe_ratio < pe_threshold ? color.green : color.red)
+    table.cell(fundamentalsTable, 1, 1, str.tostring(pb_ratio, "#.##"), text_color=pb_ratio < pb_threshold ? color.green : color.red)
+    table.cell(fundamentalsTable, 1, 2, str.tostring(dividend_yield, "#.##") + "%", text_color=dividend_yield > div_yield_min ? color.green : color.red)
+    table.cell(fundamentalsTable, 1, 3, str.tostring(debt_equity, "#.##"), text_color=debt_equity < debt_equity_max ? color.green : color.red)
+
+// Update table with current symbol if conditions met
+if barstate.islast
+    var int rowIndex = na
+    for i = 0 to tableRows - 1
+        if array.get(filledRows, i) == 0
+            rowIndex := i
+            break
+    if is_undervalued and not na(rowIndex)
+        table.cell(scannerTable, 0, rowIndex, text=syminfo.ticker, bgcolor=color.green, text_color=color.white)
+        table.cell(scannerTable, 1, rowIndex, text=str.tostring(value_score, "#.##"), bgcolor=color.green, text_color=color.white)
+        array.set(filledRows, rowIndex, 1)
+    if is_overvalued and not na(rowIndex)
+        table.cell(scannerTable, 0, rowIndex, text=syminfo.ticker, bgcolor=color.red, text_color=color.white)
+        table.cell(scannerTable, 1, rowIndex, text=str.tostring(value_score, "#.##"), bgcolor=color.red, text_color=color.white)
+        array.set(filledRows, rowIndex, 1)

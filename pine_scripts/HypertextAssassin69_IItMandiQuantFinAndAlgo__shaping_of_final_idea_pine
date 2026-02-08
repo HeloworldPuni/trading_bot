@@ -1,0 +1,43 @@
+//@version=6
+strategy("Strict HMA 50 / EMA 50 with Early Exit & Re-Entry", 
+     overlay=true, 
+     initial_capital=1000,                
+     default_qty_type=strategy.percent_of_equity, 
+     default_qty_value=100)
+
+// === Inputs ===
+hmaLen = input.int(50, "HMA Length", minval=1)
+emaLen = input.int(50, "EMA Length", minval=1)
+
+// === Indicators ===
+hma_50 = ta.hma(close, hmaLen)
+ema_50 = ta.ema(close, emaLen)
+
+// === Signals ===
+hmaCrossEMA = ta.crossover(hma_50, ema_50)       // Mandatory buy signal
+hmaBelowEMA = ta.crossunder(hma_50, ema_50)      // Optional exit if it crosses below EMA
+hmaDown = hma_50 < hma_50[1]                     // HMA turning downward
+hmaUp   = hma_50 > hma_50[1]                     // HMA turning upward
+
+// === Entry Conditions ===
+// 1️⃣ Mandatory buy on HMA crossing above EMA
+enterOnCross = hmaCrossEMA
+
+// 2️⃣ Re-entry if HMA starts turning up again, still above EMA, and no position open
+enterOnTurnUp = hmaUp and hma_50 > ema_50 and strategy.position_size == 0
+
+if (enterOnCross or enterOnTurnUp)
+    strategy.entry("Long", strategy.long, comment="Buy")
+
+// === Exit Conditions ===
+// 1️⃣ Exit if HMA turns downward (early exit)
+if strategy.position_size > 0
+    if hmaDown
+        strategy.close("Long", comment="HMA Falling Exit")
+    // Optional: force exit if HMA crosses below EMA
+    else if hmaBelowEMA
+        strategy.close("Long", comment="HMA < EMA Exit")
+
+// === Plots ===
+plot(hma_50, title="HMA 50", color=color.blue, linewidth=2)
+plot(ema_50, title="EMA 50", color=color.red, linewidth=2)

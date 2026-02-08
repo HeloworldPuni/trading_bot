@@ -1,0 +1,56 @@
+//@version=5
+indicator("Candle Hider Overlay - 3B - MN", overlay=true)
+
+// Inputs
+hideAfterTime = input.time(timestamp("2025-04-03 13:00 +0000"), "Нуугдах цаг (UTC)")
+preLineColor = input.color(color.rgb(0, 0, 0), "Эхний шугамын өнгө")
+boxColor = input.color(color.rgb(0, 0, 0), "Тэгш өнцөгтийн дэвсгэр өнгө")
+boxTransp = input.int(0, "Дэвсгэр тунгалаг байдал", minval=0, maxval=100)
+boxWidth = input.int(2, "Тэгш өнцөгтийн өргөн (барууд)", minval=1, maxval=10) // boxWidth-ийг 2 болгож нэмэгдүүлсэн
+
+// Хязгааргүй өндөртөй болгохын тулд маш том утгууд
+var float unlimitedTop = 1e10    // Маш өндөр утга
+var float unlimitedBottom = -1e10 // Маш доод утга
+
+// Variables
+var box myBox = na
+var line preLine = na
+
+// bar = -1
+// bar := nz(bar[1]) + 1
+
+// dT = time - time[1]
+// dT := math.min(nz(dT[1], time), time - time[1])
+
+// start = request.security(syminfo.tickerid, dintval, time, lookahead = barmerge.lookahead_on)
+// newSession = ta.change(start) ? 1 : 0
+// sinceNew = nz(ta.barssince(newSession), bar)
+
+// Нуух логик
+if time >= hideAfterTime
+    myBox := box.new(
+         left = bar_index - 1,  // preLine-тай давхцахын тулд 1 барын өмнө эхэлнэ
+         right = bar_index + boxWidth,
+         top = unlimitedTop,
+         bottom = unlimitedBottom,
+         bgcolor = color.new(boxColor, boxTransp),
+         border_color = color.new(boxColor, boxTransp),
+         border_width = 1
+     )
+
+// Хамгийн эхний лааны өмнө 0.5 урттай шугам зурах
+if time >= hideAfterTime and time[1] < hideAfterTime
+    preLine := line.new(
+         bar_index - 1,  // Эхний лааны өмнөх бар
+         unlimitedBottom,
+         bar_index,      // `float` утга ашиглахгүй, шууд `bar_index` ашиглана
+         unlimitedTop,
+         color=preLineColor,
+         style=line.style_solid,
+         width=15
+     )
+
+// Таслах цагийг тэмдэглэх шугам (заавал биш)
+var line cutoffLine = na
+if time >= hideAfterTime and time[1] < hideAfterTime
+    cutoffLine := line.new(bar_index, low, bar_index, high, color=color.red, style=line.style_dashed)

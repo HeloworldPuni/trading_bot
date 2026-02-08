@@ -1,0 +1,598 @@
+//@version=5
+
+// =============================================================================
+// BTMM STOP HUNT DETECTION
+// =============================================================================
+// Purpose: [DESCRIBE THE PURPOSE OF THIS INDICATOR/STRATEGY]
+// Method: [DESCRIBE THE TECHNICAL ANALYSIS METHOD USED]
+// Author: BTMM Development Team
+// Version: 1.0
+// Date: 2025-07-02
+// =============================================================================
+
+// Note: BTMMFoundation functions imported directly due to local development
+// In production, this would use: import username/BTMMFoundation/1 as btmm
+
+indicator("BTMM Stop Hunt Detection", "BTMM Hunt", overlay=true, shorttitle="BTMM Stop Hu...")
+
+// ============================================================================
+// BTMM STOP HUNT DETECTION - LIQUIDITY SWEEP & HUNT ANALYSIS
+// ============================================================================
+// This script consolidates all stop hunt functionality including:
+// - Liquidity level detection
+// - Stop hunt pattern recognition
+// - False move identification
+// - Market maker manipulation detection
+// ============================================================================
+
+// ============================================================================
+// SETTINGS & INPUTS
+// ============================================================================
+
+var g_detection = "Stop Hunt Detection"
+hunt_sensitivity = input.float(1.0, "Hunt Sensitivity", minval=0.1, maxval=3.0, group=g_detection)
+// TODO: Add input validation for hunt_sensitivity (e.g., if hunt_sensitivity < 1 runtime.error("hunt_sensitivity must be positive"))
+min_liquidity_level = input.int(3, "Min Liquidity Level", minval=2, maxval=10, group=g_detection)
+hunt_confirmation_bars = input.int(3, "Hunt Confirmation Bars", minval=1, maxval=10, group=g_detection)
+
+var g_levels = "Liquidity Levels"
+show_liquidity_levels = input.bool(true, "Show Liquidity Levels", group=g_levels)
+show_hunt_zones = input.bool(true, "Show Hunt Zones", group=g_levels)
+extend_levels = input.bool(true, "Extend Levels", group=g_levels)
+
+var g_sources = "External Sources"
+asian_hi_src = input.source(close, "Asian High", group=g_sources)
+asian_lo_src = input.source(close, "Asian Low", group=g_sources)
+ema13_src = input.source(close, "EMA 13", group=g_sources)
+ema50_src = input.source(close, "EMA 50", group=g_sources)
+ema200_src = input.source(close, "EMA 200", group=g_sources)
+
+var g_display = "Display Settings"
+show_hunt_signals = input.bool(true, "Show Hunt Signals", group=g_display)
+show_liquidity_sweep = input.bool(true, "Show Liquidity Sweep", group=g_display)
+
+// ============================================================================
+// ATR AND VOLATILITY ANALYSIS - PERFORMANCE OPTIMIZED
+// ============================================================================
+
+// Cache ATR calculation for performance optimization (eliminates duplicate calculations)
+atr_14 = ta.atr(14)
+
+// ============================================================================
+// LIQUIDITY LEVEL DETECTION
+// ============================================================================
+
+// Store liquidity levels
+var array<float> liquidity_highs = array.new<float>()
+var array<float> liquidity_lows = array.new<float>()
+var array<int> liquidity_high_bars = array.new<int>()
+var array<int> liquidity_low_bars = array.new<int>()
+
+// Swing point detection
+swing_high = ta.pivothigh(high, 5, 5)
+swing_low = ta.pivotlow(low, 5, 5)
+
+// Update liquidity arrays
+if not na(swing_high)
+    array.push(liquidity_highs, swing_high)
+    array.push(liquidity_high_bars, bar_index[5])
+    if array.size(liquidity_highs) > 20
+        array.shift(liquidity_highs)
+        array.shift(liquidity_high_bars)
+
+if not na(swing_low)
+    array.push(liquidity_lows, swing_low)
+    array.push(liquidity_low_bars, bar_index[5])
+    if array.size(liquidity_lows) > 20
+        array.shift(liquidity_lows)
+        array.shift(liquidity_low_bars)
+
+// ============================================================================
+// STOP HUNT DETECTION
+// ============================================================================
+
+// Function to detect stop hunts
+detect_stop_hunt() =>
+    bull_hunt = false
+    bear_hunt = false
+    hunt_level = 0.0
+
+    // Use cached ATR value instead of recalculating
+    hunt_threshold = close + (atr_14 * hunt_sensitivity)
+
+    // Check for liquidity sweep above recent highs
+    if array.size(liquidity_highs) > 0
+        for i = 0 to math.min(array.size(liquidity_highs) - 1, 5)
+            level = array.get(liquidity_highs, array.size(liquidity_highs) - 1 - i)
+            level_bar = array.get(liquidity_high_bars, array.size(liquidity_high_bars) - 1 - i)
+
+            // Stop hunt criteria: price spikes above level then quickly reverses
+            if high > level + (atr_14 * hunt_sensitivity) and close < level and bar_index - level_bar <= 20
+                bull_hunt := true
+                hunt_level := level
+                break
+
+    // Check for liquidity sweep below recent lows
+    if array.size(liquidity_lows) > 0
+        for i = 0 to math.min(array.size(liquidity_lows) - 1, 5)
+            level = array.get(liquidity_lows, array.size(liquidity_lows) - 1 - i)
+            level_bar = array.get(liquidity_low_bars, array.size(liquidity_low_bars) - 1 - i)
+
+            // Stop hunt criteria: price spikes below level then quickly reverses
+            if low < level - (atr_14 * hunt_sensitivity) and close > level and bar_index - level_bar <= 20
+                bear_hunt := true
+                hunt_level := level
+                break
+
+    [bull_hunt, bear_hunt, hunt_level]
+
+[stop_hunt_bull, stop_hunt_bear, hunt_level] = detect_stop_hunt()
+
+// ============================================================================
+// EMA LEVEL HUNTS
+// ============================================================================
+
+// Use cached ATR value in risk calculations
+risk_level = atr_14 / close * 100
+
+// EMA 13 hunts using cached ATR
+ema13_bull_hunt = high > ema13_src + (atr_14 * 0.5) and close < ema13_src and close < open
+ema13_bear_hunt = low < ema13_src - (atr_14 * 0.5) and close > ema13_src and close > open
+
+// EMA 50 hunts using cached ATR
+ema50_bull_hunt = high > ema50_src + (atr_14 * 0.8) and close < ema50_src and close < open
+ema50_bear_hunt = low < ema50_src - (atr_14 * 0.8) and close > ema50_src and close > open
+
+// EMA 200 hunts (major levels) using cached ATR
+ema200_bull_hunt = high > ema200_src + (atr_14 * 1.2) and close < ema200_src and close < open
+ema200_bear_hunt = low < ema200_src - (atr_14 * 1.2) and close > ema200_src and close > open
+
+// Asian range hunts
+asian_high_hunt = high > asian_hi_src + (risk_level * 0.5) and close < asian_hi_src and close < open
+asian_low_hunt = low < asian_lo_src - (risk_level * 0.5) and close > asian_lo_src and close > open
+
+// ============================================================================
+// LIQUIDITY SWEEP DETECTION
+// ============================================================================
+
+// Detect when multiple levels are swept
+liquidity_sweep_bull = stop_hunt_bull or ema13_bull_hunt or ema50_bull_hunt or asian_high_hunt
+liquidity_sweep_bear = stop_hunt_bear or ema13_bear_hunt or ema50_bear_hunt or asian_low_hunt
+
+// Major liquidity sweep (EMA 200 or multiple levels)
+major_sweep_bull = ema200_bull_hunt or (liquidity_sweep_bull and (ema13_bull_hunt or ema50_bull_hunt))
+major_sweep_bear = ema200_bear_hunt or (liquidity_sweep_bear and (ema13_bear_hunt or ema50_bear_hunt))
+
+// ============================================================================
+// FALSE MOVE DETECTION
+// ============================================================================
+
+// False move: strong directional move that quickly reverses
+var bool false_move_up = false
+var bool false_move_down = false
+
+// Detect false moves
+strong_up_move = close > open and (close - open) >= risk_level * 1.5
+strong_down_move = close < open and (open - close) >= risk_level * 1.5
+
+// Check for quick reversal
+if strong_up_move
+    for i = 1 to hunt_confirmation_bars
+        if close[i] < low and close[i] < open[i]
+            false_move_up := true
+            break
+
+if strong_down_move
+    for i = 1 to hunt_confirmation_bars
+        if close[i] > high and close[i] > open[i]
+            false_move_down := true
+            break
+
+// ============================================================================
+// HUNT CONFIRMATION
+// ============================================================================
+
+// Confirmed hunt: hunt signal followed by reversal
+var bool hunt_confirmed_bull = false
+var bool hunt_confirmed_bear = false
+
+if liquidity_sweep_bull
+    for i = 1 to hunt_confirmation_bars
+        if close[i] > high  // Price moved back above the hunt level
+            hunt_confirmed_bull := true
+            break
+
+if liquidity_sweep_bear
+    for i = 1 to hunt_confirmation_bars
+        if close[i] < low  // Price moved back below the hunt level
+            hunt_confirmed_bear := true
+            break
+
+// Overall stop hunt signal
+stop_hunt = liquidity_sweep_bull or liquidity_sweep_bear
+bull_hunt = liquidity_sweep_bull or hunt_confirmed_bull
+bear_hunt = liquidity_sweep_bear or hunt_confirmed_bear
+
+// ============================================================================
+// VISUAL ELEMENTS
+// ============================================================================
+
+// Hunt signals
+plotshape(show_hunt_signals and liquidity_sweep_bull, "Bull Hunt", shape.arrowdown,
+          location.abovebar, color.orange, size=size.normal)
+plotshape(show_hunt_signals and liquidity_sweep_bear, "Bear Hunt", shape.arrowup,
+          location.belowbar, color.orange, size=size.normal)
+
+// Major sweeps
+plotshape(show_liquidity_sweep and major_sweep_bull, "Major Bull Sweep", shape.triangledown,
+          location.abovebar, color.red, size=size.large)
+plotshape(show_liquidity_sweep and major_sweep_bear, "Major Bear Sweep", shape.triangleup,
+          location.belowbar, color.red, size=size.large)
+
+// False moves
+plotshape(false_move_up, "False Move Up", shape.xcross, location.abovebar, color.purple, size=size.small)
+plotshape(false_move_down, "False Move Down", shape.xcross, location.belowbar, color.purple, size=size.small)
+
+// Hunt zones
+bgcolor(show_hunt_zones and stop_hunt ? color.new(color.orange, 90) : na)
+
+// Liquidity levels
+if show_liquidity_levels and array.size(liquidity_highs) > 0
+    latest_high = array.get(liquidity_highs, array.size(liquidity_highs) - 1)
+    plot(latest_high, "Liquidity High", color=color.red, linewidth=1, style=plot.style_line)
+
+if show_liquidity_levels and array.size(liquidity_lows) > 0
+    latest_low = array.get(liquidity_lows, array.size(liquidity_lows) - 1)
+    plot(latest_low, "Liquidity Low", color=color.green, linewidth=1, style=plot.style_line)
+
+// ============================================================================
+// DATA WINDOW OUTPUTS (FOR INTEGRATION)
+// ============================================================================
+
+plot(stop_hunt ? 1 : 0, "Stop_Hunt", display=display.data_window)
+plot(bull_hunt ? 1 : 0, "Bull_Hunt", display=display.data_window)
+plot(bear_hunt ? 1 : 0, "Bear_Hunt", display=display.data_window)
+plot(liquidity_sweep_bull ? 1 : 0, "Liquidity_Sweep_Bull", display=display.data_window)
+plot(liquidity_sweep_bear ? 1 : 0, "Liquidity_Sweep_Bear", display=display.data_window)
+plot(major_sweep_bull ? 1 : 0, "Major_Sweep_Bull", display=display.data_window)
+plot(major_sweep_bear ? 1 : 0, "Major_Sweep_Bear", display=display.data_window)
+plot(false_move_up ? 1 : 0, "False_Move_Up", display=display.data_window)
+plot(false_move_down ? 1 : 0, "False_Move_Down", display=display.data_window)
+plot(hunt_confirmed_bull ? 1 : 0, "Hunt_Confirmed_Bull", display=display.data_window)
+plot(hunt_confirmed_bear ? 1 : 0, "Hunt_Confirmed_Bear", display=display.data_window)
+
+// Liquidity levels for integration
+liquidity_levels = array.size(liquidity_highs) + array.size(liquidity_lows)
+plot(liquidity_levels, "Liquidity_Levels", display=display.data_window)
+// ============================================================================
+// MERGED FROM: BTMM_OTE_Zones
+// ============================================================================
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 🎯 BTMM OTE (OPTIMAL TRADE ENTRY) ZONES - SCRIPT 6 OF 10
+// Steve Mauro's Beat The Market Maker Methodology
+// Focus: Fibonacci Retracements, Premium/Discount Zones, Institutional Entry Areas
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+import TradingView/ta/7 as ta
+
+// === OTE CONFIGURATION ===
+ote_group = "🎯 OTE Zone Configuration"
+enable_fibonacci = input.bool(true, "Enable Fibonacci Levels", group=ote_group)
+enable_premium_discount = input.bool(true, "Enable Premium/Discount Zones", group=ote_group)
+swing_lookback = input.int(20, "Swing Point Lookback", minval=10, maxval=50, group=ote_group)
+ote_sensitivity = input.float(1.0, "OTE Zone Sensitivity", minval=0.5, maxval=2.0, step=0.1, group=ote_group)
+show_ote_labels = input.bool(true, "Show OTE Labels", group=ote_group)
+
+// === FIBONACCI LEVELS ===
+fib_group = "📊 Fibonacci Retracement Levels"
+show_fib_618 = input.bool(true, "Show 61.8% Level", group=fib_group)
+show_fib_786 = input.bool(true, "Show 78.6% Level", group=fib_group)
+show_fib_705 = input.bool(true, "Show 70.5% Level (OTE)", group=fib_group)
+show_fib_79 = input.bool(true, "Show 79% Level (OTE)", group=fib_group)
+fib_extension = input.bool(true, "Extend Fibonacci Lines", group=fib_group)
+auto_fib_detection = input.bool(true, "Auto Fibonacci Detection", group=fib_group)
+
+// === PREMIUM/DISCOUNT ZONES ===
+pd_group = "💰 Premium/Discount Analysis"
+premium_threshold = input.float(70.0, "Premium Zone Threshold (%)", minval=60.0, maxval=80.0, group=pd_group)
+discount_threshold = input.float(30.0, "Discount Zone Threshold (%)", minval=20.0, maxval=40.0, group=pd_group)
+show_pd_zones = input.bool(true, "Show Premium/Discount Zones", group=pd_group)
+pd_zone_transparency = input.int(80, "Zone Transparency", minval=50, maxval=95, group=pd_group)
+
+// === VISUAL SETTINGS ===
+stophunt_visual_group = "🎨 Stop Hunt Visual Configuration"
+ote_zone_color = input.color(color.new(color.yellow, 70), "OTE Zone Color", group=stophunt_visual_group)
+premium_zone_color = input.color(color.new(color.red, pd_zone_transparency), "Premium Zone Color", group=stophunt_visual_group)
+discount_zone_color = input.color(color.new(color.green, pd_zone_transparency), "Discount Zone Color", group=stophunt_visual_group)
+fib_line_width = input.int(1, "Fibonacci Line Width", minval=1, maxval=3, group=stophunt_visual_group)
+show_price_labels = input.bool(true, "Show Price Labels on Levels", group=stophunt_visual_group)
+
+// === ALERT CONFIGURATION ===
+stophunt_alert_group = "🚨 Stop Hunt Alert Settings"
+enable_ote_alerts = input.bool(true, "OTE Zone Entry Alerts", group=stophunt_alert_group)
+enable_pd_alerts = input.bool(true, "Premium/Discount Alerts", group=stophunt_alert_group)
+enable_fib_touch_alerts = input.bool(true, "Fibonacci Level Touch Alerts", group=stophunt_alert_group)
+alert_frequency = input.string("once_per_bar", "Alert Frequency", options=["once_per_bar", "once_per_bar_close"], group=stophunt_alert_group)
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 📊 SWING POINT DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Detect swing highs and lows
+swing_high = ta.pivothigh(high, swing_lookback, swing_lookback)
+swing_low = ta.pivotlow(low, swing_lookback, swing_lookback)
+
+// Store recent swing points
+var float last_swing_high = na
+var float last_swing_low = na
+var int last_swing_high_bar = na
+var int last_swing_low_bar = na
+
+// Update swing points
+if not na(swing_high)
+    last_swing_high := swing_high
+    last_swing_high_bar := bar_index[swing_lookback]
+
+if not na(swing_low)
+    last_swing_low := swing_low
+    last_swing_low_bar := bar_index[swing_lookback]
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 🎯 FIBONACCI CALCULATIONS
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Determine trend direction and calculate fibonacci levels
+calculate_fibonacci_levels() =>
+    var float fib_high = na
+    var float fib_low = na
+    var bool is_uptrend = na
+
+    if not na(last_swing_high) and not na(last_swing_low)
+        // Determine trend direction
+        if last_swing_high_bar > last_swing_low_bar
+            // Recent high after low = potential uptrend
+            fib_high := last_swing_high
+            fib_low := last_swing_low
+            is_uptrend := true
+        else
+            // Recent low after high = potential downtrend
+            fib_high := last_swing_high
+            fib_low := last_swing_low
+            is_uptrend := false
+
+    // Calculate fibonacci levels
+    fib_range = fib_high - fib_low
+
+    // Key fibonacci retracement levels
+    fib_0 = is_uptrend ? fib_low : fib_high
+    fib_236 = is_uptrend ? fib_high - (fib_range * 0.236) : fib_low + (fib_range * 0.236)
+    fib_382 = is_uptrend ? fib_high - (fib_range * 0.382) : fib_low + (fib_range * 0.382)
+    fib_500 = is_uptrend ? fib_high - (fib_range * 0.500) : fib_low + (fib_range * 0.500)
+    fib_618 = is_uptrend ? fib_high - (fib_range * 0.618) : fib_low + (fib_range * 0.618)
+    fib_705 = is_uptrend ? fib_high - (fib_range * 0.705) : fib_low + (fib_range * 0.705)  // OTE Zone
+    fib_786 = is_uptrend ? fib_high - (fib_range * 0.786) : fib_low + (fib_range * 0.786)
+    fib_79 = is_uptrend ? fib_high - (fib_range * 0.79) : fib_low + (fib_range * 0.79)     // OTE Zone
+    fib_100 = is_uptrend ? fib_high : fib_low
+
+    [fib_0, fib_236, fib_382, fib_500, fib_618, fib_705, fib_786, fib_79, fib_100, is_uptrend, fib_high, fib_low]
+
+[fib_0, fib_236, fib_382, fib_500, fib_618, fib_705, fib_786, fib_79, fib_100, is_uptrend, fib_high, fib_low] = calculate_fibonacci_levels()
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 💰 PREMIUM/DISCOUNT ZONE ANALYSIS
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Calculate current position within the range
+calculate_premium_discount() =>
+    if not na(fib_high) and not na(fib_low) and fib_high != fib_low
+        range_position = (close - fib_low) / (fib_high - fib_low) * 100
+
+        premium_zone = range_position >= premium_threshold
+        discount_zone = range_position <= discount_threshold
+        equilibrium_zone = range_position > discount_threshold and range_position < premium_threshold
+
+        [range_position, premium_zone, discount_zone, equilibrium_zone]
+    else
+        [na, false, false, false]
+
+[current_range_position, in_premium_zone, in_discount_zone, in_equilibrium_zone] = calculate_premium_discount()
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 🎯 OTE ZONE IDENTIFICATION
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// OTE Zone is typically between 70.5% and 79% fibonacci retracement
+in_ote_zone = not na(fib_705) and not na(fib_79) and
+              ((is_uptrend and close <= fib_705 and close >= fib_79) or
+               (not is_uptrend and close >= fib_705 and close <= fib_79))
+
+// OTE Zone boundaries
+ote_upper = is_uptrend ? fib_705 : fib_79
+ote_lower = is_uptrend ? fib_79 : fib_705
+
+// Calculate OTE zone strength based on confluence factors
+calculate_ote_strength() =>
+    strength = 0
+
+    // Volume confluence
+    avg_volume = ta.sma(volume, 20)
+    if volume > avg_volume * 1.2
+        strength += 1
+
+    // Time-based confluence (session timing)
+    london_session = time(timeframe.period, "0200-0900")
+    ny_session = time(timeframe.period, "0930-1700")
+    if london_session or ny_session
+        strength += 1
+
+    // Price action confluence
+    if ta.doji()
+        strength += 1
+
+    # Additional confluence could include:
+    # - EMA alignment
+    # - Previous structure levels
+    # - Market maker signatures
+
+    strength
+
+ote_strength = in_ote_zone ? calculate_ote_strength() : 0
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 🎨 VISUAL DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Plot Fibonacci Levels
+plot(enable_fibonacci and show_fib_618 ? fib_618 : na, "Fib 61.8%", color=color.orange, linewidth=fib_line_width, style=plot.style_line)
+plot(enable_fibonacci and show_fib_786 ? fib_786 : na, "Fib 78.6%", color=color.purple, linewidth=fib_line_width, style=plot.style_line)
+plot(enable_fibonacci and show_fib_705 ? fib_705 : na, "Fib 70.5% (OTE)", color=color.yellow, linewidth=fib_line_width + 1, style=plot.style_line)
+plot(enable_fibonacci and show_fib_79 ? fib_79 : na, "Fib 79% (OTE)", color=color.yellow, linewidth=fib_line_width + 1, style=plot.style_line)
+
+// Plot key levels
+plot(enable_fibonacci ? fib_500 : na, "Fib 50%", color=color.blue, linewidth=fib_line_width, style=plot.style_line)
+plot(enable_fibonacci ? fib_0 : na, "Fib 0%", color=color.gray, linewidth=1, style=plot.style_line)
+plot(enable_fibonacci ? fib_100 : na, "Fib 100%", color=color.gray, linewidth=1, style=plot.style_line)
+
+// OTE Zone Background
+if in_ote_zone and not na(ote_upper) and not na(ote_lower)
+    bgcolor(ote_zone_color, title="OTE Zone")
+
+// Premium/Discount Zone Backgrounds
+if show_pd_zones
+    premium_level = not na(fib_high) and not na(fib_low) ? fib_low + ((fib_high - fib_low) * (premium_threshold / 100)) : na
+    discount_level = not na(fib_high) and not na(fib_low) ? fib_low + ((fib_high - fib_low) * (discount_threshold / 100)) : na
+
+    bgcolor(in_premium_zone ? premium_zone_color : na, title="Premium Zone")
+    bgcolor(in_discount_zone ? discount_zone_color : na, title="Discount Zone")
+
+// Price Labels on Levels
+if show_price_labels and barstate.islast and enable_fibonacci
+    if show_fib_618 and not na(fib_618)
+        label.new(bar_index + 2, fib_618, "61.8% " + str.tostring(fib_618, "#.#####"), style=label.style_label_left, color=color.orange, textcolor=color.white, size=size.tiny)
+    if show_fib_705 and not na(fib_705)
+        label.new(bar_index + 2, fib_705, "70.5% OTE " + str.tostring(fib_705, "#.#####"), style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.small)
+    if show_fib_786 and not na(fib_786)
+        label.new(bar_index + 2, fib_786, "78.6% " + str.tostring(fib_786, "#.#####"), style=label.style_label_left, color=color.purple, textcolor=color.white, size=size.tiny)
+    if show_fib_79 and not na(fib_79)
+        label.new(bar_index + 2, fib_79, "79% OTE " + str.tostring(fib_79, "#.#####"), style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.small)
+
+// OTE Entry Signals
+if show_ote_labels and in_ote_zone and not in_ote_zone[1]
+    label.new(bar_index, low - ta.atr(14),
+              "🎯 OTE ZONE ENTRY\nStrength: " + str.tostring(ote_strength) + "/3\nTrend: " + (is_uptrend ? "UP" : "DOWN"),
+              style=label.style_label_up,
+              color=color.yellow,
+              textcolor=color.black,
+              size=size.normal)
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 📊 OTE ANALYSIS TABLE
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
+    var table ote_table = table.new(position.top_left, 3, 7, bgcolor=color.new(color.white, 10), border_width=2)
+
+    // Header
+    table.cell(ote_table, 0, 0, "OTE ANALYSIS", bgcolor=color.navy, text_color=color.white, text_size=size.normal)
+    table.cell(ote_table, 1, 0, "LEVEL", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(ote_table, 2, 0, "STATUS", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+
+    // Current Range Position
+    table.cell(ote_table, 0, 1, "Range Position", bgcolor=color.blue, text_color=color.white)
+    table.cell(ote_table, 1, 1, not na(current_range_position) ? str.tostring(current_range_position, "#.#") + "%" : "N/A", bgcolor=color.new(color.blue, 70), text_color=color.white)
+    range_status = in_premium_zone ? "🔴 PREMIUM" : in_discount_zone ? "🟢 DISCOUNT" : "🔵 EQUILIBRIUM"
+    range_color = in_premium_zone ? color.new(color.red, 70) : in_discount_zone ? color.new(color.green, 70) : color.new(color.blue, 70)
+    table.cell(ote_table, 2, 1, range_status, bgcolor=range_color, text_color=color.white)
+
+    // OTE Zone Status
+    table.cell(ote_table, 0, 2, "OTE Zone", bgcolor=color.yellow, text_color=color.black)
+    table.cell(ote_table, 1, 2, in_ote_zone ? "ACTIVE" : "INACTIVE", bgcolor=in_ote_zone ? color.new(color.yellow, 50) : color.new(color.gray, 80), text_color=color.black)
+    table.cell(ote_table, 2, 2, in_ote_zone ? "🎯 IN ZONE" : "❌ OUT", bgcolor=in_ote_zone ? color.new(color.yellow, 50) : color.new(color.gray, 80), text_color=color.black)
+
+    // OTE Strength
+    table.cell(ote_table, 0, 3, "OTE Strength", bgcolor=color.orange, text_color=color.white)
+    table.cell(ote_table, 1, 3, str.tostring(ote_strength) + "/3", bgcolor=color.new(color.orange, 70), text_color=color.white)
+    strength_status = ote_strength >= 2 ? "💪 STRONG" : ote_strength == 1 ? "📊 MODERATE" : "❌ WEAK"
+    strength_color = ote_strength >= 2 ? color.new(color.green, 70) : ote_strength == 1 ? color.new(color.orange, 70) : color.new(color.red, 70)
+    table.cell(ote_table, 2, 3, strength_status, bgcolor=strength_color, text_color=color.white)
+
+    // Trend Direction
+    table.cell(ote_table, 0, 4, "Trend Direction", bgcolor=color.purple, text_color=color.white)
+    table.cell(ote_table, 1, 4, not na(is_uptrend) ? (is_uptrend ? "BULLISH" : "BEARISH") : "N/A", bgcolor=color.new(color.purple, 70), text_color=color.white)
+    trend_status = not na(is_uptrend) ? (is_uptrend ? "🔺 UP" : "🔻 DOWN") : "❓ UNCLEAR"
+    trend_color = not na(is_uptrend) ? (is_uptrend ? color.new(color.green, 70) : color.new(color.red, 70)) : color.new(color.gray, 70)
+    table.cell(ote_table, 2, 4, trend_status, bgcolor=trend_color, text_color=color.white)
+
+    // Key Fibonacci Levels
+    table.cell(ote_table, 0, 5, "Fib 70.5%", bgcolor=color.yellow, text_color=color.black)
+    table.cell(ote_table, 1, 5, not na(fib_705) ? str.tostring(fib_705, "#.#####") : "N/A", bgcolor=color.new(color.yellow, 70), text_color=color.black)
+    fib705_status = not na(fib_705) ? (close > fib_705 ? "🔺 ABOVE" : "🔻 BELOW") : "❓"
+    table.cell(ote_table, 2, 5, fib705_status, bgcolor=color.new(color.yellow, 70), text_color=color.black)
+
+    table.cell(ote_table, 0, 6, "Fib 79%", bgcolor=color.yellow, text_color=color.black)
+    table.cell(ote_table, 1, 6, not na(fib_79) ? str.tostring(fib_79, "#.#####") : "N/A", bgcolor=color.new(color.yellow, 70), text_color=color.black)
+    fib79_status = not na(fib_79) ? (close > fib_79 ? "🔺 ABOVE" : "🔻 BELOW") : "❓"
+    table.cell(ote_table, 2, 6, fib79_status, bgcolor=color.new(color.yellow, 70), text_color=color.black)
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 🚨 OTE ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+alert_freq = alert_frequency == "once_per_bar" ? alert.freq_once_per_bar : alert.freq_once_per_bar_close
+
+// OTE Zone Entry Alerts
+if enable_ote_alerts and in_ote_zone and not in_ote_zone[1]
+    alert("🎯 OTE ZONE ENTRY!\n" +
+          "Symbol: " + syminfo.ticker + "\n" +
+          "Timeframe: " + timeframe.period + "\n" +
+          "OTE Zone: 70.5% - 79% Fibonacci\n" +
+          "Trend Direction: " + (is_uptrend ? "BULLISH" : "BEARISH") + "\n" +
+          "Strength: " + str.tostring(ote_strength) + "/3\n" +
+          "Price: " + str.tostring(close, "#.#####"), alert_freq)
+
+// Premium/Discount Zone Alerts
+if enable_pd_alerts
+    if in_premium_zone and not in_premium_zone[1]
+        alert("🔴 PREMIUM ZONE ENTRY!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Range Position: " + str.tostring(current_range_position, "#.#") + "%\n" +
+              "Zone: PREMIUM (Selling preferred)\n" +
+              "Price: " + str.tostring(close, "#.#####"), alert_freq)
+
+    if in_discount_zone and not in_discount_zone[1]
+        alert("🟢 DISCOUNT ZONE ENTRY!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Range Position: " + str.tostring(current_range_position, "#.#") + "%\n" +
+              "Zone: DISCOUNT (Buying preferred)\n" +
+              "Price: " + str.tostring(close, "#.#####"), alert_freq)
+
+// Fibonacci Level Touch Alerts
+if enable_fib_touch_alerts
+    if show_fib_618 and not na(fib_618) and math.abs(close - fib_618) <= ta.atr(14) * 0.1
+        alert("📊 FIBONACCI 61.8% TOUCH!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Level: " + str.tostring(fib_618, "#.#####") + "\n" +
+              "Current: " + str.tostring(close, "#.#####"), alert_freq)
+
+    if show_fib_786 and not na(fib_786) and math.abs(close - fib_786) <= ta.atr(14) * 0.1
+        alert("📊 FIBONACCI 78.6% TOUCH!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Level: " + str.tostring(fib_786, "#.#####") + "\n" +
+              "Current: " + str.tostring(close, "#.#####"), alert_freq)
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// 📤 EXPORT FOR INTEGRATION WITH OTHER SCRIPTS
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// Note: Converting export statements to plot() for indicator script compatibility
+plot(in_ote_zone ? 1 : 0, "In_OTE_Zone", display=display.data_window)
+plot(ote_strength, "OTE_Strength", display=display.data_window)
+plot(in_premium_zone ? 1 : 0, "In_Premium_Zone", display=display.data_window)
+plot(in_discount_zone ? 1 : 0, "In_Discount_Zone", display=display.data_window)
+plot(is_uptrend ? 1 : 0, "Is_Uptrend", display=display.data_window)
+plot(fib_705, "Fib_705", display=display.data_window)
+plot(fib_79, "Fib_79", display=display.data_window)
+plot(fib_618, "Fib_618", display=display.data_window)
+plot(fib_786, "Fib_786", display=display.data_window)
+plot(current_range_position, "Current_Range_Position", display=display.data_window)

@@ -1,0 +1,176 @@
+//@version=6
+indicator(title='RAPF v7.1 [Anti-Chop Fusion]', shorttitle='RAPF Fusion 7.1', overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+grp_exec    = "Execution Engine"
+length      = input.int(12, "Price Speed (HMA)", minval=1, group=grp_exec)
+sl_lookback = input.int(3, "Stop Loss Lookback", minval=1, group=grp_exec)
+
+grp_vol     = "Volume & Chop Filters (The Fix)"
+use_vol_flt = input.bool(true, "Active Volume Filter", group=grp_vol, tooltip="If true, blocks trades when volume is weak.")
+vol_thresh  = input.float(0.8, "Volume Threshold %", minval=0.1, step=0.1, group=grp_vol, tooltip="Requires current Volume to be at least X% of the 20-period average. 1.0 = 100%, 0.8 = 80%.")
+use_sqz     = input.bool(true, "Block Tight Squeezes", group=grp_vol, tooltip="Prevents trading during extremely tight consolidation (low volatility).")
+
+grp_brain   = "Analyst Brain"
+min_score   = input.float(0.15, "Min Predictive Score", step=0.05, group=grp_brain)
+
+grp_vis     = "Visuals"
+show_table  = input.bool(true, "Show Info Dashboard", group=grp_vis)
+c_buy       = input.color(#00E676, "Buy Color", group=grp_vis)
+c_sell      = input.color(#FF5252, "Sell Color", group=grp_vis)
+
+// ==========================================
+// 2. THE ANALYST & FILTERS
+// ==========================================
+
+// --- A. Volume Logic (Restored & Enhanced) ---
+// 1. PVT (Price Volume Trend) Check from v21
+pvt = ta.cum(ta.change(close) / close[1] * volume)
+pvt_signal = ta.ema(pvt, 21)
+bool pvt_bullish = pvt > pvt_signal
+
+// 2. Volume Floor Check
+vol_ma = ta.sma(volume, 20)
+bool vol_healthy = volume >= (vol_ma * vol_thresh)
+
+// Master Volume Condition
+bool vol_ok = false
+if not use_vol_flt
+    vol_ok := true
+else
+    // Must have PVT trend AND decent relative volume
+    vol_ok := pvt_bullish and vol_healthy
+
+// --- B. Regime & Squeeze Detection ---
+[di_plus, di_minus, adx] = ta.dmi(14, 14)
+
+basis = ta.sma(close, 20)
+dev = 2.0 * ta.stdev(close, 20)
+bb_width = ((basis + dev) - (basis - dev)) / basis
+avg_bb_width = ta.sma(bb_width, 50)
+
+// Squeeze Filter: If bands are super tight (< 70% of average), market is sleeping
+bool is_squeeze = bb_width < (avg_bb_width * 0.7)
+bool squeeze_ok = use_sqz ? not is_squeeze : true
+
+// --- C. Predictive Scoring ---
+// Momentum
+macd = ta.ema(close, 12) - ta.ema(close, 26)
+float s_mom = 0.0
+s_mom += ta.roc(close, 10) > 0 ? 0.3 : -0.3
+s_mom += macd > ta.ema(macd, 9) ? 0.2 : -0.2
+
+// RSI
+rsi = ta.rsi(close, 14)
+float s_mr = 0.0
+s_mr += rsi > 50 ? 0.1 : -0.1
+s_mr += rsi > 70 ? -0.3 : (rsi < 30 ? 0.3 : 0.0)
+
+// Total Score
+float raw_score = s_mom + s_mr + (vol_ok ? 0.2 : -0.2)
+float predictive_score = math.max(math.min(raw_score / 1.5, 1.0), -1.0)
+
+// ==========================================
+// 3. THE EXECUTIONER
+// ==========================================
+
+// --- Price Engine ---
+hma_val = ta.hma(close, length)
+bool price_rising = hma_val > hma_val[1]
+bool price_falling = hma_val < hma_val[1]
+
+// --- State Machine ---
+var int state = 0 
+var float active_sl = 0.0
+
+bool signal_buy = false
+bool signal_sell = false
+
+// --- BUY LOGIC ---
+if state != 1
+    bool hma_buy = close > hma_val and price_rising
+    
+    // FILTERS
+    bool entry_allowed = true
+    
+    // 1. Check Score
+    if predictive_score < min_score
+        entry_allowed := false
+        
+    // 2. Check Volume (Critical Fix)
+    if not vol_ok
+        entry_allowed := false
+        
+    // 3. Check Squeeze
+    if not squeeze_ok
+        entry_allowed := false
+
+    // Trigger
+    if hma_buy and entry_allowed
+        signal_buy := true
+        state := 1
+        active_sl := ta.lowest(low, sl_lookback)
+
+// --- SELL LOGIC ---
+if state == 1
+    // Trailing SL
+    float new_sl = ta.lowest(low, sl_lookback)
+    active_sl := math.max(active_sl, new_sl)
+    
+    // Exits
+    bool sl_hit = low <= active_sl
+    bool trend_flip = close < hma_val and price_falling
+    bool score_crash = predictive_score < -0.4
+    
+    if sl_hit or trend_flip or score_crash
+        signal_sell := true
+        state := -1
+
+// ==========================================
+// 4. VISUALIZATION
+// ==========================================
+
+// Logic: If Price is Rising but Volume Filter blocked it, show Gray line
+color line_col = state == 1 ? c_buy : (state == -1 and price_rising ? color.gray : c_sell)
+plot(hma_val, "Trend Line", color=line_col, linewidth=2)
+plot(state == 1 ? active_sl : na, "Stop Loss", color=color.white, style=plot.style_cross, linewidth=1)
+barcolor(state == 1 ? c_buy : c_sell)
+
+if signal_buy
+    label.new(bar_index, low, "BUY", color=c_buy, textcolor=color.white, style=label.style_label_up, size=size.small)
+if signal_sell
+    label.new(bar_index, high, "EXIT", color=c_sell, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ==========================================
+// 5. DASHBOARD
+// ==========================================
+var table infoTable = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 50), border_width=1)
+
+if show_table and barstate.islast
+    table.cell(infoTable, 0, 0, "RAPF ANTI-CHOP", bgcolor=color.gray, text_color=color.white)
+    table.cell(infoTable, 1, 0, "v7.1", bgcolor=color.gray, text_color=color.white)
+    
+    // Volume Status
+    color vol_col = vol_ok ? c_buy : color.orange
+    string vol_txt = vol_ok ? "STRONG" : "WEAK"
+    table.cell(infoTable, 0, 1, "Volume", text_color=color.white)
+    table.cell(infoTable, 1, 1, vol_txt, bgcolor=vol_col, text_color=color.white)
+
+    // Squeeze Status
+    color sqz_col = squeeze_ok ? c_buy : color.red
+    string sqz_txt = squeeze_ok ? "ACTIVE" : "SQUEEZE"
+    table.cell(infoTable, 0, 2, "Volatility", text_color=color.white)
+    table.cell(infoTable, 1, 2, sqz_txt, bgcolor=sqz_col, text_color=color.white)
+    
+    // Score
+    color score_col = predictive_score > min_score ? c_buy : predictive_score < -min_score ? c_sell : color.gray
+    table.cell(infoTable, 0, 3, "Score", text_color=color.white)
+    table.cell(infoTable, 1, 3, str.tostring(predictive_score, "#.##"), bgcolor=score_col, text_color=color.white)
+    
+    table.cell(infoTable, 0, 4, "Status", text_color=color.white)
+    table.cell(infoTable, 1, 4, state == 1 ? "LONG" : "WAIT", bgcolor=state==1 ? c_buy : color.gray, text_color=color.white)
+
+alertcondition(signal_buy, "Fusion Buy", "Fusion BUY. SL={{plot('Stop Loss')}}")
+alertcondition(signal_sell, "Fusion Sell", "Fusion SELL.")

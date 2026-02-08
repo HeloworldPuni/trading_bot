@@ -1,0 +1,75 @@
+//@version=6
+// # ========================================================================= #
+// #                   |  Draw-On-Liquidity Indicator  |
+// # ========================================================================= #
+indicator(title = "Draw-On-Liquidity", shorttitle = "DOLZ", overlay = true, max_lines_count = 500, max_labels_count = 500)
+// # ========================================================================= #
+// #                   |  Draw-On-Liquidity Indicator  |
+// # ========================================================================= #
+
+// Inputs
+liquidityTF = input.timeframe("60", "Liquidity Zone Timeframe")
+threshold = input.float(0.1, "EQ High / Low Threshold", minval = 0.01)
+// showHighs = input.bool(true, "Show Highs")
+// showLows = input.bool(true, "Show Lows")
+showPDH_PDL = input.bool(true, "Show PDH / PDL")
+pdhColor = input.color(color.orange, "PDH Color")
+pdlColor = input.color(color.purple, "PDL Color")
+
+// HTF High / Low (Liquidity Points)
+[htfHigh, htfLow] = request.security(syminfo.tickerid, liquidityTF, [high, low])
+
+var float lastHigh = na
+var float lastLow = na
+
+isEqual(a, b) => 
+    diff = math.abs(a - b)
+    avg = (a + b) / 2
+    percentageDiff = (diff / avg) * 100
+    percentageDiff < threshold
+
+// Liquidity Zone Plotting
+// Equal Highs
+if showHighs and isEqual(htfHigh, lastHigh)
+    line.new(bar_index[1], lastHigh, bar_index, htfHigh, extend = extend.right, color = color.red, style = line.style_dotted, width = 1)
+    label.new(bar_index, htfHigh, "BSL", style = label.style_label_down, color = color.red, textcolor = color.black)
+
+// Equal Lows
+if showLows and not na(lastLow) and isEqual(htfLow, lastLow)
+    line.new(bar_index[1], lastLow, bar_index, htfLow, extend=extend.right, color=color.blue, style=line.style_dashed, width=1)
+    label.new(bar_index, htfLow, "SSL", style=label.style_label_up, color=color.blue, textcolor=color.black)
+
+lastHigh := htfHigh
+lastLow := htfLow
+
+
+// PDH / PDL Plotting
+var line pdhLine = na
+var line pdlLine = na
+var label pdhLabel = na
+var label pdlLabel = na
+var int pdhStartBar = na
+var int pdlStartBar = na
+
+newDay = ta.change(time("D"))
+pdhVal = request.security(syminfo.tickerid, "D", high[1])
+pdlVal = request.security(syminfo.tickerid, "D", low[1])
+
+if showPDH_PDL and (newDay != 0)
+    if not na(pdhLine)
+        line.delete(pdhLine)
+    if not na(pdhLabel)
+        label.delete(pdhLabel)
+    if not na(pdlLine)
+        line.delete(pdlLine)
+    if not na(pdlLabel)
+        label.delete(pdlLabel)
+
+    pdhStartBar := bar_index
+    pdlStartBar := bar_index
+
+    pdhLine := line.new(x1=pdhStartBar - 100, y1=pdhVal, x2=pdhStartBar + 50, y2=pdhVal, extend = extend.right, color = pdhColor, style = line.style_solid, width = 2)
+    pdlLine := line.new(x1=pdlStartBar - 100, y1=pdlVal, x2=pdlStartBar + 50, y2=pdlVal, extend = extend.right, color = pdlColor, style = line.style_solid, width = 2)
+
+    pdhLabel := label.new(x=pdhStartBar, y=pdhVal, text = "PDH", textcolor = pdhColor, size = size.normal, style = label.style_none)
+    pdlLabel := label.new(x=pdlStartBar, y=pdlVal, text = "PDL", textcolor = pdlColor, size = size.normal, style = label.style_none)

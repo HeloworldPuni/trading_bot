@@ -1,0 +1,90 @@
+//@version=4
+strategy(title="RSI Divergence Core", overlay=true, pyramiding=2, default_qty_value=1, default_qty_type=strategy.fixed)
+
+// Inputs
+// RSI Inputs
+len = input(title="RSI Period", minval=1, defval=9, group="RSI Settings")
+src = input(title="RSI Source", defval=close, group="RSI Settings")
+lbR = input(title="Pivot Lookback Right", defval=3, group="RSI Settings")
+lbL = input(title="Pivot Lookback Left", defval=1, group="RSI Settings")
+takeProfitRSILevel = input(title="Take Profit at RSI Level", minval=70, defval=80, group="RSI Settings")
+rangeUpper = input(title="Max of Lookback Range", defval=60, group="RSI Settings")
+rangeLower = input(title="Min of Lookback Range", defval=5, group="RSI Settings")
+
+// Support/Resistance Filter Inputs
+useSupportFilter = input(true, title="Enable Support Filter for Longs", group="Support/Resistance Filter")
+srLeftBars = input(15, title="S/R Pivot Lookback Left", group="Support/Resistance Filter")
+srRightBars = input(15, title="S/R Pivot Lookback Right", group="Support/Resistance Filter")
+
+// Variables
+adjusted_qty = 1
+
+// RSI calculation
+osc = rsi(src, len)
+
+// Pivot detection
+plFound = na(pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(pivothigh(osc, lbL, lbR)) ? false : true
+
+var entry_price = 0.0
+
+// Range check function
+_inRange(cond) =>
+    bars = barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+// Regular Bullish Divergence
+oscHL = osc[lbR] > valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+priceLL = low[lbR] < valuewhen(plFound, low[lbR], 1)
+bullCond = priceLL and oscHL and plFound
+
+// Hidden Bullish Divergence
+oscLL = osc[lbR] < valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+priceHL = low[lbR] > valuewhen(plFound, low[lbR], 1)
+hiddenBullCond = priceHL and oscLL and plFound
+
+// Regular Bearish Divergence
+oscLH = osc[lbR] < valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+priceHH = high[lbR] > valuewhen(phFound, high[lbR], 1)
+bearCond = priceHH and oscLH and phFound
+
+// Calculate Support and Resistance Levels
+priceSupportLevel = fixnan(pivotlow(low, srLeftBars, srRightBars)[1])
+priceResistanceLevel = fixnan(pivothigh(high, srLeftBars, srRightBars)[1])
+
+// Entry and Exit Logic
+// Base long condition (divergence)
+longDivergenceCond = bullCond or hiddenBullCond
+
+// Support filter condition
+supportFilterCond = true // Default to true (filter passes or is disabled)
+if useSupportFilter
+    // Ensure support and resistance levels are valid and resistance is above support
+    if not na(priceSupportLevel) and not na(priceResistanceLevel) and priceResistanceLevel > priceSupportLevel
+        signalClose = close[lbR] // Close price at the time the divergence pattern is confirmed
+
+        // Check if the signal's close is above support AND within the 10% threshold from support
+        isAboveSupport = signalClose > priceSupportLevel
+        isWithinThreshold = (signalClose - priceSupportLevel) < (0.10 * (priceResistanceLevel - priceSupportLevel))
+        
+        supportFilterCond := isAboveSupport and isWithinThreshold
+    else
+        // If filter is enabled but levels are invalid (e.g., no pivot, or R <= S), condition fails
+        supportFilterCond := false
+
+longCondition = longDivergenceCond and supportFilterCond
+longCloseCondition = crossover(osc, takeProfitRSILevel) or bearCond
+
+// longCloseCondition = (close >= entry_price*1.002) or (close <= 0.999*entry_price)
+
+if longCondition and strategy.position_size <= 0
+    strategy.entry(id="RSIDivLE", long=true, when=longCondition, qty = adjusted_qty)
+    // entry_price := close
+
+strategy.close(id="RSIDivLE", when=longCloseCondition)
+
+// Plotting for debugging/visualization
+plot(priceSupportLevel, title="Calculated Support Level", color=color.new(color.blue, 0), style=plot.style_linebr, linewidth=2, offset=-(srRightBars+1))
+plot(priceResistanceLevel, title="Calculated Resistance Level", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2, offset=-(srRightBars+1))
+// Highlight bars where bullish divergence happened near support
+bgcolor(longCondition ? color.new(color.green, 80) : na) 

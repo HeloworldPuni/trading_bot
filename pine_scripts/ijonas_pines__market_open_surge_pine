@@ -1,0 +1,283 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════
+// Market Open Surge Strategy
+// ══════════════════════════════════════════════════════════════════════════════
+// Description: Specialized strategy for the first 30 minutes of US market open
+// Features: Gap analysis, pre-market levels, volume surge detection
+// Best for: US equities (stocks)
+// Trading Window: 9:30 AM - 10:00 AM EST
+// Author: Pine Script Collection
+// Version: 1.0
+// ══════════════════════════════════════════════════════════════════════════════
+
+strategy("Market Open Surge",
+         overlay=true,
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=100,
+         commission_type=strategy.commission.percent,
+         commission_value=0.1,
+         slippage=2,
+         calc_on_every_tick=false)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Session Settings ===
+sessionStart = input.string("0930-1000", "Trading Session (EST)", group="Session", tooltip="Format: HHMM-HHMM in EST timezone")
+extendedHours = input.bool(true, "Show Extended Hours", group="Session")
+
+// === Gap Settings ===
+minGapPercent = input.float(0.5, "Min Gap % for Entry", minval=0.1, maxval=10.0, step=0.1, group="Gap Analysis", tooltip="Minimum overnight gap size")
+maxGapPercent = input.float(5.0, "Max Gap % for Entry", minval=1.0, maxval=20.0, step=0.5, group="Gap Analysis", tooltip="Maximum gap to avoid extreme volatility")
+gapFillTarget = input.bool(false, "Target Gap Fill", group="Gap Analysis")
+
+// === Volume Surge Settings ===
+volumeLookback = input.int(20, "Volume Average Lookback", minval=5, maxval=100, group="Volume")
+volumeSurgeMultiplier = input.float(3.0, "Open Volume Surge Multiplier", minval=1.0, maxval=10.0, step=0.5, group="Volume", tooltip="Volume at open must be X times average")
+requireVolumeSurge = input.bool(true, "Require Volume Surge", group="Volume")
+
+// === Pre-Market Levels ===
+usePreMarketLevels = input.bool(true, "Use Pre-Market High/Low", group="Pre-Market")
+pmSessionStart = input.string("0400", "Pre-Market Start (EST)", group="Pre-Market")
+pmSessionEnd = input.string("0930", "Pre-Market End (EST)", group="Pre-Market")
+
+// === Momentum Settings ===
+useRSIFilter = input.bool(true, "Use RSI Momentum Filter", group="Momentum")
+rsiLength = input.int(5, "RSI Length (Fast)", minval=2, maxval=20, group="Momentum")
+rsiOverbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="Momentum")
+rsiOversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="Momentum")
+
+// === Risk Management ===
+atrLength = input.int(14, "ATR Length", minval=5, maxval=30, group="Risk Management")
+stopLossATRMult = input.float(1.5, "Stop Loss (ATR Multiplier)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+riskRewardRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.1, group="Risk Management")
+closeAtSessionEnd = input.bool(true, "Close All at 10:00 AM", group="Risk Management")
+
+// === Visual Settings ===
+showGapLevels = input.bool(true, "Show Gap Levels", group="Visual")
+showPMHighLow = input.bool(true, "Show Pre-Market High/Low", group="Visual")
+showEntryLabels = input.bool(true, "Show Entry Labels", group="Visual")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SESSION DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Session time in EST (exchange timezone)
+inTradingSession = not na(time(timeframe.period, sessionStart + ":1234567", "America/New_York"))
+inPreMarket = not na(time(timeframe.period, pmSessionStart + "-" + pmSessionEnd + ":12345", "America/New_York"))
+
+// First bar of regular session
+isMarketOpen = inTradingSession and not inTradingSession[1]
+
+// Last bar of trading window
+isSessionEnd = inTradingSession[1] and not inTradingSession
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GAP CALCULATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float prevDayClose = na
+var float openPrice = na
+var float gapSize = na
+var float gapPercent = na
+
+// Get previous day's close (before market open)
+if not inTradingSession and not inTradingSession[1]
+    prevDayClose := close
+
+// Get market open price
+if isMarketOpen
+    openPrice := open
+    if not na(prevDayClose)
+        gapSize := openPrice - prevDayClose
+        gapPercent := (gapSize / prevDayClose) * 100
+
+// Gap type
+gapUp = gapPercent > 0 and gapPercent >= minGapPercent and gapPercent <= maxGapPercent
+gapDown = gapPercent < 0 and math.abs(gapPercent) >= minGapPercent and math.abs(gapPercent) <= maxGapPercent
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PRE-MARKET HIGH/LOW
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float pmHigh = na
+var float pmLow = na
+var float pmHighRecorded = na
+var float pmLowRecorded = na
+
+// Track pre-market high/low
+if inPreMarket
+    if na(pmHigh) or high > pmHigh
+        pmHigh := high
+    if na(pmLow) or low < pmLow
+        pmLow := low
+
+// Save PM levels when market opens
+if isMarketOpen and usePreMarketLevels
+    pmHighRecorded := pmHigh
+    pmLowRecorded := pmLow
+    pmHigh := na
+    pmLow := na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VOLUME ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+
+volumeAvg = ta.sma(volume, volumeLookback)
+volumeSurge = volume > (volumeAvg * volumeSurgeMultiplier)
+volumeOK = requireVolumeSurge ? volumeSurge : true
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MOMENTUM INDICATORS
+// ══════════════════════════════════════════════════════════════════════════════
+
+rsi = ta.rsi(close, rsiLength)
+rsiBullish = useRSIFilter ? rsi > 50 and rsi < rsiOverbought : true
+rsiBearish = useRSIFilter ? rsi < 50 and rsi > rsiOversold : true
+
+atr = ta.atr(atrLength)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Gap Up Long (gap up + continuation) ===
+gapUpLong = gapUp and inTradingSession and close > openPrice and volumeOK and rsiBullish and strategy.position_size == 0
+
+// === Gap Down Short (gap down + continuation) ===
+gapDownShort = gapDown and inTradingSession and close < openPrice and volumeOK and rsiBearish and strategy.position_size == 0
+
+// === Gap Fade (opposite of gap direction) ===
+gapUpFade = gapUp and inTradingSession and close < openPrice and volumeOK and rsiBearish and strategy.position_size == 0
+gapDownFade = gapDown and inTradingSession and close > openPrice and volumeOK and rsiBullish and strategy.position_size == 0
+
+// === Pre-Market Breakout ===
+pmHighBreakout = usePreMarketLevels and not na(pmHighRecorded) and close > pmHighRecorded and volumeOK and rsiBullish and strategy.position_size == 0
+pmLowBreakdown = usePreMarketLevels and not na(pmLowRecorded) and close < pmLowRecorded and volumeOK and rsiBearish and strategy.position_size == 0
+
+// Combined long/short conditions
+longCondition = (gapUpLong or gapDownFade or pmHighBreakout) and inTradingSession
+shortCondition = (gapDownShort or gapUpFade or pmLowBreakdown) and inTradingSession
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POSITION MANAGEMENT
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float entryPrice = na
+var float stopLoss = na
+var float takeProfit = na
+var string entryType = na
+
+// === Long Entry ===
+if longCondition
+    entryPrice := close
+    stopLoss := close - (atr * stopLossATRMult)
+
+    // Determine take profit based on entry type
+    if gapFillTarget and (gapUpFade or gapDownFade)
+        takeProfit := prevDayClose  // Target gap fill
+    else
+        stopDistance = entryPrice - stopLoss
+        takeProfit := entryPrice + (stopDistance * riskRewardRatio)
+
+    entryType := gapUpLong ? "Gap Up Continuation" :
+                 gapDownFade ? "Gap Fade Long" :
+                 pmHighBreakout ? "PM High Breakout" : "Long"
+
+    strategy.entry("Long", strategy.long)
+
+    if showEntryLabels
+        label.new(bar_index, low, "🟢 " + entryType + "\nGap: " + str.tostring(gapPercent, "#.##") + "%\nEntry: " + str.tostring(entryPrice, format.mintick),
+                 color=color.new(color.green, 0), textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+
+// === Short Entry ===
+if shortCondition
+    entryPrice := close
+    stopLoss := close + (atr * stopLossATRMult)
+
+    // Determine take profit based on entry type
+    if gapFillTarget and (gapUpFade or gapDownFade)
+        takeProfit := prevDayClose  // Target gap fill
+    else
+        stopDistance = stopLoss - entryPrice
+        takeProfit := entryPrice - (stopDistance * riskRewardRatio)
+
+    entryType := gapDownShort ? "Gap Down Continuation" :
+                 gapUpFade ? "Gap Fade Short" :
+                 pmLowBreakdown ? "PM Low Breakdown" : "Short"
+
+    strategy.entry("Short", strategy.short)
+
+    if showEntryLabels
+        label.new(bar_index, high, "🔴 " + entryType + "\nGap: " + str.tostring(gapPercent, "#.##") + "%\nEntry: " + str.tostring(entryPrice, format.mintick),
+                 color=color.new(color.red, 0), textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+
+// === Exit Management ===
+if strategy.position_size > 0  // Long position
+    strategy.exit("Long Exit", "Long", stop=stopLoss, limit=takeProfit)
+
+if strategy.position_size < 0  // Short position
+    strategy.exit("Short Exit", "Short", stop=stopLoss, limit=takeProfit)
+
+// === Close at Session End ===
+if closeAtSessionEnd and isSessionEnd
+    strategy.close_all("Session Close")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Previous Day Close ===
+plot(showGapLevels and not na(prevDayClose) ? prevDayClose : na, "Prev Close", color=color.new(color.gray, 0), linewidth=2, style=plot.style_circles)
+
+// === Open Price ===
+plot(showGapLevels and not na(openPrice) and inTradingSession ? openPrice : na, "Open", color=color.new(color.white, 0), linewidth=2, style=plot.style_cross)
+
+// === Pre-Market High/Low ===
+plot(showPMHighLow and not na(pmHighRecorded) and inTradingSession ? pmHighRecorded : na, "PM High", color=color.new(color.green, 30), linewidth=2)
+plot(showPMHighLow and not na(pmLowRecorded) and inTradingSession ? pmLowRecorded : na, "PM Low", color=color.new(color.red, 30), linewidth=2)
+
+// === Active Position Lines ===
+longActive = strategy.position_size > 0
+shortActive = strategy.position_size < 0
+
+plot(longActive ? stopLoss : na, "Long SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(longActive ? takeProfit : na, "Long TP", color=color.green, linewidth=2, style=plot.style_circles)
+plot(shortActive ? stopLoss : na, "Short SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(shortActive ? takeProfit : na, "Short TP", color=color.green, linewidth=2, style=plot.style_circles)
+
+// === Background for Trading Session ===
+bgcolor(inTradingSession ? color.new(color.blue, 97) : na, title="Trading Window")
+bgcolor(inPreMarket and extendedHours ? color.new(color.purple, 97) : na, title="Pre-Market")
+
+// === Gap Visualization ===
+if showGapLevels and isMarketOpen and (gapUp or gapDown)
+    gapColor = gapUp ? color.new(color.green, 80) : color.new(color.red, 80)
+    box.new(bar_index, prevDayClose, bar_index + 10, openPrice,
+            border_color=gapColor, bgcolor=gapColor, border_width=2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(isMarketOpen, "Market Open", "US Market Opening - 9:30 AM EST")
+alertcondition(gapUp, "Gap Up Detected", "Gap Up at market open - {{ticker}}")
+alertcondition(gapDown, "Gap Down Detected", "Gap Down at market open - {{ticker}}")
+alertcondition(longCondition, "Long Entry", "Market Open Surge - LONG Entry")
+alertcondition(shortCondition, "Short Entry", "Market Open Surge - SHORT Entry")
+alertcondition(isSessionEnd, "Session End", "Trading window closing - 10:00 AM EST")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PERFORMANCE NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+// Best for: US equities with good liquidity
+// Trading window: 9:30 AM - 10:00 AM EST (first 30 minutes)
+// Works best on 1m, 5m charts
+// Requires extended hours data to calculate pre-market levels
+// Gap strategies work best during earnings season and news events
+// Always paper trade first to understand the volatility
+// ══════════════════════════════════════════════════════════════════════════════

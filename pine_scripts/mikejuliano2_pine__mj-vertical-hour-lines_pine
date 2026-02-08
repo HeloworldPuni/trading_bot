@@ -1,0 +1,369 @@
+//@version=4
+
+study("MJ - Vertical Hour Lines", overlay=true)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== DATE UTILS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+int MS_PER_MINUTE = 1000 * 60
+int MS_PER_HOUR = MS_PER_MINUTE * 60
+int MS_PER_DAY = MS_PER_HOUR * 24
+int MS_PER_WEEK = MS_PER_DAY * 7
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+
+_currentBarTime() => time(timeframe.period)
+
+_calcBarsPerHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+
+_calcBarsPerDay() => _calcBarsPerHour() * 24
+_calcBarsPerWeek() => _calcBarsPerDay() * 7
+
+_timeElapsedThisHourInMs() => (MS_PER_MINUTE * minute) + (1000 * second)
+_timeElapsedTodayInMs() => (MS_PER_HOUR * hour) - (MS_PER_MINUTE * minute) - (1000 * second)
+_timeElapsedThisWeekInMs() => ((dayofweek - 1) * MS_PER_DAY) + _timeElapsedTodayInMs()
+
+// _barsElapsedThisWeek() => 
+
+_getTimeAtBeginningOfToday() => timenow - _timeElapsedTodayInMs()
+_getTimeAtBeginningOfWeek() => timenow - _timeElapsedThisWeekInMs()
+_getTimeAtBeginningOfNextWeek() => _getTimeAtBeginningOfWeek() + MS_PER_WEEK
+    
+_getTimeAtStartOfHourNHoursAgo(numHours) => 
+    timeElapsedSinceStartInMs = _timeElapsedThisHourInMs() + (numHours * MS_PER_HOUR)
+    timenow - timeElapsedSinceStartInMs
+
+
+// *** TOOD ***
+// _getBarIndexAtTime() => 
+// _getBarIndexForTimestamp(_timestamp) => 
+
+_getBarsElapsedAndRemainingForCurrentHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+    int barsRemainingThisHour = barsPerHour - barsElapsedThisHour
+    [barsElapsedThisHour, barsRemainingThisHour]
+
+_getStartTimeNDaysBack(numDays) => 
+    // int barsPerDay = _calcBarsPerDay()
+    // int numBarsElapsedToday = 0
+    // int barsElapsedSinceCutoff = numBarsElapsedToday + (barsPerDay * numDays)
+    // _getPastTimeNBarsBackFromNow(barsElapsedSinceCutoff)
+    _getTimeAtBeginningOfToday() - (numDays * MS_PER_DAY)    
+
+_isCurrentDay() => 
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - MS_PER_DAY)   
+
+_isCurrentWeek() => 
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - MS_PER_WEEK)   
+
+_isInSession(timeRange) =>
+    not na(time(timeframe.period, timeRange))
+
+_isFirstOrLastFiveMinOfAnyHour() => 
+    _isInSession('2355-0005') or _isInSession('0055-0105') or _isInSession('0155-0205') or _isInSession('0255-0305') or _isInSession('0355-0405') or _isInSession('0455-0505') or _isInSession('0555-0605') or _isInSession('0655-0705') or _isInSession('0755-0805') or _isInSession('0855-0905') or _isInSession('0955-1005') or _isInSession('1055-1105') or _isInSession('1155-1205') or _isInSession('1255-1305') or _isInSession('1355-1405') or _isInSession('1455-1505') or _isInSession('1555-1605') or _isInSession('1655-1705') or _isInSession('1755-1805') or _isInSession('1855-1905') or _isInSession('1955-2005') or _isInSession('2055-2105') or _isInSession('2155-2205') or _isInSession('2255-2305')    
+
+_isLastBarForCurrentTimeframeAtResolution(Resolution) =>
+    t = time(Resolution, session.regular) // e.g. "1440" = Daily Resolution
+    not na(t[1]) and na(t) or t[1] < t
+
+_isFirstBarForCurrentTimeframeAtResolution(Resolution) =>
+    // e.g. current timeframe: 1min, resolution: '60' => return true for the first minute of the hour
+    // e.g. current timeframe: 5min, resolution: '60' => return true for the first 5 minutes of the hour
+    t = time(Resolution)
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and (na(previousBar) or currentBar > previousBar)
+
+COLOR_LIME = #1cd206
+COLOR_VOLT = #affd00
+COLOR_PINK = #e63a97
+COLOR_RED = #f21616
+COLOR_LIGHT_BLUE = #3179f5
+COLOR_MAGENTA = #d612f8
+COLOR_ORANGE = #f57f17
+COLOR_GOLD = #ffb74d
+COLOR_YELLOW = #ffeb3b
+COLOR_TEAL = #00bcd4
+COLOR_WHITE = #ffffff
+COLOR_BLUE = #1848cc
+COLOR_PURPLE = #3e31c4
+COLOR_GREY_ONE = #9598a1
+COLOR_GREEN = #4caf50
+COLOR_ROYAL_BLUE = #1848cc
+COLOR_TURQUOISE = #00897b
+COLOR_PEACH = #e57373
+COLOR_BLACK = #000000
+COLOR_PINKISH_RED = #e91e63
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== VERTICAL HOUR LINES ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// -----------------------
+// dependencies: dateUtils
+// -----------------------
+
+groupShared = 'Shared'
+groupLines = 'Lines'
+groupLabels = 'Labels'
+groupDateTimeLabel = 'Date/Time Label'
+
+// SHARED
+maxTimeframe = input(title='Max timeframe', defval=5, maxval=60, minval=1, group=groupShared)
+numHoursToShow = input(24, 'Number of hours to show', group=groupShared, minval=0, maxval=100)
+
+// LINES
+showLines = input(true, 'Show Lines', group=groupLines)
+lineColor = input(#090720, 'Line Color', group=groupLines)
+lineStyle = input(line.style_dashed, 'Line Style', group=groupLines, options=[line.style_solid, line.style_dashed, line.style_dotted])
+lineWidth = input(1, 'Line Width', group=groupLines, options=[1, 2, 3, 4])
+
+// LABELS
+showLabels = input(true, 'Show Labels?', group=groupLabels)
+isDaylightSavings = input(false, 'Is Daylight Savings?', group=groupLabels)
+labelSize = input(size.normal, 'Label Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group=groupLabels)
+labelColor = input(color.new(#ffb74d, 0), 'Label Color', group=groupLabels)
+labelTextColor = input(#090720, 'Label Text Color', group=groupLabels)
+labelStyle = input(label.style_none, 'Label Style', options=[label.style_none, label.style_label_up, label.style_label_center], group=groupLabels)
+labelLocation = input(yloc.belowbar, 'Label Location', options=[yloc.price, yloc.abovebar, yloc.belowbar], group=groupLabels)
+
+// DATE/TIME LABEL
+showDateTimeLabel = input(false, 'Show Date/Time Label', group=groupDateTimeLabel)
+dateTimeLabelFixedColorActive = input(true, 'Fixed Color', group=groupDateTimeLabel, inline='fixedColor')
+dateTimeLabelFixedColor = input(color.new(color.white, 0), 'Color', group=groupDateTimeLabel, inline='fixedColor')
+dateTimeLabelSize = input(size.normal, 'Date/Time Label Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group=groupDateTimeLabel)
+dateTimeLabelMarginMultiple = input(0.4, 'Date/Time Label Margin Multiple', 
+ group=groupDateTimeLabel, minval=-2, maxval=2, step=0.05, 
+ tooltip='Use this to adjust the vertical positioning of the date/time label.  Positive values will place it above price. Negative values will place it below price.')
+dateTimeLabelOffset = input(50, 'Date/Time Label Offset (in bars)', group=groupDateTimeLabel)
+dateTimeLabelOpacity = input(30, 'Opacity', minval=0, maxval=100)
+
+// var label[] labels = array.new_label(0)
+// var line[] lines = array.new_line(0)
+
+_isWithinVerticalHourLineLookbackPeriod() => 
+    lookbackTimeInMs = MS_PER_DAY * numHoursToShow / 24
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - lookbackTimeInMs)
+
+_plotVerticalLineAtIndex(BarIndex, Color, LineStyle, LineWidth) => // Verticle Line Function, ≈50-54 lines maximum allowable per indicator
+    return = line.new(BarIndex, low - tr, BarIndex, high + tr, xloc.bar_index, extend.both, Color, LineStyle, LineWidth) // Suitable for study(overlay=true)
+
+_isAtOrBelowMaxTimeframe() => timeframe.isseconds or (timeframe.isminutes and timeframe.multiplier <= maxTimeframe)
+
+_conditionsMet() => 
+    _isFirstBarForCurrentTimeframeAtResolution('60')  
+      and _isWithinVerticalHourLineLookbackPeriod()
+      and _isAtOrBelowMaxTimeframe()
+
+_drawLabel() => 
+    _hour = isDaylightSavings ? hour : (hour == 0 ? 23 : hour - 1)
+
+    barIndex = _conditionsMet() and showLabels ? bar_index : na
+    labelId = label.new(
+             x=showLabels ? barIndex : na,
+             y=high,
+             text=tostring(_hour < 4 ? _hour + 20 : _hour - 4) + ':00',
+             textcolor=labelTextColor,
+             style=labelStyle,
+             size=labelSize,
+             xloc=xloc.bar_index,
+             yloc=labelLocation,
+             color=labelColor)
+    
+    // array.push(labels, labelId)
+
+    // cleanup
+    // if array.size(labels) > numHoursToShow
+        // labelToDelete = array.shift(labels)
+        // label.delete(labelToDelete)
+
+_plotHourLines() =>
+    barIndex = _conditionsMet() and showLines ? bar_index : na
+    lineId = _plotVerticalLineAtIndex(barIndex, lineColor, lineStyle, lineWidth)
+    
+    // array.push(lines, lineId)
+
+    // cleanup
+    // if array.size(lines) > numHoursToShow
+        // lineToDelete = array.shift(lines)
+        // line.delete(lineToDelete)
+
+
+_plotHourLines()
+_drawLabel()
+
+_getAdjustedHour() => 
+    _hour = isDaylightSavings ? hour : (hour == 0 ? 23 : hour - 1) // adjust for daylight savings.  pine does something weird here
+    _hour := _hour < 4 ? _hour + 20 : _hour - 4
+
+_getAdjustedDay() => 
+    adjustedDay = dayofweek == 1 and hour < 4 ? 7
+      : hour < 4 ? dayofweek - 1
+      : dayofweek
+_getMinute() => minute < 10 ? '0' + tostring(minute) : tostring(minute)
+
+_dateDisplay() => '(' + tostring(month) + '/' + tostring(dayofmonth) + ') '
+
+_getDayOfWeekLabel() =>
+    adjustedHour = _getAdjustedHour()
+    adjustedDay = _getAdjustedDay()
+
+    if adjustedDay == 1
+        'Sun'
+    else if adjustedDay == 2
+        'Mon'
+    else if adjustedDay == 3
+        'Tues'
+    else if adjustedDay == 4
+        'Wed'
+    else if adjustedDay == 5
+        'Thur'
+    else if adjustedDay == 6
+        'Fri'
+    else
+        'Sat'
+
+_getAdjustedTimeDisplay() => tostring(_getAdjustedHour()) + ':' + _getMinute()
+// _debugDisplay() => 'D' + tostring(dayofweek) + ' h' + tostring(hour) + ' m' + tostring(minute) + ' | '
+
+_getDateTimeDisplay() =>
+    _display = _dateDisplay() + _getDayOfWeekLabel() + ' - ' + _getAdjustedTimeDisplay()
+    timeframe.isintraday ? _display : na
+
+
+_getColorByDay() =>
+    adjustedDay = _getAdjustedDay()
+    if dateTimeLabelFixedColorActive
+        dateTimeLabelFixedColor
+    else if adjustedDay == 1
+        color.white
+    else if adjustedDay == 2
+        color.red
+    else if adjustedDay == 3
+        color.orange
+    else if adjustedDay == 4
+        color.yellow
+    else if adjustedDay == 5
+        color.green
+    else if adjustedDay == 6
+        color.blue
+    else
+        color.purple
+
+
+
+_getLabelHeight() => 
+    vm = abs(sma(high - low, 50))
+    y = dateTimeLabelMarginMultiple > 0 ? high + vm : low - vm
+
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== PRINT CURRENT DATE/TIME ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+_print(_text, _color) => 
+    var _label = label.new(bar_index, na, _text, xloc.bar_index, yloc.price, color(na), label.style_none, color.new(_color, dateTimeLabelOpacity), dateTimeLabelSize, text.align_left)
+    label.set_xy(_label, bar_index + dateTimeLabelOffset, _getLabelHeight())
+    label.set_text(_label, _text)
+    label.set_textcolor(_label, _color)
+
+
+_print(
+     showDateTimeLabel ? _getDateTimeDisplay() : na, 
+     showDateTimeLabel ? _getColorByDay() : na
+     )
+
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== WEEK START LINES ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+_isFirstBarOfWeek() =>
+    // e.g. current timeframe: 1min, resolution: '60' => return true for the first minute of the hour
+    // e.g. current timeframe: 5min, resolution: '60' => return true for the first 5 minutes of the hour
+    t = time('1D', '2100-2100:1')
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and (na(previousBar) or currentBar > previousBar)
+
+
+groupWeekStart = 'Week Start'
+weekStartLineActive = input(false, 'Is Active', group=groupWeekStart)
+weekStartMaxTimeframe = input(60, 'Max Timeframe', minval=15, maxval=240, group=groupWeekStart)
+weekStartPlotWidth = input(2, 'Plot Width', options=[1,2,3,4], group=groupWeekStart)
+weekStartPlotColor = input(color.new(#4db6ac, 70), 'Plot Color', group=groupWeekStart)
+
+_weekStartLineVisible() => 
+    _isFirstBarOfWeek() and weekStartLineActive and 
+     timeframe.isintraday and not timeframe.isseconds
+      and timeframe.multiplier <= weekStartMaxTimeframe 
+
+barsPerWeek = _calcBarsPerWeek()
+weekMarkerY = low - (high - low)
+
+plot(
+     _weekStartLineVisible() ? weekMarkerY : na, 
+     style=plot.style_histogram, 
+     linewidth=weekStartPlotWidth, 
+     color=weekStartPlotColor,
+     title='Start of Week',
+     offset=0
+     )
+
+plot(
+     _weekStartLineVisible() and _isCurrentWeek() ? weekMarkerY : na, 
+     style=plot.style_histogram, 
+     linewidth=weekStartPlotWidth, 
+     color=weekStartPlotColor,
+     title='Start of Next Week',
+     offset=barsPerWeek
+     )
+
+
+
+// plot next week start line
+
+// var line nextWeekLine = na
+
+// _plotVerticalLineAtTime(x, Color, LineStyle, LineWidth) => // Verticle Line Function, ≈50-54 lines maximum allowable per indicator
+//     line.new(
+//          x1=x, 
+//          y1=low, 
+//          x2=x, 
+//          y2=low, 
+//          xloc=xloc.bar_time, 
+//          extend=extend.both, 
+//          color=Color, 
+//          style=LineStyle, 
+//          width=LineWidth
+//          )
+
+// nextWeekStartLineVisible = _weekStartLineVisible()
+// nextWeekStartTime = _getTimeAtBeginningOfNextWeek()
+
+// nextWeekLine := nextWeekStartLineVisible 
+//  ? _plotVerticalLineAtTime(nextWeekStartTime, weekStartPlotColor, line.style_solid, weekStartPlotWidth) 
+//   : na
+
+// if not na(nextWeekLine[1])
+//     line.delete(nextWeekLine[1])
+

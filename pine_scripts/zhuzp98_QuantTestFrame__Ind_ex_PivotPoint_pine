@@ -1,0 +1,82 @@
+//@version=4
+study("Pivot Point Reversal + RSI Alerts with Moving Averages", shorttitle = 'PP + RSI Alerts MA', overlay=true)
+////////////
+// Inputs //
+
+leftBars    = input(4,  title = 'PP - Left Bars')
+rightBars   = input(2,  title = 'PP - Right Bars')
+rsi_length = input(14, title = "RSI - Length")
+rsi_long    = input(58, title = "RSI - Overbought level")
+rsi_short   = input(42, title = "RSI - Oversold level")
+
+// Moving Averages
+short_ma_length = input(5, title="Short MA Length")
+long_ma_length = input(20, title="Long MA Length")
+
+//////////////////
+// Calculations //
+
+// Pivot Points
+swh = pivothigh(leftBars, rightBars)
+swl = pivotlow(leftBars,  rightBars)
+
+// Pivot High 
+swh_cond = not na(swh)
+hprice = 0.0
+hprice := swh_cond ? swh : hprice[1]
+le = false
+le := swh_cond ? true : (le[1] and high > hprice ? false : le[1])
+
+// Pivot Low 
+swl_cond = not na(swl)
+lprice = 0.0
+lprice := swl_cond ? swl : lprice[1]
+se = false
+se := swl_cond ? true : (se[1] and low < lprice ? false : se[1])
+
+// RSI 
+rsi = rsi(close, rsi_length)
+
+// Moving Averages
+short_ma = sma(close, short_ma_length)
+long_ma = sma(close, long_ma_length)
+
+// Signals 
+
+long_level   = 0.0
+short_level = 0.0
+
+long_change   = le and rsi[rightBars] < rsi_long
+short_change  = se and rsi[rightBars] > rsi_short
+
+long_level   := long_change  ? hprice + syminfo.mintick : long_level[1]
+short_level := short_change ? lprice - syminfo.mintick : short_level[1]
+
+long_initial   = crossover(high, long_ma) and close > long_ma
+short_initial  = crossunder(low, short_ma) and close < short_ma
+
+prev_signal = 0
+
+long_final   = nz(prev_signal[1]) !=  1 and long_initial
+short_final  = nz(prev_signal[1]) != -1 and short_initial   
+
+prev_signal := long_final ? 1 : short_final ? -1 : nz(prev_signal[1])
+
+//////////
+// PLOT //
+
+plot(long_level,   color = color.green)
+plot(short_level, color = color.red)
+
+plotshape(long_final,  style = shape.triangleup,   location = location.belowbar, color = color.green)
+plotshape(short_final, style = shape.triangledown, location = location.abovebar, text = "Short", color = color.red)
+
+// Moving Averages
+plot(short_ma, color=color.blue, title="Short MA")
+plot(long_ma, color=color.orange, title="Long MA")
+
+////////////
+// Alerts //
+
+alertcondition(long_final,  "PP_RSI_Long",  "PP_RSI_Long")
+alertcondition(short_final, "PP_RSI_Short", "PP_RSI_Short")

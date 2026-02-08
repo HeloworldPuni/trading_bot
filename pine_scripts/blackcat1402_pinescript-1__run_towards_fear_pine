@@ -1,0 +1,590 @@
+//@version=4
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+study(title="RTF Indicator", overlay=true)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+bbl = input(title="BBI Band Length",    type=input.integer, defval=26,   minval=1,    step=1  )
+bbs = input(title="BBI Band Stddev",    type=input.float,   defval=2.00, minval=0.1,  step=0.1)
+bpp = input(title="BBI Pivot Point",    type=input.float,   defval=20,   minval=0.01, step=1  )
+hrb = input(title="HPI Recent Bar",     type=input.integer, defval=200,  minval=1,    step=1  )
+rlt = input(title="RTF Loss Tolerance", type=input.float,   defval=0.6,  minval=0.1,  step=0.1)
+rpb = input(title="RTF Pause Bar",      type=input.integer, defval=11,   minval=1,    step=1  )
+rtp = input(title="RTF Take Profit",    type=input.float,   defval=0.5,  minval=0.1,  step=0.1)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+var HR = #d32f2f // Hex Red. The red color for our color scheme indicating short trades.
+var HG = #388e3c // Hex Green. The green color for our color scheme indicating long trades.
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+var OS = "OS" // Open Short. The signal to start a short trade.
+var CS = "CS" // Close Short. The signal to end a short trade.
+var OL = "OL" // Open Long. The signal to start a long trade.
+var CL = "CL" // Close Long. The signal to end a long trade.
+
+var DS = "DS" // Direction Short. Trading to win from falling prices.
+var DL = "DL" // Direction Long. Trading to win from rising prices.
+
+var FP = "FP" // First Price. The entry price of our current trade.
+var LP = "LP" // Last Price. The exit price of our current trade.
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// Current Cycle. The cycle of the current trade. Either OS, CS, OL or CL.
+var CC = array.new_string(4, "")
+
+emp_ccc() =>
+    nos = array.get(CC, 0) == ""
+    ncs = array.get(CC, 1) == ""
+    nol = array.get(CC, 2) == ""
+    ncl = array.get(CC, 3) == ""
+
+    nos and ncs and nol and ncl
+
+has_ccc(v) =>
+    has = false
+
+    if v == OS
+        has := array.get(CC, 0) == OS
+    if v == CS
+        has := array.get(CC, 1) == CS
+    if v == OL
+        has := array.get(CC, 2) == OL
+    if v == CL
+        has := array.get(CC, 3) == CL
+
+    has
+
+onl_ccc(v) =>
+    has = false
+
+    if v == OS
+        has := array.get(CC, 0) == OS and array.get(CC, 1) == "" and array.get(CC, 2) == "" and array.get(CC, 3) == ""
+    if v == CS
+        has := array.get(CC, 0) == "" and array.get(CC, 1) == CS and array.get(CC, 2) == "" and array.get(CC, 3) == ""
+    if v == OL
+        has := array.get(CC, 0) == "" and array.get(CC, 1) == "" and array.get(CC, 2) == OL and array.get(CC, 3) == ""
+    if v == CL
+        has := array.get(CC, 0) == "" and array.get(CC, 1) == "" and array.get(CC, 2) == "" and array.get(CC, 3) == CL
+
+    has
+
+rem_ccc(v) =>
+    if v == OS
+        array.set(CC, 0, "")
+    if v == CS
+        array.set(CC, 1, "")
+    if v == OL
+        array.set(CC, 2, "")
+    if v == CL
+        array.set(CC, 3, "")
+
+set_ccc(v) =>
+    if v == OS
+        array.set(CC, 0, v)
+    if v == CS
+        array.set(CC, 1, v)
+    if v == OL
+        array.set(CC, 2, v)
+    if v == CL
+        array.set(CC, 3, v)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// Debug Flag. Only used for development. In complex decision trees we can print
+// labels based on the position the global was modified. This can help a great
+// deal figuring out why a certain trade was made.
+var DF = array.new_string(8, "")
+
+has_cdf(v) =>
+    has = false
+
+    if v == "1"
+        has := array.get(DF, 0) != ""
+    if v == "2"
+        has := array.get(DF, 1) != ""
+    if v == "3"
+        has := array.get(DF, 2) != ""
+    if v == "4"
+        has := array.get(DF, 3) != ""
+    if v == "5"
+        has := array.get(DF, 4) != ""
+    if v == "6"
+        has := array.get(DF, 5) != ""
+    if v == "7"
+        has := array.get(DF, 6) != ""
+    if v == "8"
+        has := array.get(DF, 7) != ""
+
+    has
+
+set_cdf(v) =>
+    if v == "1"
+        array.set(DF, 0, v)
+    if v == "2"
+        array.set(DF, 1, v)
+    if v == "3"
+        array.set(DF, 2, v)
+    if v == "4"
+        array.set(DF, 3, v)
+    if v == "5"
+        array.set(DF, 4, v)
+    if v == "6"
+        array.set(DF, 5, v)
+    if v == "7"
+        array.set(DF, 6, v)
+    if v == "8"
+        array.set(DF, 7, v)
+
+// Note that we need to clear the array's content in order to work with a fresh
+// copy on each bar when the script is executed again.
+array.fill(DF, "")
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// Failure Count.
+var FC = array.new_int(1, 0)
+
+get_cfc() =>
+    array.get(FC, 0)
+
+inc_cfc() =>
+    array.set(FC, 0, array.get(FC, 0) + 1)
+
+res_cfc() =>
+    array.set(FC, 0, 0)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// Pause Count.
+var PC = array.new_int(1, 0)
+
+get_cpc() =>
+    array.get(PC, 0)
+
+inc_cpc() =>
+    array.set(PC, 0, array.get(PC, 0) + 1)
+
+res_cpc() =>
+    array.set(PC, 0, 0)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// Trade Price. The entry price and exit price of our current trade. Based on
+// these prices and their delta we decide when to take profit and when to move
+// on.
+var TP = array.new_float(2, 0.0)
+
+get_ctp(v) =>
+    val = 0.0
+
+    if v == FP
+        val := array.get(TP, 0)
+    if v == LP
+        val := array.get(TP, 1)
+
+    val
+
+// gre_ctp returns the trade price delta for long directional trades. If the
+// result is greater zero it means the long trade made profit.
+gre_ctp() =>
+    array.get(TP, 1) - array.get(TP, 0)
+
+// les_ctp returns the trade price delta for short directional trades. If the
+// result is greater zero it means the short trade made profit.
+les_ctp() =>
+    array.get(TP, 0) - array.get(TP, 1)
+
+set_ctp(v) =>
+    if v == FP
+        array.set(TP, 0, close)
+    if v == LP
+        array.set(TP, 1, close)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// new_per calculates the percentage of a fraction based on the given absolute
+// value.
+//
+//     new_per(500, 5) => 1
+//
+new_per(abs, fra) =>
+    fra * 100 / abs
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// new_bbu returns the upper bollinger band based on the length given by bbl and
+// the standard deviation given by bbs. Here bbu means bollinger band upper.
+new_bbu(src, bbl, bbs) =>
+    sma(src, bbl) + bbs * stdev(src, bbl)
+
+new_bbi(src, bbl, bbs) =>
+    bbu = new_bbu(src, bbl, bbs)
+
+    cou = 0
+    bac = 8
+
+    for i = 0 to bac
+        cou := high[i] > bbu[i] and bbu[i] > low[i] ? cou + 1 : cou
+
+    new_per(bac, cou) > bpp and not (high[0] > bbu[0] and bbu[0] > low[0])
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// new_rsb returns the relative strength indicator for the current bar, based on
+// the running moving average. Here rsb means relative strength bar.
+new_rsb(src, rsl) =>
+    upw = rma( max(change(src), 0), rsl)
+    dow = rma(-min(change(src), 0), rsl)
+
+    dow == 0 ? 100 : upw == 0 ? 0 : 100 - (100 / (1 + upw / dow))
+
+// new_rsi returns the relative strength indicator for overbought price peaks.
+new_rsi(src) =>
+    one = new_rsb(src, 120)[1] < 57 and new_rsb(src, 120)[0] > 57
+    two = new_rsb(src, 50 )[1] < 65 and new_rsb(src, 50 )[0] > 65
+    thr = new_rsb(src, 30 )[1] < 70 and new_rsb(src, 30 )[0] > 70
+    fou = new_rsb(src, 17 )[1] < 63 and new_rsb(src, 17 )[0] > 63
+
+    one or two or thr or fou
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// new_hpi returns a high price indicator for the most recent bars since hrb.
+// Here hpi means high price indicator.
+new_hpi(hrb) =>
+    highest(close, hrb) == close
+
+// new_lpi returns a low price indicator for the most recent bars since hrb.
+// Here lpi means low price indicator.
+new_lpi(hrb) =>
+    lowest(close, hrb) == close
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+new_lfs() =>
+    100 - new_per(close, get_ctp(FP)) >= rlt
+
+new_lfl() =>
+    100 - new_per(get_ctp(FP), close) >= rlt
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// new_cos returns a signal to open a short position. This signals the beginning
+// of a trade aiming to profit from downward trends. After opening a short
+// position we wait for the close short signal. Here cos means cycle open short.
+new_cos() =>
+    src = close
+
+    bbi = new_bbi(src, bbl, bbs)
+    hpi = new_hpi(hrb) or new_hpi(hrb / 2)
+    rsi = new_rsi(src)
+
+    bhi = (bbi[0] and hpi[0]) or (bbi[0] and hpi[1]) or (bbi[1] and hpi[0])
+    bri = (bbi[0] and rsi[0]) or (bbi[0] and rsi[1]) or (bbi[1] and rsi[0])
+    hri = (hpi[0] and rsi[0]) or (hpi[0] and rsi[1]) or (hpi[1] and rsi[0])
+
+    bhi or bri or hri
+
+// new_ccs returns a signal to close a short position. This signals the end of a
+// trade aiming to profit from downward trends. After closing a short position
+// we wait for the open long signal. Here ccs means cycle close short.
+new_ccs() =>
+    100 - new_per(get_ctp(FP), close) >= rtp
+
+// new_col returns a signal to open a long position. This signals the beginning
+// of a trade aiming to profit from upward trends. After opening a long position
+// we wait for the close long signal. Here col means cycle open long.
+new_col() =>
+    new_lpi(hrb) or new_lpi(hrb / 2)
+
+// new_ccl returns a signal to close a long position. This signals the end of a
+// trade aiming to profit from upward trends. After closing a long position we
+// wait for the open short signal. Here ccl means cycle close long.
+new_ccl() =>
+    100 - new_per(close, get_ctp(FP)) >= rtp
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+new_cyc() =>
+    lfs = new_lfs()
+    lfl = new_lfl()
+
+    cos = new_cos()
+    ccs = new_ccs()
+    col = new_col()
+    ccl = new_ccl()
+
+    cct = false // Constant Cycle Tracked.
+
+    if emp_ccc()
+        if cos
+            set_ccc(OS)
+            rem_ccc(CS)
+            rem_ccc(OL)
+            rem_ccc(CL)
+
+            cos := true
+            ccs := false
+            col := false
+            ccl := false
+
+            cct := true
+
+            set_cdf("1")
+
+        else if col
+            rem_ccc(OS)
+            rem_ccc(CS)
+            set_ccc(OL)
+            rem_ccc(CL)
+
+            cos := false
+            ccs := false
+            col := true
+            ccl := false
+
+            cct := true
+
+            set_cdf("2")
+
+    else
+        if onl_ccc(OS)
+            if ccs
+                set_ccc(OS)
+                rem_ccc(CS)
+                rem_ccc(OL)
+                rem_ccc(CL)
+
+                cos := true
+                ccs := true
+                col := false
+                ccl := false
+
+                cct := true
+
+                set_cdf("3")
+
+            else if lfs
+                rem_ccc(OS)
+                rem_ccc(CS)
+                set_ccc(OL)
+                rem_ccc(CL)
+
+                cos := false
+                ccs := true
+                col := true
+                ccl := false
+
+                cct := true
+
+                set_cdf("4")
+
+        else
+            if onl_ccc(OL)
+                if ccl
+                    rem_ccc(OS)
+                    rem_ccc(CS)
+                    set_ccc(OL)
+                    rem_ccc(CL)
+
+                    cos := false
+                    ccs := false
+                    col := true
+                    ccl := true
+
+                    cct := true
+
+                    set_cdf("5")
+
+                else if lfl
+                    set_ccc(OS)
+                    rem_ccc(CS)
+                    rem_ccc(OL)
+                    rem_ccc(CL)
+
+                    cos := true
+                    ccs := false
+                    col := false
+                    ccl := true
+
+                    cct := true
+
+                    set_cdf("6")
+
+    if not cct
+        cos := false
+        ccs := false
+        col := false
+        ccl := false
+
+        set_cdf("7")
+
+    if get_cpc() > 0
+        rem_ccc(OS)
+        rem_ccc(CS)
+        rem_ccc(OL)
+        rem_ccc(CL)
+
+        cos := false
+        ccs := false
+        col := false
+        ccl := false
+
+        set_cdf("8")
+
+    [cos, ccs, col, ccl]
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+[cos, ccs, col, ccl] = new_cyc()
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// It is super important to set the last price of the current trade first. This
+// allows us to calculate the profit or loss considering the sequential nature
+// of pine script execution. Only after the last price is tracked and the loss
+// statement is collected we can track the new first price of the next trade.
+// Here ffs means failure for short. Here ffl means failure for long.
+
+
+
+set_ctp(ccs or ccl ? LP : "")
+
+ffs = ccs and les_ctp() < 0 ? true : false
+ffl = ccl and gre_ctp() < 0 ? true : false
+
+set_ctp(cos or col ? FP : "")
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+if ffs or ffl
+    inc_cfc()
+
+    cos := false
+    col := false
+
+if get_cfc() >= 1 or get_cpc() > 0
+    inc_cpc()
+
+    if get_cpc() >= rpb
+        res_cfc()
+        res_cpc()
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// plotshape(has_cdf( "1"), text="DEBUG  1", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "2"), text="DEBUG  2", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "3"), text="DEBUG  3", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "4"), text="DEBUG  4", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "5"), text="DEBUG  5", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "6"), text="DEBUG  6", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "7"), text="DEBUG  7", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+// plotshape(has_cdf( "8"), text="DEBUG  8", location=location.belowbar, style=shape.labelup, size=size.small, color=color.purple, textcolor=color.white, transp=50)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+plotshape(cos,             text=OS, location=location.abovebar, style=shape.triangledown, size=size.tiny, color=HR, textcolor=color.white, transp=30)
+plotshape(ccs and not ffs, text=CS, location=location.belowbar, style=shape.triangleup,   size=size.tiny, color=HR, textcolor=color.white, transp=30)
+plotshape(ccs and     ffs, text=CS, location=location.belowbar, style=shape.xcross,       size=size.tiny, color=HR, textcolor=color.white, transp=30)
+plotshape(col,             text=OL, location=location.abovebar, style=shape.triangledown, size=size.tiny, color=HG, textcolor=color.white, transp=30)
+plotshape(ccl and not ffl, text=CL, location=location.belowbar, style=shape.triangleup,   size=size.tiny, color=HG, textcolor=color.white, transp=30)
+plotshape(ccl and     ffl, text=CL, location=location.belowbar, style=shape.xcross,       size=size.tiny, color=HG, textcolor=color.white, transp=30)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+alertcondition(condition=cos, title=OS, message="Triggered Open Short Signal")
+alertcondition(condition=ccs, title=CS, message="Triggered Close Short Signal")
+alertcondition(condition=col, title=OL, message="Triggered Open Long Signal")
+alertcondition(condition=ccl, title=CL, message="Triggered Close Long Signal")

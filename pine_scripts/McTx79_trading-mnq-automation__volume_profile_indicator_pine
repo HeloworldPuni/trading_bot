@@ -1,0 +1,44 @@
+//@version=5
+indicator("Comprehensive Volume Profile", overlay=true)
+
+// Input parameters
+var float volumeProfileLength = input(70, title="Value Area Percentage", minval=1, maxval=100) / 100
+var int sessionLength = input(defval=1, title="Session Length (in bars)")
+var color volumeProfileColor = input.color(color.new(color.blue, 0), "Volume Profile Color")
+var color pocColor = input.color(color.red, "POC Color")
+var color vahColor = input.color(color.green, "VAH Color")
+var color valColor = input.color(color.orange, "VAL Color")
+
+// Volume Profile Calculation
+var float totalVolume = 0.0
+var float highestVolume = 0.0
+var float poc = na
+var float vah = na
+var float val = na
+
+if bar_index % sessionLength == 0
+    totalVolume := 0.0
+    highestVolume := 0.0
+    poc := na
+    vah := na
+    val := na
+
+totalVolume := totalVolume + volume
+highestVolume := math.max(highestVolume, volume)
+
+// POC Calculation
+if volume == highestVolume
+    poc := close
+
+// Value Area Calculation
+if totalVolume > 0
+    val := close - (totalVolume * volumeProfileLength)
+    vah := close + (totalVolume * volumeProfileLength)
+
+// Plotting
+plot(poc, color=pocColor, title="Point of Control", linewidth=2)
+plot(vah, color=vahColor, title="Value Area High", linewidth=2)
+plot(val, color=valColor, title="Value Area Low", linewidth=2)
+
+// Alerts
+alertcondition(cross(close, poc), title="POC Cross", message="Price has crossed the POC level.")

@@ -1,0 +1,338 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © duronic12
+
+
+//@version=5
+indicator('Price Action Signals & Filters', overlay=true, max_bars_back=500, timeframe="", timeframe_gaps=true)
+
+
+
+
+    //USER INPUTS\\
+
+//Select Long Signals
+_1              = input.bool(defval=false, title= "═════════ LONG SIGNALS ════════", tooltip="These signals are very reliable in confirming a reversal, especially when used with emas, vwap, fibs or support and resistance levels. ")
+enableBuyTD8 = input.bool(title='TD8', defval=true)
+enableBuyTD9 = input.bool(title='TD9', defval=true)
+enableHamm = input.bool(title='Hammer', defval=true)
+enableBull = input.bool(title='Bullish Harami', defval=true)
+enableRSIBuy = input.bool(title='RSI Divergence', defval=true)
+
+//Select Short Signals                         
+_2              = input.bool(false,   "═════════ SHORT SIGNALS ════════", tooltip="These signals are very reliable in confirming a reversal, especially when used with emas, vwap, fibs or support and resistance levels. ")
+enableSellTD8 = input.bool(title='TD8', defval=true)
+enableSellTD9 = input.bool(title='TD9',defval=true)
+enableStar = input.bool(title='Shooting Star', defval=true)
+enableBear = input.bool(title='Bearish Harami', defval=true)
+enableRSISell = input.bool(title='RSI Divergence', defval=true)
+
+// Filters Signals
+_3              = input.bool(false,   "═══════════ FILTER ════════════", tooltip="The filters do a great job at cutting out market noise. If swing trading you may wish to just use the VWAP anchored to the Weekly or higher (see VWAP SETTINGS).  If day trading, you may wish to use the EMA for entry signals and the VWAP for exit signals.")
+MD0 = "Both"
+MD1 = "Long Only"
+MD2 = "Short Only"
+markerDirection = input.string(MD0,  "Signal Side", options = [MD0, MD1, MD2])
+
+sm1 = "Off"
+sm2 = "EMA"
+sm3 = "VWAP"
+markerDirectionL = input.string(sm2,  "Long Filter", options = [sm1, sm2, sm3])
+sm4 = "Off"
+sm5 = "EMA"
+sm6 = "VWAP"
+markerDirectionS = input.string(sm6,  "Short Filter", options = [sm4, sm5, sm6])
+
+longsOnly  = markerDirection == MD1
+shortsOnly = markerDirection == MD2
+showMarker1 = markerDirectionL == sm1
+showMarker2 = markerDirectionL == sm2
+showMarker3 = markerDirectionL == sm3
+showMarker4 = markerDirectionS == sm4
+showMarker5 = markerDirectionS == sm5
+showMarker6 = markerDirectionS == sm6
+
+//EMA Filter OPtions
+_5              = input.bool(false,   "════════ EMA SETTINGS ══════════", tooltip="The EMA filter reduces signals to only those that occure  as follows: Long Signal < Fast EMA & Med EMA > Slow EMA (--POSSIBLE LONG--); Short Signal > Fast EMA & Med EMA > Slow EMA (--POSSIBLE SHORT/TIGHTEN STOP/REDUCE POSITION--); Short Signal > Fast EMA & Med EMA < Slow EMA (--POSSIBLE SHORT--); Long Signal < Fast EMA & Med EMA < Slow EMA  (--POSSIBLE LONG/TIGHTEN STOP /REDUCE POSITION--).")
+showEMAs = input(true, title="Show EMAs")
+EMAhideonDWM = input(true, title="Hide EMA plots on 1D charts or above", tooltip="Great for a clean chart when drawing support and resitance etc on the daily or higher.")
+Flen = input.int(10, title="Fast Length")
+Fsrc = input.source(hlc3, 'Source')
+FastEMA = ta.ema(Fsrc, Flen)
+
+Mlen = input.int(20, title="Med Length")
+Msrc = input.source(hlc3, 'Source')
+MedEMA = ta.ema(Msrc, Mlen)
+
+Slen = input.int(50, title="Slow Length")
+Ssrc = input.source(hlc3, 'Source')
+SlowEMA = ta.ema(Ssrc, Slen)
+
+//VWAP Filter Options
+_7              = input.bool(false,   "════════ VWAP SETTINGS ═════════ ", tooltip="The VWAP reduces signals to only those that occure as follows: Long Signal < VWAP Cloud Bottom (--POSSIBLE LONG--); Short Signal > VWAP Cloud Top (--POSSIBLE SHORT--). If trading over longer periods of time, you can increase  the Anchor Period to Week or higher. Also, you can adjust the VWAP Cloud St Dev to your liking with fib levels e.g. 0.618, 0.786, 1.000, 1.618 etc.")
+showVWAP = input.bool(defval=true, title='Show VWAP Cloud')
+hideonDWM = input(true, title="Hide VWAP plots on 1D charts or above", tooltip ="Great for a clean chart when drawing support and resitance etc on the daily or higher.")
+stdevMult = input(0.786, title="VWAP Cloud St Dev")
+var anchor = input.string(defval = "Session", title="Anchor Period",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"])
+vwapsrc = input(title = "Source", defval = hlc3)
+offset = input(0, title="Offset")
+
+//RSI Divergence Signal Options
+_6              = input.bool(false,   "═════ RSI DIVERGENCE SETTINGS ═════", tooltip="The RSI Divergence signal highlights the first bar after a devergence between Price and RSI has occured. For more details please check @LonesomeTheBlue's RSI Tops and Bottoms.")
+len = input.int(14, minval=1, title='Length')
+src = input.source(hlc3, 'Source')
+ob = input.int(defval=60, title='Overbought (OB)')
+os = input.int(defval=40, title='Oversold (OS)')
+prd = input.int(defval=1000, title='Max Bars in OB/OS')
+mindis = input.int(defval=0, title='Min Bars between OB/OS Signals')
+maxdis = input.int(defval=1000, title='Max Bars between OB/OS Signals')
+
+
+
+
+    //HAMMER & SHOOTING STAR SIGNAL DETECTION\\
+
+Hamm = math.abs(low - open) > math.abs(open - close) * 2 and low <= ta.lowest(low, 10) and math.abs(low - open) > math.abs(high - close) * 2 and close <= open[1]
+Star = math.abs(high - open) > math.abs(open - close) * 2 and high >= ta.highest(high, 10) and math.abs(high - open) > math.abs(low - close) * 2 and open <= close[1]
+HammB = enableHamm and Hamm
+StarS = enableStar and Star
+
+
+
+
+    //BULLISH & BEARISH HARAMI SIGNAL DETETCION\\
+
+Bull = open[1] > close[1] and close > open and close <= open[1] and close[1] <= open and math.abs(close - open) < open[1] - close[1]
+Bear = close[1] > open[1] and open > close and open <= close[1] and open[1] <= close and math.abs(open - close) < close[1] - open[1]
+BullB = enableBull and Bull 
+BearS = enableBear and Bear
+
+
+
+
+    //TD8&9 SIGNAL DETECTION\\
+
+buySignals = 0
+buySignals := close < close[4] ? buySignals[1] == 9 ? 1 : buySignals[1] + 1 : 0
+
+sellSignals = 0
+sellSignals := close > close[4] ? sellSignals[1] == 9 ? 1 : sellSignals[1] + 1 : 0
+
+BuyOrSell = math.max(buySignals, sellSignals)
+
+TD8buy = enableBuyTD8 and buySignals and BuyOrSell == 8
+TD9buy = enableBuyTD9 and buySignals and BuyOrSell == 9
+
+TD8sell = enableSellTD8 and sellSignals and BuyOrSell == 8
+TD9sell = enableSellTD9 and sellSignals and BuyOrSell == 9
+
+
+
+
+    //RSI DIVERGENCE DETECTION\\
+
+rsi = ta.rsi(src, len)
+var bool belowos = false
+var int oscount = 0
+belowos := rsi[1] >= os and rsi < os ? true : rsi > os ? false : belowos
+oscount := belowos ? oscount + 1 : not belowos ? 0 : oscount
+var float lastlowestrsi = na
+var float lastlowestprice = na
+var int lastlowestbi = na
+var bool itsfineos = false
+bool maygoup = false
+if belowos[1] and not belowos and nz(oscount[1]) > 0
+    lastlowestrsi := 101
+    lastlowestbi := bar_index
+    itsfineos := true
+    for x = 1 to oscount[1] by 1
+        if x > prd
+            itsfineos := false
+            itsfineos
+        if rsi[x] < lastlowestrsi
+            lastlowestrsi := rsi[x]
+            lastlowestbi := bar_index - x
+            lastlowestprice := low[x]
+            lastlowestprice
+
+if ta.change(lastlowestrsi) != 0 and lastlowestrsi and lastlowestrsi[1] and lastlowestrsi > lastlowestrsi[1] and lastlowestprice < lastlowestprice[1] and bar_index - lastlowestbi[1] < maxdis and itsfineos and itsfineos[1] and bar_index - lastlowestbi[1] > mindis
+//    line.new(x1=bar_index, y1=lastlowestrsi, x2=lastlowestbi[1], y2=lastlowestrsi[1])
+    maygoup := true
+    maygoup
+
+var bool aboveob = false
+var int obcount = 0
+aboveob := rsi[1] <= ob and rsi > ob ? true : rsi < ob ? false : aboveob
+obcount := aboveob ? obcount + 1 : not aboveob ? 0 : obcount
+var float lasthighestrsi = na
+var float lasthighestprice = na
+var int lasthighestbi = na
+var bool itsfineob = false
+bool maygodown = false
+if aboveob[1] and not aboveob and nz(obcount[1]) > 0
+    lasthighestrsi := -1
+    lasthighestbi := bar_index
+    itsfineob := true
+    for x = 1 to obcount[1] by 1
+        if x > prd
+            itsfineob := false
+            itsfineob
+        if rsi[x] > lasthighestrsi
+            lasthighestrsi := rsi[x]
+            lasthighestbi := bar_index - x
+            lasthighestprice := high[x]
+            lasthighestprice
+
+if ta.change(lasthighestrsi) != 0 and lasthighestrsi and lasthighestrsi[1] and lasthighestrsi < lasthighestrsi[1] and lasthighestprice > lasthighestprice[1] and bar_index - lasthighestbi[1] < maxdis and itsfineob and itsfineob[1] and bar_index - lasthighestbi[1] > mindis
+//    line.new(x1=bar_index, y1=lasthighestrsi, x2=lasthighestbi[1], y2=lasthighestrsi[1])
+    maygodown := true
+    maygodown
+
+RSIbuy = enableRSIBuy and maygoup
+RSIsell =  enableRSISell and maygodown
+
+
+
+
+    //VWAP FILTER DETECTION\\
+ 
+showBands = showMarker1 or showMarker2 or showMarker3 or showMarker4 or showMarker5 or showMarker6
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+computeVWAP(vwapsrc, isNewPeriod, stDevMultiplier) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+    var float sumSrcSrcVol = na
+
+	sumSrcVol := isNewPeriod ? vwapsrc * volume : vwapsrc * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	// sumSrcSrcVol calculates the dividend of the equation that is later used to calculate the standard deviation
+	sumSrcSrcVol := isNewPeriod ? volume * math.pow(vwapsrc, 2) : volume * math.pow(vwapsrc, 2) + sumSrcSrcVol[1]
+
+	_vwap = sumSrcVol / sumVol
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+
+	lowerBand = _vwap - stDev * stDevMultiplier
+	upperBand = _vwap + stDev * stDevMultiplier
+
+	[_vwap, lowerBand, upperBand]
+	
+timeChange(period) =>
+	ta.change(time(period))
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+	"Earnings" => not na(new_earnings)
+	"Dividends" => not na(new_dividends)
+	"Splits" => not na(new_split)
+	"Session" => timeChange("D")
+	"Week" => timeChange("W")
+	"Month" => timeChange("M")
+	"Quarter" => timeChange("3M")
+	"Year" => timeChange("12M")
+	"Decade" => timeChange("12M") and year % 10 == 0
+	"Century" => timeChange("12M") and year % 100 == 0
+	=> false
+
+isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+if na(vwapsrc[1]) and not isEsdAnchor
+	isNewPeriod := true
+
+float vwapValue = na
+float std = na
+float upperBandValue = na
+float lowerBandValue = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, bottom, top] = computeVWAP(vwapsrc, isNewPeriod, stdevMult)
+    vwapValue := _vwap
+    upperBandValue := showBands ? top : na
+    lowerBandValue := showBands ? bottom : na
+
+
+
+
+    //DEFINE LONG VS SHORT\\
+    
+LongSignals = HammB or BullB or TD8buy or TD9buy or RSIbuy
+ShortSignals = StarS or BearS or TD8sell or TD9sell or RSIsell
+
+GoLong = LongSignals
+GoShort = ShortSignals
+
+
+
+    //DEFINIE FILTER CONDITIONS\\
+    
+//Conditions
+C1U = GoLong//UNFILTERED LONGS
+C2U = GoLong and hlc3 <= FastEMA and MedEMA > SlowEMA or GoLong and hlc3 <= FastEMA and MedEMA < SlowEMA //EMA LONG/CLOSE SHORT
+C3U = GoLong and hlc3 <= lowerBandValue //VWAP LONG
+C4D = GoShort //UNFILTERED SHORTS
+C5D = GoShort and hlc3 >= FastEMA and MedEMA > SlowEMA or GoShort and hlc3 >= FastEMA and MedEMA < SlowEMA //EMA SHORT/CLOSE SHORT
+C6D = GoShort and hlc3 >= upperBandValue //VWAP SHORT
+
+//Assembly
+A1U = showMarker1 and not shortsOnly and C1U
+A2U = showMarker2 and not shortsOnly  and C2U
+A3U = showMarker3 and not shortsOnly and C3U
+A4D = showMarker4 and not longsOnly  and C4D
+A5D = showMarker5 and not longsOnly and C5D
+A6D = showMarker6 and not longsOnly  and C6D
+
+
+
+
+    //PLOT SIGNALS & FILTERS\\
+
+//Signal Plots
+var cMarkerUp = color.new(#33ff33, 0)
+var cMarkerDn = color.new(#ff2226, 0)
+
+SL =  A1U or A2U or A3U
+plotshape(SL, "Long Signal", shape.arrowup,     location.belowbar,    cMarkerUp, size = size.tiny, display = display.none)
+
+BL = A1U or A2U or A3U
+barcolor(color=BL ? cMarkerUp : na)
+
+SS =  A4D or A5D or A6D
+plotshape(SS, "Short Signal", shape.arrowdown,   location.abovebar,       cMarkerDn, size = size.tiny, display = display.none)
+
+BS = A4D or A5D or A6D
+barcolor(color=BS ? cMarkerDn : na)
+
+//EMA Plots
+hideEMA = EMAhideonDWM and timeframe.isdwm
+showEMA = showEMAs and not hideEMA
+plot(showEMA ? FastEMA : na, title = "Fast EMA", color = #9598a1)
+plot(showEMA ? MedEMA : na, title = "Med EMA", color = #33ff33)
+plot(showEMA ? SlowEMA : na, title = "Slow EMA", color = #ff2226)
+
+//VWAP Plots
+plot(vwapValue, title = "VWAP", color=#2962FF, display = display.none)
+upperBand = plot(upperBandValue, title="VWAP Cloud Top", color = #2962FF, display = display.none)
+lowerBand = plot(lowerBandValue, title="VWAP Cloud Bottom", color = #2962FF, display = display.none)
+fill(upperBand, lowerBand, title="VWAP Cloud", color= showVWAP ? color.new(#9598a1, 80) : na)
+
+
+
+
+    //CREATE SIGNAL ALERTS\\
+    
+allalerts = A1U or A2U or A3U or A4D or A5D or A6D
+
+indicatorAbbreviation = "Price Action"
+
+alertcondition(allalerts, indicatorAbbreviation + '- Filtered Signals', indicatorAbbreviation + '- Alert for {{ticker}} on {{exchange}}')
+
+
+

@@ -1,0 +1,721 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simplewashere
+
+//@version=4
+
+study("screener", overlay=true)
+
+//// colors
+
+colorBlue = color(#05ffff)
+colorMagenta = color(#fe0a6f)
+colorPink = color(#ff0ae2)
+colorTeal = color(#05ffa6)
+colorPurple = color(#5405ff)
+colorYellow = color(#fbc02d)
+colorGreen = color(#3ddb56)
+
+//// inputs
+
+timeframe = input(title="resolution", type=input.resolution, defval="", group="filter")
+shouldScreenStc = input(true, "screen stc?", group="filter")
+stcMin = input(0, title="stc min", group="filter")
+stcMax = input(25, title="stc max", group="filter")
+shouldScreenVolatility = input(false, "screen volatility?", group="filter")
+volatilityMin = input(5.0, title="min % volatility", group="filter") / 100
+volatilityMax = input(25.0, title="max % volatility", group="filter") / 100
+
+fastLength = input(23, "fast length", group="schaff trend cycle")
+slowLength = input(50, "slow length", group="schaff trend cycle")
+stochasticLength = input(10, "stochastic length", group="schaff trend cycle")
+factor = input(0.5, "factor", group="schaff trend cycle") 
+
+labelOffsetX = input(5, "label offset x", group="options")
+labelOffsetY = input(0, "label offset y", group="options")
+labelSize = input("small", options=["auto", "tiny", "small", "normal", "large", "huge"], group="options")
+
+//// securities to screen — tradingview has a limit of 40 `security` calls
+
+s01 = input('COINBASE:1INCHUSD', type=input.symbol, group="securities")
+s02 = input('COINBASE:AAVEUSD', type=input.symbol, group="securities")
+s03 = input('COINBASE:ADAUSD', type=input.symbol, group="securities")
+s04 = input('COINBASE:ALGOUSD', type=input.symbol, group="securities")
+s05 = input('COINBASE:ANKRUSD', type=input.symbol, group="securities")
+s06 = input('COINBASE:ATOMUSD', type=input.symbol, group="securities")
+s07 = input('COINBASE:BALUSD', type=input.symbol, group="securities")
+s08 = input('COINBASE:BTCUSD', type=input.symbol, group="securities")
+s09 = input('COINBASE:BANDUSD', type=input.symbol, group="securities")
+s10 = input('COINBASE:CGLDUSD', type=input.symbol, group="securities")
+s11 = input('COINBASE:COMPUSD', type=input.symbol, group="securities")
+s12 = input('COINBASE:CRVUSD', type=input.symbol, group="securities")
+s13 = input('COINBASE:CVCUSDC', type=input.symbol, group="securities")
+s14 = input('COINBASE:DASHUSD', type=input.symbol, group="securities")
+s15 = input('COINBASE:ENJUSD', type=input.symbol, group="securities")
+s16 = input('COINBASE:EOSUSD', type=input.symbol, group="securities")
+s17 = input('COINBASE:ETHUSD', type=input.symbol, group="securities")
+s18 = input('COINBASE:ETCUSD', type=input.symbol, group="securities")
+s19 = input('COINBASE:FILUSD', type=input.symbol, group="securities")
+s20 = input('COINBASE:GRTUSD', type=input.symbol, group="securities")
+s21 = input('COINBASE:LINKUSD', type=input.symbol, group="securities")
+s22 = input('COINBASE:MATICUSD', type=input.symbol, group="securities")
+s23 = input('COINBASE:MKRUSD', type=input.symbol, group="securities")
+s24 = input('COINBASE:NMRUSD', type=input.symbol, group="securities")
+s25 = input('COINBASE:NUUSD', type=input.symbol, group="securities")
+s26 = input('COINBASE:OMGUSD', type=input.symbol, group="securities")
+s27 = input('COINBASE:OXTUSD', type=input.symbol, group="securities")
+s28 = input('COINBASE:RENUSD', type=input.symbol, group="securities")
+s29 = input('COINBASE:REPUSD', type=input.symbol, group="securities")
+s30 = input('COINBASE:SKLUSD', type=input.symbol, group="securities")
+s31 = input('COINBASE:SNXUSD', type=input.symbol, group="securities")
+s32 = input('COINBASE:STORJUSD', type=input.symbol, group="securities")
+s33 = input('COINBASE:SUSHIUSD', type=input.symbol, group="securities")
+s34 = input('COINBASE:UNIUSD', type=input.symbol, group="securities")
+s35 = input('COINBASE:UMAUSD', type=input.symbol, group="securities")
+s36 = input('COINBASE:XLMUSD',  type=input.symbol, group="securities")
+s37 = input('COINBASE:XTZUSD', type=input.symbol, group="securities")
+s38 = input('COINBASE:YFIUSD', type=input.symbol, group="securities")
+s39 = input('COINBASE:ZECUSD', type=input.symbol, group="securities")
+s40 = input('COINBASE:ZRXUSD', type=input.symbol, group="securities")
+
+//// stats
+
+schaffTrendCycle(fastLength, slowLength, stochasticLength) => 
+    f1 = 0.0
+    pf = 0.0
+    f2 = 0.0
+    pff = 0.0
+    [macdLine, _, _] = macd(close, fastLength, slowLength, 9)   
+    v1 = lowest(macdLine, stochasticLength)
+    v2 = highest(macdLine, stochasticLength) - v1    
+    f1 := (v2 > 0 ? ((macdLine - v1) / v2) * 100 : nz(f1[1])) 
+    pf := (na(pf[1]) ? f1 : pf[1] + (factor * (f1 - pf[1]))) 
+    v3 = lowest(pf, stochasticLength) 
+    v4 = highest(pf, stochasticLength) - v3     
+    f2 := (v4 > 0 ? ((pf - v3) / v4) * 100 : nz(f2[1])) 
+    pff := (na(pff[1]) ? f2 : pff[1] + (factor * (f2 - pff[1])))
+    pff
+
+averageNormalizedTrueRange() => ema(tr(true) / close, 14)
+
+priceDistanceMA() =>
+    pmrLen = 21
+    stdL = 0.75
+    stdH = 2.
+
+    pmar = (close / sma(close, 21) - 1) * 100
+
+    [_, uL, lL] = bb(pmar, pmrLen * 10, stdL)
+    [_, uH, lH] = bb(pmar, pmrLen * 10, stdH)
+
+    if pmar >= 0 
+        if pmar > uH
+            // strong bullish in overbought
+            3
+        else if pmar < uH and pmar > uL
+            // bullish in overbought
+            2
+        else
+            // trendless in bullish zone
+            1
+    else
+        if pmar < lH
+            // strong bearish in oversold
+            -3
+        else if pmar > lH and pmar < lL
+            // bearish in oversold
+            -2
+        else
+            // trendless in bearish zone
+            -1
+adx() =>
+    diLength = 14
+    adxSmoothing = 14
+    strongTrendMin = 25
+    weakTrendMax = 17
+
+    [diplus, diminus, adxValue] = dmi(diLength, adxSmoothing)
+
+    isBullish = diplus >= diminus and adxValue >= strongTrendMin
+    isBearish = diplus < diminus and adxValue >= strongTrendMin
+    isWeak = adxValue < strongTrendMin  and adxValue > weakTrendMax
+    isRising = adxValue > adxValue[1]
+
+    if isBullish
+        if isRising
+            3
+        else
+            2
+    else if isBearish
+        if isRising
+            -2
+        else
+            -1
+    else if isWeak and isRising
+        1
+    else
+        0
+
+wavetrend() =>
+    wtChannelLength = 10
+    wtAverageLenth = 21
+    wtSignalLength = 4
+
+    esa = ema(hlc3, wtChannelLength)
+    
+    meanDeviation = ema(abs(hlc3 - esa), wtChannelLength)
+    ci = (hlc3 - esa) / (0.015 * meanDeviation)
+    tci = ema(ci, wtAverageLenth)
+    
+    wtTrend = tci
+    wtSignal = sma(wtTrend, wtSignalLength)
+    wtHist = wtTrend - wtSignal
+
+//// screen
+
+screenSecurity() => 
+    stc = schaffTrendCycle(fastLength, slowLength, stochasticLength)
+    antr = averageNormalizedTrueRange()
+
+    isViableStc = stc >= stcMin and stc <= stcMax ? true : false
+    isViableVolatility = antr >= volatilityMin and antr <= volatilityMax ? true : false
+
+    isViable = shouldScreenStc and shouldScreenVolatility ? isViableStc and isViableVolatility : (shouldScreenStc ? isViableStc : (shouldScreenVolatility ? isViableVolatility : false))
+
+    [isViable, stc, antr]
+
+[isViable01, stc01, antr01] = security(s01, timeframe, screenSecurity())
+[isViable02, stc02, antr02] = security(s02, timeframe, screenSecurity())
+[isViable03, stc03, antr03] = security(s03, timeframe, screenSecurity())
+[isViable04, stc04, antr04] = security(s04, timeframe, screenSecurity())
+[isViable05, stc05, antr05] = security(s05, timeframe, screenSecurity())
+[isViable06, stc06, antr06] = security(s06, timeframe, screenSecurity())
+[isViable07, stc07, antr07] = security(s07, timeframe, screenSecurity())
+[isViable08, stc08, antr08] = security(s08, timeframe, screenSecurity())
+[isViable09, stc09, antr09] = security(s09, timeframe, screenSecurity())
+[isViable10, stc10, antr10] = security(s10, timeframe, screenSecurity())
+[isViable11, stc11, antr11] = security(s11, timeframe, screenSecurity())
+[isViable12, stc12, antr12] = security(s12, timeframe, screenSecurity())
+[isViable13, stc13, antr13] = security(s13, timeframe, screenSecurity())
+[isViable14, stc14, antr14] = security(s14, timeframe, screenSecurity())
+[isViable15, stc15, antr15] = security(s15, timeframe, screenSecurity())
+[isViable16, stc16, antr16] = security(s16, timeframe, screenSecurity())
+[isViable17, stc17, antr17] = security(s17, timeframe, screenSecurity())
+[isViable18, stc18, antr18] = security(s18, timeframe, screenSecurity())
+[isViable19, stc19, antr19] = security(s19, timeframe, screenSecurity())
+[isViable20, stc20, antr20] = security(s20, timeframe, screenSecurity())
+[isViable21, stc21, antr21] = security(s21, timeframe, screenSecurity())
+[isViable22, stc22, antr22] = security(s22, timeframe, screenSecurity())
+[isViable23, stc23, antr23] = security(s23, timeframe, screenSecurity())
+[isViable24, stc24, antr24] = security(s24, timeframe, screenSecurity())
+[isViable25, stc25, antr25] = security(s25, timeframe, screenSecurity())
+[isViable26, stc26, antr26] = security(s26, timeframe, screenSecurity())
+[isViable27, stc27, antr27] = security(s27, timeframe, screenSecurity())
+[isViable28, stc28, antr28] = security(s28, timeframe, screenSecurity())
+[isViable29, stc29, antr29] = security(s29, timeframe, screenSecurity())
+[isViable30, stc30, antr30] = security(s30, timeframe, screenSecurity())
+[isViable31, stc31, antr31] = security(s31, timeframe, screenSecurity())
+[isViable32, stc32, antr32] = security(s32, timeframe, screenSecurity())
+[isViable33, stc33, antr33] = security(s33, timeframe, screenSecurity())
+[isViable34, stc34, antr34] = security(s34, timeframe, screenSecurity())
+[isViable35, stc35, antr35] = security(s35, timeframe, screenSecurity())
+[isViable36, stc36, antr36] = security(s36, timeframe, screenSecurity())
+[isViable37, stc37, antr37] = security(s37, timeframe, screenSecurity())
+[isViable38, stc38, antr38] = security(s38, timeframe, screenSecurity())
+[isViable39, stc39, antr39] = security(s39, timeframe, screenSecurity())
+[isViable40, stc40, antr40] = security(s40, timeframe, screenSecurity())
+
+//// render
+
+viables = array.new_float(0)
+nonViables = array.new_float(0)
+
+if isViable01
+    array.push(viables, int(antr01 * 10000) + 0 * 0.01)
+else
+    array.push(nonViables, int(antr01 * 10000) + 0 * 0.01)
+
+if isViable02
+    array.push(viables, int(antr02 * 10000) + 1 * 0.01)
+else
+    array.push(nonViables, int(antr02 * 10000) + 1 * 0.01)
+
+if isViable03
+    array.push(viables, int(antr03 * 10000) + 2 * 0.01)
+else
+    array.push(nonViables, int(antr03 * 10000) + 2 * 0.01)
+
+if isViable04
+    array.push(viables, int(antr04 * 10000) + 3 * 0.01)
+else
+    array.push(nonViables, int(antr04 * 10000) + 3 * 0.01)
+
+if isViable05
+    array.push(viables, int(antr05 * 10000) + 4 * 0.01)
+else
+    array.push(nonViables, int(antr05 * 10000) + 4 * 0.01)
+
+if isViable06
+    array.push(viables, int(antr06 * 10000) + 5 * 0.01)
+else
+    array.push(nonViables, int(antr06 * 10000) + 5 * 0.01)
+
+if isViable07
+    array.push(viables, int(antr07 * 10000) + 6 * 0.01)
+else
+    array.push(nonViables, int(antr07 * 10000) + 6 * 0.01)
+
+if isViable08
+    array.push(viables, int(antr08 * 10000) + 7 * 0.01)
+else
+    array.push(nonViables, int(antr08 * 10000) + 7 * 0.01)
+
+if isViable09
+    array.push(viables, int(antr09 * 10000) + 8 * 0.01)
+else
+    array.push(nonViables, int(antr09 * 10000) + 8 * 0.01)
+
+if isViable10
+    array.push(viables, int(antr10 * 10000) + 9 * 0.01)
+else
+    array.push(nonViables, int(antr10 * 10000) + 9 * 0.01)
+
+if isViable11
+    array.push(viables, int(antr11 * 10000) + 10 * 0.01)
+else
+    array.push(nonViables, int(antr11 * 10000) + 10 * 0.01)
+
+if isViable12
+    array.push(viables, int(antr12 * 10000) + 11 * 0.01)
+else
+    array.push(nonViables, int(antr12 * 10000) + 11 * 0.01)
+
+if isViable13
+    array.push(viables, int(antr13 * 10000) + 12 * 0.01)
+else
+    array.push(nonViables, int(antr13 * 10000) + 12 * 0.01)
+
+if isViable14
+    array.push(viables, int(antr14 * 10000) + 13 * 0.01)
+else
+    array.push(nonViables, int(antr14 * 10000) + 13 * 0.01)
+
+if isViable15
+    array.push(viables, int(antr15 * 10000) + 14 * 0.01)
+else
+    array.push(nonViables, int(antr15 * 10000) + 14 * 0.01)
+
+if isViable16
+    array.push(viables, int(antr16 * 10000) + 15 * 0.01)
+else
+    array.push(nonViables, int(antr16 * 10000) + 15 * 0.01)
+
+if isViable17
+    array.push(viables, int(antr17 * 10000) + 16 * 0.01)
+else
+    array.push(nonViables, int(antr17 * 10000) + 16 * 0.01)
+
+if isViable18
+    array.push(viables, int(antr18 * 10000) + 17 * 0.01)
+else
+    array.push(nonViables, int(antr18 * 10000) + 17 * 0.01)
+
+if isViable19
+    array.push(viables, int(antr19 * 10000) + 18 * 0.01)
+else
+    array.push(nonViables, int(antr19 * 10000) + 18 * 0.01)
+
+if isViable20
+    array.push(viables, int(antr20 * 10000) + 19 * 0.01)
+else
+    array.push(nonViables, int(antr20 * 10000) + 19 * 0.01)
+
+if isViable21
+    array.push(viables, int(antr21 * 10000) + 20 * 0.01)
+else
+    array.push(nonViables, int(antr21 * 10000) + 20 * 0.01)
+
+if isViable22
+    array.push(viables, int(antr22 * 10000) + 21 * 0.01)
+else
+    array.push(nonViables, int(antr22 * 10000) + 21 * 0.01)
+
+if isViable23
+    array.push(viables, int(antr23 * 10000) + 22 * 0.01)
+else
+    array.push(nonViables, int(antr23 * 10000) + 22 * 0.01)
+
+if isViable24
+    array.push(viables, int(antr24 * 10000) + 23 * 0.01)
+else
+    array.push(nonViables, int(antr24 * 10000) + 23 * 0.01)
+
+if isViable25
+    array.push(viables, int(antr25 * 10000) + 24 * 0.01)
+else
+    array.push(nonViables, int(antr25 * 10000) + 24 * 0.01)
+
+if isViable26
+    array.push(viables, int(antr26 * 10000) + 25 * 0.01)
+else
+    array.push(nonViables, int(antr26 * 10000) + 25 * 0.01)
+
+if isViable27
+    array.push(viables, int(antr27 * 10000) + 26 * 0.01)
+else
+    array.push(nonViables, int(antr27 * 10000) + 26 * 0.01)
+
+if isViable28
+    array.push(viables, int(antr28 * 10000) + 27 * 0.01)
+else
+    array.push(nonViables, int(antr28 * 10000) + 27 * 0.01)
+
+if isViable29
+    array.push(viables, int(antr29 * 10000) + 28 * 0.01)
+else
+    array.push(nonViables, int(antr29 * 10000) + 28 * 0.01)
+
+if isViable30
+    array.push(viables, int(antr30 * 10000) + 29 * 0.01)
+else
+    array.push(nonViables, int(antr30 * 10000) + 29 * 0.01)
+
+if isViable31
+    array.push(viables, int(antr31 * 10000) + 30 * 0.01)
+else
+    array.push(nonViables, int(antr31 * 10000) + 30 * 0.01)
+
+if isViable32
+    array.push(viables, int(antr32 * 10000) + 31 * 0.01)
+else
+    array.push(nonViables, int(antr32 * 10000) + 31 * 0.01)
+
+if isViable33
+    array.push(viables, int(antr33 * 10000) + 32 * 0.01)
+else
+    array.push(nonViables, int(antr33 * 10000) + 32 * 0.01)
+
+if isViable34
+    array.push(viables, int(antr34 * 10000) + 33 * 0.01)
+else
+    array.push(nonViables, int(antr34 * 10000) + 33 * 0.01)
+
+if isViable35
+    array.push(viables, int(antr35 * 10000) + 34 * 0.01)
+else
+    array.push(nonViables, int(antr35 * 10000) + 34 * 0.01)
+
+if isViable36
+    array.push(viables, int(antr36 * 10000) + 35 * 0.01)
+else
+    array.push(nonViables, int(antr36 * 10000) + 35 * 0.01)
+
+if isViable37
+    array.push(viables, int(antr37 * 10000) + 36 * 0.01)
+else
+    array.push(nonViables, int(antr37 * 10000) + 36 * 0.01)
+
+if isViable38
+    array.push(viables, int(antr38 * 10000) + 37 * 0.01)
+else
+    array.push(nonViables, int(antr38 * 10000) + 37 * 0.01)
+
+if isViable39
+    array.push(viables, int(antr39 * 10000) + 38 * 0.01)
+else
+    array.push(nonViables, int(antr39 * 10000) + 38 * 0.01)
+
+if isViable40
+    array.push(viables, int(antr40 * 10000) + 39 * 0.01)
+else
+    array.push(nonViables, int(antr40 * 10000) + 39 * 0.01)
+
+array.sort(viables, order.descending)
+array.sort(nonViables, order.descending)
+
+composeLabelText(labelText, securityName, isViable, securityStc, securityVolatility) =>
+    stcString = '🚀' + tostring(securityStc, '#.##')
+    volatilityString = ' 🌋' + tostring(securityVolatility * 100, '#.##') + '%'
+    labelText + (isViable ? '✅' : '⬛') + ' ' + securityName + '\n     ' + stcString + volatilityString + '\n'
+
+getIndex(value) =>
+     float(value - int(value)) * 100.00
+
+string viableText = na
+string nonViableText = na
+
+viablesSize = array.size(viables)
+if viablesSize > 0
+    for i = 1 to viablesSize
+        viableIndex = getIndex(array.get(viables, i - 1))
+        
+        if viableIndex == 0
+            viableText := composeLabelText(viableText, s01, isViable01, stc01, antr01)
+
+        if viableIndex == 1
+            viableText := composeLabelText(viableText, s02, isViable02, stc02, antr02)
+
+        if viableIndex == 2
+            viableText := composeLabelText(viableText, s03, isViable03, stc03, antr03)
+
+        if viableIndex == 3
+            viableText := composeLabelText(viableText, s04, isViable04, stc04, antr04)
+
+        if viableIndex == 4
+            viableText := composeLabelText(viableText, s05, isViable05, stc05, antr05)
+
+        if viableIndex == 5
+            viableText := composeLabelText(viableText, s06, isViable06, stc06, antr06)
+
+        if viableIndex == 6
+            viableText := composeLabelText(viableText, s07, isViable07, stc07, antr07)
+
+        if viableIndex == 7
+            viableText := composeLabelText(viableText, s08, isViable08, stc08, antr08)
+
+        if viableIndex == 8
+            viableText := composeLabelText(viableText, s09, isViable09, stc09, antr09)
+
+        if viableIndex == 9
+            viableText := composeLabelText(viableText, s10, isViable10, stc10, antr10)
+
+        if viableIndex == 10
+            viableText := composeLabelText(viableText, s11, isViable11, stc11, antr11)
+
+        if viableIndex == 11
+            viableText := composeLabelText(viableText, s12, isViable12, stc12, antr12)
+
+        if viableIndex == 12
+            viableText := composeLabelText(viableText, s13, isViable13, stc13, antr13)
+
+        if viableIndex == 13
+            viableText := composeLabelText(viableText, s14, isViable14, stc14, antr14)
+
+        if viableIndex == 14
+            viableText := composeLabelText(viableText, s15, isViable15, stc15, antr15)
+
+        if viableIndex == 15
+            viableText := composeLabelText(viableText, s16, isViable16, stc16, antr16)
+
+        if viableIndex == 16
+            viableText := composeLabelText(viableText, s17, isViable17, stc17, antr17)
+
+        if viableIndex == 17
+            viableText := composeLabelText(viableText, s18, isViable18, stc18, antr18)
+
+        if viableIndex == 18
+            viableText := composeLabelText(viableText, s19, isViable19, stc19, antr19)
+
+        if viableIndex == 19
+            viableText := composeLabelText(viableText, s20, isViable20, stc20, antr20)
+
+        if viableIndex == 20
+            viableText := composeLabelText(viableText, s21, isViable21, stc21, antr21)
+
+        if viableIndex == 21
+            viableText := composeLabelText(viableText, s22, isViable22, stc22, antr22)
+
+        if viableIndex == 22
+            viableText := composeLabelText(viableText, s23, isViable23, stc23, antr23)
+
+        if viableIndex == 23
+            viableText := composeLabelText(viableText, s24, isViable24, stc24, antr24)
+
+        if viableIndex == 24
+            viableText := composeLabelText(viableText, s25, isViable25, stc25, antr25)
+
+        if viableIndex == 25
+            viableText := composeLabelText(viableText, s26, isViable26, stc26, antr26)
+
+        if viableIndex == 26
+            viableText := composeLabelText(viableText, s27, isViable27, stc27, antr27)
+
+        if viableIndex == 27
+            viableText := composeLabelText(viableText, s28, isViable28, stc28, antr28)
+
+        if viableIndex == 28
+            viableText := composeLabelText(viableText, s29, isViable29, stc29, antr29)
+
+        if viableIndex == 29
+            viableText := composeLabelText(viableText, s30, isViable30, stc30, antr30)
+
+        if viableIndex == 30
+            viableText := composeLabelText(viableText, s31, isViable31, stc31, antr31)
+
+        if viableIndex == 31
+            viableText := composeLabelText(viableText, s32, isViable32, stc32, antr32)
+
+        if viableIndex == 32
+            viableText := composeLabelText(viableText, s33, isViable33, stc33, antr33)
+
+        if viableIndex == 33
+            viableText := composeLabelText(viableText, s34, isViable34, stc34, antr34)
+
+        if viableIndex == 34
+            viableText := composeLabelText(viableText, s35, isViable35, stc35, antr35)
+
+        if viableIndex == 35
+            viableText := composeLabelText(viableText, s36, isViable36, stc36, antr36)
+
+        if viableIndex == 36
+            viableText := composeLabelText(viableText, s37, isViable37, stc37, antr37)
+
+        if viableIndex == 37
+            viableText := composeLabelText(viableText, s38, isViable38, stc38, antr38)
+
+        if viableIndex == 38
+            viableText := composeLabelText(viableText, s39, isViable39, stc39, antr39)
+
+        if viableIndex == 39
+            viableText := composeLabelText(viableText, s40, isViable40, stc40, antr40)
+
+nonViablesSize = array.size(nonViables)
+if nonViablesSize > 0
+    for i = 1 to nonViablesSize
+        nonViableIndex = getIndex(array.get(nonViables, i - 1))
+        
+        if nonViableIndex == 0
+            nonViableText := composeLabelText(nonViableText, s01, isViable01, stc01, antr01)
+
+        if nonViableIndex == 1
+            nonViableText := composeLabelText(nonViableText, s02, isViable02, stc02, antr02)
+
+        if nonViableIndex == 2
+            nonViableText := composeLabelText(nonViableText, s03, isViable03, stc03, antr03)
+
+        if nonViableIndex == 3
+            nonViableText := composeLabelText(nonViableText, s04, isViable04, stc04, antr04)
+
+        if nonViableIndex == 4
+            nonViableText := composeLabelText(nonViableText, s05, isViable05, stc05, antr05)
+
+        if nonViableIndex == 5
+            nonViableText := composeLabelText(nonViableText, s06, isViable06, stc06, antr06)
+
+        if nonViableIndex == 6
+            nonViableText := composeLabelText(nonViableText, s07, isViable07, stc07, antr07)
+
+        if nonViableIndex == 7
+            nonViableText := composeLabelText(nonViableText, s08, isViable08, stc08, antr08)
+
+        if nonViableIndex == 8
+            nonViableText := composeLabelText(nonViableText, s09, isViable09, stc09, antr09)
+
+        if nonViableIndex == 9
+            nonViableText := composeLabelText(nonViableText, s10, isViable10, stc10, antr10)
+
+        if nonViableIndex == 10
+            nonViableText := composeLabelText(nonViableText, s11, isViable11, stc11, antr11)
+
+        if nonViableIndex == 11
+            nonViableText := composeLabelText(nonViableText, s12, isViable12, stc12, antr12)
+
+        if nonViableIndex == 12
+            nonViableText := composeLabelText(nonViableText, s13, isViable13, stc13, antr13)
+
+        if nonViableIndex == 13
+            nonViableText := composeLabelText(nonViableText, s14, isViable14, stc14, antr14)
+
+        if nonViableIndex == 14
+            nonViableText := composeLabelText(nonViableText, s15, isViable15, stc15, antr15)
+
+        if nonViableIndex == 15
+            nonViableText := composeLabelText(nonViableText, s16, isViable16, stc16, antr16)
+
+        if nonViableIndex == 16
+            nonViableText := composeLabelText(nonViableText, s17, isViable17, stc17, antr17)
+
+        if nonViableIndex == 17
+            nonViableText := composeLabelText(nonViableText, s18, isViable18, stc18, antr18)
+
+        if nonViableIndex == 18
+            nonViableText := composeLabelText(nonViableText, s19, isViable19, stc19, antr19)
+
+        if nonViableIndex == 19
+            nonViableText := composeLabelText(nonViableText, s20, isViable20, stc20, antr20)
+
+        if nonViableIndex == 20
+            nonViableText := composeLabelText(nonViableText, s21, isViable21, stc21, antr21)
+
+        if nonViableIndex == 21
+            nonViableText := composeLabelText(nonViableText, s22, isViable22, stc22, antr22)
+
+        if nonViableIndex == 22
+            nonViableText := composeLabelText(nonViableText, s23, isViable23, stc23, antr23)
+
+        if nonViableIndex == 23
+            nonViableText := composeLabelText(nonViableText, s24, isViable24, stc24, antr24)
+
+        if nonViableIndex == 24
+            nonViableText := composeLabelText(nonViableText, s25, isViable25, stc25, antr25)
+
+        if nonViableIndex == 25
+            nonViableText := composeLabelText(nonViableText, s26, isViable26, stc26, antr26)
+
+        if nonViableIndex == 26
+            nonViableText := composeLabelText(nonViableText, s27, isViable27, stc27, antr27)
+
+        if nonViableIndex == 27
+            nonViableText := composeLabelText(nonViableText, s28, isViable28, stc28, antr28)
+
+        if nonViableIndex == 28
+            nonViableText := composeLabelText(nonViableText, s29, isViable29, stc29, antr29)
+
+        if nonViableIndex == 29
+            nonViableText := composeLabelText(nonViableText, s30, isViable30, stc30, antr30)
+
+        if nonViableIndex == 30
+            nonViableText := composeLabelText(nonViableText, s31, isViable31, stc31, antr31)
+
+        if nonViableIndex == 31
+            nonViableText := composeLabelText(nonViableText, s32, isViable32, stc32, antr32)
+
+        if nonViableIndex == 32
+            nonViableText := composeLabelText(nonViableText, s33, isViable33, stc33, antr33)
+
+        if nonViableIndex == 33
+            nonViableText := composeLabelText(nonViableText, s34, isViable34, stc34, antr34)
+
+        if nonViableIndex == 34
+            nonViableText := composeLabelText(nonViableText, s35, isViable35, stc35, antr35)
+
+        if nonViableIndex == 35
+            nonViableText := composeLabelText(nonViableText, s36, isViable36, stc36, antr36)
+
+        if nonViableIndex == 36
+            nonViableText := composeLabelText(nonViableText, s37, isViable37, stc37, antr37)
+
+        if nonViableIndex == 37
+            nonViableText := composeLabelText(nonViableText, s38, isViable38, stc38, antr38)
+
+        if nonViableIndex == 38
+            nonViableText := composeLabelText(nonViableText, s39, isViable39, stc39, antr39)
+
+        if nonViableIndex == 39
+            nonViableText := composeLabelText(nonViableText, s40, isViable40, stc40, antr40)
+
+
+var label _label = na
+
+label.delete(_label[1])
+
+_label := label.new(
+     time + labelOffsetX * (time - time[1]), 
+     highest(20) + labelOffsetY, 
+     text      = '',
+     textalign = text.align_left,
+     textcolor = color.white, 
+     color     = colorPurple,
+     size      = labelSize,
+     style     = label.style_label_upper_left,
+     xloc      = xloc.bar_time
+ )
+
+labelText = not na(viableText) ? viableText + '\n' : na
+labelText := not na(nonViableText) ? labelText + nonViableText : labelText
+
+label.set_text(_label, not na(labelText) ? '📺 simple screener\n\n' + labelText : '🌚')
+
+//// alert
+
+// if (scr_label != '')
+    // alert('Screener \n##########\n' + scr_label, freq = alert.freq_once_per_bar_close )

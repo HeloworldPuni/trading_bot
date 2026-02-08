@@ -1,0 +1,53 @@
+//@version=4
+
+study("MJ - Vertical Hour Lines", overlay=true)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== VERTICAL HOUR LINES ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+groupVerticalHourLInes = 'Vertical Hour Lines'
+maxTimeFrameToShowVerticalLines = input(title='Max timeframe to show hourly vertical lines', defval=5, maxval=60, minval=1, group=groupVerticalHourLInes)
+hourLineColor = input(color.new(#fbc02d, 40), 'Vertical Hour Line Color', group=groupVerticalHourLInes)
+hourLineStyle = input(line.style_dashed, 'Vertical Hour Line Style', group=groupVerticalHourLInes, options=[line.style_solid, line.style_dashed, line.style_dotted])
+hourLineWidth = input(1, 'Vertical Hour Line Width', group=groupVerticalHourLInes, options=[1, 2, 3, 4])
+
+_isNewBarForResolution(res) =>
+    t = time(res)
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and ( na(previousBar) or currentBar > previousBar)
+
+_getBgColor(isOpen, Color, showBg) => 
+    return = showBg and isOpen ? Color : na
+
+_plotVerticalLineAtIndex(BarIndex, Color, LineStyle, LineWidth) => // Verticle Line Function, ≈50-54 lines maximum allowable per indicator
+    return = line.new(BarIndex, low - tr, BarIndex, high + tr, xloc.bar_index, extend.both, Color, LineStyle, LineWidth) // Suitable for study(overlay=true)
+
+_isAtOrBelowMaxTimeframe() => timeframe.multiplier <= maxTimeFrameToShowVerticalLines
+    
+
+_plotVerticalLineAtTime(Hour, Minute, Color, LineStyle, LineWidth) =>
+    isGoodTimeframe = hour == Hour and Minute == minute and timeframe.isminutes and _isAtOrBelowMaxTimeframe()
+    barIndex = isGoodTimeframe ? bar_index : na
+    _plotVerticalLineAtIndex(barIndex, Color, LineStyle, LineWidth)
+
+_plotVerticalLineForNewBarsAtResolution(Resolution, Color, LineStyle, LineWidth) =>
+    isNewBar = _isNewBarForResolution(Resolution)
+    barIndex = isNewBar ? bar_index : na
+    _plotVerticalLineAtIndex(barIndex, hourLineColor, hourLineStyle, hourLineWidth)
+
+
+_plotHourLinesOld() =>
+    for i = 0 to 23
+        _hourToPlot = hour - i
+        hourToPlot = _hourToPlot == -1 ? 23 : _hourToPlot
+        _plotVerticalLineAtTime(i, 00, hourLineColor, hourLineStyle, hourLineWidth)
+
+_plotHourLines() =>
+    if _isAtOrBelowMaxTimeframe()
+        _plotVerticalLineForNewBarsAtResolution('60', hourLineColor, hourLineStyle, hourLineWidth)
+
+_plotHourLines()

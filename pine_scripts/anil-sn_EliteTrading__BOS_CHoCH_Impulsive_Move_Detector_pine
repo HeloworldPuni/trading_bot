@@ -1,0 +1,598 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//@version=5
+indicator("BOS/CHoCH Impulsive Move Detector #6", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ===================== INPUT PARAMETERS =====================
+
+swingSize = input.int(10, "Pivot Lookback", minval=1, maxval=50, group="Structure Detection")
+
+// Move classification
+level1MinPct = input.float(5.0, "Level 1 Min %", minval=1.0, group="Level Ranges")
+level1MaxPct = input.float(10.0, "Level 1 Max %", minval=2.0, group="Level Ranges")
+level2MinPct = input.float(10.0, "Level 2 Min %", minval=2.0, group="Level Ranges")
+level2MaxPct = input.float(15.0, "Level 2 Max %", minval=3.0, group="Level Ranges")
+level3MinPct = input.float(15.0, "Level 3 Min %", minval=3.0, group="Level Ranges")
+level3MaxPct = input.float(20.0, "Level 3 Max %", minval=4.0, group="Level Ranges")
+level4MinPct = input.float(20.0, "Level 4 Min %", minval=4.0, group="Level Ranges")
+
+// Display options
+showBOS = input.bool(true, "Show BOS", group="Display")
+showCHoCH = input.bool(true, "Show CHoCH", group="Display")
+showMoveLabels = input.bool(true, "Show Move Labels", group="Display")
+showMoveLines = input.bool(true, "Show Move Lines", group="Display")
+showSwings = input.bool(false, "Show Swing Labels", group="Display")
+showTable = input.bool(true, "Show Statistics", group="Display")
+showSessionTable = input.bool(true, "Show Session Stats", group="Display")
+showLogTable = input.bool(true, "Show Event Log", group="Display")
+
+colBull = input.color(color.green, "Bull Color", group="Display")
+colBear = input.color(color.red, "Bear Color", group="Display")
+
+// Session settings
+useCustomTimezone = input.bool(true, "Use Custom Timezone", group="Sessions")
+customTimezone = input.string("America/New_York", "Custom Timezone", group="Sessions")
+
+// ===================== STATE VARIABLES =====================
+
+var float prevHigh = na
+var float prevLow = na
+var int prevHighIdx = na
+var int prevLowIdx = na
+var bool highActive = false
+var bool lowActive = false
+var int prevBreakDir = 0
+
+// Impulsive move tracking
+var float moveStartPrice = na
+var int moveStartBar = na
+var bool moveInProgress = false
+var bool moveIsBullish = na
+var string moveType = na
+
+// Event tracking
+var array<bool> moveIsBullishArr = array.new_bool(0)
+var array<float> movePercentArr = array.new_float(0)
+var array<int> moveLevelArr = array.new_int(0)
+var array<string> moveTypeArr = array.new_string(0)
+var array<int> moveStartBarArr = array.new_int(0)
+var array<int> moveEndBarArr = array.new_int(0)
+var array<float> moveStartPriceArr = array.new_float(0)
+var array<float> moveEndPriceArr = array.new_float(0)
+var array<string> moveSessionArr = array.new_string(0)
+var array<string> moveDayOfWeekArr = array.new_string(0)
+var array<int> moveEndTimeArr = array.new_int(0)
+var array<int> moveStartTimeArr = array.new_int(0)
+
+// ===================== HELPER FUNCTIONS =====================
+
+calcPercent(float startPrice, float endPrice) =>
+    math.abs((endPrice - startPrice) / startPrice) * 100
+
+getLevel(float pct) =>
+    int lvl = 0
+    if pct >= level1MinPct and pct < level1MaxPct
+        lvl := 1
+    else if pct >= level2MinPct and pct < level2MaxPct
+        lvl := 2
+    else if pct >= level3MinPct and pct < level3MaxPct
+        lvl := 3
+    else if pct >= level4MinPct
+        lvl := 4
+    lvl
+
+getLevelColor(int level) =>
+    switch level
+        1 => color.new(color.blue, 0)
+        2 => color.new(color.green, 0)
+        3 => color.new(color.orange, 0)
+        4 => color.new(color.red, 0)
+        => color.gray
+
+getCurrentSession() =>
+    currentHour = hour(time, useCustomTimezone ? customTimezone : syminfo.timezone)
+    currentMin = minute(time, useCustomTimezone ? customTimezone : syminfo.timezone)
+    currentTimeInMin = currentHour * 60 + currentMin
+    currentDay = dayofweek(time, useCustomTimezone ? customTimezone : syminfo.timezone)
+    
+    string session = "No Session"
+    
+    // Check if weekend (Saturday = 7, Sunday = 1)
+    if currentDay == 7 or currentDay == 1
+        session := "Weekend"
+    // Weekday sessions (Monday-Friday)
+    else if currentTimeInMin >= 510 and currentTimeInMin < 570
+        session := "Pre-London/NY"
+    else if currentTimeInMin >= 570 and currentTimeInMin < 690
+        session := "London/NY"
+    else if currentTimeInMin >= 690 and currentTimeInMin < 900
+        session := "NY"
+    else if currentTimeInMin >= 900 and currentTimeInMin < 960
+        session := "NY Power Hour"
+    else if currentTimeInMin >= 960 and currentTimeInMin < 1080
+        session := "NY End"
+    else if currentTimeInMin >= 1080 and currentTimeInMin < 1140
+        session := "Sydney"
+    else if currentTimeInMin >= 1140 and currentTimeInMin < 1410
+        session := "Asia"
+    else if currentTimeInMin >= 1410 or currentTimeInMin < 60
+        session := "Sake Time"
+    else if currentTimeInMin >= 60 and currentTimeInMin < 180
+        session := "No Session"
+    else if currentTimeInMin >= 180 and currentTimeInMin < 240
+        session := "Asia/London"
+    else if currentTimeInMin >= 240 and currentTimeInMin < 510
+        session := "London"
+    
+    session
+
+getSessionColor(string session) =>
+    switch session
+        "Pre-London/NY" => color.new(color.teal, 0)
+        "London/NY" => color.new(color.purple, 0)
+        "NY" => color.new(color.green, 0)
+        "NY Power Hour" => color.new(color.lime, 0)
+        "NY End" => color.new(color.olive, 0)
+        "Sydney" => color.new(color.aqua, 0)
+        "Asia" => color.new(color.yellow, 0)
+        "Sake Time" => color.new(color.orange, 0)
+        "Asia/London" => color.new(color.fuchsia, 0)
+        "London" => color.new(color.blue, 0)
+        "Weekend" => color.new(color.maroon, 0)
+        => color.new(color.gray, 0)
+
+getDayOfWeek(int timestamp) =>
+    dayNum = dayofweek(timestamp, useCustomTimezone ? customTimezone : syminfo.timezone)
+    switch dayNum
+        1 => "Sun"
+        2 => "Mon"
+        3 => "Tue"
+        4 => "Wed"
+        5 => "Thu"
+        6 => "Fri"
+        7 => "Sat"
+        => "?"
+
+formatDuration(int durationMs) =>
+    totalMinutes = math.floor(durationMs / 60000)
+    hours = math.floor(totalMinutes / 60)
+    minutes = totalMinutes % 60
+    str.format("{0}h {1}m", hours, minutes)
+
+// ===================== MARKET STRUCTURE DETECTION =====================
+
+pivHi = ta.pivothigh(high, swingSize, swingSize)
+pivLo = ta.pivotlow(low, swingSize, swingSize)
+
+bool hh = false, lh = false, hl = false, ll = false
+
+// Update pivot highs
+if not na(pivHi)
+    hh := na(prevHigh) or pivHi >= prevHigh
+    lh := not hh
+    prevHigh := pivHi
+    prevHighIdx := bar_index - swingSize
+    highActive := true
+    
+    if showSwings
+        label.new(prevHighIdx, pivHi, hh ? "HH" : "LH", style=label.style_label_down, textcolor=hh ? colBull : colBear, color=color.new(color.gray, 80), size=size.tiny)
+    
+    // Check if we have an active bullish move to complete
+    if moveInProgress and moveIsBullish
+        movePct = calcPercent(moveStartPrice, pivHi)
+        moveLevel = getLevel(movePct)
+        currentSession = getCurrentSession()
+        currentDay = getDayOfWeek(time)
+        
+        if moveLevel > 0
+            array.push(moveIsBullishArr, true)
+            array.push(movePercentArr, movePct)
+            array.push(moveLevelArr, moveLevel)
+            array.push(moveTypeArr, moveType)
+            array.push(moveStartBarArr, moveStartBar)
+            array.push(moveEndBarArr, bar_index - swingSize)
+            array.push(moveStartPriceArr, moveStartPrice)
+            array.push(moveEndPriceArr, pivHi)
+            array.push(moveSessionArr, currentSession)
+            array.push(moveDayOfWeekArr, currentDay)
+            array.push(moveEndTimeArr, time)
+            array.push(moveStartTimeArr, time[bar_index - moveStartBar])
+            
+            if showMoveLines
+                line.new(moveStartBar, moveStartPrice, bar_index - swingSize, pivHi, color=getLevelColor(moveLevel), width=2, style=line.style_solid)
+            
+            if showMoveLabels
+                midBar = math.floor((moveStartBar + bar_index - swingSize) / 2)
+                labelText = str.format("{0}\nL{1}: {2}%\n{3}", moveType, moveLevel, str.tostring(movePct, "#.#"), currentSession)
+                label.new(midBar, pivHi, labelText, style=label.style_label_down, color=getLevelColor(moveLevel), textcolor=color.white, size=size.small)
+        
+        moveInProgress := false
+
+// Update pivot lows
+if not na(pivLo)
+    hl := na(prevLow) or pivLo >= prevLow
+    ll := not hl
+    prevLow := pivLo
+    prevLowIdx := bar_index - swingSize
+    lowActive := true
+    
+    if showSwings
+        label.new(prevLowIdx, pivLo, hl ? "HL" : "LL", style=label.style_label_up, textcolor=hl ? colBull : colBear, color=color.new(color.gray, 80), size=size.tiny)
+    
+    // Check if we have an active bearish move to complete
+    if moveInProgress and not moveIsBullish
+        movePct = calcPercent(moveStartPrice, pivLo)
+        moveLevel = getLevel(movePct)
+        currentSession = getCurrentSession()
+        currentDay = getDayOfWeek(time)
+        
+        if moveLevel > 0
+            array.push(moveIsBullishArr, false)
+            array.push(movePercentArr, movePct)
+            array.push(moveLevelArr, moveLevel)
+            array.push(moveTypeArr, moveType)
+            array.push(moveStartBarArr, moveStartBar)
+            array.push(moveEndBarArr, bar_index - swingSize)
+            array.push(moveStartPriceArr, moveStartPrice)
+            array.push(moveEndPriceArr, pivLo)
+            array.push(moveSessionArr, currentSession)
+            array.push(moveDayOfWeekArr, currentDay)
+            array.push(moveEndTimeArr, time)
+            array.push(moveStartTimeArr, time[bar_index - moveStartBar])
+            
+            if showMoveLines
+                line.new(moveStartBar, moveStartPrice, bar_index - swingSize, pivLo, color=getLevelColor(moveLevel), width=2, style=line.style_solid)
+            
+            if showMoveLabels
+                midBar = math.floor((moveStartBar + bar_index - swingSize) / 2)
+                labelText = str.format("{0}\nL{1}: {2}%\n{3}", moveType, moveLevel, str.tostring(movePct, "#.#"), currentSession)
+                label.new(midBar, pivLo, labelText, style=label.style_label_up, color=getLevelColor(moveLevel), textcolor=color.white, size=size.small)
+        
+        moveInProgress := false
+
+// ===================== BOS & CHoCH DETECTION =====================
+
+bool highBroken = false
+bool lowBroken = false
+
+if barstate.isconfirmed
+    // Check if previous high is broken (bullish break)
+    if highActive and not na(prevHigh) and close > prevHigh
+        highBroken := true
+        highActive := false
+        
+        // Determine if BOS or CHoCH
+        isBOS = prevBreakDir != -1
+        moveTypeStr = isBOS ? "BOS" : "CHoCH"
+        
+        // Draw BOS/CHoCH line
+        if (isBOS and showBOS) or (not isBOS and showCHoCH)
+            line.new(prevHighIdx, prevHigh, bar_index, prevHigh, color=colBull, style=line.style_solid, width=2)
+            mid = math.floor(bar_index - (bar_index - prevHighIdx) / 2)
+            label.new(mid, prevHigh, moveTypeStr, color=color.new(color.gray, 80), textcolor=colBull, size=size.small)
+        
+        // Start tracking new impulsive move from this break point
+        moveStartPrice := prevHigh
+        moveStartBar := bar_index
+        moveInProgress := true
+        moveIsBullish := true
+        moveType := moveTypeStr
+        
+        prevBreakDir := 1
+    
+    // Check if previous low is broken (bearish break)
+    if lowActive and not na(prevLow) and close < prevLow
+        lowBroken := true
+        lowActive := false
+        
+        // Determine if BOS or CHoCH
+        isBOS = prevBreakDir != 1
+        moveTypeStr = isBOS ? "BOS" : "CHoCH"
+        
+        // Draw BOS/CHoCH line
+        if (isBOS and showBOS) or (not isBOS and showCHoCH)
+            line.new(prevLowIdx, prevLow, bar_index, prevLow, color=colBear, style=line.style_solid, width=2)
+            mid = math.floor(bar_index - (bar_index - prevLowIdx) / 2)
+            label.new(mid, prevLow, moveTypeStr, style=label.style_label_up, color=color.new(color.gray, 80), textcolor=colBear, size=size.small)
+        
+        // Start tracking new impulsive move from this break point
+        moveStartPrice := prevLow
+        moveStartBar := bar_index
+        moveInProgress := true
+        moveIsBullish := false
+        moveType := moveTypeStr
+        
+        prevBreakDir := -1
+
+// ===================== STATISTICS =====================
+
+totalMoves = array.size(moveIsBullishArr)
+bullishCount = 0
+bearishCount = 0
+bosCount = 0
+chochCount = 0
+level1Count = 0
+level2Count = 0
+level3Count = 0
+level4Count = 0
+
+preLondonNyCount = 0
+londonNyCount = 0
+nyCount = 0
+nyPowerCount = 0
+nyEndCount = 0
+sydneyCount = 0
+asiaCount = 0
+sakeTimeCount = 0
+asiaLondonCount = 0
+londonCount = 0
+weekendCount = 0
+noSessionCount = 0
+
+preLondonNyPctTotal = 0.0
+londonNyPctTotal = 0.0
+nyPctTotal = 0.0
+nyPowerPctTotal = 0.0
+nyEndPctTotal = 0.0
+sydneyPctTotal = 0.0
+asiaPctTotal = 0.0
+sakeTimePctTotal = 0.0
+asiaLondonPctTotal = 0.0
+londonPctTotal = 0.0
+weekendPctTotal = 0.0
+noSessionPctTotal = 0.0
+
+if totalMoves > 0
+    for i = 0 to totalMoves - 1
+        if array.get(moveIsBullishArr, i)
+            bullishCount += 1
+        else
+            bearishCount += 1
+        
+        if array.get(moveTypeArr, i) == "BOS"
+            bosCount += 1
+        else
+            chochCount += 1
+        
+        lvl = array.get(moveLevelArr, i)
+        switch lvl
+            1 => level1Count += 1
+            2 => level2Count += 1
+            3 => level3Count += 1
+            4 => level4Count += 1
+        
+        sess = array.get(moveSessionArr, i)
+        pct = array.get(movePercentArr, i)
+        
+        if sess == "Pre-London/NY"
+            preLondonNyCount += 1
+            preLondonNyPctTotal += pct
+        else if sess == "London/NY"
+            londonNyCount += 1
+            londonNyPctTotal += pct
+        else if sess == "NY"
+            nyCount += 1
+            nyPctTotal += pct
+        else if sess == "NY Power Hour"
+            nyPowerCount += 1
+            nyPowerPctTotal += pct
+        else if sess == "NY End"
+            nyEndCount += 1
+            nyEndPctTotal += pct
+        else if sess == "Sydney"
+            sydneyCount += 1
+            sydneyPctTotal += pct
+        else if sess == "Asia"
+            asiaCount += 1
+            asiaPctTotal += pct
+        else if sess == "Sake Time"
+            sakeTimeCount += 1
+            sakeTimePctTotal += pct
+        else if sess == "Asia/London"
+            asiaLondonCount += 1
+            asiaLondonPctTotal += pct
+        else if sess == "London"
+            londonCount += 1
+            londonPctTotal += pct
+        else if sess == "Weekend"
+            weekendCount += 1
+            weekendPctTotal += pct
+        else if sess == "No Session"
+            noSessionCount += 1
+            noSessionPctTotal += pct
+
+preLondonNyAvg = preLondonNyCount > 0 ? preLondonNyPctTotal / preLondonNyCount : 0.0
+londonNyAvg = londonNyCount > 0 ? londonNyPctTotal / londonNyCount : 0.0
+nyAvg = nyCount > 0 ? nyPctTotal / nyCount : 0.0
+nyPowerAvg = nyPowerCount > 0 ? nyPowerPctTotal / nyPowerCount : 0.0
+nyEndAvg = nyEndCount > 0 ? nyEndPctTotal / nyEndCount : 0.0
+sydneyAvg = sydneyCount > 0 ? sydneyPctTotal / sydneyCount : 0.0
+asiaAvg = asiaCount > 0 ? asiaPctTotal / asiaCount : 0.0
+sakeTimeAvg = sakeTimeCount > 0 ? sakeTimePctTotal / sakeTimeCount : 0.0
+asiaLondonAvg = asiaLondonCount > 0 ? asiaLondonPctTotal / asiaLondonCount : 0.0
+londonAvg = londonCount > 0 ? londonPctTotal / londonCount : 0.0
+weekendAvg = weekendCount > 0 ? weekendPctTotal / weekendCount : 0.0
+noSessionAvg = noSessionCount > 0 ? noSessionPctTotal / noSessionCount : 0.0
+
+londonTotalCount = preLondonNyCount + londonNyCount + londonCount + asiaLondonCount
+nyTotalCount = preLondonNyCount + londonNyCount + nyCount + nyPowerCount + nyEndCount
+asiaTotalCount = asiaCount + sakeTimeCount + asiaLondonCount
+
+londonTotalPct = preLondonNyPctTotal + londonNyPctTotal + londonPctTotal + asiaLondonPctTotal
+nyTotalPct = preLondonNyPctTotal + londonNyPctTotal + nyPctTotal + nyPowerPctTotal + nyEndPctTotal
+asiaTotalPct = asiaPctTotal + sakeTimePctTotal + asiaLondonPctTotal
+
+londonTotalAvg = londonTotalCount > 0 ? londonTotalPct / londonTotalCount : 0.0
+nyTotalAvg = nyTotalCount > 0 ? nyTotalPct / nyTotalCount : 0.0
+asiaTotalAvg = asiaTotalCount > 0 ? asiaTotalPct / asiaTotalCount : 0.0
+
+// ===================== STATISTICS TABLE =====================
+
+if showTable and barstate.islast
+    var table statsTable = table.new(position.top_right, 2, 16, border_width=1)
+    
+    table.cell(statsTable, 0, 0, "Metric", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.small)
+    table.cell(statsTable, 1, 0, "Value", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.small)
+    
+    table.cell(statsTable, 0, 1, "Total Events", text_size=size.small)
+    table.cell(statsTable, 1, 1, str.tostring(totalMoves), text_size=size.small)
+    
+    table.cell(statsTable, 0, 2, "Bullish ↑", text_size=size.small)
+    table.cell(statsTable, 1, 2, str.tostring(bullishCount), text_color=color.green, text_size=size.small)
+    
+    table.cell(statsTable, 0, 3, "Bearish ↓", text_size=size.small)
+    table.cell(statsTable, 1, 3, str.tostring(bearishCount), text_color=color.red, text_size=size.small)
+    
+    table.cell(statsTable, 0, 4, "BOS", text_size=size.small)
+    table.cell(statsTable, 1, 4, str.tostring(bosCount), text_color=color.green, text_size=size.small)
+    
+    table.cell(statsTable, 0, 5, "CHoCH", text_size=size.small)
+    table.cell(statsTable, 1, 5, str.tostring(chochCount), text_color=color.aqua, text_size=size.small)
+    
+    table.cell(statsTable, 0, 6, "Level 1", text_size=size.small)
+    table.cell(statsTable, 1, 6, str.tostring(level1Count), text_color=getLevelColor(1), text_size=size.small)
+    
+    table.cell(statsTable, 0, 7, "Level 2", text_size=size.small)
+    table.cell(statsTable, 1, 7, str.tostring(level2Count), text_color=getLevelColor(2), text_size=size.small)
+    
+    table.cell(statsTable, 0, 8, "Level 3", text_size=size.small)
+    table.cell(statsTable, 1, 8, str.tostring(level3Count), text_color=getLevelColor(3), text_size=size.small)
+    
+    table.cell(statsTable, 0, 9, "Level 4", text_size=size.small)
+    table.cell(statsTable, 1, 9, str.tostring(level4Count), text_color=getLevelColor(4), text_size=size.small)
+    
+    table.cell(statsTable, 0, 10, "London Total", text_size=size.small)
+    table.cell(statsTable, 1, 10, str.tostring(londonTotalCount), text_color=color.white, text_size=size.small)
+    
+    table.cell(statsTable, 0, 11, "NY Total", text_size=size.small)
+    table.cell(statsTable, 1, 11, str.tostring(nyTotalCount), text_color=color.white, text_size=size.small)
+    
+    table.cell(statsTable, 0, 12, "Asia Total", text_size=size.small)
+    table.cell(statsTable, 1, 12, str.tostring(asiaTotalCount), text_color=color.white, text_size=size.small)
+    
+    table.cell(statsTable, 0, 13, "Sydney", text_size=size.small)
+    table.cell(statsTable, 1, 13, str.tostring(sydneyCount), text_color=getSessionColor("Sydney"), text_size=size.small)
+    
+    table.cell(statsTable, 0, 14, "Weekend", text_size=size.small)
+    table.cell(statsTable, 1, 14, str.tostring(weekendCount), text_color=getSessionColor("Weekend"), text_size=size.small)
+    
+    table.cell(statsTable, 0, 15, "No Session", text_size=size.small)
+    table.cell(statsTable, 1, 15, str.tostring(noSessionCount), text_color=color.gray, text_size=size.small)
+
+// ===================== SESSION STATISTICS TABLE =====================
+
+if showSessionTable and barstate.islast
+    var table sessionTable = table.new(position.bottom_left, 3, 16, border_width=1)
+    
+    table.cell(sessionTable, 0, 0, "Session", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 0, "Moves", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 2, 0, "Avg %", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 1, "London Total", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 1, str.tostring(londonTotalCount), bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 2, 1, str.tostring(londonTotalAvg, "#.##") + "%", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 2, "  Asia/London", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 2, str.tostring(asiaLondonCount), text_color=getSessionColor("Asia/London"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 2, str.tostring(asiaLondonAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 3, "  London", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 3, str.tostring(londonCount), text_color=getSessionColor("London"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 3, str.tostring(londonAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 4, "  Pre-London/NY", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 4, str.tostring(preLondonNyCount), text_color=getSessionColor("Pre-London/NY"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 4, str.tostring(preLondonNyAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 5, "  London/NY", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 5, str.tostring(londonNyCount), text_color=getSessionColor("London/NY"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 5, str.tostring(londonNyAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 6, "NY Total", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 6, str.tostring(nyTotalCount), bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 2, 6, str.tostring(nyTotalAvg, "#.##") + "%", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 7, "  NY", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 7, str.tostring(nyCount), text_color=getSessionColor("NY"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 7, str.tostring(nyAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 8, "  NY Power Hour", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 8, str.tostring(nyPowerCount), text_color=getSessionColor("NY Power Hour"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 8, str.tostring(nyPowerAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 9, "  NY End", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 9, str.tostring(nyEndCount), text_color=getSessionColor("NY End"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 9, str.tostring(nyEndAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 10, "Asia Total", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 10, str.tostring(asiaTotalCount), bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 2, 10, str.tostring(asiaTotalAvg, "#.##") + "%", bgcolor=color.new(color.gray, 50), text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 11, "  Sydney", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 11, str.tostring(sydneyCount), text_color=getSessionColor("Sydney"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 11, str.tostring(sydneyAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 12, "  Asia", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 12, str.tostring(asiaCount), text_color=getSessionColor("Asia"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 12, str.tostring(asiaAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 13, "  Sake Time", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 13, str.tostring(sakeTimeCount), text_color=getSessionColor("Sake Time"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 13, str.tostring(sakeTimeAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 14, "Weekend", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 14, str.tostring(weekendCount), text_color=getSessionColor("Weekend"), text_size=size.tiny)
+    table.cell(sessionTable, 2, 14, str.tostring(weekendAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+    
+    table.cell(sessionTable, 0, 15, "No Session", text_color=color.white, text_size=size.tiny)
+    table.cell(sessionTable, 1, 15, str.tostring(noSessionCount), text_color=color.gray, text_size=size.tiny)
+    table.cell(sessionTable, 2, 15, str.tostring(noSessionAvg, "#.##") + "%", text_color=color.white, text_size=size.tiny)
+
+// ===================== EVENT LOG TABLE =====================
+
+if showLogTable and barstate.islast and totalMoves > 0
+    maxRows = math.min(10, totalMoves)
+    var table logTable = table.new(position.bottom_right, 9, maxRows + 1, border_width=1)
+    
+    table.cell(logTable, 0, 0, "Date", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 1, 0, "Day", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 2, 0, "Session", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 3, 0, "Dir", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 4, 0, "Type", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 5, 0, "Lvl", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 6, 0, "%", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 7, 0, "Dur", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    table.cell(logTable, 8, 0, "Bars", bgcolor=color.new(color.gray, 30), text_color=color.white, text_size=size.tiny)
+    
+    startIdx = math.max(0, totalMoves - 10)
+    row = 1
+    
+    for i = startIdx to totalMoves - 1
+        endTime = array.get(moveEndTimeArr, i)
+        startTime = array.get(moveStartTimeArr, i)
+        isBull = array.get(moveIsBullishArr, i)
+        pct = array.get(movePercentArr, i)
+        lvl = array.get(moveLevelArr, i)
+        moveTypeStr = array.get(moveTypeArr, i)
+        sess = array.get(moveSessionArr, i)
+        dayOfWeek = array.get(moveDayOfWeekArr, i)
+        startBar = array.get(moveStartBarArr, i)
+        endBar = array.get(moveEndBarArr, i)
+        
+        barCount = endBar - startBar
+        durationMs = endTime - startTime
+        durationStr = formatDuration(durationMs)
+        
+        dirSymbol = isBull ? "↑" : "↓"
+        dirColor = isBull ? color.green : color.red
+        
+        table.cell(logTable, 0, row, str.format("{0,date,MM/dd}", endTime), text_size=size.tiny)
+        table.cell(logTable, 1, row, dayOfWeek, text_size=size.tiny)
+        table.cell(logTable, 2, row, sess, text_color=getSessionColor(sess), text_size=size.tiny)
+        table.cell(logTable, 3, row, dirSymbol, text_color=dirColor, text_size=size.tiny)
+        table.cell(logTable, 4, row, moveTypeStr, text_size=size.tiny)
+        table.cell(logTable, 5, row, "L" + str.tostring(lvl), text_color=getLevelColor(lvl), text_size=size.tiny)
+        table.cell(logTable, 6, row, str.tostring(pct, "#.##") + "%", text_size=size.tiny)
+        table.cell(logTable, 7, row, durationStr, text_size=size.tiny)
+        table.cell(logTable, 8, row, str.tostring(barCount), text_size=size.tiny)
+        
+        row += 1

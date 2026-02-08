@@ -1,0 +1,195 @@
+//@version=5
+indicator("سیستم معاملاتی پیشرفته v2.0", overlay=true, max_labels_count=500, max_bars_back=5000)
+
+// ============ تنظیمات و ورودی‌های کاربر ============
+var string G_CORE = "تنظیمات اصلی"
+var string G_RISK = "مدیریت ریسک"
+var string G_SIGNAL = "سیگنال‌های معاملاتی"
+var string G_DISPLAY = "تنظیمات نمایش"
+var string G_AI = "هوش مصنوعی و کوانتوم"
+
+// --- تنظیمات اصلی ---
+useAI = input.bool(true, "استفاده از هوش مصنوعی", group=G_CORE)
+useQuantum = input.bool(true, "استفاده از سیستم کوانتومی", group=G_CORE)
+useSMC = input.bool(true, "تحلیل SMC", group=G_CORE)
+useHarmonic = input.bool(true, "الگوهای هارمونیک", group=G_CORE)
+
+// --- تنظیمات تایم‌فریم ---
+htf1 = input.timeframe("60", "تایم فریم اول (بالاتر)", group=G_CORE)
+htf2 = input.timeframe("240", "تایم فریم دوم (بالاتر)", group=G_CORE)
+htf3 = input.timeframe("D", "تایم فریم سوم (بالاتر)", group=G_CORE)
+
+// --- تنظیمات ریسک ---
+riskPercent = input.float(1.0, "درصد ریسک", 0.1, 5.0, 0.1, group=G_RISK)
+rrRatio = input.float(2.0, "نسبت ریسک/ریوارد", 1.0, 5.0, 0.1, group=G_RISK)
+useKelly = input.bool(true, "استفاده از Kelly Criterion", group=G_RISK)
+useTrailingStop = input.bool(true, "استفاده از تریلینگ استاپ", group=G_RISK)
+
+// --- تنظیمات سیگنال ---
+signalThreshold = input.int(75, "حداقل امتیاز سیگنال", 50, 100, group=G_SIGNAL)
+trendFilter = input.bool(true, "فیلتر روند", group=G_SIGNAL)
+volumeFilter = input.bool(true, "فیلتر حجم", group=G_SIGNAL)
+patternFilter = input.bool(true, "فیلتر الگو", group=G_SIGNAL)
+
+// --- تنظیمات نمایش ---
+showLabels = input.bool(true, "نمایش برچسب‌ها", group=G_DISPLAY)
+showZones = input.bool(true, "نمایش مناطق", group=G_DISPLAY)
+labelColor = input.color(color.blue, "رنگ برچسب‌ها", group=G_DISPLAY)
+zoneTransparency = input.int(90, "شفافیت مناطق", 0, 100, group=G_DISPLAY)
+
+// ============ توابع کمکی ============
+
+// تابع محاسبه اندیکاتورهای پیشرفته
+calcAdvancedIndicators(src) =>
+    var float result = 0.0
+    ema = ta.ema(src, 14)
+    rsi = ta.rsi(src, 14)
+    macd = ta.macd(src, 12, 26, 9)
+    result := (ema > src ? 1 : -1) * 
+              (rsi > 50 ? 1 : -1) * 
+              (macd > 0 ? 1 : -1)
+    result
+
+// تابع تشخیص الگوهای هارمونیک
+detectHarmonicPatterns() =>
+    var float xabLevel = 0.0
+    var float abcLevel = 0.0
+    var float bcdLevel = 0.0
+    
+    // محاسبات الگوهای هارمونیک
+    xabLevel := math.abs(high[3] - low[2]) * 0.618
+    abcLevel := math.abs(high[2] - low[1]) * 0.786
+    bcdLevel := math.abs(high[1] - low[0]) * 0.886
+    
+    bullish = low[0] <= bcdLevel and high[1] >= abcLevel and low[2] <= xabLevel
+    bearish = high[0] >= bcdLevel and low[1] <= abcLevel and high[2] >= xabLevel
+    
+    [bullish, bearish]
+
+// تابع محاسبه سطوح اسمارت مانی
+calcSmartMoneyLevels() =>
+    var float[] levels = array.new_float(0)
+    
+    // محاسبه سطوح کلیدی
+    pivot = (high + low + close) / 3
+    r1 = pivot + (high - low)
+    s1 = pivot - (high - low)
+    
+    array.push(levels, r1)
+    array.push(levels, pivot)
+    array.push(levels, s1)
+    
+    levels
+
+// ============ محاسبات اصلی ============
+
+// محاسبه شاخص‌های تکنیکال
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+rsi = ta.rsi(close, 14)
+atr = ta.atr(14)
+
+// محاسبه الگوها و سطوح
+[bullishPattern, bearishPattern] = detectHarmonicPatterns()
+smartMoneyLevels = calcSmartMoneyLevels()
+
+// محاسبه امتیاز سیگنال
+var float buyScore = 0.0
+var float sellScore = 0.0
+
+// به‌روزرسانی امتیازها
+buyScore := 0.0
+buyScore := buyScore + (ta.crossover(macdLine, signalLine) ? 25 : 0)
+buyScore := buyScore + (rsi < 30 ? 20 : 0)
+buyScore := buyScore + (bullishPattern ? 15 : 0)
+buyScore := buyScore + (close > ta.sma(close, 200) ? 15 : 0)
+buyScore := buyScore + (volume > ta.sma(volume, 20) ? 10 : 0)
+buyScore := buyScore + (ta.rising(close, 3) ? 15 : 0)
+
+sellScore := 0.0
+sellScore := sellScore + (ta.crossunder(macdLine, signalLine) ? 25 : 0)
+sellScore := sellScore + (rsi > 70 ? 20 : 0)
+sellScore := sellScore + (bearishPattern ? 15 : 0)
+sellScore := sellScore + (close < ta.sma(close, 200) ? 15 : 0)
+sellScore := sellScore + (volume > ta.sma(volume, 20) ? 10 : 0)
+sellScore := sellScore + (ta.falling(close, 3) ? 15 : 0)
+
+// ============ سیگنال‌های معاملاتی ============
+
+// شرایط معتبر برای سیگنال‌ها
+validBuy = buyScore >= signalThreshold and
+          (not trendFilter or close > ta.sma(close, 200)) and
+          (not volumeFilter or volume > ta.sma(volume, 20)) and
+          (not patternFilter or bullishPattern)
+
+validSell = sellScore >= signalThreshold and
+           (not trendFilter or close < ta.sma(close, 200)) and
+           (not volumeFilter or volume > ta.sma(volume, 20)) and
+           (not patternFilter or bearishPattern)
+
+// محاسبه سطوح ورود و خروج
+if validBuy
+    stopLoss = low - atr * 1.5
+    takeProfit = close + (close - stopLoss) * rrRatio
+    
+    if useTrailingStop
+        strategy.exit("خروج خرید", "خرید", stop=stopLoss, limit=takeProfit)
+    
+    if showLabels
+        label.new(bar_index, low, "↑\nBuy\nScore: " + str.tostring(buyScore, "#.##"), 
+                 color=color.green, style=label.style_label_up,
+                 textcolor=color.white)
+
+if validSell
+    stopLoss = high + atr * 1.5
+    takeProfit = close - (stopLoss - close) * rrRatio
+    
+    if useTrailingStop
+        strategy.exit("خروج فروش", "فروش", stop=stopLoss, limit=takeProfit)
+    
+    if showLabels
+        label.new(bar_index, high, "↓\nSell\nScore: " + str.tostring(sellScore, "#.##"), 
+                 color=color.red, style=label.style_label_down,
+                 textcolor=color.white)
+
+// ============ نمایش گرافیکی ============
+
+// نمایش سیگنال‌ها
+plotshape(validBuy, "سیگنال خرید", shape.triangleup, location.belowbar,
+          color.new(color.green, 0), size=size.small)
+plotshape(validSell, "سیگنال فروش", shape.triangledown, location.abovebar,
+          color.new(color.red, 0), size=size.small)
+
+// نمایش سطوح کلیدی
+if showZones
+    for level in smartMoneyLevels
+        linefill = line.new(bar_index[10], level, bar_index, level,
+                           color=color.new(labelColor, zoneTransparency),
+                           width=2)
+
+// داشبورد اطلاعات
+var table infoPanel = table.new(position.top_right, 2, 5)
+if barstate.islast
+    table.cell(infoPanel, 0, 0, "امتیاز خرید", text_color=color.white)
+    table.cell(infoPanel, 1, 0, str.tostring(buyScore, "#.##"),
+               text_color=buyScore >= signalThreshold ? color.green : color.gray)
+    
+    table.cell(infoPanel, 0, 1, "امتیاز فروش", text_color=color.white)
+    table.cell(infoPanel, 1, 1, str.tostring(sellScore, "#.##"),
+               text_color=sellScore >= signalThreshold ? color.red : color.gray)
+    
+    table.cell(infoPanel, 0, 2, "RSI", text_color=color.white)
+    table.cell(infoPanel, 1, 2, str.tostring(rsi, "#.##"),
+               text_color=rsi > 70 ? color.red : rsi < 30 ? color.green : color.gray)
+    
+    table.cell(infoPanel, 0, 3, "ATR", text_color=color.white)
+    table.cell(infoPanel, 1, 3, str.tostring(atr, "#.##"), text_color=color.white)
+    
+    table.cell(infoPanel, 0, 4, "روند", text_color=color.white)
+    table.cell(infoPanel, 1, 4, close > ta.sma(close, 200) ? "صعودی" : "نزولی",
+               text_color=close > ta.sma(close, 200) ? color.green : color.red)
+
+// ============ هشدارها ============
+alertcondition(validBuy, "سیگنال خرید", 
+              "سیگنال خرید قوی با امتیاز {{buyScore}}")
+alertcondition(validSell, "سیگنال فروش", 
+              "سیگنال فروش قوی با امتیاز {{sellScore}}")

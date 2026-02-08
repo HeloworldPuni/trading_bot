@@ -1,0 +1,41 @@
+//@version=5
+strategy('VWAP Crossovers', overlay=true, margin_long=1, margin_short=1)
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+computeVWAP(src, isNewPeriod) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+
+	_vwap = sumSrcVol / sumVol
+
+	[_vwap]
+
+src = hlc3
+
+isWeek = ta.change(time("W"))
+isDay = ta.change(time("D"))
+
+float weekVwap = na
+float dayVwap = na
+
+[_week_vwap] = computeVWAP(src, isWeek)
+[_day_vwap] = computeVWAP(src, isDay)
+weekVwap := _week_vwap
+dayVwap := _day_vwap
+
+plot(weekVwap, title="Weekly VWAP", color=color.black)
+plot(dayVwap, title="Daily VWAP", color=color.red)
+
+longCondition = ta.crossover(dayVwap, weekVwap)
+shortCondition = ta.crossunder(dayVwap, weekVwap)
+if(longCondition)
+    strategy.entry("Long", strategy.long)
+if(shortCondition)
+    strategy.entry("Short", strategy.short)

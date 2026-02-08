@@ -1,0 +1,198 @@
+//@version=5
+indicator("DINO - EngulfingCandle RSI Strategy - Live Alerts", overlay=true)
+
+// This indicator expected to always alternate between bullish and bearish positions
+// A position is closed either by
+// by a stop loss OR the opposite signal
+// when a stop loss is hit, the indicator will wait for the next opposite signal to open a new opposing position
+// when an opposite signal is hit, the indicator will close the current position and open a new opposing position
+
+// Candlestick pattern detection
+bullishCandle = close >= open[1] and close[1] < open[1]
+bearishCandle = close <= open[1] and close[1] > open[1]
+
+// RSI inputs (same as strategy)
+rsiSource = input.source(close, "RSI Source")
+rsiLength = input.int(14, "RSI Length")
+rsiOverBought = input.int(70, "RSI Overbought Level")
+rsiOverSold = input.int(30, "RSI Oversold Level")
+
+// RSI calculations (same as strategy)
+rsiValue = ta.rsi(rsiSource, rsiLength)
+isRSIOB = rsiValue >= rsiOverBought
+isRSIOS = rsiValue <= rsiOverSold
+
+// Trading signal logic (same as strategy)
+tradeSignal = ((isRSIOS or isRSIOS[1] or isRSIOS[2]) and bullishCandle) or ((isRSIOB or isRSIOB[1] or isRSIOB[2]) and bearishCandle)
+
+// Visual signals (same as strategy)
+plotshape(tradeSignal and bullishCandle, title="Bullish Signal", location=location.belowbar, color=color.green, style=shape.triangleup, text="Buy MIT", textcolor=color.green)
+plotshape(tradeSignal and bearishCandle, title="Bearish Signal", location=location.abovebar, color=color.red, style=shape.triangledown, text="Sell MIT", textcolor=color.red)
+
+// Risk management calculations (same as strategy)
+pipSize = syminfo.mintick
+stopLossPips = 10000
+stopLossValue = close - stopLossPips * pipSize
+
+// Calculate take profit levels (same as strategy)
+longTP1 = close + 10000 * pipSize
+longTP2 = close + 20000 * pipSize
+longTP3 = close + 25000 * pipSize
+shortTP1 = close - 10000 * pipSize
+shortTP2 = close - 20000 * pipSize
+shortTP3 = close - 25000 * pipSize
+
+// Alert conditions for live trading
+longSignal = tradeSignal and bullishCandle
+shortSignal = tradeSignal and bearishCandle
+
+// Long entry alert with all trade details
+alertcondition(longSignal, title="Long Entry Alert", message="LONG ENTRY: {{ticker}} at {{close}} | Stop Loss: {{close}} - {{stopLossPips}} pips | TP1: {{close}} + 10000 pips (25%) | TP2: {{close}} + 20000 pips (75%) | TP3: {{close}} + 25000 pips (100%)")
+
+// Short entry alert with all trade details
+alertcondition(shortSignal, title="Short Entry Alert", message="SHORT ENTRY: {{ticker}} at {{close}} | Stop Loss: {{close}} + {{stopLossPips}} pips | TP1: {{close}} - 10000 pips (25%) | TP2: {{close}} - 20000 pips (75%) | TP3: {{close}} - 25000 pips (100%)")
+
+// Display current RSI value and signal status
+var table infoTable = table.new(position.top_right, 2, 5, bgcolor=color.white, border_width=1)
+if barstate.islast
+    table.cell(infoTable, 0, 0, "RSI Value", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 0, str.tostring(rsiValue, "#.##"), text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 0, 1, "Stop Loss", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(stopLossPips) + " pips", text_color=color.red, text_size=size.small)
+    table.cell(infoTable, 0, 2, "TP1/TP2/TP3", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 2, "10k/20k/25k pips", text_color=color.green, text_size=size.small)
+    table.cell(infoTable, 0, 3, "Signal Status", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 3, longSignal ? "LONG" : shortSignal ? "SHORT" : "NONE", text_color=longSignal ? color.green : shortSignal ? color.red : color.gray, text_size=size.small)
+    table.cell(infoTable, 0, 4, "Pattern", text_color=color.black, text_size=size.small)
+    table.cell(infoTable, 1, 4, bullishCandle ? "Bullish Engulfing" : bearishCandle ? "Bearish Engulfing" : "None", text_color=bullishCandle ? color.green : bearishCandle ? color.red : color.gray, text_size=size.small)
+
+// --- Trade tracking for plotting targets and hits ---
+var float lastLongEntry = na
+var float lastShortEntry = na
+var float lastLongSL = na
+var float lastShortSL = na
+var float lastLongTP1 = na
+var float lastLongTP2 = na
+var float lastLongTP3 = na
+var float lastShortTP1 = na
+var float lastShortTP2 = na
+var float lastShortTP3 = na
+var bool longActive = false
+var bool shortActive = false
+
+// Detect new long entry
+if longSignal
+    lastLongEntry := close
+    lastLongSL := close - stopLossPips * pipSize
+    lastLongTP1 := close + 10000 * pipSize
+    lastLongTP2 := close + 20000 * pipSize
+    lastLongTP3 := close + 25000 * pipSize
+    longActive := true
+    shortActive := false
+
+// Detect new short entry
+if shortSignal
+    lastShortEntry := close
+    lastShortSL := close + stopLossPips * pipSize
+    lastShortTP1 := close - 10000 * pipSize
+    lastShortTP2 := close - 20000 * pipSize
+    lastShortTP3 := close - 25000 * pipSize
+    shortActive := true
+    longActive := false
+
+// Plot long targets if long is active
+plot(longActive ? lastLongTP1 : na, color=color.new(color.green, 0), style=plot.style_linebr, linewidth=1, title="Long TP1")
+plot(longActive ? lastLongTP2 : na, color=color.new(color.green, 40), style=plot.style_linebr, linewidth=1, title="Long TP2")
+plot(longActive ? lastLongTP3 : na, color=color.new(color.green, 80), style=plot.style_linebr, linewidth=1, title="Long TP3")
+plot(longActive ? lastLongSL : na, color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1, title="Long SL")
+
+// Plot short targets if short is active
+plot(shortActive ? lastShortTP1 : na, color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1, title="Short TP1")
+plot(shortActive ? lastShortTP2 : na, color=color.new(color.red, 40), style=plot.style_linebr, linewidth=1, title="Short TP2")
+plot(shortActive ? lastShortTP3 : na, color=color.new(color.red, 80), style=plot.style_linebr, linewidth=1, title="Short TP3")
+plot(shortActive ? lastShortSL : na, color=color.new(color.green, 0), style=plot.style_linebr, linewidth=1, title="Short SL")
+
+// Markers for when targets are hit
+var bool longTP1Hit = false
+var bool longTP2Hit = false
+var bool longTP3Hit = false
+var bool longSLHit = false
+var bool shortTP1Hit = false
+var bool shortTP2Hit = false
+var bool shortTP3Hit = false
+var bool shortSLHit = false
+
+// Show marker variables for plotting in global scope
+showLongTP1Hit = false
+showLongTP2Hit = false
+showLongTP3Hit = false
+showLongSLHit = false
+showShortTP1Hit = false
+showShortTP2Hit = false
+showShortTP3Hit = false
+showShortSLHit = false
+
+// Check if long targets are hit
+if longActive
+    if not longTP1Hit and high >= lastLongTP1
+        longTP1Hit := true
+        showLongTP1Hit := true
+    if not longTP2Hit and high >= lastLongTP2
+        longTP2Hit := true
+        showLongTP2Hit := true
+    if not longTP3Hit and high >= lastLongTP3
+        longTP3Hit := true
+        showLongTP3Hit := true
+    if not longSLHit and low <= lastLongSL
+        longSLHit := true
+        showLongSLHit := true
+    // Reset on hit
+    if longTP1Hit or longTP2Hit or longTP3Hit or longSLHit
+        longActive := false
+        longTP1Hit := false
+        longTP2Hit := false
+        longTP3Hit := false
+        longSLHit := false
+else
+    showLongTP1Hit := false
+    showLongTP2Hit := false
+    showLongTP3Hit := false
+    showLongSLHit := false
+
+// Check if short targets are hit
+if shortActive
+    if not shortTP1Hit and low <= lastShortTP1
+        shortTP1Hit := true
+        showShortTP1Hit := true
+    if not shortTP2Hit and low <= lastShortTP2
+        shortTP2Hit := true
+        showShortTP2Hit := true
+    if not shortTP3Hit and low <= lastShortTP3
+        shortTP3Hit := true
+        showShortTP3Hit := true
+    if not shortSLHit and high >= lastShortSL
+        shortSLHit := true
+        showShortSLHit := true
+
+// Reset on hit - moved outside the shortActive check
+if shortActive and (shortTP1Hit or shortTP2Hit or shortTP3Hit or shortSLHit)
+    shortActive := false
+    shortTP1Hit := false
+    shortTP2Hit := false
+    shortTP3Hit := false
+    shortSLHit := false
+else
+    showShortTP1Hit := false
+    showShortTP2Hit := false
+    showShortTP3Hit := false
+    showShortSLHit := false
+
+// Plot all markers in global scope
+plotshape(showLongTP1Hit, title="Long TP1 Hit", location=location.abovebar, color=color.green, style=shape.circle, text="TP1", textcolor=color.white, size=size.tiny)
+plotshape(showLongTP2Hit, title="Long TP2 Hit", location=location.abovebar, color=color.green, style=shape.circle, text="TP2", textcolor=color.white, size=size.tiny)
+plotshape(showLongTP3Hit, title="Long TP3 Hit", location=location.abovebar, color=color.green, style=shape.circle, text="TP3", textcolor=color.white, size=size.tiny)
+plotshape(showLongSLHit, title="Long SL Hit", location=location.belowbar, color=color.red, style=shape.xcross, text="SL", textcolor=color.white, size=size.tiny)
+plotshape(showShortTP1Hit, title="Short TP1 Hit", location=location.belowbar, color=color.red, style=shape.circle, text="TP1", textcolor=color.white, size=size.tiny)
+plotshape(showShortTP2Hit, title="Short TP2 Hit", location=location.belowbar, color=color.red, style=shape.circle, text="TP2", textcolor=color.white, size=size.tiny)
+plotshape(showShortTP3Hit, title="Short TP3 Hit", location=location.belowbar, color=color.red, style=shape.circle, text="TP3", textcolor=color.white, size=size.tiny)
+plotshape(showShortSLHit, title="Short SL Hit", location=location.abovebar, color=color.green, style=shape.xcross, text="SL", textcolor=color.white, size=size.tiny)

@@ -1,0 +1,152 @@
+// ===================================================================================================================
+//
+// WTT_KNNML © William Skrzypczak 2025 Waverider  Trading Technologies
+//
+// ===================================================================================================================
+
+// This Pine Script code implements a machine learning-inspired k-nearest neighbors (KNN) price prediction indicator for 
+// use on TradingView charts. It allows the user to select a timeframe and various parameters (such as the number of data 
+// points, neighbors, and adjustment options) to analyze historical price data. The script calculates the K nearest 
+// historical closing prices to the current price, predicts the next price and its likely direction (bullish, bearish, 
+// or neutral), and visually displays this prediction and direction in a customizable on-chart table. Additional coloring 
+// options based on Z-score or pivot points provide enhanced signal context, and the indicator supports both repainting 
+// and non-repainting modes.
+
+//@version=5
+indicator("WTT_MLPrediction", '', true, format=format.price, precision=2)
+
+// === USER INPUTS ===
+// Basic settings
+TF    = input.timeframe('5',       'Resolution',                         ['1','3','5','10','15','30','45','60','120','180','240','480','D','W','M'])
+N     = input.int      (10,        '# of Data Points [2:n]',             minval=2)
+K     = input.int      (100,       '# of Nearest Neighbors (K) [1:252]', minval=1, maxval=252)
+ADJ   = input.bool     (true,      'Adjust Prediction',                  inline='b')
+REP   = input.bool     (false,     'Non-Repainting',                     inline='b')
+ADDON = input.string   ('Z-Score', 'Add-On',                             options=['None','Pivot Point','Z-Score'])
+LAGP  = input.int      (5,         'Pivot Point Lag [2:n]',              minval=2)
+LAGZ  = input.int      (20,        'Z-Score Lag [2:n]',                  minval=2)
+DISP  = input.string   ('Both',    'Show Outcomes',                      options=['Curve','Predict','Both'])
+ODS   = input.source   (hlcc4,     'Projection Base')
+
+// Table Settings
+showTable = input.bool(true, "Show Prediction Table")
+tablePosition = input.string("Top-Right", "Table Position", options=["Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left"])
+tableSize = input.string("Small", "Table Size", options=["Small", "Normal", "Large"])
+
+// === HELPER FUNCTIONS ===
+
+// Calculates k-nearest neighbors from historical price data
+get_k_nearest_neighbors(data, lookback, k) =>
+    distances = array.new_float()
+    neighbors = array.new_float()
+
+    for i = 0 to lookback - 1
+        float distance = math.abs(data[i] - data[i+1])
+        array.push(distances, distance)
+        int size = array.size(distances)
+        float min_dist = array.min(distances, size > k ? k : 0)
+        float neighbor = distance < min_dist ? data[i+1] : data[i]
+        array.push(neighbors, neighbor)
+
+    neighbors
+
+// Predicts the next price and direction from nearest neighbors
+predict_from_neighbors(neighbors, data, adjustPrediction) =>
+    float avg = array.avg(neighbors)
+    int dir = avg < data[adjustPrediction ? 0 : 1] ? 1 : avg > data[adjustPrediction ? 0 : 1] ? -1 : 0
+    [avg, dir]
+
+// Color scale for positive (green) signals
+get_green_gradient(level) =>
+    level > 9 ? #006400 :
+     level > 8 ? #1A741A :
+     level > 7 ? #338333 :
+     level > 6 ? #4D934D :
+     level > 5 ? #66A266 :
+     level > 4 ? #80B280 :
+     level > 3 ? #99C199 :
+     level > 2 ? #B3D1B3 :
+     level > 1 ? #CCE0CC : #E6F0E6
+
+// Color scale for negative (red) signals
+get_red_gradient(level) =>
+    level > 9 ? #E00000 :
+     level > 8 ? #E31A1A :
+     level > 7 ? #E63333 :
+     level > 6 ? #E94D4D :
+     level > 5 ? #EC6666 :
+     level > 4 ? #F08080 :
+     level > 3 ? #F39999 :
+     level > 2 ? #F6B3B3 :
+     level > 1 ? #F9CCCC : #FCE6E6
+
+// Basic directional color coding
+get_basic_color(direction) =>
+    direction == 1 ? get_green_gradient(9) :
+     direction == -1 ? get_red_gradient(9) : na
+
+// Pivot point condition-based coloring
+get_pivot_color(h, l, lag, direction) =>
+    bool isHigh = ta.highestbars(h, lag) == 0
+    bool isLow  = ta.lowestbars(l, lag) == 0
+    isHigh and direction == 1 ? get_green_gradient(9) :
+     isLow  and direction == -1 ? get_red_gradient(9) : na
+
+// Z-score-based coloring
+get_zscore_color(data, period, direction) =>
+    z = (data - ta.sma(data, period)) / ta.stdev(data, period)
+    z / (period / 5) > 0 and direction == 1 ? get_green_gradient(9) :
+     z / (period / 5) < 0 and direction == -1 ? get_red_gradient(9) : na
+
+// === CORE LOGIC ===
+
+// Enable non-repainting via offset
+rep = REP ? 1 : 0
+
+// Retrieve candle data for selected timeframe
+[open_, high_, low_, close_] = request.security('', TF, [open, high[rep], low[rep], close[rep]])
+
+// Compute neighbors and prediction
+neighbors = get_k_nearest_neighbors(close_, N, K)
+[prediction, dir] = predict_from_neighbors(neighbors, close_, ADJ)
+
+// Determine coloring method
+colorOutput = ADDON == 'Z-Score'     ? get_zscore_color(close_, LAGZ, dir) :
+              ADDON == 'Pivot Point' ? get_pivot_color(high_, low_, LAGP, dir) :
+              get_basic_color(dir)
+
+// === TABLE IMPLEMENTATION ===
+// Set table position
+var pos = tablePosition == "Top-Right"    ? position.top_right :
+          tablePosition == "Top-Left"     ? position.top_left :
+          tablePosition == "Bottom-Right" ? position.bottom_right : 
+          position.bottom_left
+
+// Set table size
+var sz = tableSize == "Small"  ? size.normal :    // Changed from size.large
+         tableSize == "Large"  ? size.large :     // Changed from size.huge
+         size.normal                              // Changed from size.xlarge
+
+// Create and configure the table
+var table predictionTable = table.new(pos, columns=1, rows=2, border_width=2)  // Changed to 2 rows
+
+// Update the table only on the last bar
+if barstate.islast and showTable
+    // Clear the table
+    table.clear(predictionTable, 0, 0)
+    
+    // Direction text and color settings
+    dirText = dir == 1  ? "BULLISH 🚀" :
+              dir == -1 ? "BEARISH 📉" : 
+              "NEUTRAL ⚖️"
+    
+    // Use solid colors instead of gradients
+    dirColor = dir == 1  ? color.rgb(0, 100, 0) :  // Dark green for bullish
+               dir == -1 ? color.rgb(180, 0, 0) :  // Medium red for bearish
+               color.rgb(100, 100, 100)            // Gray for neutral
+    
+    // Add one empty row
+    table.cell(predictionTable, 0, 0, "", text_color=color.white, bgcolor=color.rgb(0, 0, 0, 80), text_size=sz)
+    
+    // Add prediction row
+    table.cell(predictionTable, 0, 1, "AI PREDICTION: " + dirText, text_color=color.white, bgcolor=dirColor, text_size=sz) 

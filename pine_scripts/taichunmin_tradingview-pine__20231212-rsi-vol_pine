@@ -1,0 +1,57 @@
+//@version=5
+// 沒有賺錢
+strategy("RSI金叉死叉-VOL過濾-20231212", overlay=true, default_qty_type = strategy.percent_of_equity, default_qty_value = 20)
+
+// vol
+signalVol = volume[1] > (volume[2] * 1.2)
+// signalVol = true
+
+// rsi
+rsiFast = ta.rsi(close, 30)
+rsiSlow = ta.rsi(close, 40)
+// plot(rsiFast, color = color.white)
+// plot(rsiSlow, color = color.gray)
+
+signalLong = ta.crossover(rsiFast, rsiSlow)
+signalShort = ta.crossunder(rsiFast, rsiSlow)
+
+plotshape(signalLong, style = shape.triangleup, location = location.belowbar, color = color.green)
+plotshape(signalShort, style = shape.triangledown, location = location.abovebar, color = color.red)
+
+bool isEntry = false
+
+if (signalLong and strategy.position_size <= 0)
+    strategy.close_all("close_all")
+    if (signalVol)
+        strategy.entry("long", strategy.long)
+        isEntry := true
+
+if (signalShort and strategy.position_size >= 0)
+    strategy.close_all("close_all")
+    if (signalVol)
+        strategy.entry("short", strategy.short)
+        isEntry := true
+
+float atrFactor = 2.0
+int atrPeriod = 10
+atr = ta.atr(atrPeriod)
+atrUpper = hl2 + atrFactor * atr
+atrLower = hl2 - atrFactor * atr
+// plot(atrUpper, color = color.green)
+// plot(atrLower, color = color.red)
+
+float stopLong = na
+lowest = ta.lowest(10)
+stopLong := na(stopLong[1]) or isEntry ? lowest : stopLong[1]
+stopLong := atrLower > stopLong ? atrLower : stopLong
+plot(strategy.position_size > 0 ? stopLong : na, color = color.red, style = plot.style_linebr)
+if (strategy.position_size > 0)
+    strategy.exit("exit long", "long", qty_percent = 100, stop = stopLong)
+
+float stopShort = na
+highest = ta.highest(10)
+stopShort := na(stopShort[1]) or isEntry ? highest : stopShort[1]
+stopShort := atrUpper < stopShort ? atrUpper : stopShort
+plot(strategy.position_size < 0 ? stopShort : na, color = color.green, style = plot.style_linebr)
+if (strategy.position_size < 0)
+    strategy.exit("exit short", "short", qty_percent = 100, stop = stopShort)

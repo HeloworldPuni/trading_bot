@@ -1,0 +1,36 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © responsibleSwift3o8h5
+//@version=5
+indicator("4H Bias Zones (Normal Distribution) with Breakout Zones", overlay=true)
+
+// === Settings ===
+length = input.int(50, title="Lookback 4H Candles", minval=10)
+mult = input.float(1.0, title="Standard Deviation Multiplier", step=0.1)
+
+// === Calculate 4H Returns ===
+prevClose = request.security(syminfo.tickerid, "240", close[1])
+currentClose = request.security(syminfo.tickerid, "240", close)
+return_4h = (currentClose - prevClose) / prevClose
+
+// === Rolling Mean & Std Dev of Returns ===
+mean = ta.sma(return_4h, length)
+stdDev = ta.stdev(return_4h, length)
+
+// === Current 4H Open Price ===
+open_4h = request.security(syminfo.tickerid, "240", open)
+
+// === Bias Levels Based on Distribution ===
+upperBias = open_4h * (1 + (mean + stdDev) * mult)
+lowerBias = open_4h * (1 - (mean + stdDev) * mult)
+
+// === Plotting ===
+plot(upperBias, title="+1σ Bias Zone", color=color.green, linewidth=2)
+plot(lowerBias, title="-1σ Bias Zone", color=color.red, linewidth=2)
+plot(open_4h, title="4H Open", color=color.gray, linewidth=1, style=plot.style_dashed)
+
+// === Background Coloring for Exceeding ±1σ ===
+// If price exceeds upper Bias (green zone)
+bgcolor(close > upperBias ? color.new(color.green, 90) : na)
+// If price drops below lower Bias (red zone)
+bgcolor(close < lowerBias ? color.new(color.red, 90) : na)
+

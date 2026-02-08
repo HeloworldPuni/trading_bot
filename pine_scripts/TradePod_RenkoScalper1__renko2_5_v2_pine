@@ -1,0 +1,95 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TradePod
+//RENKO: USE TRADITIONAL OLHC
+
+//SPY: 0.02% SL, 0.3 BAR RENKO 1915.3%
+//SPY: 0.02% SL, 0.3 BAR, 10 SMA 2406% 
+
+
+
+
+//@version=4
+strategy("renko lowTF", overlay=true, pyramiding = 5, commission_type = strategy.commission.percent)
+//user inputs
+barsBeforeAction = input(title = "Bars before strat action", type=input.integer, defval = 3)
+smaSource = input(title = "SMA source", type=input.source, defval = close)
+smaLength = input(title = "SMA length", type=input.integer, defval = 12)
+shortTrail = input(title = "Trailing SL % : Short", type = input.float, minval = 0.0, step=0.001, defval = 0.5)*0.01 //eg 5*0.01 = 5%  //NEED MUCH TIGHTER SL FOR LOW TF
+longTrail = input(title = "Trailing SL % : Long", type = input.float, minval = 0.0, step=0.001, defval = 0.5)*0.01 
+//Alerts
+//alertcondition(stuff or stuff2, title="trade alert", message = "Trade opened")
+
+
+//SMA (declare sma source (eg. close, open) and length (eg. 15) in inputs)
+
+smaValue = sma(smaSource, smaLength)
+plot(smaValue, title = "SMA ", color = color.yellow, editable = true)
+
+//trade conditions
+laggingPrice = close[barsBeforeAction - 1] // - 1 cuz 2 is actually 3rd bar (array 2 = 3 irl) ALSO try valuewhen function
+currentClose = close
+
+//exit conditions (execution at the very bottom)
+//trailing stop setup https://kodify.net/tradingview/orders/percentage-trail/
+longTrailStopPrice = 0.0
+
+longTrailStopPrice := if(strategy.position_size > 0) //strat position size is long when above 0 
+    stopValue = close*(1 - longTrail) //1 - because  stops for long should initially be below the current market price 
+    max(stopValue, longTrailStopPrice[1]) // this trails the stop value: either stopValue or prev value of long stop price: this way stop either increases or remains the same
+else                                      // [1] = prev bar/value of long stop price
+    0  //resets longTrailStopPrice so it calculates it properly next time long 
+    
+shortTrailStopPrice = 0.0
+
+shortTrailStopPrice := if(strategy.position_size < 0)
+    stopValue = close*(1 + shortTrail)
+    min(stopValue, shortTrailStopPrice[1])
+else
+    9999999 //if stop reests to 0 min compares prev value to 0 and will never trigger unless btc trades negatively
+    
+    //plot SL val
+plot(series=strategy.position_size > 0 ? longTrailStopPrice : na, color=color.yellow, style=plot.style_cross, linewidth=2, title="Long Trail Stop")
+plot(series=strategy.position_size < 0 ? shortTrailStopPrice : na, color=color.aqua, style=plot.style_cross, linewidth=2, title="Short Trail Stop")
+
+
+    
+    
+//entryconditions and execution
+
+shortCondition = crossunder(laggingPrice, smaValue) and (currentClose < smaValue)
+plotshape(series=shortCondition, location=location.abovebar, style=shape.triangledown, size = size.tiny)
+
+longCondition = crossover(laggingPrice, smaValue) and (currentClose > smaValue)
+plotshape(series = longCondition, location = location.belowbar, style = shape.triangleup, size = size.tiny)
+
+if shortCondition
+    strategy.entry("short opened", strategy.short)
+
+
+
+if longCondition
+    strategy.entry("long opened", strategy.long)
+
+
+longstp = false
+shortstp = false
+
+//SL exit execution 
+if(strategy.position_size > 0)
+    strategy.exit(id = "LONG STP", stop = longTrailStopPrice)
+    longstp = true
+
+if(strategy.position_size < 0)
+    strategy.exit(id = "SHORT STP", stop = shortTrailStopPrice)
+    shortstp = true
+    
+//ALERTS
+alertcondition(shortCondition, title="Short opened", message="SHORTED")
+alertcondition(longCondition, title="Long opened", message="LONGED")
+
+alertcondition(shortstp, title="shortstopped", message="short stopped")
+alertcondition(shortCondition, title="longstopped", message="long stopped")
+
+
+
+

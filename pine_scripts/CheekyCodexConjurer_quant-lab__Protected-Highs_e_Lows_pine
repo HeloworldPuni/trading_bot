@@ -1,0 +1,252 @@
+//@version=6
+indicator("Advanced Market Structure [Matthews]", max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500, overlay = true)
+
+// >>>> INPUTS
+
+var string g_STR = "Structure"
+ps = 1 
+
+show_phl = true
+ph_color = #2e2e2e
+pl_color = #388e3c
+
+use_valid_pbs   = false
+extra_valid_pbs = false
+
+bull_color = #2e2e2e
+bear_color = #2e2e2e
+
+// >>>> VARIÁVEIS GLOBAIS
+
+var bool bull = false
+var ph  = array.new_float()
+var pl  = array.new_float()
+
+var pht = array.new_int()
+var plt = array.new_int()
+
+var float last_high = na
+var float last_low  = na
+
+var int last_high_idx = na
+var int last_low_idx  = na
+
+var float track_high = na
+var float track_low  = na
+
+var int track_high_idx = na
+var int track_low_idx  = na
+
+// >>>> VARIÁVEL DO ESTADO DO MERCADO
+
+var string marketState = "Bullish"
+
+// >>>> STRUCTS
+
+type pb
+    float price
+    int idx
+    bool valid = false
+    bool bull
+
+type dwg
+    label[] _label
+    label[] _phl
+    line[]  _line
+    bool[]  _bull
+
+// >>>> FUNÇÕES AUXILIARES
+
+f_barTop(offset) =>
+    math.max(high[offset], open[offset], close[offset])
+
+f_barBottom(offset) =>
+    math.min(low[offset], open[offset], close[offset])
+
+method dwg_add(dwg d, label LB, label PHL, line LN, bool BL) =>
+    d._label.unshift(LB)
+    d._phl.unshift(PHL)
+    d._line.unshift(LN)
+    d._bull.unshift(BL)
+
+method pb_set(pb p, float P, int I) =>
+    p.price := P
+    p.idx   := I
+    p.valid := false
+
+clear_all() =>
+    pl.clear()
+    plt.clear()    
+    ph.clear()
+    pht.clear()
+
+// >>>> INSTÂNCIA DE PULLBACKS
+
+var pb_from_high = pb.new(bull = true)
+var pb_from_low  = pb.new(bull = false)
+
+// >>>> ATRIBUIÇÃO DOS RESULTADOS DOS PIVÔS A VARIÁVEIS GLOBAIS
+
+var float pl_low_val   = na
+var float pl_open_val  = na
+var float pl_close_val = na
+
+var float ph_high_val   = na
+var float ph_open_val  = na
+var float ph_close_val = na
+
+pl_low_val   := ta.pivotlow(low, ps, ps)
+pl_open_val  := ta.pivotlow(open, ps, ps)
+pl_close_val := ta.pivotlow(close, ps, ps)
+
+ph_high_val   := ta.pivothigh(high, ps, ps)
+ph_open_val  := ta.pivothigh(open, ps, ps)
+ph_close_val := ta.pivothigh(close, ps, ps)
+
+// >>>> DETECÇÃO DE PIVÔ LOW (com checagem de barra à esquerda)
+
+bool realPivotLow = false
+
+if ((not na(pl_low_val)) or (not na(pl_open_val)) or (not na(pl_close_val))) and pl.size() == 0
+    float leftBarBottom  = f_barBottom(ps + 1)
+    float pivotCandleLow = f_barBottom(ps)
+    if leftBarBottom > pivotCandleLow
+        realPivotLow := true
+
+if realPivotLow
+    pl.unshift(low[ps])
+    plt.unshift(time[ps])
+    if extra_valid_pbs
+        for i = 0 to 3
+            if close[ps + i] < open[ps + i]
+                pb_set(pb_from_low, high[ps + i], bar_index)
+                break
+    else
+        pb_set(pb_from_low, high[ps], bar_index)
+    if na(last_low)
+        last_low := low[ps]
+        last_low_idx := bar_index - ps
+    else
+        if low[ps] < last_low
+            last_low := low[ps]
+            last_low_idx := bar_index - ps
+
+// >>>> DETECÇÃO DE PIVÔ HIGH (com checagem de barra à esquerda)
+
+bool realPivotHigh = false
+
+if ((not na(ph_high_val)) or (not na(ph_open_val)) or (not na(ph_close_val))) and ph.size() == 0
+    float leftBarTop    = f_barTop(ps + 1)
+    float pivotCandleHi = f_barTop(ps)
+    if leftBarTop < pivotCandleHi
+        realPivotHigh := true
+
+if realPivotHigh
+    ph.unshift(high[ps])
+    pht.unshift(time[ps])
+    if extra_valid_pbs
+        for i = 0 to 3
+            if close[ps + i] > open[ps + i]
+                pb_set(pb_from_high, low[ps + i], bar_index)
+                break
+    else
+        pb_set(pb_from_high, low[ps], bar_index)
+    if na(last_high)
+        last_high := high[ps]
+        last_high_idx := bar_index - ps
+    else
+        if high[ps] > last_high
+            last_high := high[ps]
+            last_high_idx := bar_index - ps
+
+// >>>> VERIFICA PULLBACKS
+
+check_pb(pb p) =>
+    if p.bull
+        if close < p.price and p.valid == false
+            p.valid := true
+    else
+        if close > p.price and p.valid == false
+            p.valid := true
+
+check_pb(pb_from_high)
+check_pb(pb_from_low)
+
+if (high[ps] > track_high or na(track_high) or last_low_idx >= track_high_idx) and not na(ph_high_val) and (use_valid_pbs ? pb_from_low.valid == true : true)
+    track_high := high[ps]
+    track_high_idx := bar_index - ps
+if (low[ps] < track_low or na(track_low) or last_high_idx >= track_low_idx) and not na(pl_low_val) and (use_valid_pbs ? pb_from_high.valid == true : true)
+    track_low := low[ps]
+    track_low_idx := bar_index - ps
+
+// >>>> LÓGICA DE BOS / MSS
+
+mss_bear = false
+mss_bull = false
+change   = false
+
+var dwgs = dwg.new(array.new_label(), array.new_label(), array.new_line(), array.new_bool())
+
+if ph.size() > 0 
+    if (open > ph.get(0)) or (close > ph.get(0)) or (((open == ph.get(0)) or (close == ph.get(0))) and (high > ph.get(0)))
+        // Não são criadas labels para Structure Labels
+        label _label = na
+        label _phl   = na
+        if not bull
+            mss_bull := true
+        _line = line.new(pht.get(0), ph.get(0), time, ph.get(0), color = na, xloc = xloc.bar_time, style = line.style_dashed)
+        bull := true
+        change := true
+        clear_all()
+        if not na(track_low)
+            if show_phl
+                _phl := label.new(time[bar_index - track_low_idx], track_low, "▲", xloc = xloc.bar_time, style = label.style_label_up, textcolor = na, color = #ffffff00)
+            pl.unshift(track_low)
+            plt.unshift(time[bar_index - track_low_idx])
+            last_high := na
+        dwgs.dwg_add(_label, _phl, _line, bull)
+    else if (open <= ph.get(0)) and (high > ph.get(0)) and (close <= ph.get(0))
+        ph.clear()
+        pht.clear()
+        ph.unshift(high)
+        pht.unshift(time)
+
+if pl.size() > 0
+    if (open < pl.get(0)) or (close < pl.get(0)) or (((open == pl.get(0)) or (close == pl.get(0))) and (low < pl.get(0)))
+        // Não são criadas labels para Structure Labels
+        label _label = na
+        label _phl   = na
+        if bull
+            mss_bear := true
+        _line = line.new(plt.get(0), pl.get(0), time, pl.get(0), color = na, xloc = xloc.bar_time, style = line.style_dashed)
+        bull := false
+        change := true
+        clear_all()
+        if not na(track_high)
+            if show_phl
+                _phl := label.new(time[bar_index - track_high_idx], track_high, "▼", xloc = xloc.bar_time, style = label.style_label_down, textcolor = na, color = #ffffff00)
+            ph.unshift(track_high)
+            pht.unshift(time[bar_index - track_high_idx])                
+            last_low := na
+        dwgs.dwg_add(_label, _phl, _line, bull)
+    else if (open >= pl.get(0)) and (low < pl.get(0)) and (close >= pl.get(0))
+        pl.clear()
+        plt.clear()
+        pl.unshift(low)
+        plt.unshift(time)
+
+if change[1]
+    _bull = dwgs._bull.get(0)
+    dwgs._label.get(0).set_textcolor(_bull ? bull_color : bear_color)
+    dwgs._phl.get(0).set_textcolor(_bull ? pl_color : ph_color)
+    dwgs._line.get(0).set_color(_bull ? bull_color : bear_color)
+
+// Atualiza estado de mercado com base em MSS
+if mss_bull
+    marketState := "Bullish"
+if mss_bear
+    marketState := "Bearish"
+
+// Tabela de Estado do Mercado
+var table stateTable = table.new(position.top_right, 1, 1)
+table.cell(stateTable, 0, 0, "Market State: " + marketState, text_color=color.white, bgcolor=(marketState == "Bullish" ? bull_color : bear_color))

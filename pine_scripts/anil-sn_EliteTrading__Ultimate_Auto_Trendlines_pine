@@ -1,0 +1,125 @@
+//@version=5
+indicator("Ultimate Auto Trendlines – Revised & Improved", shorttitle="Ultimate Auto Trendlines", overlay=true, max_lines_count=50, max_labels_count=50)
+
+// Inputs - Trendlines
+pivotLeft = input.int(5, "Pivot Left")
+pivotRight = input.int(5, "Pivot Right")
+maxTLines = input.int(8, "Max Trendlines")
+lineExtend = input.int(100, "Extension")
+lineWidth = input.int(2, "Width")
+showLabels = input.bool(true, "Show R/S Labels")
+minAngle = input.float(15, "Min Angle °")
+resColor = color.new(color.red, 20)
+supColor = color.new(color.green, 20)
+
+// Inputs - Table & Indicators
+showTable = input.bool(true, "Show Table")
+tableBg = input.color(color.new(#000000,70), "Table Bg")
+
+ema10_len = input.int(10, "EMA 10")
+ema20_len = input.int(20, "EMA 20")
+ema50_len = input.int(50, "EMA 50")
+macdFast  = input.int(12, "MACD Fast")
+macdSlow  = input.int(26, "MACD Slow")
+macdSignal= input.int(9,  "MACD Signal")
+rsiLen    = input.int(14, "RSI Length")
+adxLen    = input.int(14, "ADX Length")
+
+// Indicators
+ema10 = ta.ema(close, ema10_len)
+ema20 = ta.ema(close, ema20_len)
+ema50 = ta.ema(close, ema50_len)
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+rsiVal = ta.rsi(close, rsiLen)
+[_, _, adxVal] = ta.dmi(adxLen, adxLen)
+
+// Pivots
+pivotHigh = ta.pivothigh(high, pivotLeft, pivotRight)
+pivotLow  = ta.pivotlow(low, pivotLeft, pivotRight)
+
+// Pivot arrays
+var array<float> highPivots = array.new<float>()
+var array<int> highBars = array.new<int>()
+var array<float> lowPivots = array.new<float>()
+var array<int> lowBars = array.new<int>()
+
+if not na(pivotHigh)
+    array.unshift(highPivots, pivotHigh)
+    array.unshift(highBars, bar_index - pivotRight)
+    if array.size(highPivots) > maxTLines
+        array.pop(highPivots)
+        array.pop(highBars)
+
+if not na(pivotLow)
+    array.unshift(lowPivots, pivotLow)
+    array.unshift(lowBars, bar_index - pivotRight)
+    if array.size(lowPivots) > maxTLines
+        array.pop(lowPivots)
+        array.pop(lowBars)
+
+// Draw trendlines
+var line[] trendLines = array.new<line>()
+f_draw(x1,y1,x2,y2,col) =>
+    slope = (y2-y1)/(x2-x1)
+    angle = math.atan(slope)*180/math.pi
+    if math.abs(angle) >= minAngle and barstate.isconfirmed
+        ln = line.new(x1,y1,x2,y2,extend=extend.right,color=col,width=lineWidth,style=line.style_solid)
+        array.push(trendLines,ln)
+        if array.size(trendLines) > maxTLines*2
+            line.delete(array.shift(trendLines))
+        true
+    else
+        false
+
+bool newRes = false
+bool newSup = false
+if array.size(highPivots) >= 2
+    for i=0 to math.min(1,array.size(highPivots)-2)
+        if f_draw(array.get(highBars,i), array.get(highPivots,i), array.get(highBars,i+1), array.get(highPivots,i+1), resColor)
+            newRes := true
+
+if array.size(lowPivots) >= 2
+    for i=0 to math.min(1,array.size(lowPivots)-2)
+        if f_draw(array.get(lowBars,i), array.get(lowPivots,i), array.get(lowBars,i+1), array.get(lowPivots,i+1), supColor)
+            newSup := true
+
+// Pivot labels
+if showLabels and not na(pivotHigh)
+    label.new(bar_index-pivotRight, pivotHigh, "R", style=label.style_label_down, color=color.new(color.red,0), textcolor=color.white, size=size.small)
+if showLabels and not na(pivotLow)
+    label.new(bar_index-pivotRight, pivotLow, "S", style=label.style_label_up, color=color.new(color.green,0), textcolor=color.white, size=size.small)
+
+// Table (NO PRICE ROW, includes MACD + RSI + ADX)
+if showTable and barstate.islast
+    var table t = table.new(position.top_right, 3, 7, bgcolor=tableBg, border_width=1, border_color=color.gray)
+    table.cell(t,0,0,"Ind", text_color=color.white, bgcolor=color.gray)
+    table.cell(t,1,0,"Value", text_color=color.white, bgcolor=color.gray)
+    table.cell(t,2,0,"Status", text_color=color.white, bgcolor=color.gray)
+    
+    table.cell(t,0,1,"EMA10", text_color=color.white)
+    table.cell(t,1,1,str.tostring(ema10,"#.##"), text_color=close>ema10?color.green:color.red)
+    table.cell(t,2,1,close>ema10?"Above":"Below", text_color=close>ema10?color.green:color.red)
+    
+    table.cell(t,0,2,"EMA20", text_color=color.white)
+    table.cell(t,1,2,str.tostring(ema20,"#.##"), text_color=close>ema20?color.green:color.red)
+    table.cell(t,2,2,close>ema20?"Above":"Below", text_color=close>ema20?color.green:color.red)
+    
+    table.cell(t,0,3,"EMA50", text_color=color.white)
+    table.cell(t,1,3,str.tostring(ema50,"#.##"), text_color=close>ema50?color.green:color.red)
+    table.cell(t,2,3,close>ema50?"Above":"Below", text_color=close>ema50?color.green:color.red)
+    
+    table.cell(t,0,4,"MACD", text_color=color.white)
+    table.cell(t,1,4,str.tostring(macdLine,"#.###"), text_color=macdLine>signalLine?color.green:color.red)
+    table.cell(t,2,4,macdLine>signalLine?"Bull":"Bear", text_color=macdLine>signalLine?color.green:color.red)
+    
+    table.cell(t,0,5,"RSI", text_color=color.white)
+    table.cell(t,1,5,str.tostring(rsiVal,"#.#"), text_color=rsiVal>50?color.green:color.orange)
+    table.cell(t,2,5,rsiVal>50?"Bull":"Bear", text_color=rsiVal>50?color.green:color.orange)
+    
+    table.cell(t,0,6,"ADX", text_color=color.white)
+    table.cell(t,1,6,str.tostring(adxVal,"#.#"), text_color=adxVal>25?color.purple:color.gray)
+    table.cell(t,2,6,adxVal>25?"Strong":"Weak", text_color=adxVal>25?color.purple:color.gray)
+
+// Alerts
+alertcondition(newRes, title="New Resistance", message="New resistance trendline")
+alertcondition(newSup, title="New Support", message="New support trendline")

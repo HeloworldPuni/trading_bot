@@ -1,0 +1,352 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Hc_Sunt_Lucrum
+
+//@version=6
+strategy("Nasdaq Mean Reversion Strategy", overlay=true, pyramiding=8, process_orders_on_close=true)
+
+// Import necessary libraries
+import ZenAndTheArtOfTrading/PineConnector/2 as pc
+import ZenAndTheArtOfTrading/ZenLibrary/9 as zen
+
+
+
+
+// { Inputs 
+
+var const string gStrat = '==========STRATEGY VITALS=========='
+exitStrategy               = input.string('Group Trailing', 'Exit Method', ['Group Trailing','Group Fixed'], group = gStrat)
+numEntries                 = input.int(3, 'Number of Entries', [1,2,3,4,5,6,7,8], tooltip = 'How many entries will the strategy have',group = gStrat)
+trailingreference          = input.string(title="SL Anchor Price", defval="Close", options=["Close","High/Low"], tooltip="Which price to calculate SL distance from", group = gStrat)
+longOnly                   = input.bool(false, title = 'Long Only', tooltip = 'Turn on if you want a Long Only Strategy', group = gStrat)
+
+var const string gExits = '==========EXIT PARAMETERS=========='
+atrperiod                  = input.int(14, 'ATR Period', tooltip = 'ATR Period (candles) for measuring the actual ATR, usually 14. EVERYTHING BELOW IS A MULTIPLE OF THIS', group = gExits)
+targetATRmultiplier        = input.float(1, 'Distance Between Successive Entries', tooltip = 'Answer is a Multiple of the ATR', group = gExits)
+entryTPdistancemultiplier  = input.float(4, 'Risk Reward', tooltip = 'Muliple of the Stop Loss/Trailing Distance. MAKE SURE ITS ABOVE THE FINAL ENTRY', group = gExits)
+entrySTOPdistancemultipler = input.float(1, 'Stop Loss Distance', tooltip = 'Stop distance as a multiple of the atr, also is the stop distance for a Group Trailing stop loss', group = gExits)
+
+var const string gTrail = 'Trailing'
+trailingStopATR            = input.float(1, 'Trailing Stop Distance',tooltip = 'Different from Stop Loss Distance, distance the Trail will follow, when above the SLD',group = gTrail)
+trailingstopLookback       = input.int(7,'Swing Low/High Lookback', tooltip = 'How many candles to lookback for a swing low to anchor Trailing Stop Distance', group = gTrail)
+Usetp                      = input.bool(false, 'TP and Trailing?', tooltip = 'If unchecked, price exits at trailing stop only, if checked uses Risk Reward',group = gTrail)
+Usema                      = input.bool(true, title = 'Use MA as TP?')
+filterMA                   = input.int(800, 'Ma Filter Length')
+
+
+
+
+//target calculations
+atr               = ta.atr(atrperiod)
+targetATR         = (atr * targetATRmultiplier)
+stopATR           = (atr * entrySTOPdistancemultipler)
+TrailATR          = (atr * trailingStopATR)
+
+maType = input.string("WMA", "MA Type", options=["WMA", "SMA", "RMA", "EMA", "HMA", "VWAP"])
+maLength = input.int(20, "MA Length", minval=2)
+entryStep = input.float(1, "Entry Step (%)", minval=0.1) / 100  // Convert to decimal
+
+
+
+// { ==========your Strategy Here=============//
+
+// Calculate Moving Average
+filterSMA = ta.sma(close,filterMA)
+ma = zen.getMA(maLength, maType)
+percentage_diff = 100 * ((close - ma) / close)
+
+
+
+// Calculate Take Profit
+takeProfitLevel = ma * (1 + entryTPdistancemultiplier / 100)
+
+
+
+
+entry1 = ma * (1 - entryStep * 1)
+entry2 = ma * (1 - entryStep * 2)
+entry3 = ma * (1 - entryStep * 3)
+entry4 = ma * (1 - entryStep * 4)
+entry5 = ma * (1 - entryStep * 5)
+entry6 = ma * (1 - entryStep * 6)
+entry7 = ma * (1 - entryStep * 7)
+entry8 = ma * (1 - entryStep * 8)
+
+
+longCheck = ta.highest(close, 10) > ma
+longCheck2 = close > filterSMA
+Longcondition = low < entry1 and longCheck and longCheck2
+// strategy specific code - change for different strategy
+
+
+
+
+
+// }
+
+
+
+
+// { ==============entry variables==============//
+var bool enterLONG   = false
+var bool enterSHORT  = false
+var float tradeSL    = na
+//var float takeProfitLevel    = na
+
+var bool longEntry2Triggered  = false
+var bool longEntry3Triggered  = false
+var bool longEntry4Triggered  = false
+var bool longEntry5Triggered  = false
+var bool longEntry6Triggered  = false
+var bool longEntry7Triggered  = false
+var bool longEntry8Triggered  = false
+var bool shortEntry2Triggered = false
+var bool shortEntry3Triggered = false
+var bool shortEntry4Triggered = false
+var bool shortEntry5Triggered = false
+var bool shortEntry6Triggered = false
+var bool shortEntry7Triggered = false
+var bool shortEntry8Triggered = false
+// }
+
+
+
+// { =======================Fixed Entry and Exit=======================
+if exitStrategy == 'Group Fixed'
+    if Longcondition and  barstate.isconfirmed and strategy.opentrades ==0 and not enterLONG 
+        enterLONG      := true
+        tradeSL        := trailingreference == 'Close'? close - stopATR : low - stopATR
+        //takeProfitLevel        := Usema ? ma : close + (atr * entryTPdistancemultiplier) 
+        
+        
+        // First entry: market order
+        strategy.entry('buy1', strategy.long)
+
+
+
+        // Entry 2
+    if numEntries >= 2 and strategy.position_size > 0 and not longEntry2Triggered and low <= entry2 and barstate.isconfirmed 
+        strategy.entry('buy2', strategy.long)
+        longEntry2Triggered := true
+
+        // Entry 3
+    if numEntries >= 3 and strategy.position_size > 0 and not longEntry3Triggered and low <= entry3 and barstate.isconfirmed 
+        strategy.entry('buy3', strategy.long)
+        longEntry3Triggered := true
+
+        // Entry 4
+    if numEntries >= 4 and strategy.position_size > 0 and not longEntry4Triggered and low <= entry4 and barstate.isconfirmed 
+        strategy.entry('buy4', strategy.long)
+        longEntry4Triggered := true
+
+        // Entry 5
+    if numEntries >= 5 and strategy.position_size > 0 and not longEntry5Triggered and low <= entry5 and barstate.isconfirmed 
+        strategy.entry('buy5', strategy.long)
+        longEntry5Triggered := true
+
+        // Entry 6
+    if numEntries >= 6 and strategy.position_size > 0 and not longEntry6Triggered and low <= entry6 and barstate.isconfirmed 
+        strategy.entry('buy6', strategy.long)
+        longEntry6Triggered := true
+
+        // Entry 7
+    if numEntries >= 7 and strategy.position_size > 0 and not longEntry7Triggered and low <= entry7 and barstate.isconfirmed 
+        strategy.entry('buy7', strategy.long)
+        longEntry7Triggered := true
+
+        // Entry 8
+    if numEntries == 8 and strategy.position_size > 0 and not longEntry8Triggered and low <= entry8 and barstate.isconfirmed 
+        strategy.entry('buy8', strategy.long)
+        longEntry8Triggered := true
+
+
+    if strategy.position_size > 0 
+        strategy.exit('exit1', 'buy1', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 2
+            strategy.exit('exit2', 'buy2', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 3
+            strategy.exit('exit3', 'buy3', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 4
+            strategy.exit('exit4', 'buy4', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 5
+            strategy.exit('exit5', 'buy5', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 6
+            strategy.exit('exit6', 'buy6', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 7 
+            strategy.exit('exit7', 'buy7', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries == 8
+            strategy.exit('exit8', 'buy8', stop = tradeSL,limit=takeProfitLevel)
+
+    if strategy.position_size == 0 
+        enterLONG  := false
+        longEntry2Triggered := false
+        longEntry3Triggered := false
+        longEntry4Triggered := false
+        longEntry5Triggered := false
+        longEntry6Triggered := false
+        longEntry7Triggered := false
+        longEntry8Triggered := false   
+        
+        
+
+    
+
+// }
+
+
+
+// { =======================Group Trailing=======================
+
+
+
+float swingLow    = ta.lowest(low,trailingstopLookback)
+float swingHigh   = ta.highest(high,trailingstopLookback)
+next_trailPrice         = swingLow - TrailATR
+next_trailPriceShort    = swingHigh + TrailATR
+
+
+if exitStrategy == 'Group Trailing'
+    if Longcondition and  barstate.isconfirmed and strategy.opentrades ==0 and not enterLONG 
+        enterLONG      := true
+        tradeSL        := trailingreference == 'Close'? close - stopATR : low - stopATR
+        //takeProfitLevel        := Usema ? ma : close + (atr * entryTPdistancemultiplier) 
+      
+
+        // First entry: market order
+        strategy.entry('buy1', strategy.long)
+
+
+
+        // Entry 2
+    if numEntries >= 2 and strategy.position_size > 0 and not longEntry2Triggered and low <= entry2 and barstate.isconfirmed 
+        strategy.entry('buy2', strategy.long)
+        longEntry2Triggered := true
+
+        // Entry 3
+    if numEntries >= 3 and strategy.position_size > 0 and not longEntry3Triggered and low <= entry3 and barstate.isconfirmed 
+        strategy.entry('buy3', strategy.long)
+        longEntry3Triggered := true
+
+        // Entry 4
+    if numEntries >= 4 and strategy.position_size > 0 and not longEntry4Triggered and low <= entry4 and barstate.isconfirmed 
+        strategy.entry('buy4', strategy.long)
+        longEntry4Triggered := true
+
+        // Entry 5
+    if numEntries >= 5 and strategy.position_size > 0 and not longEntry5Triggered and low <= entry5 and barstate.isconfirmed 
+        strategy.entry('buy5', strategy.long)
+        longEntry5Triggered := true
+
+        // Entry 6
+    if numEntries >= 6 and strategy.position_size > 0 and not longEntry6Triggered and low <= entry6 and barstate.isconfirmed 
+        strategy.entry('buy6', strategy.long)
+        longEntry6Triggered := true
+
+        // Entry 7
+    if numEntries >= 7 and strategy.position_size > 0 and not longEntry7Triggered and low <= entry7 and barstate.isconfirmed 
+        strategy.entry('buy7', strategy.long)
+        longEntry7Triggered := true
+
+        // Entry 8
+    if numEntries == 8 and strategy.position_size > 0 and not longEntry8Triggered and low <= entry8 and barstate.isconfirmed 
+        strategy.entry('buy8', strategy.long)
+        longEntry8Triggered := true
+
+    if next_trailPrice > tradeSL
+        tradeSL := next_trailPrice
+        
+
+
+    if strategy.position_size > 0 
+        strategy.exit('exit1', 'buy1', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 2
+            strategy.exit('exit2', 'buy2', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 3
+            strategy.exit('exit3', 'buy3', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 4
+            strategy.exit('exit4', 'buy4', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 5
+            strategy.exit('exit5', 'buy5', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 6
+            strategy.exit('exit6', 'buy6', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries >= 7 
+            strategy.exit('exit7', 'buy7', stop = tradeSL,limit=takeProfitLevel)
+        if numEntries == 8
+            strategy.exit('exit8', 'buy8', stop = tradeSL,limit=takeProfitLevel)
+
+    if strategy.position_size == 0 
+        enterLONG  := false
+        longEntry2Triggered := false
+        longEntry3Triggered := false
+        longEntry4Triggered := false
+        longEntry5Triggered := false
+        longEntry6Triggered := false
+        longEntry7Triggered := false
+        longEntry8Triggered := false   
+        
+        
+        
+
+    
+// } 
+
+// { ====================plotting code======================//
+
+plot(strategy.position_size != 0 ? tradeSL : na, 'SL', color = color.orange, linewidth = 1, style = plot.style_linebr)
+plot(strategy.position_size != 0 ? takeProfitLevel : na, 'TP', color = color.green, linewidth = 1, style = plot.style_linebr)
+
+// Plot levels for visualization based on numEntries input
+plot(numEntries >= 2 and strategy.position_size != 0 ? entry2 : na, color=color.blue, title="Entry 2 Level", linewidth=1, style=plot.style_linebr)  // Plot second entry level
+plot(numEntries >= 3 and strategy.position_size != 0 ? entry3 : na, color=color.blue, title="Entry 3 Level", linewidth=1, style=plot.style_linebr)  // Plot third entry level
+plot(numEntries >= 4 and strategy.position_size != 0 ? entry4 : na, color=color.blue, title="Entry 4 Level", linewidth=1, style=plot.style_linebr)  // Plot fourth entry level
+plot(numEntries >= 5 and strategy.position_size != 0 ? entry5 : na, color=color.blue, title="Entry 5 Level", linewidth=1, style=plot.style_linebr)  // Plot fifth entry level
+plot(numEntries >= 6 and strategy.position_size != 0 ? entry6 : na, color=color.blue, title="Entry 6 Level", linewidth=1, style=plot.style_linebr)  // Plot second entry level
+plot(numEntries >= 7 and strategy.position_size != 0 ? entry7 : na, color=color.blue, title="Entry 7 Level", linewidth=1, style=plot.style_linebr)  // Plot third entry level
+plot(numEntries == 8 and strategy.position_size != 0 ? entry8 : na, color=color.blue, title="Entry 8 Level", linewidth=1, style=plot.style_linebr)  // Plot fourth entry level
+
+
+
+// Plot Moving Average and Dynamic Entry Levels
+plot(ma, title="Moving Average", color=color.orange, linewidth=2)
+plot(entry1, title="Entry Level 1", color=color.blue, linewidth=1)
+plot(entry2, title="Entry Level 2", color=color.blue, linewidth=1)
+plot(entry3, title="Entry Level 3", color=color.blue, linewidth=1)
+plot(entry4, title="Entry Level 4", color=color.blue, linewidth=1)
+plot(entry5, title="Entry Level 5", color=color.blue, linewidth=1)
+plot(entry6, title="Entry Level 6", color=color.blue, linewidth=1)
+plot(entry7, title="Entry Level 7", color=color.blue, linewidth=1)
+plot(entry8, title="Entry Level 8", color=color.blue, linewidth=1)
+
+// Plot Take Profit Level (Same for All Entries)
+plot(takeProfitLevel, title="Take Profit Level", color=color.red, linewidth=1, style=plot.style_linebr)
+
+
+
+
+plotshape(Longcondition,style= shape.triangleup, color=color.orange, title="Long Condition Debug", location = location.belowbar)
+
+
+
+
+
+// { ======================START BACKTEST RESULTS CODE==================================
+
+// Prepare stats table
+var table testTable = table.new(position.top_right, 2, 2, border_width=1)
+f_fillCell(_table, _column, _row, _title, _value, _bgcolor, _txtcolor) =>
+    _cellText = _title + "\n" + _value
+    table.cell(_table, _column, _row, _cellText, bgcolor=_bgcolor, text_color=_txtcolor)
+
+// Draw stats table
+var bgcolor = color.black
+if barstate.islastconfirmedhistory
+    dollarReturn = strategy.equity - strategy.initial_capital
+    f_fillCell(testTable, 0, 0, "Total Trades:", str.tostring(strategy.closedtrades), bgcolor, color.white)
+    f_fillCell(testTable, 0, 1, "Win Rate:", str.tostring(strategy.wintrades / strategy.closedtrades * 100, "##.##") + "%", bgcolor, color.white)
+    f_fillCell(testTable, 1, 0, "Equity:", "$" + str.tostring(strategy.equity, "###,###.##"), bgcolor, color.white)
+    f_fillCell(testTable, 1, 1, "Return:", str.tostring((strategy.netprofit / strategy.initial_capital) * 100, "##.##") + "%", dollarReturn > 0 ? color.green : color.red, color.white)
+
+// =============================================================================
+// END BACKTEST CODE
+// ============================================================================= }
+
+

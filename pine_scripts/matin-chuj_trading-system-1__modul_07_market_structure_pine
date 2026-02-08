@@ -1,0 +1,60 @@
+//@version=5
+indicator("Moduł 7 – Market Structure (BOS, CHoCH, Trend)", overlay=true)
+
+// Parametry
+leftPrice = input.int(5, "Price Pivot - Left Bars", minval=1)
+rightPrice = input.int(5, "Price Pivot - Right Bars", minval=1)
+useCloseForBos = input.bool(true, "Użyj Close dla BOS")
+
+// Pivoty
+ph = ta.pivothigh(high, leftPrice, rightPrice)
+pl = ta.pivotlow(low, leftPrice, rightPrice)
+
+// Magazyn pivotów
+var float lastPricePh = na
+var float prevPricePh = na
+var float lastPricePl = na
+var float prevPricePl = na
+
+if not na(ph)
+    prevPricePh := lastPricePh
+    lastPricePh := ph
+
+if not na(pl)
+    prevPricePl := lastPricePl
+    lastPricePl := pl
+
+// Market Structure
+var bool trendUp = false
+var bool trendDown = false
+
+// BOS Detection
+bosUp = not na(lastPricePh) and (useCloseForBos ? close > lastPricePh : high > lastPricePh)
+bosDown = not na(lastPricePl) and (useCloseForBos ? close < lastPricePl : low < lastPricePl)
+
+// CHoCH Detection
+chochUp = trendDown and bosUp
+chochDown = trendUp and bosDown
+
+// Trend Update
+if chochUp
+    trendUp := true
+    trendDown := false
+
+if chochDown
+    trendUp := false
+    trendDown := true
+
+if not trendUp and not trendDown
+    if bosUp
+        trendUp := true
+    else if bosDown
+        trendDown := true
+
+// Wizualizacja
+plotshape(bosUp, title="BOS Up", text="BOS↑", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(bosDown, title="BOS Down", text="BOS↓", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+plotshape(chochUp, title="CHoCH Up", text="CHoCH↑", style=shape.labelup, location=location.belowbar, color=color.blue, textcolor=color.white, size=size.normal)
+plotshape(chochDown, title="CHoCH Down", text="CHoCH↓", style=shape.labeldown, location=location.abovebar, color=color.purple, textcolor=color.white, size=size.normal)
+
+bgcolor(trendUp ? color.new(color.green, 95) : trendDown ? color.new(color.red, 95) : na)

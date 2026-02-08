@@ -1,0 +1,52 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified
+
+// Insted of using security() we iterate through the values.  Avoids repaiting issues and alert warnings.
+
+//@version=4
+study('Previous Days High & Low', shorttitle='PDHL', overlay=true)
+days = input(1, 'Days', minval=1, tooltip='Number of days previous to read from.')
+lo_src = input(low, 'Low', group='Sources', tooltip='The source of the low value.\nDefaults to the low of the bars but could be changed to close (for example).')
+hi_src = input(high, 'High', group='Sources', tooltip='The source of the high value.\nDefaults to the high of the bars but could be changed to close (for example).')
+useClose = input(false, 'Use close for alerts', group='Sources', tooltip='When true, will use the close value instead of the high / low values to trigger alerts.')
+
+var los = array.new_float()
+var his = array.new_float()
+var datePrev = 0
+
+lo = lo_src[0]
+hi = hi_src[0]
+var L_d = lo
+var H_d = hi
+var float L = na
+var float H = na
+
+date = time('D')
+newDay = date!=datePrev
+
+if(datePrev!=0 and newDay)
+    if(array.size(los)==days)
+        array.shift(los)
+    if(array.size(his)==days)
+        array.shift(his)
+    array.push(los,L_d)
+    array.push(his,H_d)
+    L_d := lo
+    H_d := hi
+    L := array.min(los)
+    H := array.max(his)
+else
+    if(hi>H_d)
+        H_d := hi
+    if(lo<L_d)
+        L_d := lo
+
+datePrev := date
+    
+plot(L, 'Low', color=color.red, style=plot.style_circles)
+plot(H, 'High', color=color.lime, style=plot.style_circles)
+
+alertcondition((useClose ? close : low)<L, '< Less than low ▼', 'Less than previous days low of {{plot_0}}. ({{ticker}})')
+alertcondition((useClose ? close : high)>H, '> Greater than high ▲', 'Greater than previous days high of {{plot_1}}. ({{ticker}})')
+alertcondition(L[0]>L[1], 'Higher Low', 'Previous days low has risen to {{plot_0}}. ({{ticker}})')
+alertcondition(H[0]<H[1], 'Lower High', 'Previous days high has fallen to {{plot_0}}. ({{ticker}})')

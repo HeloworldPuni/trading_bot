@@ -1,0 +1,227 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Sergei Seivach  ||  github.com/sseivach  ||  www.linkedin.com/in/sseivach
+
+//@version=6
+indicator("Chotkiy Rasklad 1.5", overlay=true, max_labels_count=500)
+
+// ==========================================
+// 1. SETTINGS
+// ==========================================
+
+lenSma = input.int(200, "SMA Length", group="Global Filters")
+lenEma = input.int(200, "EMA Length", group="Global Filters")
+lenRSI       = input.int(7, "HARSI RSI Length", group="HARSI Settings")
+lenSmoothing = input.int(14, "HARSI Smoothing", group="HARSI Settings")
+smoothing    = input.int(1, "HARSI Open Smoothing", group="HARSI Settings")
+
+sessOpen    = input.session("0930-0945", "Opening Mess", group="Time Settings")
+sessMorning = input.session("0945-1130", "Morning Session", group="Time Settings")
+sessEvening = input.session("1400-1530", "Evening Session", group="Time Settings")
+daysOfWeek  = "1234567" 
+
+showDash    = input.bool(true, "Show Dashboard", group="Dashboard")
+dashSize    = input.string(size.small, "Dashboard Size", options=[size.tiny, size.small, size.normal], group="Dashboard")
+dashOffsetV = input.int(1, "Vertical Offset (Top)", minval=0, maxval=20, group="Dashboard")
+dashOffsetH = input.int(1, "Horizontal Offset (Right)", minval=0, maxval=10, group="Dashboard")
+
+colLongBright  = color.rgb(0, 255, 51)    
+colLongPale    = color.rgb(131, 255, 135) 
+colShortBright = #FF1744   
+colShortPale   = #E57373   
+colText        = color.black 
+colTextW       = color.white
+colExit        = color.gray
+colDarkBg      = color.rgb(15, 15, 15)       
+colTransp      = color.new(color.black, 100) 
+colBorder      = color.new(color.black, 100)
+colSkyBlue     = color.rgb(0, 191, 255) // Sky blue for extreme trend
+
+// ==========================================
+// 2. GLOBAL HELPER FUNCTIONS
+// ==========================================
+
+get_rasklad_values() =>
+    ha_c = (open + high + low + close) / 4
+    var float ha_o = na
+    ha_o := na(ha_o[1]) ? (open + close) / 2 : (nz(ha_o[1]) + nz(ha_c[1])) / 2
+    ha_l = math.min(low, math.min(ha_o, ha_c))
+    
+    isGreen = ha_c > ha_o
+    isRed   = ha_c < ha_o
+    
+    smaVal  = ta.sma(close, lenSma)
+    emaVal  = ta.ema(close, lenEma)
+    vwapVal = ta.vwap(close)
+    
+    // ADX Calculation
+    [_, _, adxVal] = ta.dmi(14, 14)
+    
+    rsiVal  = ta.rsi(close, lenRSI)
+    isHarsiGreen = rsiVal > 50
+    
+    tG = (isGreen[0] and isGreen[1] and isGreen[2]) and ha_l[2] < ha_l[1] and ha_l[1] < ha_l[0]
+    tR = (isRed[0] and isRed[1] and isRed[2]) and ha_l[2] > ha_l[1] and ha_l[1] > ha_l[0]
+    
+    bSma  = close > smaVal
+    bEma  = close > emaVal
+    bVwap = close > vwapVal
+    
+    isBuy  = tG and bSma and bEma and bVwap and isHarsiGreen
+    isSell = tR and not bSma and not bEma and not bVwap and not isHarsiGreen
+    
+    // Return all data needed for both Chart Labels and MTF Dashboard
+    [bSma, bEma, bVwap, isHarsiGreen, tG, tR, isBuy, isSell, isGreen, isRed, adxVal]
+
+draw_bool_row(table dash, int row_idx, string title, bool v1, bool v5, bool v15, bool v60, bool v240, bool vD, color cUp, color cDn, string sSize, color bg) =>
+    table.cell(dash, 0, row_idx, title, text_color=color.white, bgcolor=bg, text_halign=text.align_left, text_size=sSize)
+    vals = array.from(v1, v5, v15, v60, v240, vD)
+    for i = 0 to 5
+        bool val = array.get(vals, i)
+        table.cell(dash, i + 1, row_idx, val ? "BULL" : "BEAR", bgcolor=val ? cUp : cDn, text_size=sSize)
+
+// ==========================================
+// 3. DATA ACQUISITION
+// ==========================================
+
+// MTF Data
+[bSma1, bEma1, bVwap1, bHar1, tG1, tR1, actB1, actS1, g1, r1, adx1] = request.security(syminfo.tickerid, "1", get_rasklad_values())
+[bSma5, bEma5, bVwap5, bHar5, tG5, tR5, actB5, actS5, g5, r5, adx5] = request.security(syminfo.tickerid, "5", get_rasklad_values())
+[bSma15, bEma15, bVwap15, bHar15, tG15, tR15, actB15, actS15, g15, r15, adx15] = request.security(syminfo.tickerid, "15", get_rasklad_values())
+[bSma60, bEma60, bVwap60, bHar60, tG60, tR60, actB60, actS60, g60, r60, adx60] = request.security(syminfo.tickerid, "60", get_rasklad_values())
+[bSma240, bEma240, bVwap240, bHar240, tG240, tR240, actB240, actS240, g240, r240, adx240] = request.security(syminfo.tickerid, "240", get_rasklad_values())
+[bSmaD, bEmaD, bVwapD, bHarD, tGD, tRD, actBD, actSD, gD, rD, adxD] = request.security(syminfo.tickerid, "D", get_rasklad_values())
+
+// Current Chart Data
+[curSma, curEma, curVwap, curHar, curTG, curTR, curBuy, curSell, curGreen, curRed, curAdx] = get_rasklad_values()
+
+inOpen    = not na(time(timeframe.period, sessOpen + ":" + daysOfWeek))
+inMorning = not na(time(timeframe.period, sessMorning + ":" + daysOfWeek))
+inEvening = not na(time(timeframe.period, sessEvening + ":" + daysOfWeek))
+isGoodTime = inMorning or inEvening
+
+// ==========================================
+// 4. DRAWING SIGNALS (CHART)
+// ==========================================
+
+var bool alreadyLong  = false
+var bool alreadyShort = false
+
+fireLong  = curBuy and not alreadyLong
+fireShort = curSell and not alreadyShort
+exitLong  = alreadyLong and curRed
+exitShort = alreadyShort and curGreen
+
+if fireLong
+    alreadyLong := true
+if exitLong
+    alreadyLong := false 
+
+if fireShort
+    alreadyShort := true
+if exitShort
+    alreadyShort := false
+
+// Draw Labels
+padding = ta.atr(14) * 0.5
+baseText = "3HA+S2+E2\nVWAP+HRSI"
+finalTxtBull = isGoodTime ? baseText + "\nTIME" : baseText
+finalTxtBear = isGoodTime ? baseText + "\nTIME" : baseText
+txtExit      = "EXIT"
+
+if fireLong
+    colFinal = isGoodTime ? colLongBright : colLongPale
+    label.new(x=bar_index, y=low - padding, text=finalTxtBull, color=colFinal, textcolor=colText, style=label.style_label_up, size=size.tiny)
+    alert("LONG ENTRY: " + finalTxtBull, alert.freq_once_per_bar_close)
+
+if fireShort
+    colFinal = isGoodTime ? colShortBright : colShortPale
+    label.new(x=bar_index, y=high + padding, text=finalTxtBear, color=colFinal, textcolor=colTextW, style=label.style_label_down, size=size.tiny)
+    alert("SHORT ENTRY: " + finalTxtBear, alert.freq_once_per_bar_close)
+
+if exitLong
+    label.new(x=bar_index, y=low - padding, text=txtExit, color=colExit, textcolor=colTextW, style=label.style_label_up, size=size.tiny)
+    alert("EXIT LONG", alert.freq_once_per_bar_close)
+
+if exitShort
+    label.new(x=bar_index, y=high + padding, text=txtExit, color=colExit, textcolor=colTextW, style=label.style_label_down, size=size.tiny)
+    alert("EXIT SHORT", alert.freq_once_per_bar_close)
+
+// ==========================================
+// 5. DASHBOARD RENDER (MTF)
+// ==========================================
+
+totalCols = 7 + dashOffsetH
+var table dash = table.new(position.top_right, totalCols, 25, frame_width=0, border_width=1, border_color=colBorder)
+
+if showDash and barstate.islast
+    if dashOffsetV > 0
+        for r = 0 to dashOffsetV - 1
+            table.cell(dash, 0, r, "", bgcolor=colTransp)
+    
+    if dashOffsetH > 0
+        for c = 7 to totalCols - 1
+            for r = 0 to 20
+                table.cell(dash, c, r, "", bgcolor=colTransp)
+
+    r = dashOffsetV
+    
+    // Header
+    table.cell(dash, 0, r, "RASKLAD", text_color=color.white, bgcolor=color.new(color.blue, 40), text_size=dashSize)
+    tfs = array.from("1m", "5m", "15m", "1h", "4h", "1d")
+    for i = 0 to 5
+        table.cell(dash, i + 1, r, array.get(tfs, i), text_color=color.white, bgcolor=color.new(color.blue, 60), text_size=dashSize)
+    r += 1
+
+    // 3 HAshi
+    table.cell(dash, 0, r, "3 HAshi", text_color=color.white, bgcolor=colDarkBg, text_halign=text.align_left, text_size=dashSize)
+    p_up = array.from(tG1, tG5, tG15, tG60, tG240, tGD)
+    p_dn = array.from(tR1, tR5, tR15, tR60, tR240, tRD)
+    for i = 0 to 5
+        u = array.get(p_up, i), d = array.get(p_dn, i)
+        table.cell(dash, i + 1, r, u ? "LONG" : d ? "SHORT" : "---", bgcolor=u ? colLongBright : d ? colShortBright : color.gray, text_size=dashSize)
+    r += 1
+
+    // Indicators
+    draw_bool_row(dash, r, "SMA 200", bSma1, bSma5, bSma15, bSma60, bSma240, bSmaD, colLongBright, colShortBright, dashSize, colDarkBg), r += 1
+    draw_bool_row(dash, r, "EMA 200", bEma1, bEma5, bEma15, bEma60, bEma240, bEmaD, colLongBright, colShortBright, dashSize, colDarkBg), r += 1
+    draw_bool_row(dash, r, "VWAP", bVwap1, bVwap5, bVwap15, bVwap60, bVwap240, bVwapD, colLongBright, colShortBright, dashSize, colDarkBg), r += 1
+    
+    // HARSI
+    table.cell(dash, 0, r, "HARSI", text_color=color.white, bgcolor=colDarkBg, text_halign=text.align_left, text_size=dashSize)
+    h_vals = array.from(bHar1, bHar5, bHar15, bHar60, bHar240, bHarD)
+    for i = 0 to 5
+        hv = array.get(h_vals, i)
+        table.cell(dash, i + 1, r, hv ? "UP" : "DOWN", bgcolor=hv ? colLongBright : colShortBright, text_size=dashSize)
+    r += 1
+
+    // ADX Row
+    table.cell(dash, 0, r, "ADX", text_color=color.white, bgcolor=colDarkBg, text_halign=text.align_left, text_size=dashSize)
+    adx_vals = array.from(adx1, adx5, adx15, adx60, adx240, adxD)
+    for i = 0 to 5
+        float av = array.get(adx_vals, i)
+        // Custom Color Logic
+        color av_col = av < 20 ? color.gray : av <= 25 ? color.yellow : av <= 50 ? colLongBright : colSkyBlue
+        table.cell(dash, i + 1, r, str.tostring(av, "0.0"), bgcolor=av_col, text_size=dashSize, text_color=color.black)
+    r += 1
+
+    // TIME
+    table.cell(dash, 0, r, "TIME", text_color=color.white, bgcolor=colDarkBg, text_halign=text.align_left, text_size=dashSize)
+    t_txt = inOpen ? "MESS" : isGoodTime ? "GOOD" : "QUIET"
+    t_col = inOpen ? colShortBright : isGoodTime ? colLongBright : color.gray
+    table.cell(dash, 1, r, t_txt, bgcolor=t_col, text_size=dashSize)
+    table.merge_cells(dash, 1, r, 6, r)
+    r += 1
+
+    // ACTION
+    table.cell(dash, 0, r, "ACTION", text_color=color.white, bgcolor=colDarkBg, text_halign=text.align_left, text_size=dashSize)
+    aB = array.from(actB1, actB5, actB15, actB60, actB240, actBD)
+    aS = array.from(actS1, actS5, actS15, actS60, actS240, actSD)
+    for i = 0 to 5
+        buy = array.get(aB, i), sell = array.get(aS, i)
+        table.cell(dash, i + 1, r, buy ? "BUY" : sell ? "SELL" : "WAIT", bgcolor=buy ? colLongBright : sell ? colShortBright : color.gray, text_size=dashSize)
+
+// ==========================================
+// 6. ALERTS
+// ==========================================
+alertcondition(actB5 or actB15, "MTF Buy Signal", "Trend alignment detected on multiple TFs")
+alertcondition(actS5 or actS15, "MTF Sell Signal", "Trend alignment detected on multiple TFs")

@@ -1,0 +1,466 @@
+// ─────────────────────────────────────────────────────────────
+// ACCESS ALGO – 
+// © Hc_Sunt_Lucrum | access-algo.com
+// This script is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+//
+// Description:
+// Higher Time frame band play pullback strategy.  Unreliable due to lookahead bias. Look into possibly playing the lookahead bias. 
+//
+// Usage:
+// Designed for TradingView. Compatible with Pine Script v6.
+// Free to use under invite-only rules or for educational purposes.
+//
+// Version:         v6
+// Last Updated:    2025-04-21
+// Author:          Hc_Sunt_Lucrum
+// Contact:         access-algo.com | TradingView: @Hc_Sunt_Lucrum
+// ─────────────────────────────────────────────────────────────
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © hc_svnt_mordacitas
+//@version=5
+strategy("Testing FTMO GOLD", overlay=true,
+     initial_capital=100000,
+     currency=currency.USD,
+     default_qty_type=strategy.fixed,
+     default_qty_value=100000)
+
+// Import Zen library
+import ZenAndTheArtOfTrading/ZenLibrary/7 as zen
+
+// { Time/Date/Session =====================================================
+fromDay      = input.int(defval = 1, title = "D", minval = 1, maxval = 31, inline="1", group='Trade Session')
+fromMonth    = input.int(defval = 1, title = "M", minval = 1, maxval = 12, inline="1", group='Trade Session')
+fromYear     = input.int(defval = 2010, title = "Y", minval = 1970, inline="1", group='Trade Session')
+toDay        = input.int(defval = 31, title = "D", minval = 1, maxval = 31, inline="2", group='Trade Session')
+toMonth      = input.int(defval = 12, title = "M", minval = 1, maxval = 12, inline="2", group='Trade Session')
+toYear       = input.int(defval = 2099, title = "Y", minval = 1970, inline="2", group='Trade Session')
+
+startDate    = timestamp(fromYear, fromMonth, fromDay, 00, 00)
+finishDate   = timestamp(toYear, toMonth, toDay, 23, 59)
+date_cond    = (time >= startDate and time <= finishDate)
+
+// Day of the Week Inputs
+is_trade_mon = input(true, title="Mon", inline="1", group='DAY OF THE WEEK')
+is_trade_tue = input(true, title="Tue", inline="1", group='DAY OF THE WEEK')
+is_trade_wed = input(true, title="Wed", inline="1", group='DAY OF THE WEEK')
+is_trade_thu = input(true, title="Thu", inline="1", group='DAY OF THE WEEK')
+is_trade_fri = input(true, title="Fri", inline="1", group='DAY OF THE WEEK')
+is_trade_sat = input(true, title="Sat", inline="1", group='DAY OF THE WEEK')
+is_trade_sun = input(true, title="Sun", inline="1", group='DAY OF THE WEEK')
+
+// Session and Timezone Settings
+i_sess       = input.session(defval = "0000-2359", title = "Trade 24hr Time", group='DAY OF THE WEEK')
+UTC_offset   = input.int(defval = 0, title='UTC Offset', minval=-10, maxval=13, group='DAY OF THE WEEK')
+UTC_string   = 'UTC' + (UTC_offset > 0 ? '+' : '') + (UTC_offset != 0 ? str.tostring(UTC_offset) : '')
+time_cond    = time(timeframe.period, i_sess, UTC_string)
+
+// Determine if trading is allowed on the selected day
+day_cond = (dayofweek(time) == dayofweek.monday and is_trade_mon) or
+           (dayofweek(time) == dayofweek.tuesday and is_trade_tue) or
+           (dayofweek(time) == dayofweek.wednesday and is_trade_wed) or
+           (dayofweek(time) == dayofweek.thursday and is_trade_thu) or
+           (dayofweek(time) == dayofweek.friday and is_trade_fri) or
+           (dayofweek(time) == dayofweek.saturday and is_trade_sat) or
+           (dayofweek(time) == dayofweek.sunday and is_trade_sun)
+
+// Background color to visually indicate session time
+bgcolor((not na(time_cond) and day_cond) ? color.new(color.gray, 90) : na)
+
+// Final condition for active trading session
+final_time_cond = not na(time_cond) and day_cond and date_cond
+
+// Determine if we are within the active session (final condition)
+isinSession = final_time_cond
+
+//=================== end of session code ==============//
+// }
+
+
+// Strategy Settings
+var const string GROUP_STRATEGY = "System Settings"
+STRATEGY_SL_DISTANCE    = input.float(title="Stop Loss Distance", defval=5, minval=0, group=GROUP_STRATEGY, tooltip="Distance in pips or ATR multiplier to place your SL", display=display.none)
+STRATEGY_SL_ANCHOR      = input.string(title="SL Anchor Price", defval="Close", options=["Close","High/Low"], group=GROUP_STRATEGY, tooltip="Which price to calculate SL distance from", display=display.none)
+STRATEGY_SL_LOOKBACK    = input.int(title="SL High/low Lookback", defval=1, group=GROUP_STRATEGY, tooltip="How many bars to look back for high/low anchor price", display=display.none)
+STRATEGY_ATR_MULTIPLIER = input.float(title="ATR Multiplier", defval=2.2, minval=0, group=GROUP_STRATEGY, tooltip="14-period ATR multiplier for stop loss distance - set to 0 to use fixed pips instead", display=display.none)
+STRATEGY_RISK_REWARD    = input.float(title="Profit Risk:Reward", defval=1.1, minval=0, group=GROUP_STRATEGY, tooltip="Your risk:reward profile for taking profit", display=display.none)
+STRATEGY_BREAK_EVEN     = input.float(title="Break-Even Risk:Reward", defval=0, minval=0, group=GROUP_STRATEGY, tooltip="Your risk:reward profile for triggering your Stop Loss to move to break-even (set to 0 to disable)", display=display.none)
+STRATEGY_TRAIL_STOP     = input.float(title="Trailing Stop Distance", defval=0,  minval=0, group=GROUP_STRATEGY, tooltip="Your risk:reward profile for triggering your Trailing Stop (set to 0 to disable)", display=display.none)
+STRATEGY_EXIT_HCLC      = input.bool(title="Exit on Higher-Close/Lower-Close", defval=false, group=GROUP_STRATEGY, tooltip="If enabled, the script will exit on a higher/lower close after take-profit price is hit", display=display.none)
+STRATEGY_EXIT_EXHAUST   = input.bool(title="Exit on Opposite Color Bar", defval=false, group=GROUP_STRATEGY, tooltip="If enabled, the script will exit on a bullish/bearish bar in the opposite direction of trade after price is hit", display=display.none)
+
+// Filter Settings
+var const string  GROUP_FILTER = "Strategy Inputs"
+drawTester           = input.bool(title="Draw Backtester", defval=true, tooltip="Turn on/off inbuilt backtester display", group = GROUP_FILTER)
+highTimeMA           = input.string(title = "BandPlay Timeframe", defval = "60", tooltip = "The timeframe which the band play will be pulled from",group = GROUP_FILTER)
+fastMAcross          = input.int(title="Fast Crossing MA Length", defval=8, minval = 1 , group=GROUP_FILTER, tooltip = "Fast Ma speed to cross over the slow")
+slowMAcross          = input.int(title="Slow Crossing MA Length", defval=20, minval = 1 , group=GROUP_FILTER, tooltip = "Slow Ma speed to cross over the Fast")
+highTimeBandEMA      = input.int(title="Band EMA length", defval=6, minval = 1 , group=GROUP_FILTER, tooltip="Adjusts the length of the bands, 5 default, 4 to tighten, 6 to widen etc")
+highTimeMAFilter1    = input.string(title = "High Timeframe EMA 1", defval = "D", tooltip = "The timeframe of the filter MA to negate trading",group = GROUP_FILTER)
+FILTER_EMA_LENGTH1   = input.int(title="EMA 1 Filter Length", defval=0, group=GROUP_FILTER, tooltip="EMA length to filter trades - set to zero to disable")
+highTimeMAFilter2    = input.string(title="High Timeframe EMA 2", defval="D", tooltip="The timeframe of the second EMA filter", group=GROUP_FILTER)
+FILTER_EMA_LENGTH2   = input.int(title="EMA 2 Filter Length", defval=0, group=GROUP_FILTER, tooltip="EMA 2 length to filter trades - set to zero to disable")
+FILTER_ATR_MIN_SIZE  = input.float(title=">= ATR Filter", defval=0.0, minval=0.0, group=GROUP_FILTER, tooltip="Minimum size of entry candle compared to ATR")
+FILTER_ATR_MAX_SIZE  = input.float(title="<= ATR Filter", defval=3.0, minval=0.0, group=GROUP_FILTER, tooltip="Maximum size of entry candle compared to ATR")
+
+
+// { PineConnector Settings
+
+var const string GROUP_PC = "PineConnector Settings"
+PC_ENABLED              = input.bool(title="Use PineConnector", defval=true, group=GROUP_PC, tooltip="If accepted, when you set alert() function call then PineConnector commands will be automatically triggered by the script. Use this experimental feature at your own risk and don't use it with money you can't afford to lose", display=display.none)
+PC_ID                   = input.string(title="License ID", defval="76678416631891", group=GROUP_PC, tooltip="This is your PineConnector license ID", display=display.none)
+PC_RISK                 = input.float(title="Risk Per Trade", defval=0.3, step=0.5, group=GROUP_PC, tooltip="This is how much to risk per trade (% of account balance OR lots - which one is used depends on your PineConnector settings)", display=display.none)
+PC_ENTRY_PIPS           = input.float(title="Entry Pips", defval=0, minval=0, group=GROUP_PC, tooltip="Enter your pip offset for limit orders (ie. entry buy-limit/entry sell-limit)", display=display.none)
+PC_SPREAD_FILTER        = input.float(title="Spread Filter", defval=0, group=GROUP_PC, tooltip="Optional Spread filter - will only execute trades if the current market Spread is below this pip amount. Zero to disable", display=display.none)
+PC_BREAK_EVEN_OFFSET    = input.float(title="Break Even Offset", defval=0, group=GROUP_PC, tooltip="", display=display.none)
+PC_USE_LIMIT            = input.bool(title="Use Entry Limit Order", defval=false, group=GROUP_PC, tooltip="If true a limit order will be used, if false a market order will be used", display=display.none)
+PC_USE_PIP_ENTRY        = input.bool(title="Use Pip-Based Entry", defval=false, group=GROUP_PC, tooltip="If turned on and you're using a buylimit/selllimit order to enter, then pips will be sent to PineConnector - otherwise a Price value will be sent", display=display.none)
+PC_USE_PIP_TARGET       = input.bool(title="Use Pip-Based SL & TP", defval=true, group=GROUP_PC, tooltip="Turn this on if you want to use a pip-based TP & SL, turn it off if you want to use a TradingView price-based TP & SL. Watch Update v3.05 course video for more info", display=display.none)
+PC_OVERRIDE             = input.string(title="MetaTrader Symbol Override", defval="", group=GROUP_PC + " Optional", tooltip="Don't touch unless you really need to. This overrides the symbol sent from TradingView. Eg. if the TV symbol you're using is BTCUSDT.P and your MT broker's symbol is BTCUSDT, put BTCUSDT in here to override TV's symbol. This also overrides the prefix and suffix settings below.", display=display.none)
+PC_PREFIX               = input.string(title="MetaTrader Prefix", defval="", group=GROUP_PC + " Optional", tooltip="OPTIONAL: This is your broker's MetaTrader symbol prefix", display=display.none)
+PC_SUFFIX               = input.string(title="MetaTrader Suffix", defval="", group=GROUP_PC + " Optional", tooltip="OPTIONAL: This is your broker's MetaTrader symbol suffix", display=display.none)
+PC_STRATEGY             = input.string(title="Strategy ID", defval="GOLD", group=GROUP_PC + " Optional", tooltip="OPTIONAL: This allows for multi-strategy setups by adding this string as a 'comment' parameter to any orders sent to PC. Useful for running multiple strategies on the same market across different timeframes or with different parameters.")
+PC_DEBUG                = input.bool(title="Debug Automation Alerts", defval=true, group=GROUP_PC + " Optional", tooltip="Turns on/off label that displays what your alert message will look like if it gets sent to AutoView or PineConnector (useful for debugging errors or issues)", display=display.none)
+// }
+
+
+// Prepare PineConnector Variables
+var PC_VAR_SYMBOL = PC_OVERRIDE == "" ? (PC_PREFIX + syminfo.ticker + PC_SUFFIX) : PC_OVERRIDE
+var PC_VAR_USE_LIMIT = PC_USE_LIMIT ? "limit" : ""
+var PC_VAR_SPREAD_FILTER = PC_SPREAD_FILTER != 0 ? (",spread=" + str.tostring(PC_SPREAD_FILTER)) : ""
+var PC_VAR_STRATEGY = PC_STRATEGY == "" ? "" : ",comment=" + PC_STRATEGY + ""
+var label PC_DEBUG_LABEL = na
+var label PC_DEBUG_LABEL_TS = na
+
+// Generate PineConnector entry alert string
+PC_Entry_Alert(_direction, _entryprice, _sl, _tp, _be, _truncate=true) =>
+    _format = _truncate ? "#.#####" : "#.##########"
+    _price = PC_USE_LIMIT ? "price=" + str.tostring(_entryprice, _format) + "," : ""
+    _tpText = _tp == 0 ? "" : "tp=" + str.tostring(_tp, _format) + ","
+    _beText = _be == 0 ? "" : "betrigger=" + str.tostring(_be, _format) + ",beoffset=" + str.tostring(PC_BREAK_EVEN_OFFSET, _format) + ","
+    PC_ID + "," + _direction + PC_VAR_USE_LIMIT + "," + PC_VAR_SYMBOL + "," + _price + "sl=" + str.tostring(_sl, _format) + "," + _tpText + 
+     _beText + "risk=" + str.tostring(PC_RISK) + PC_VAR_SPREAD_FILTER + PC_VAR_STRATEGY
+
+// Get market point -> pip value
+GetPipSize() =>
+    if (syminfo.type == "forex")
+        syminfo.mintick * 10 // Multiply by 10 for forex pairs
+    else if (syminfo.ticker == "NAS100" or syminfo.ticker == "UK100")
+        1 // Use 1 pip size for US30, NASDAQ, and UK100 (1 point per pip)
+    else if (syminfo.ticker == "BTCUSD")
+        10 // Use 1 pip size for BTCUSD (since BTC typically uses 1 point per pip)
+    else if (syminfo.ticker == "JPN225")
+        1 // For JPN225, typically 1 point equals 1 pip
+    else if (syminfo.ticker == "XAUUSD")
+        0.1 // Gold (XAUUSD) typically has a tick size of 0.01
+    else if (syminfo.ticker == "US30")
+        1 // Gold (XAUUSD) typically has a tick size of 0.01
+    else
+        syminfo.mintick // Default for other instruments
+
+
+
+// Stops & Targets
+var float StopDistanceFixedPips = STRATEGY_SL_DISTANCE * GetPipSize()
+var float TradeEntryPrice = na
+var float TradeStopPrice = na
+var float TradeProfitPrice = na
+var float TradeBreakEvenPrice = na
+var float TrailStopActivatePrice = na
+var bool TrailStopActivated = false
+var bool SearchingForExit = false
+
+// Get indicator values
+EMA_Value1 = request.security(syminfo.tickerid, highTimeMAFilter1, ta.ema(close[1], FILTER_EMA_LENGTH1 == 0 ? 1 : FILTER_EMA_LENGTH1))
+EMA_Value2 = request.security(syminfo.tickerid, highTimeMAFilter2, ta.ema(close[1], FILTER_EMA_LENGTH2 == 0 ? 1 : FILTER_EMA_LENGTH2))
+
+ATR_Value = nz(ta.atr(14))
+
+// Check system filters
+EmaFilterLong1 = FILTER_EMA_LENGTH1 == 0 or close > EMA_Value1
+EmaFilterShort1 = FILTER_EMA_LENGTH1 == 0 or close < EMA_Value1
+
+EmaFilterLong2 = FILTER_EMA_LENGTH2 == 0 or close > EMA_Value2
+EmaFilterShort2 = FILTER_EMA_LENGTH2 == 0 or close < EMA_Value2
+
+AtrMinFilter = high - low >= (FILTER_ATR_MAX_SIZE * ATR_Value) or FILTER_ATR_MIN_SIZE == 0.0
+AtrMaxFilter = high - low <= (FILTER_ATR_MAX_SIZE * ATR_Value) or FILTER_ATR_MIN_SIZE == 0.0
+
+AtrFilter = AtrMinFilter and AtrMaxFilter and not na(ATR_Value)
+
+
+// { ==================================Strategy code=============================//
+
+// Fetching 60-minute values for SMA and EMA calculations
+sma8_htf = request.security(syminfo.tickerid, highTimeMA, ta.sma(close, fastMAcross), lookahead = barmerge.lookahead_on,gaps = barmerge.gaps_off)
+sma20_htf = request.security(syminfo.tickerid, highTimeMA, ta.sma(close, slowMAcross),lookahead = barmerge.lookahead_on,gaps = barmerge.gaps_off)
+ema5Low_htf = request.security(syminfo.tickerid, highTimeMA, ta.ema(low, highTimeBandEMA),lookahead = barmerge.lookahead_on,gaps = barmerge.gaps_off)
+ema5High_htf = request.security(syminfo.tickerid, highTimeMA, ta.ema(high, highTimeBandEMA),lookahead = barmerge.lookahead_on,gaps = barmerge.gaps_off)
+
+
+//====BUY LOGIC====//
+// Check for a persistent crossover (2-bar confirmation)
+crossAbove_htf = sma8_htf[2] < sma20_htf[2] and sma8_htf[1] > sma20_htf[1] and sma8_htf > sma20_htf
+
+// Entry condition: 1-minute price touching the 60-minute EMA5 low
+priceTouchesEma5Low_htf = low <= ema5Low_htf
+
+// Logic for marking the first candle after crossover (green triangle) using 60-minute data
+var lookingForGreenTriangle = false
+var greenTrianglePlotted = false
+if crossAbove_htf
+    lookingForGreenTriangle := true
+    greenTrianglePlotted := false
+
+plotGreenTriangle_htf = lookingForGreenTriangle and not greenTrianglePlotted and priceTouchesEma5Low_htf and sma8_htf > sma20_htf
+if plotGreenTriangle_htf
+    greenTrianglePlotted := true
+    lookingForGreenTriangle := false
+
+//====END OF BUY LOGIC====//
+
+//====SELL LOGIC====//
+
+// Check for a persistent crossover (2-bar confirmation)
+crossUnder_htf = sma8_htf[2] > sma20_htf[2] and sma8_htf[1] < sma20_htf[1] and sma8_htf < sma20_htf
+
+// Entry condition: 1-minute price touching the 60-minute EMA5 high
+priceTouchesEma5High_htf = high >= ema5High_htf
+
+// Logic for marking the first candle after crossover (red triangle) using 60-minute data
+var lookingForRedTriangle = false
+var redTrianglePlotted = false
+if crossUnder_htf
+    lookingForRedTriangle := true
+    redTrianglePlotted := false
+
+plotRedTriangle_htf = lookingForRedTriangle and not redTrianglePlotted and priceTouchesEma5High_htf and sma8_htf < sma20_htf
+if plotRedTriangle_htf
+    redTrianglePlotted := true
+    lookingForRedTriangle := false
+
+//====END OF SELL LOGIC====//
+
+// Combine the buy and sell logic into trade conditions
+bool LongTrade  = plotGreenTriangle_htf and AtrFilter and EmaFilterLong1 and EmaFilterLong2 and isinSession and strategy.position_size == 0
+bool ShortTrade = plotRedTriangle_htf and AtrFilter and EmaFilterShort1 and EmaFilterShort2 and isinSession and strategy.position_size == 0
+
+bool UseExitReason = STRATEGY_TRAIL_STOP > 0 or STRATEGY_EXIT_HCLC or STRATEGY_EXIT_EXHAUST
+
+//====================End of Strategey Code==========================// }
+
+// Generate PineConnector Alert String with all required parameters
+GenerateEntryAlertString() =>
+    pcStopPips      = math.abs(close - TradeStopPrice)
+    pcTargetPips    = math.abs(close - TradeProfitPrice)
+    pcBreakEvenPips = math.abs(close - TradeBreakEvenPrice)
+    pcEntry         = PC_USE_PIP_ENTRY ? PC_ENTRY_PIPS : TradeEntryPrice
+    pcStop          = PC_USE_PIP_TARGET ? pcStopPips / GetPipSize() : TradeStopPrice
+    pcTarget        = UseExitReason ? 0 : PC_USE_PIP_TARGET ? pcTargetPips / GetPipSize() : TradeProfitPrice
+    pcBreakEven     = na(TradeBreakEvenPrice) ? 0 : pcBreakEvenPips
+    PC_Entry_Alert(LongTrade ? "buy" : "sell", pcEntry, pcStop, pcTarget, pcBreakEven, true)
+
+// Get Long Stop Loss
+swingHigh = ta.highest(high, STRATEGY_SL_LOOKBACK)
+swingLow  = ta.lowest(low, STRATEGY_SL_LOOKBACK)
+GetStopPrice(bool strategy_direction) =>
+    AnchorPriceSL = STRATEGY_SL_ANCHOR == "Close" ? close : (strategy_direction ? swingLow : swingHigh)
+    if strategy_direction
+        returnValue = AnchorPriceSL - (STRATEGY_ATR_MULTIPLIER > 0 ? (ATR_Value * STRATEGY_ATR_MULTIPLIER) : StopDistanceFixedPips)
+    else
+        returnValue = AnchorPriceSL + (STRATEGY_ATR_MULTIPLIER > 0 ? (ATR_Value * STRATEGY_ATR_MULTIPLIER) : StopDistanceFixedPips)
+
+// Long Entry Code
+if LongTrade and barstate.isconfirmed
+    TradeStopPrice      := GetStopPrice(true)
+    StopDistancePips     = close - TradeStopPrice
+    TradeProfitPrice    := close + (StopDistancePips * STRATEGY_RISK_REWARD)
+    TradeEntryPrice     := close
+    SearchingForExit    := false
+    if STRATEGY_BREAK_EVEN > 0
+        TradeBreakEvenPrice := close + (StopDistancePips * STRATEGY_BREAK_EVEN)
+    if STRATEGY_TRAIL_STOP > 0
+        TrailStopActivated := false
+        TrailStopActivatePrice := close + (StopDistancePips * STRATEGY_TRAIL_STOP)
+    if PC_USE_LIMIT
+        strategy.cancel_all()
+    strategy.entry("Buy", strategy.long, limit=PC_USE_LIMIT ? close - (PC_ENTRY_PIPS * GetPipSize()) : na)
+    if PC_ENABLED
+        alert(GenerateEntryAlertString(), alert.freq_once_per_bar_close)
+
+// Short Entry Code
+if ShortTrade and barstate.isconfirmed
+    TradeStopPrice      := GetStopPrice(false)
+    StopDistancePips     = TradeStopPrice - close
+    TradeProfitPrice    := close - (StopDistancePips * STRATEGY_RISK_REWARD)
+    TradeEntryPrice     := close
+    SearchingForExit    := false
+    if STRATEGY_BREAK_EVEN > 0
+        TradeBreakEvenPrice := close - (StopDistancePips * STRATEGY_BREAK_EVEN)
+    if STRATEGY_TRAIL_STOP > 0
+        TrailStopActivated := false
+        TrailStopActivatePrice := close - (StopDistancePips * STRATEGY_TRAIL_STOP)
+    if PC_USE_LIMIT
+        strategy.cancel_all()
+    strategy.entry("Sell", strategy.short, limit=PC_USE_LIMIT ? close + (PC_ENTRY_PIPS * GetPipSize()) : na)
+    if PC_ENABLED
+        alert(GenerateEntryAlertString(), alert.freq_once_per_bar_close)
+
+// Update trade entry price to match TradingView strategy tester 
+if strategy.position_size != 0
+    if TradeEntryPrice != strategy.position_avg_price
+        TradeEntryPrice := strategy.position_avg_price
+
+// Long Strategy Management Code
+if strategy.position_size > 0
+    // Long Break-Even Code (break-even order is handled directly by PC so no need for alert)
+    if not na(TradeBreakEvenPrice) and high >= TradeBreakEvenPrice and TradeStopPrice < TradeEntryPrice
+        TradeStopPrice := TradeEntryPrice + (PC_BREAK_EVEN_OFFSET * GetPipSize())
+        TradeBreakEvenPrice := na
+
+    // Long Trailing Stop Activation Code
+    if STRATEGY_TRAIL_STOP > 0 and high >= TrailStopActivatePrice
+        TrailStopActivated := true
+
+    // Long Exit Reason Activation Code
+    if high >= TradeProfitPrice
+        if UseExitReason
+            SearchingForExit := true
+        if PC_USE_LIMIT // Ensure pending entry limit order is cancelled if target is hit in case entry order was not filled
+            strategy.cancel("Buy")
+            if PC_ENABLED
+                alert(PC_ID + ",cancellong," + PC_VAR_SYMBOL + PC_STRATEGY, alert.freq_once_per_bar)
+
+    // Confirmed Bar Code
+    if barstate.isconfirmed
+
+        //! SIMPLE EXAMPLE EXIT DETECTION CODE (REPLACE WITH YOUR OWN!)
+        bool ExitTrade = false
+        if SearchingForExit
+            if STRATEGY_EXIT_HCLC and close < low[1]
+                ExitTrade := true
+            if STRATEGY_EXIT_EXHAUST and close < open
+                ExitTrade := true
+
+        // Long Exit Alert
+        if ExitTrade
+            strategy.close("Buy")
+            if PC_ENABLED
+                alert(PC_ID + ",closelong," + PC_VAR_SYMBOL + PC_VAR_STRATEGY, alert.freq_once_per_bar)
+        
+        // Long Trailing Stop Code
+        LongStopLoss = GetStopPrice(true)
+        if TrailStopActivated and LongStopLoss > TradeStopPrice
+            TradeStopPrice := LongStopLoss
+            NEW_SL = PC_USE_PIP_TARGET ? math.abs(TradeStopPrice - close) / GetPipSize() : TradeStopPrice
+            string alertMessage = PC_ID + ",newsltplong," + PC_VAR_SYMBOL + ",sl=" + str.tostring(NEW_SL) + PC_VAR_STRATEGY
+            if PC_ENABLED
+                alert(alertMessage, alert.freq_once_per_bar_close)
+
+            // Debug alert message label
+            PC_DEBUG_LABEL_TS := label.new(bar_index, high + (GetPipSize() * 10), alertMessage, color=color.white)
+            label.delete(PC_DEBUG_LABEL_TS[1])
+
+// Short Strategy Management Code
+if strategy.position_size < 0
+    // Short Break-Even Code (break-even order is handled directly by PC so no need for alert)
+    if not na(TradeBreakEvenPrice) and low <= TradeBreakEvenPrice and TradeStopPrice > TradeEntryPrice
+        TradeStopPrice := TradeEntryPrice - (PC_BREAK_EVEN_OFFSET * GetPipSize())
+        TradeBreakEvenPrice := na
+
+    // Short Trailing Stop Activation Code
+    if STRATEGY_TRAIL_STOP > 0 and low <= TrailStopActivatePrice
+        TrailStopActivated := true
+
+    // Short Exit Reason Activation Code
+    if low <= TradeProfitPrice
+        if UseExitReason
+            SearchingForExit := true
+        if PC_USE_LIMIT // Ensure pending entry limit order is cancelled if target is hit in case entry order was not filled
+            strategy.cancel("Buy")
+            if PC_ENABLED
+                alert(PC_ID + ",cancelshort," + PC_VAR_SYMBOL + PC_STRATEGY, alert.freq_once_per_bar)
+
+    // Confirmed Bar Code
+    if barstate.isconfirmed
+
+        //! SIMPLE EXAMPLE EXIT DETECTION CODE (REPLACE WITH YOUR OWN!)
+        bool ExitTrade = false
+        if SearchingForExit
+            if STRATEGY_EXIT_HCLC and close > high[1]
+                ExitTrade := true
+            if STRATEGY_EXIT_EXHAUST and close > open
+                ExitTrade := true
+
+        // Long Exit Alert
+        if ExitTrade
+            strategy.close("Sell")
+            if PC_ENABLED
+                alert(PC_ID + ",closeshort," + PC_VAR_SYMBOL + PC_VAR_STRATEGY, alert.freq_once_per_bar)
+
+        // Short Trailing Stop Code
+        ShortStopLoss = GetStopPrice(false)
+        if TrailStopActivated and ShortStopLoss < TradeStopPrice
+            TradeStopPrice := ShortStopLoss
+            NEW_SL = PC_USE_PIP_TARGET ? math.abs(TradeStopPrice - close) / GetPipSize() : TradeStopPrice
+            string alertMessage = PC_ID + ",newsltpshort," + PC_VAR_SYMBOL + ",sl=" + str.tostring(NEW_SL) + PC_VAR_STRATEGY
+            if PC_ENABLED
+                alert(alertMessage, alert.freq_once_per_bar_close)
+
+            // Debug alert message label
+            PC_DEBUG_LABEL_TS := label.new(bar_index, high + (GetPipSize() * 10), alertMessage, color=color.white)
+            label.delete(PC_DEBUG_LABEL_TS[1])
+
+// Trigger SL/TP Orders
+strategy.exit("Long Exit", "Buy", stop=TradeStopPrice, limit=UseExitReason ? na : TradeProfitPrice)
+strategy.exit("Short Exit", "Sell", stop=TradeStopPrice, limit=UseExitReason ? na : TradeProfitPrice)
+
+// Display automation alert string on last valid trade - for debugging purposes
+if PC_DEBUG and ((LongTrade and barstate.isconfirmed) or (ShortTrade and barstate.isconfirmed))
+    debugString = "Automation is not enabled!"
+    if PC_ENABLED
+        debugString := GenerateEntryAlertString()
+    PC_DEBUG_LABEL := label.new(bar_index, high + (GetPipSize() * 10), debugString, color=color.white)
+    label.delete(PC_DEBUG_LABEL[1])
+
+// Draw trade info to chart
+plot(strategy.position_size != 0 ? TradeStopPrice : na, "SL", color=color.teal, linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size != 0 and not SearchingForExit ? TradeProfitPrice : na, "TP", color=color.green, linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size != 0 and STRATEGY_BREAK_EVEN != 0 ? TradeBreakEvenPrice : na, "BE", color=color.blue, linewidth=1, style=plot.style_linebr)
+plot(strategy.position_size != 0 and not TrailStopActivated ? TrailStopActivatePrice : na, "TS", color=color.orange, linewidth=1, style=plot.style_linebr)
+
+// Plotting
+plot(sma8_htf, color=color.gray, title="htf 8 SMA", linewidth=1)
+plot(sma20_htf, color=color.blue, title="htf 20 SMA", linewidth=1)
+plot(ema5Low_htf, color=color.red, title="htf 5 EMA Low", linewidth=1)
+plot(ema5High_htf, color=color.red, title="htf 5 EMA High", linewidth=1)
+
+// Plotting Shapes based on high time frame
+plotshape(series=plotGreenTriangle_htf, location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal, title="HTF Entry Long")
+plotshape(series=plotRedTriangle_htf, location=location.abovebar, color=color.red, style=shape.triangledown, size=size.normal, title="HTF Entry Short")
+
+plotshape(crossAbove_htf, title="Cross Above Confirmed", location=location.top, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(crossUnder_htf, title="Cross Under Confirmed", location=location.bottom, color=color.red, style=shape.triangledown, size=size.small)
+
+
+// { ======================START BACKTEST RESULTS CODE==================================
+
+// Prepare stats table
+var table testTable = table.new(position.top_right, 2, 2, border_width=1)
+f_fillCell(_table, _column, _row, _title, _value, _bgcolor, _txtcolor) =>
+    _cellText = _title + "\n" + _value
+    table.cell(_table, _column, _row, _cellText, bgcolor=_bgcolor, text_color=_txtcolor)
+
+// Draw stats table
+var bgcolor = color.black
+if barstate.islastconfirmedhistory
+    if drawTester
+        dollarReturn = strategy.equity - strategy.initial_capital
+        f_fillCell(testTable, 0, 0, "Total Trades:", str.tostring(strategy.closedtrades), bgcolor, color.white)
+        f_fillCell(testTable, 0, 1, "Win Rate:", str.tostring(strategy.wintrades / strategy.closedtrades * 100, "##.##") + "%", bgcolor, color.white)
+        f_fillCell(testTable, 1, 0, "Equity:", "$" + str.tostring(strategy.equity, "###,###.##"), bgcolor, color.white)
+        f_fillCell(testTable, 1, 1, "Return:", str.tostring((strategy.netprofit / strategy.initial_capital) * 100, "##.##") + "%", dollarReturn > 0 ? color.green : color.red, color.white)
+
+// =============================================================================
+// END BACKTEST CODE
+// ============================================================================= }

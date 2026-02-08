@@ -1,0 +1,716 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// ©  InNoobWeTrust
+
+//@version=6
+
+// @description Multiple utilities in one
+library("polyglot_lib", overlay = false)
+import TradingView/ta/10
+import forbidden_gun/commonlib/6
+import forbidden_gun/plot_lib/3
+
+//===============================================================================
+// Constants
+//===============================================================================
+
+const int[] fib_numbers = array.from(0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610)
+
+//===============================================================================
+// Types
+//===============================================================================
+
+export enum MaT
+	sma = 'SMA'
+	wma = 'WMA'
+	ema = 'EMA'
+
+export type KeyGap
+	plot_lib.TfBarZone zone
+	float spread
+	float relative_spread
+
+//===============================================================================
+// Functions
+//===============================================================================
+
+// @function calculate moving average
+// @param t type of moving average
+// @param src the series to calculate
+// @param len averaging length
+// @returns the moving average series
+export ma(MaT t, float src, simple int len) =>
+	switch t
+		MaT.sma => ta.sma(src,len)
+		MaT.wma => ta.wma(src,len)
+		MaT.ema => ta.ema(src,len)
+
+// @function calculate rolling SMA
+// @param src the series to calculate
+// @param len averaging length
+// @param prev_sma the previous value of SMA
+// @returns the SMA value
+export rolling_sma(float src, simple int len, float prev_sma) =>
+	prev_sma * (len - 1) / len + src / len
+
+// @function calculate rolling EMA
+// @param src the series to calculate
+// @param len averaging length
+// @param prev_ema the previous value of EMA
+// @returns the EMA value
+export rolling_ema(float src, simple int len, float prev_ema) =>
+	src * 2 / (len + 1) + prev_ema * (1 - 2 / (len + 1))
+
+// @function calculate liquidity as strength index of 100
+// @param len length to calculate ATR
+// @returns the relative liquidity index
+export relative_liquidity_index(int atr_len, int rli_len) =>
+	atr = ta.atr(atr_len)
+	rli = ta.rsi(atr,rli_len)
+	// Return the RLI
+	rli
+
+// @function Calculate safe leverage based on ATR and the percentage of acceptable SL
+// @param atr_len The length to calculate ATR
+// @param sl_percent The percentage of acceptable SL
+// @param tolerance The percentage tolerance relative to ATR to account for lateness in entry price
+// @returns The tuple of: leverage rounded up to whole number, max_endurable_spread, max_endurable_percent
+export estimate_leverage(int atr_len = 14, float sl_percent = 0.1, float tolerance = 0.5) =>
+	spread_osc = ta.atr(atr_len)
+	max_endurable_spread = spread_osc * (1 + tolerance)
+	max_endurable_percent = max_endurable_spread / open
+	max_leverage = sl_percent / max_endurable_percent
+	// Return max leverage as whole number
+	[math.floor(max_leverage), max_endurable_spread, max_endurable_percent]
+
+// @function Display leverage, ATR, and the percentage of acceptable SL
+// @param atr_len The length to calculate ATR
+// @param sl_percent The percentage of acceptable SL
+// @param tolerance The percentage tolerance relative to ATR to account for lateness in entry price
+// @param pos The position to display the table
+// @returns The table
+export display_lvrg_table(int atr_len = 14, float sl_percent = 0.1, float tolerance = 0.5, string pos = position.bottom_left, bool overlay = true) =>
+	lvrg_tb = overlay ? table.new(pos,2,4,force_overlay = true) : table.new(pos,2,4,force_overlay = false)
+	[lvrg, _, _] = estimate_leverage(atr_len,sl_percent,tolerance)
+	atr = ta.atr(atr_len)
+	atr_percent = atr / open
+	table.cell(lvrg_tb,0,0,'SL',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(lvrg_tb,1,0,str.format('{0,number,percent}',sl_percent),bgcolor=color.new(color.gray, transp = 80),text_color=color.red)
+	table.cell(lvrg_tb,0,1,'Tol',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(lvrg_tb,1,1,str.format('{0,number,#.##}%',tolerance*100),bgcolor=color.new(color.gray, transp = 80),text_color=color.blue)
+	table.cell(lvrg_tb,0,2,'ATR',text_color=color.gray,bgcolor=color.new(color.silver, transp = 80))
+	table.cell(lvrg_tb,1,2,str.format('{0,number,#.##}%',atr_percent*100),bgcolor=color.new(color.silver, transp = 80),text_color=color.yellow)
+	table.cell(lvrg_tb,0,3,'Lvrg',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(lvrg_tb,1,3,str.format('x{0,number,integer}',lvrg),bgcolor=color.new(color.gray, transp = 80),text_color=color.aqua)
+	// Return the table id to manage drawings
+	lvrg_tb
+
+// @function Display current RSI and SMA of RSI
+// @param rsi_len The length to calculate RSI
+// @param rsi_sma_len The length to calculate MA of RSI
+// @param rsi_sma_type The type of MA to calculate for RSI
+// @param pos The position to display the table
+// @returns The table
+export display_rsi_table(int rsi_len = 14, simple int rsi_ma_len = 14, MaT rsi_ma_type = MaT.sma, string pos = position.middle_right, bool overlay = false) =>
+	rsi_tb = overlay ? table.new(pos,1,4,force_overlay = true) : table.new(pos,1,4,force_overlay = false)
+	rsi = ta.rsi(close,rsi_len)
+	rsi_ma = ma(rsi_ma_type,rsi,rsi_ma_len)
+	rsi_color = switch
+		rsi >= 80 => color.navy
+		rsi <= 20 => color.maroon
+		rsi >= 70 => color.green
+		rsi <= 30 => color.red
+		=> color.gray
+	rsi_sma_color = switch
+		rsi_ma >= 60 => color.teal
+		rsi_ma <= 40 => color.orange
+		=> color.silver
+	table.cell(rsi_tb,0,0,'RSI',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(rsi_tb,0,1,str.format('{0,number}',rsi),bgcolor=color.new(color.silver, transp = 80),text_color=rsi_color)
+	table.cell(rsi_tb,0,2,'RSI SMA',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(rsi_tb,0,3,str.format('{0,number}',rsi_ma),bgcolor=color.new(color.silver, transp = 80),text_color=rsi_sma_color)
+	// Return the table id to manage drawings
+	rsi_tb
+
+// @function Display current RSI and SMA of RSI and RLI (Relative Liquidity Index)
+// @param index_len The length to calculate index
+// @param index_ma_len The length to calculate SMA of index values
+// @param index_ma_type The type of MA to calculate for index values
+// @param atr_len The length to calculate ATR for RLI
+// @param pos The position to display the table
+// @returns The table
+export display_index_table(int index_len = 14, simple int ma_len = 14, MaT ma_type = MaT.sma, int atr_len = 34, string pos = position.middle_right, bool overlay = false) =>
+	index_tb = overlay ? table.new(pos,3,3,frame_color = color.white,force_overlay = true) : table.new(pos,3,3,frame_color = color.white,force_overlay = false)
+	rsi = ta.rsi(close,index_len)
+	rli = relative_liquidity_index(atr_len,index_len)
+	rsi_ma = ma(ma_type,rsi,ma_len)
+	rli_ma = ma(ma_type,rli,ma_len)
+	rsi_color = switch
+		rsi >= 80 => color.navy
+		rsi <= 20 => color.maroon
+		rsi >= 70 => color.red
+		rsi <= 30 => color.green
+		=> color.gray
+	rsi_ma_color = switch
+		rsi_ma >= 60 => color.yellow
+		rsi_ma <= 40 => color.lime
+		=> color.silver
+	rli_color = switch
+		rli >= 70 => color.teal
+		rli <= 30 => color.maroon
+		=> color.gray
+	rli_ma_color = switch
+		rli_ma >= 60 => color.aqua
+		rli_ma <= 40 => color.orange
+		=> color.silver
+	table.cell(index_tb,1,0,'Index',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(index_tb,2,0,'MA',text_color=color.gray,bgcolor=color.new(color.silver, transp = 80))
+	table.cell(index_tb,0,1,'RSI',text_color=color.gray,bgcolor=color.new(color.silver, transp = 80))
+	table.cell(index_tb,0,2,'RLI',text_color=color.gray,bgcolor=color.new(color.gray, transp = 80))
+	table.cell(index_tb,1,1,str.format('{0,number,integer}',rsi),bgcolor=color.new(color.black, transp = 80),text_color=rsi_color)
+	table.cell(index_tb,2,1,str.format('{0,number,integer}',rsi_ma),bgcolor=color.new(color.black, transp = 80),text_color=rsi_ma_color)
+	table.cell(index_tb,1,2,str.format('{0,number,integer}',rli),bgcolor=color.new(color.black, transp = 80),text_color=rli_color)
+	table.cell(index_tb,2,2,str.format('{0,number,integer}',rli_ma),bgcolor=color.new(color.black, transp = 80),text_color=rli_ma_color)
+	// Return the table id to manage drawings
+	index_tb
+
+// @function Calculate the pivot left high with cutoff
+// @param src The source series
+// @param len Pivot length
+// @param cutoff Cutoff value, na means no cutoff
+// @returns The pivot high with cutoff
+export pivot_left_high(float src, int len, float cutoff = na) =>
+	pivot_high = ta.pivothigh(src,len,0)
+	pivot_high_non_na = ta.valuewhen(not na(pivot_high),pivot_high,0)
+	if not na(cutoff)
+		// Return the pivot with cutoff
+		math.max(pivot_high_non_na,cutoff)
+	else
+		// Return the non na
+		pivot_high_non_na
+
+// @function Calculate the pivot left low with cutoff
+// @param src The source series
+// @param len Pivot length
+// @param cutoff Cutoff value, na means no cutoff
+// @returns The pivot low with cutoff
+export pivot_left_low(float src, int len, float cutoff = na) =>
+	pivot_low = ta.pivotlow(src,len,0)
+	pivot_low_non_na = ta.valuewhen(not na(pivot_low),pivot_low,0)
+	if not na(cutoff)
+		// Return the pivot with cutoff
+		math.min(pivot_low_non_na,cutoff)
+	else
+		// Return the non na
+		pivot_low_non_na
+
+// @function Calculate top wick, bottom wick and body in percentage of candle's height
+// @param o Open price
+// @param h High price
+// @param l Low price
+// @param c Close price
+// @returns Tuple of top wick + bottom wick + body as percentage, body can be negative
+export candle_split_percent(float o,float h, float l, float c) =>
+	spread = h - l
+	body_top = math.max(o,c)
+	body_bottom = math.min(o,c)
+	body = (c - o) / spread // Can be negative
+	top_wick = (h - body_top) / spread
+	bottom_wick = (body_bottom - l) / spread
+	// Return the wicks and body as percentage
+	[top_wick, bottom_wick, body]
+
+// @function Calculate target value by providing target rsi and reverse engineer the formula.
+// 			 Reference: https://c.mql5.com/forextsd/forum/138/reverse_engineering_rsi.pdf
+// @param len RSI length
+// @param target_rsi the target RSI for estimation
+// @param src the souce series to calculate
+// @returns the reverse engineered value that matches target RSI
+export reverse_engineering_rsi(int len, float target_rsi,float src=close) =>
+	exp_per = 2 * len - 1
+	// Average up src
+	uc = src > src[1] ? src - src[1] : 0
+	auc = ta.ema(uc, exp_per)
+	// Average down src
+	dc = src < src[1] ? src[1] - src : 0
+	adc = ta.ema(dc, exp_per)
+	// x factor
+	x = (len - 1) * (adc * target_rsi / (100 - target_rsi) - auc)
+	// RevEngRSI
+	rev_eng_rsi = x >= 0 ? src + x : src + x * (100 - target_rsi) / target_rsi
+	// Return RevEngRSI
+	rev_eng_rsi
+
+// @function Calculate target value by providing target rsi and reverse engineer the formula.
+// 			 Reference: https://c.mql5.com/forextsd/forum/138/reverse_engineering_rsi.pdf
+// @param len RSI length
+// @param target_rsi the target RSI for estimation
+// @param src the current value to calculate RSI
+// @param prev_src the previous value to calculate RSI
+// @param prev_auc the previous auc value
+// @param prev_adc the previous adc value
+// @returns Tuple of RevEngRSI, auc, adc
+export rolling_revengrsi(int len, float target_rsi, float src, float prev_src, float prev_auc, float prev_adc) =>
+	exp_per = 2 * len - 1
+	// New average up
+	uc  = src > prev_src ? src - prev_src : 0
+	auc = rolling_ema(uc,exp_per,prev_auc)
+	// New average down
+	dc = prev_src > src ? prev_src - src : 0
+	adc = rolling_ema(dc,exp_per,prev_adc)
+	// x factor
+	x = (len - 1) * (adc * target_rsi / (100 - target_rsi) - auc)
+	// RevEngRSI
+	rev_eng_rsi = x >= 0 ? src + x : src + x * (100 - target_rsi) / target_rsi
+	// Return RevEngRSI, auc, adc
+	[rev_eng_rsi, auc, adc]
+
+// @function fill na value from a source with its last non-na
+// @param src source series
+// @returns the series with filled values using previous data point
+export fill_na(series float src) =>
+    ta.valuewhen(not na(src), src, 0)
+
+// @function check if the bar is in right timing as specified
+// @param bar_time the bar's time in UNIX format
+// @param period_seconds the period of bar's timeframe, in seconds
+// @param timing the timing, in seconds
+// @returns true if timing is within bar's session, false otherwise
+export check_bar_time(int bar_open_time, int bar_close_time, int timing) =>
+    bar_open_time <= timing and timing < bar_close_time
+
+// @function checking if any timing is within the bar's time using binary search
+// @param open_time bar's open time in UNIX format
+// @param close_time bar's close time in UNIX format
+// @param timings array of timings
+// @returns true if any timing is within bar's session, false otherwise
+export check_bar_time(int open_time, int close_time, int[] timings) =>
+    found = false
+	// Try copy and then sort
+	sorted_timings = array.copy(timings)
+	array.sort(sorted_timings, order.ascending)
+	timing_left_idx = array.binary_search_leftmost(sorted_timings,open_time)
+	timing_right_idx = array.binary_search_rightmost(sorted_timings,close_time)
+    if timing_right_idx - timing_left_idx > 0
+		for idx = timing_left_idx to timing_right_idx
+			timing = sorted_timings.get(idx)
+			if check_bar_time(open_time,close_time,timing)
+				found := true
+				break
+    found
+
+// @function check if current bar just broke resistance level
+// @param resistance the resistance level
+// @returns true if broke, false otherwise
+export resistance_breakout(float resistance) =>
+    // Breakout if previous bar touches the level but current bar is higher than level
+    low > resistance and low[1] <= resistance
+
+// @function check if current bar just broke support level
+// @param support the support level
+// @returns true if broke, false otherwise
+export support_breakout(float support) =>
+    // Breakout if previous bar touches the level but current bar is lower than level
+    high < support and high[1] >= support
+
+//===============================================================================
+// Precalculated
+//===============================================================================
+
+[bar_pwr, bar_bias] = commonlib.bar_structure()
+
+//===============================================================================
+// Testing
+//===============================================================================
+
+// Structure Power Oscillator
+//-------------------------------------------------------------------------------
+spo_grp = '► Structure Power Oscillator'
+spo_bias_len = input.int(9,'Bias length',group = spo_grp)
+spo_bias_sma_len = input.int(16,'SMA length',group = spo_grp)
+spo_rssi_len = input.int(14,'RSSI length', group = spo_grp)
+spo_rssi_bullish = input.float(60,'RSSI Bullish Threshold',group = spo_grp)
+spo_rssi_bearish = input.float(40,'RSSI Bearish Threshold',group = spo_grp)
+
+bar_bias_rma = ta.rma(bar_bias, spo_bias_len)
+bar_bias_sma = ta.sma(bar_bias_rma, spo_bias_sma_len)
+bar_bias_dir = 3 * bar_bias_rma - 2 * bar_bias_sma
+rssi = ta.rsi(bar_pwr,spo_rssi_len)
+bar_pwr_reversion = open - bar_bias_rma
+bias_reversion_value = ta.sma(bar_pwr_reversion, spo_bias_len)
+
+bias_rma_color = switch bar_bias_rma > 0
+	true => color.new(color.teal, 20)
+	false => color.new(color.maroon, 20)
+bias_sma_color = switch bar_bias_sma > 0
+	true => color.new(color.green, 70)
+	false => color.new(color.red, 70)
+bias_dir_color = switch bar_bias_dir > 0
+	true => color.new(color.aqua, 80)
+	false => color.new(color.orange, 80)
+bias_bg = switch
+	rssi >= spo_rssi_bullish => color.new(color.teal,80)
+	rssi <= spo_rssi_bearish => color.new(color.maroon,80)
+	=> color(na)
+
+// plot(bar_pwr, 'Bar Power', color = color.new(bias_rma_color,80), style = plot.style_line, force_overlay = true) // Almost invisible, plot to use as source for other indicators
+plot(bias_reversion_value, 'Bias Reversion Value', color = color.new(color.purple,50), linewidth = 2, style = plot.style_line, force_overlay = true)
+plot(bar_bias_rma, 'Bias RMA', color = bias_rma_color, style = plot.style_histogram, force_overlay = false)
+plot(bar_bias_sma, 'Bias SMA', color = bias_sma_color, style = plot.style_columns, force_overlay = false)
+plot(bar_bias_dir, 'Bias Direction', color = bias_dir_color, style = plot.style_area, force_overlay = false)
+bgcolor(bias_bg, title = 'Bias Bullish/Bearish')
+
+// Scaled Relative Liquidity Index
+//-------------------------------------------------------------------------------
+rli_grp = '► Scaled Relative Liquidity Index'
+rli_enable = input.bool(true,'Enable',group = rli_grp)
+rli_atr_len = input.int(16,"RLI's ATR length",group = rli_grp)
+rli_len = input.int(9,'RLI length',group = rli_grp)
+rli_low_color = input.color(color.new(color.red,25),'Low liquidity color',group = rli_grp)
+rli_high_color = input.color(color.new(color.teal,25),'High liquidity color',group = rli_grp)
+rli_gradient_bg_enable = input.bool(true,'Show gradient background',group = rli_grp)
+rli_gradient_bg_transparency = input.int(90,'Gradient transparency',minval=0,maxval=100,group = rli_grp)
+rli_gradient_ignore_upperbound = input.float(75, "Ignore high RLI gradient until this value", group = rli_grp)
+rli_gradient_ignore_lowerbound = input.float(25, "Ignore low RLI gradient until this value", group = rli_grp)
+
+rli = relative_liquidity_index(rli_atr_len,rli_len)
+shifted_rli = rli - 50
+scaled_rli = shifted_rli * bar_bias_rma / 50
+
+rli_atr = ta.atr(rli_atr_len)
+
+rli_color = color.from_gradient(rli,0,100,rli_low_color,rli_high_color)
+rli_bg_color = rli_enable and rli_gradient_bg_enable and (rli <= rli_gradient_ignore_lowerbound or rli >= rli_gradient_ignore_upperbound) ? color.new(rli_color,rli_gradient_bg_transparency) : color(na)
+plot(rli_enable ? scaled_rli : na,'Scaled RLI',color = rli_color,linewidth = 2,force_overlay = false)
+
+bgcolor(rli_bg_color,force_overlay = true)
+
+// Key gap
+//-------------------------------------------------------------------------------
+key_gap_grp = '► Key gaps'
+key_gap_enable = input.bool(true, 'Enable', group = key_gap_grp)
+key_gap_atr_len = input.int(16, 'base ATR length', group = key_gap_grp)
+key_gap_threshold = input.float(2.618, 'ATR mult',group = key_gap_grp)
+key_gap_cap = input.float(4.236, 'ATR upper cap',group = key_gap_grp)
+key_gap_body_percent = input.float(0.618, 'Min body percent', minval=0, maxval=1,group = key_gap_grp)
+key_gap_buffer = input.int(512, 'Buffer', minval = 0, group = key_gap_grp)
+key_gap_visible_range_tolerance = input.float(0.1, "Visible range tolerance (for drawings)", group = key_gap_grp)
+key_gap_heatmap_inline = 'Gap heatmap'
+key_gap_heatmap_offset = input.int(4, 'Heatmap offset', group = key_gap_grp, inline = key_gap_heatmap_inline)
+key_gap_heatmap_width = input.int(6, 'Heatmap width (0 to disable)', group = key_gap_grp, inline = key_gap_heatmap_inline)
+key_gap_zone_count = input.int(5, 'Draw most recent gaps (0 to disable)', minval = 0, group = key_gap_grp)
+key_gap_gradient_inline = 'Gradient'
+key_gap_gradient_low = input.color(color.new(color.aqua, 90), key_gap_gradient_inline, group = key_gap_grp, inline = key_gap_gradient_inline)
+key_gap_gradient_high = input.color(color.new(color.teal, 85), '', group = key_gap_grp, inline = key_gap_gradient_inline)
+key_gap_inverse_gradient = input.bool(true, "Inverse gradient based on candle color", group = key_gap_grp, inline = key_gap_gradient_inline)
+
+// Global vars
+var array<KeyGap> key_gaps = array.new<KeyGap>(key_gap_buffer, na)
+var array<float> key_gap_highs = array.new<float>(key_gap_buffer, na)
+var array<float> key_gap_lows = array.new<float>(key_gap_buffer, na)
+var array<plot_lib.TfBarZonePlot> key_gaps_plt = array.new<plot_lib.TfBarZonePlot>(key_gap_zone_count, na)
+var array<box> key_wicks_plt = array.new<box>(key_gap_zone_count, na)
+var array<box> key_level_boxes = array.new<box>()
+
+// Calculations
+[visible_low, visible_high] = commonlib.visible_price_range()
+visible_range_delta = key_gap_visible_range_tolerance * (visible_high - visible_low)
+visible_tolerance_low = visible_low - visible_range_delta
+visible_tolerance_high = visible_high + visible_range_delta
+key_gap_atr = ta.atr(key_gap_atr_len)
+key_gap_candle_spread = high - low
+key_gap_candle_spread_mult = key_gap_candle_spread / key_gap_atr[1]
+candle_is_key = key_gap_candle_spread_mult >= key_gap_threshold and math.abs(commonlib.bar_body_percent()) >= key_gap_body_percent
+
+if candle_is_key and key_gap_buffer > 0
+	// Remove old gaps
+	key_gaps.shift()
+	key_gap_highs.shift()
+	key_gap_lows.shift()
+
+	tf_secs = timeframe.in_seconds()
+	bar = plot_lib.TfBar.new(open, high, low, close, time, time_close)
+	bar_zone = plot_lib.TfBarZone.new(tf_secs, bar)
+	key_gaps.push(KeyGap.new(bar_zone, key_gap_candle_spread, key_gap_candle_spread_mult))
+	key_gap_highs.push(high)
+	key_gap_lows.push(high)
+
+// Plot
+if barstate.islast
+	if key_gap_enable and key_gap_zone_count > 0
+		// Remove and clear old plots
+		while key_gaps_plt.size() > 0
+			oldest_zone_plt = key_gaps_plt.shift()
+			if not na(oldest_zone_plt)
+				plot_lib.clear_tf_zone(oldest_zone_plt)
+			oldest_wick_plt = key_wicks_plt.shift()
+			if not na(oldest_wick_plt)
+				oldest_wick_plt.delete()
+	if key_gap_enable
+		for b in key_level_boxes
+			b.delete()
+		key_level_boxes.clear()
+
+	// Calculated indices of gaps with valid highs
+	inclusive_high_indices = array.new<int>()
+	sorted_indices = key_gap_highs.sort_indices(order.ascending)
+	sorted_vals = key_gap_highs.copy()
+	sorted_vals.sort(order.ascending)
+	min_idx_idx = sorted_vals.binary_search_leftmost(visible_tolerance_low)
+	for idx_idx = min_idx_idx to sorted_indices.size() -1
+		idx = sorted_indices.get(idx_idx)
+		inclusive_high_indices.push(idx)
+	// Calculated indices of gaps with valid lows
+	inclusive_low_indices = array.new<int>()
+	sorted_indices := key_gap_lows.sort_indices(order.ascending)
+	sorted_vals := key_gap_lows.copy()
+	sorted_vals.sort(order.ascending)
+	max_idx_idx = sorted_vals.binary_search_rightmost(visible_tolerance_high) - 1
+	for idx_idx = 0 to max_idx_idx
+		idx = sorted_indices.get(idx_idx)
+		inclusive_low_indices.push(idx)
+	
+	inclusive_indices = array.new<int>()
+	if inclusive_low_indices.size() < inclusive_high_indices.size()
+		for idx in inclusive_low_indices
+			// Assume indexing is faster than looping due to compiler optimizations
+			if inclusive_high_indices.indexof(idx) != -1
+				inclusive_indices.push(idx)
+	else
+		for idx in inclusive_high_indices
+			if inclusive_low_indices.indexof(idx) != -1
+				inclusive_indices.push(idx)
+	// Sort indices from latest to oldest
+	inclusive_indices.sort(order.descending)
+
+	for idx in inclusive_indices
+		gap = key_gaps.get(idx)
+		// Skip empty slots in buffer
+		if na(gap)
+			continue
+
+		// Plot zones
+		if key_gap_enable and key_gaps_plt.size() <= key_gap_zone_count
+			clr = color.from_gradient(gap.relative_spread, key_gap_threshold, key_gap_cap, key_gap_gradient_low, key_gap_gradient_high)
+			if key_gap_inverse_gradient and gap.zone.bar.c < gap.zone.bar.o
+				// Invert the color
+				clr := color.rgb(255 - color.r(clr), 255 - color.g(clr), 255 - color.b(clr), color.t(clr))
+			plt = plot_lib.plot_tf_zone(gap.zone, clr)
+			key_gaps_plt.push(plt)
+			wick_box = box.new(left = gap.zone.bar.t_o,
+								 top = gap.zone.bar.c > gap.zone.bar.o ? gap.zone.bar.o : gap.zone.bar.h,
+								 right = time_close,
+								 bottom = gap.zone.bar.c > gap.zone.bar.o ? gap.zone.bar.l : gap.zone.bar.o,
+								 border_color = clr,
+								 border_width = 2,
+								 border_style = line.style_solid,
+								 extend = extend.none,
+								 xloc = xloc.bar_time,
+								 bgcolor = clr,
+								 force_overlay = true)
+			key_wicks_plt.push(wick_box)
+
+		// Plot heatmap
+		if key_gap_enable
+			clr = color.from_gradient(gap.relative_spread, key_gap_threshold, key_gap_cap, key_gap_gradient_low, key_gap_gradient_high)
+			if key_gap_inverse_gradient and gap.zone.bar.c < gap.zone.bar.o
+				// Invert the color
+				clr := color.rgb(255 - color.r(clr), 255 - color.g(clr), 255 - color.b(clr), color.t(clr))
+			b = box.new(left = bar_index + key_gap_heatmap_offset,
+						 top = gap.zone.bar.h,
+						 right = bar_index + key_gap_heatmap_offset + key_gap_heatmap_width,
+						 bottom = gap.zone.bar.l,
+						 border_color = color(na),
+						 border_width = 2,
+						 border_style = line.style_solid,
+						 xloc = xloc.bar_index,
+						 bgcolor = clr,
+						 force_overlay = true)
+			key_level_boxes.push(b)
+
+// Biased candle
+//-------------------------------------------------------------------------------
+biased_candle_grp = '► Biased candle'
+biased_candle_enable = input.bool(true,'Enable',group = biased_candle_grp)
+
+[top_wick, bottom_wick, body] = candle_split_percent(open,high,low,close)
+candle_wick_bias = bottom_wick >= 0.236 ? 1 : top_wick >= 0.236 ? -1 : na
+candle_bias = (hlc3 - low) / (high - low)
+candle_bias_rising = ta.rising(hlc3[1],1)
+candle_bias_falling = ta.falling(hlc3[1],1)
+candle_rising = candle_wick_bias > 0 and candle_bias >= 0.5
+candle_falling = candle_wick_bias < 0 and candle_bias < 0.5
+stronger_candle = (high - low) / (high[1] - low[1]) >= 1.5
+
+candle_strictly_rising = candle_rising and candle_bias_falling and stronger_candle
+candle_strictly_falling = candle_falling and candle_bias_rising and stronger_candle
+
+// plot(not candle_rising and not candle_falling ? ohlc4 : na,'Price balance',style = plot.style_linebr,linewidth = 2, color = color.silver,force_overlay = true)
+plotshape(biased_candle_enable and candle_strictly_rising,'Biased candle rising',style=shape.triangleup,location=location.belowbar,color=color.green,force_overlay = true)
+plotshape(biased_candle_enable and candle_strictly_falling,'Biased candle falling',style=shape.triangledown,location=location.abovebar,color=color.red,force_overlay = true)
+
+// Leverage table
+//-------------------------------------------------------------------------------
+lvrg_tb_grp = '► Leverage table'
+lvrg_tb_enable = input.bool(true,'Enable',group = lvrg_tb_grp)
+lvrg_tb_mult = input.float(0.618,'Slippage tolerance percentage',group = lvrg_tb_grp)
+lvrg_tb_sl = input.float(0.1, 'SL percentage', minval=0.01,maxval=1,group=lvrg_tb_grp)
+lvrg_tb_position = input.string(position.bottom_left,'Position',options = [position.bottom_center,position.bottom_left,position.bottom_right,position.middle_center,position.middle_left,position.middle_right,position.top_center,position.top_left,position.top_right],group = lvrg_tb_grp)
+lvrg_tb_overlay = input.bool(true,'Overlay',group = lvrg_tb_grp)
+
+var table lvrg_tb = na
+
+// Update leverage table
+if lvrg_tb_enable
+	lvrg_tb := display_lvrg_table(atr_len = rli_atr_len, sl_percent = lvrg_tb_sl, tolerance = lvrg_tb_mult,pos = lvrg_tb_position,overlay = lvrg_tb_overlay)
+
+// ATR bands
+//-------------------------------------------------------------------------------
+atrband_grp = '► ATR bands'
+atrband_len = input.int(42,'Length',group = atrband_grp)
+atrband_mult = input.float(1.618,'Mult (0 to disable)',group = atrband_grp)
+atrband_color_inline = 'Colors (upper/lower)'
+atrband_upper_color = input.color(color.new(color.green,50),atrband_color_inline,group = atrband_grp,inline = atrband_color_inline)
+atrband_lower_color = input.color(color.new(color.red,50),atrband_color_inline,group = atrband_grp,inline = atrband_color_inline)
+
+atrband_atr = ta.atr(atrband_len)
+atrband_osc = atrband_atr * atrband_mult
+atrband_upper = atrband_osc != 0 ? open + atrband_osc : na
+atrband_lower = atrband_osc != 0 ? open - atrband_osc : na
+
+atrband_buying_climax = ta.crossover(atrband_lower, bias_reversion_value)
+atrband_selling_climax = ta.crossunder(atrband_upper, bias_reversion_value)
+
+atrband_reversion = switch
+	bias_reversion_value <= atrband_lower => 100 * (bias_reversion_value - atrband_lower) / atrband_osc
+	bias_reversion_value >= atrband_upper => 100 * (bias_reversion_value - atrband_upper) / atrband_osc
+	=> na
+
+if barstate.isconfirmed and not na(atrband_reversion) and math.abs(atrband_reversion) > 1e-3
+	log.info("ATR reversion: {0}", atrband_reversion)
+
+plot(atrband_upper,'ATR band upper', color = atrband_upper_color, linewidth = 1,force_overlay = true)
+plot(atrband_lower,'ATR band lower', color = atrband_lower_color, linewidth = 1,force_overlay = true)
+
+plotshape(close >= atrband_upper  ? high : na, 'Buying climax',style = shape.circle,location = location.absolute, color = color.rgb(157, 225, 159, 70), size = size.normal, force_overlay = true)
+plotshape(close <= atrband_lower ? low : na, 'Selling climax',style = shape.circle,location = location.absolute, color = color.rgb(201, 134, 134, 70), size = size.normal, force_overlay = true)
+plotarrow((atrband_reversion > 50 and rssi < 46) or (atrband_reversion < -50 and rssi > 54) ? atrband_reversion : na, 'ATR Band Reversion', color.rgb(150,225,150, 25),color.rgb(220, 80, 80, 25), force_overlay = true)
+
+// Overbought/Oversold price by reverse engineering RSI
+//-------------------------------------------------------------------------------
+revengrsi_grp = '► Reverse Engineering RSI'
+revengrsi_transp = input.int(80, "Transparency",group = revengrsi_grp)
+revengrsi_src = input.string('pow', 'Source', options = ['open','high','low','close','hl2','hlc3','ohlc4','pow'],group = revengrsi_grp)
+revengrsi_len = input.int(14,'Length (0 to disable)',group = revengrsi_grp,tooltip = 'Ref: https://c.mql5.com/forextsd/forum/138/reverse_engineering_rsi.pdf')
+revengrsi_ghost_inline = 'Ghost high/low (0 to disable)'
+revengrsi_ghost_len = input.int(9,revengrsi_ghost_inline,group = revengrsi_grp,inline = revengrsi_ghost_inline)
+revengrsi_ghost_src = input.string('high/low','Source',options = ['open','high/low','close','hl2','hlc3','ohlc4','pow'],group = revengrsi_grp,inline = revengrsi_ghost_inline)
+revengrsi_ghost_bullish_threshold = input.float(70,'Bullish',group = revengrsi_grp,inline = revengrsi_ghost_inline)
+revengrsi_ghost_bearish_threshold = input.float(30,'Bearish',group = revengrsi_grp,inline = revengrsi_ghost_inline)
+
+equilibrium_src = switch revengrsi_src
+	'open' => open
+	'high' => high
+	'low' => low
+	'close' => close
+	'hl2' => hl2
+	'hlc3' => hlc3
+	'ohlc4' => ohlc4
+	'pow' => bar_pwr
+equilibrium = revengrsi_len > 0 ? reverse_engineering_rsi(revengrsi_len,50,equilibrium_src) : na
+
+ghost_upper_src = switch revengrsi_ghost_src
+	'open' => open
+	'high/low' => high
+	'close' => close
+	'hl2' => hl2
+	'hlc3' => hlc3
+	'ohlc4' => ohlc4
+	'pow' => bar_pwr
+ghost_lower_src = switch revengrsi_ghost_src
+	'open' => open
+	'high/low' => low
+	'close' => close
+	'hl2' => hl2
+	'hlc3' => hlc3
+	'ohlc4' => ohlc4
+	'pow' => bar_pwr
+ghost_bullish_threshold = revengrsi_ghost_len > 0 ? reverse_engineering_rsi(revengrsi_ghost_len,revengrsi_ghost_bullish_threshold,ghost_upper_src) : na
+ghost_bearish_threshold = revengrsi_ghost_len > 0 ? reverse_engineering_rsi(revengrsi_ghost_len,revengrsi_ghost_bearish_threshold,ghost_lower_src) : na
+
+plot(equilibrium,'Equilibrium', color = color.new(color.silver,revengrsi_transp),style = plot.style_circles,force_overlay = true)
+plot(ghost_bullish_threshold,'Ghost Bullish Threshold', color = color.new(color.blue,revengrsi_transp), linewidth = 5,force_overlay = true)
+plot(ghost_bearish_threshold,'Ghost Bearish Threshold', color = color.new(color.orange,revengrsi_transp), linewidth = 5,force_overlay = true)
+
+// Bollinger Bands Remix
+//-------------------------------------------------------------------------------
+bb_grp = '► Bollinger Bands Remix'
+bb_src = input.string('close','Source',options = ['open','high','low','close','hl2','hlc3','ohlc4','pow'],group = bb_grp)
+bb_len_inline = 'Lengths (0 to disable)'
+bbf_len = input.int(16,bb_len_inline,group = bb_grp,inline = bb_len_inline)
+bbs_len = input.int(42,'',group = bb_grp,inline = bb_len_inline)
+bb_mult_inline = 'Mult (0 to disable)'
+bb_mult_primary = input.float(2,bb_mult_inline,group = bb_grp, inline = bb_mult_inline)
+bb_mult_secondary = input.float(3,'',group = bb_grp, inline = bb_mult_inline)
+bb_color_inline = 'BB cloud gradient colors (opacity 0% to hide clouds)'
+bb_inner_color = input.color(color.new(#da9f2a, 88),'Inner',group = bb_grp, inline = bb_color_inline)
+bb_outer_color = input.color(color.new(#675a56, 90),'Outer',group = bb_grp, inline = bb_color_inline)
+bb_mid_transp = input.int(100,'BB mid transparency (100 to hide lines)',minval=0,maxval=100,group = bb_grp)
+bb_border_transp = input.int(88,'BB border (upper/lower) transparency (100 to hide lines)',minval=0,maxval=100,group = bb_grp)
+bb_cloud_trend_colors_inline = 'BB cloud trend colors'
+bb_cloud_trend_inner_up = input.color(color.new(#4d9c6d, 80),'Up inner gradient',group = bb_grp,inline = bb_cloud_trend_colors_inline)
+bb_cloud_trend_outer_up = input.color(color.new(#353091, 70),'Up outer gradient',group = bb_grp,inline = bb_cloud_trend_colors_inline)
+bb_cloud_trend_inner_dwn = input.color(color.new(#cb7015, 80),'Down inner gradient',group = bb_grp,inline = bb_cloud_trend_colors_inline)
+bb_cloud_trend_outer_dwn = input.color(color.new(#a70808, 70),'Down outer gradient',group = bb_grp,inline = bb_cloud_trend_colors_inline)
+
+bb_val_src = switch bb_src
+	'open' => open
+	'high' => high
+	'low' => low
+	'close' => close
+	'hl2' => hl2
+	'hlc3' => hlc3
+	'ohlc4' => ohlc4
+	'pow' => bar_pwr
+[bbf_m,bbf_u,bbf_l] = ta.bb(bb_val_src,math.max(1, bbf_len),math.max(1,bb_mult_primary))
+[bbf_m2,bbf_u2,bbf_l2] = ta.bb(bb_val_src,math.max(1, bbf_len),math.max(1,bb_mult_secondary))
+
+[bbs_m,bbs_u,bbs_l] = ta.bb(bb_val_src,math.max(1, bbs_len),math.max(1,bb_mult_primary))
+[bbs_m2,bbs_u2,bbs_l2] = ta.bb(bb_val_src,math.max(1, bbs_len),math.max(1,bb_mult_secondary))
+
+// BB base colors
+bb_inner_mid_color = color.new(bb_inner_color,bb_mid_transp)
+bb_outer_mid_color = color.new(bb_outer_color,bb_mid_transp)
+bb_inner_border_color = color.new(bb_inner_color,bb_border_transp)
+bb_outer_border_color = color.new(bb_outer_color,bb_border_transp)
+
+// BB average
+bba_u = math.avg(bbf_u,bbs_u)
+bba_l = math.avg(bbf_l,bbs_l)
+bba_u2 = math.avg(bbf_u2,bbs_u2)
+bba_l2 = math.avg(bbf_l2,bbs_l2)
+// Band trend
+bba_u_rising = ta.rising(bba_u,2)
+bba_l_falling = ta.falling(bba_l,2)
+bb_inner_upper_color = bba_u_rising and low > bbs_m ? bb_cloud_trend_inner_up : bb_inner_color
+bb_outer_upper_color = bba_u_rising and low > bbs_m ? bb_cloud_trend_outer_up : bb_outer_color
+bb_inner_lower_color = bba_l_falling and high < bbs_m ? bb_cloud_trend_inner_dwn : bb_inner_color
+bb_outer_lower_color = bba_l_falling and high < bbs_m ? bb_cloud_trend_outer_dwn : bb_outer_color
+
+bbf_m_plt = plot(bbf_len > 0 and bb_mult_primary > 0 ? bbf_m : na, 'BB fast middle',color = bb_inner_mid_color,force_overlay = true)
+bbs_m_plt = plot(bbs_len > 0 and bb_mult_primary > 0 ? bbs_m : na, 'BB slow middle',color = bb_outer_mid_color,force_overlay = true)
+
+bbf_u_plt = plot(bbf_len > 0 and bb_mult_primary > 0 ? bbf_u : na, 'BB fast primary upperband',color = bb_inner_border_color,force_overlay = true)
+bbf_l_plt = plot(bbf_len > 0 and bb_mult_primary > 0 ? bbf_l : na, 'BB fast primary lowerband',color = bb_inner_border_color,force_overlay = true)
+bbs_u_plt = plot(bbs_len > 0 and bb_mult_primary > 0 ? bbs_u : na, 'BB slow primary upperband',color = bb_outer_border_color,force_overlay = true)
+bbs_l_plt = plot(bbs_len > 0 and bb_mult_primary > 0 ? bbs_l : na, 'BB slow primary lowerband',color = bb_outer_border_color,force_overlay = true)
+
+fill(bbf_u_plt,bbs_u_plt,bbf_u,bbs_u,bb_inner_upper_color,bb_outer_upper_color,'BB primary upper fill')
+fill(bbf_l_plt,bbs_l_plt,bbf_l,bbs_l,bb_inner_lower_color,bb_outer_lower_color,'BB secondary lower fill')
+
+bbf_u2_plt = plot(bbf_len > 0 and bb_mult_secondary > 0 ? bbf_u2 : na, 'BB fast secondary upperband',color = bb_inner_border_color,force_overlay = true)
+bbf_l2_plt = plot(bbf_len > 0 and bb_mult_secondary > 0 ? bbf_l2 : na, 'BB fast secondary lowerband',color = bb_inner_border_color,force_overlay = true)
+bbs_u2_plt = plot(bbs_len > 0 and bb_mult_secondary > 0 ? bbs_u2 : na, 'BB slow secondary upperband',color = bb_outer_border_color,force_overlay = true)
+bbs_l2_plt = plot(bbs_len > 0 and bb_mult_secondary > 0 ? bbs_l2 : na, 'BB slow secondary lowerband',color = bb_outer_border_color,force_overlay = true)
+
+fill(bbf_u2_plt,bbs_u2_plt,bbf_u2,bbs_u2,bb_inner_upper_color,bb_outer_upper_color,'BB secondary upper fill')
+fill(bbf_l2_plt,bbs_l2_plt,bbf_l2,bbs_l2,bb_inner_lower_color,bb_outer_lower_color,'BB secondary lower fill')

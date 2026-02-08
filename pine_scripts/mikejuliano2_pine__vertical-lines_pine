@@ -1,0 +1,108 @@
+//@version=4
+study(title = "Time Helpers - MJ", overlay = true, scale = scale.none)
+
+maxTimeFrameToShowVerticalLines = input(title='Max timeframe to show hourly vertical lines', defval=5, maxval=60, minval=1)
+maxTimeFrameToShowBrinks = input(title='Max timeframe to show Brinks', defval=15, maxval=60, minval=1)
+
+// ----------------------------
+// FUNCTIONS
+// ----------------------------
+
+_getBgColor(isOpen, Color, showBg) => 
+    return = showBg and isOpen ? Color : na
+
+_plotVerticalLine(BarIndex, Color, LineStyle, LineWidth) => // Verticle Line Function, ≈50-54 lines maximum allowable per indicator
+    return = line.new(BarIndex, low - tr, BarIndex, high + tr, xloc.bar_index, extend.both, Color, LineStyle, LineWidth) // Suitable for study(overlay=true)
+
+_plotVerticalLineAtTime(Hour, Minute, Color, LineStyle, LineWidth) =>
+    lineValue = hour == Hour and Minute == minute and timeframe.isminutes and timeframe.multiplier <= maxTimeFrameToShowVerticalLines ? bar_index : na
+    _plotVerticalLine(lineValue, Color, LineStyle, LineWidth)
+
+_getPlotValue(showPlot, isHour, isMinute) => 
+    return = showPlot and isHour and isMinute ? 10e20 : na
+
+_getAllValues(lineLabel, openHour, openMinute, closeHour, closeMinute, timeRange, showBg, showLine, BgColor) =>
+    openHourStr = tostring(openHour)
+    openMinuteStr = tostring(openMinute)
+    closeHourStr = tostring(closeHour)
+    closeMinuteStr = tostring(closeMinute)
+    // timeRange = openHourStr + openMinuteStr + '-' + closeHourStr + closeMinuteStr + ':' + daysOfWeekStr
+
+    isOpeningHour = hour == openHour
+    isOpeningMinute = minute == openMinute
+    isClosingHour = hour == closeHour
+    isClosingMinute = minute == closeMinute
+
+    // plotColor = color.new(color.silver, 50)
+    // openPlotValue = _getPlotValue(showPlot, isOpeningHour, isOpeningMinute)
+    // closePlotValue = _getPlotValue(showPlot, isClosingHour, isClosingMinute)
+    
+    isOpen = time(timeframe.period, timeRange)
+    bgColor = _getBgColor(isOpen, BgColor, showBg)
+    
+    openVerticalLineValue = showLine and isOpeningHour and isOpeningMinute ? bar_index : na
+    closeVerticalLineValue = showLine and isClosingHour and isClosingMinute ? bar_index : na
+    
+    [bgColor, openVerticalLineValue, closeVerticalLineValue]
+
+// ----------------------------
+// BRINKS BOX
+// ----------------------------
+
+brinksBgColor = color.new(color.white, 95)
+brinksLineColor = color.new(color.white, 70)
+brinksLineStyle = line.style_dashed
+brinksLineWidth = 1
+showBrinksBg = true
+showBrinksLine = false
+
+_plotBrinksAndReturnBgColor(lineLabel, openHour, openMinute, closeHour, closeMinute, timeRange) =>
+    isGoodTimeframe = timeframe.multiplier <= maxTimeFrameToShowBrinks
+    [bgColor, openVerticalLineValue, closeVerticalLineValue] = _getAllValues(lineLabel, openHour, openMinute, closeHour, closeMinute, timeRange, showBrinksBg, showBrinksLine, brinksBgColor)
+    if(isGoodTimeframe)
+        _plotVerticalLine(openVerticalLineValue, brinksLineColor, brinksLineStyle, brinksLineWidth)
+        _plotVerticalLine(closeVerticalLineValue, brinksLineColor, brinksLineStyle, brinksLineWidth)
+    [isGoodTimeframe ? bgColor : na]
+
+// New York Brinks
+[bgColorNy] = _plotBrinksAndReturnBgColor('NY Brinks', 13, 00, 14, 00, '1300-1400:12345')
+bgcolor(bgColorNy)
+
+// London Brinks
+[bgColorLondon] = _plotBrinksAndReturnBgColor('London Brinks', 07, 00, 08, 00, '0700-0800:12345')
+bgcolor(bgColorLondon)
+
+
+// --------------------------
+// HOUR LINES
+// --------------------------
+
+_plotHourLines() =>
+    // TODO limit to only a few lines
+    // TODO only weekdays
+    // TODO line label
+    hourLineColor = color.new(#fbc02d, 40)
+    hourLineStyle = line.style_dashed
+    hourLineWidth = 1
+    
+    // plot(hour -1, 'hour')
+
+    for i = 0 to 23
+        _hourToPlot = hour - i
+        hourToPlot = _hourToPlot == -1 ? 23 : _hourToPlot
+        _plotVerticalLineAtTime(i, 00, hourLineColor, hourLineStyle, hourLineWidth)
+
+_plotHourLines()
+
+
+
+
+
+
+
+// plot the high and low of the brinks
+// add vertical lines to sessions script
+// show the full hour of the brinks from the beginning
+// label the brinks
+// label vertical lines
+// limit the number of vertical lines

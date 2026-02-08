@@ -1,0 +1,46 @@
+// MACD indicator
+//
+// Input configuration
+// - sourceInput: close; the OHLC input for the fast and slow moving averages
+// - fastLengthInput: 12; number of periods for the source fast moving average 
+// - slowLengthInput: 26; number of periods for the source slow moving average
+// - signalSmoothingInput: 9; number of periods for the macd moving average
+//
+// Output:
+// - Macd solid line
+// - Signal solid line
+// - Histogram of difference between the MACD and Signal lines, positive: green, negative: red 
+// - Zero dotted line
+
+//@version=5
+indicator("MACD", overlay=false, timeframe="D", timeframe_gaps=true)
+
+// Input parameters
+float   sourceInput          = input.source(close, title="Source")
+int     fastLengthInput      = input.int(12, minval=1, title="Fast Length")
+int     slowLengthInput      = input.int(26, minval=1, title="Slow Length")
+int     signalSmoothingInput = input.int(9, minval=1, title="Signal Smoothing")
+
+// MACD calculation
+macd() =>
+    fastMA      = ta.ema(sourceInput, fastLengthInput)
+    slowMA      = ta.ema(sourceInput, slowLengthInput)
+    macdLine    = fastMA - slowMA
+    signalLine  = ta.ema(macdLine, signalSmoothingInput)
+    [macdLine, signalLine]
+
+[macdLine, signalLine] = macd()
+float histogram = macdLine - signalLine
+
+// Plot the lines
+plot(macdLine, color=color.blue, title="MACD Line")
+plot(signalLine, color=color.orange, title="Signal Line")
+
+// Historgram colored by sign
+color histogramColor = color.green
+if(histogram < 0)
+    histogramColor := color.red
+
+plot(histogram, color=histogramColor, title="Histogram", style=plot.style_columns, linewidth=2)
+
+hline(0, "Zero Line", color=color.gray)

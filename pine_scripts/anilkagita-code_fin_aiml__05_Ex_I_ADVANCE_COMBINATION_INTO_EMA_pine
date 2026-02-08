@@ -1,0 +1,63 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Dynamictradingstrategies
+
+//@version=5
+indicator("ADVANCE COMBINATION OF INDICATOR INTO EMA", overlay = true)
+
+//// USER INPUTS 
+
+
+//// DMI 
+
+length_DI = input.int(defval = 14, title = "DI LENGTH", group = "DMI SETTINGS", inline ="1")
+length_ADX = input.int(defval = 14, title = "ADX LENGTH",group = "DMI SETTINGS", inline ="1")
+
+
+//// MACD 
+
+fast_l = input.int(defval = 12, title = "FAST LENGTH", group = "MACD SETTINGS", inline ="1")
+slow_l = input.int(defval = 26, title = "SLOW LENGTH", group = "MACD SETTINGS", inline ="1")
+sig_l = input.int(defval = 9, title = "SIGNAL LENGTH", group = "MACD SETTINGS", inline ="1")
+
+
+//// EMA 
+
+EMA_L = input.int(defval = 13, title = "EMA LENGTH",group = "EMA SETTINGS", inline ="1")
+
+
+/// RSI WITH OVERBOUGHT & OVERSOLD 
+
+RSI_L = input.int(defval = 14, title = "RSI LENGTH", group = "RSI SETTINGS", inline ="1")
+OVERBOUGHT = input.int(defval = 60, title = "OB",group = "RSI SETTINGS", inline ="1")
+OVERSOLD = input.int(defval = 40, title = "OS",group = "RSI SETTINGS", inline ="1")
+
+
+//////// TRADING INDICATORS 
+
+
+[macdLine, signalLine, histLine] = ta.macd(close, fast_l, slow_l, sig_l) /// MACD
+[diplus, diminus, adx] = ta.dmi(length_DI, length_ADX) // DMI
+RSI = ta.rsi(close,RSI_L) // RSI
+EMA = ta.ema(close,EMA_L) // EMA
+ADX_EMA = ta.ema(adx,13) // ADX ON EMA // SMOOTH ADX
+
+
+
+//// BUY AND SHORT CONDITION 
+
+BUY = RSI > OVERBOUGHT and histLine > 0 and diplus > diminus and ADX_EMA > ADX_EMA[1]
+SHORT = RSI < OVERSOLD and histLine < 0 and diminus > diplus and ADX_EMA > ADX_EMA[1]
+
+
+/// PLOT ADVANCE EMA
+
+plot(EMA, color = BUY ? color.rgb(0, 255, 8) : SHORT ? color.rgb(255, 0, 0) : color.rgb(0, 0, 0), linewidth = 3)
+
+
+///// ALERTS
+
+if BUY
+    alert("BUY", alert.freq_once_per_bar_close)
+
+if SHORT
+    alert("SHORT", alert.freq_once_per_bar_close)

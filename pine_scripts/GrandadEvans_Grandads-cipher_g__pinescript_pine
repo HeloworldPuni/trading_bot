@@ -1,0 +1,555 @@
+//@version=6
+//@description Personalised adaptation of Market Cipher B
+//@author GrandadEvans<john@grandadevans.com>
+// This script is available on GitHub at https://github.com/GrandadEvans/Grandads-cipher_b
+// Script version: 0.01
+
+indicatorShortTitle = "Grandad's Cipher B"
+indicator(
+     title="Grandad&#039;s Cipher B with alerts",
+     shorttitle=indicatorShortTitle,
+     overlay = false
+     )
+
+// Inputs
+int smallDotSize = input.int(
+     defval = 3,
+     display = display.none,
+     group="Dots",
+     title = "Dot Size",
+     tooltip = "How large should the dots be"
+     )
+
+int largeDotMultiplier = input.int(
+     defval=2,
+     display=display.none,
+     group="Dots",
+     title="Large Dot Multiplier",
+     tooltip = "How much do you want to multiply the size of the dot when multiple conditions are met?"
+     )
+
+color redDotColor = input.color(
+     defval = color.red,
+     display = display.none,
+     group = "Dots",
+     title = '"Red" dot color'
+     )
+
+color greenDotColor = input.color(
+     defval = color.lime,
+     display = display.none,
+     group = "Dots",
+     title = '"Green" dot color'
+     )
+
+int channelLength = input.int(
+     defval=10,
+     display=display.none,
+     group = "Momentum",
+     title="Channel Length"
+     )
+
+int averageLength = input.int(
+     defval=21,
+     display=display.none,
+     group = "Momentum",
+     title="Average Length"
+     )
+
+int obLevel = input.int(
+     defval=60,
+     display=display.none,
+     title="Over Bought Level"
+     )
+
+int osLevel = input.int(
+     defval=-60,
+     display=display.none,
+     title="Over Sold Level"
+     )
+
+int mfiObLevel = input.int(
+     defval=80,
+     display=display.none,
+     group="MFI",
+     title="Over Sold Level"
+     )
+
+color mfiObColor = input.color(
+     defval = color.new(color = color.green, transp = 50),
+     display = display.none,
+     group="MFI",
+     title = "Over-bought line color"
+     )
+
+color mfiNegativeColor = input.color(
+     defval = color.new(color = color.red, transp = 50),
+     display = display.none,
+     group="MFI",
+     title = "Negative value color"
+     )
+
+color mfiPositiveColor = input.color(
+     defval = color.new(color = color.lime, transp = 50),
+     display = display.none,
+     group="MFI",
+     title = "Positive value color"
+     )
+
+int mfiOsLevel = input.int(
+     defval=20,
+     display=display.none,
+     group="MFI",
+     title="Over-sold Level"
+     )
+
+color mfiOsColor = input.color(
+     defval = color.new(color = color.green, transp = 50),
+     display = display.none,
+     group="MFI",
+     title = "Over-sold line color"
+     )
+
+color mfiMidColor = input.color(
+     defval = color.new(color = color.green, transp = 50),
+     display = display.none,
+     group="MFI",
+     title = "Mid-level line color"
+     )
+
+int mfiLength = input.int(
+     defval=14,
+     display=display.none,
+     group="MFI",
+     maxval=2000,
+     minval=1,
+     title="MFI Length"
+     )
+
+// === 15m HTF Divergence Settings ===
+bool enableHTF15m = input.bool(
+      defval = true,
+      group = "Divergence Detection",
+      title="Enable 15m Divergence"
+      )
+
+color bullColor15m = input.color(
+      defval = color.lime,
+      group = "Divergence Detection",
+      title = "15m Bullish Divergence Color"
+      )
+
+color bearColor15m = input.color(
+      defval = color.orange,
+      group = "Divergence Detection",
+      title = "15m Bearish Divergence Color"
+      )
+
+// MFI
+mfi = ta.mfi(hlc3, mfiLength)
+// center the mfi around 0
+mfiCentered = mfi - 50
+
+// Split MFI into positive and negative parts
+mfiPositive = mfiCentered >= 0 ? mfiCentered : na
+mfiNegative = mfiCentered < 0 ? mfiCentered : na
+
+// Momentum
+ap = hlc3 
+esa = ta.ema(ap, channelLength)
+d = ta.ema(math.abs(ap - esa), channelLength)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, averageLength)
+wt1 = tci
+wt2 = ta.sma(wt1, 4)
+
+// Bollinger Bands
+bbLength = 20
+bbSrc = close
+bbMultiplier = 2.0
+basis = ta.sma(bbSrc, bbLength)
+dev = bbMultiplier * ta.stdev(bbSrc, bbLength)
+upper = basis + dev
+lower = basis - dev
+
+// Cross conditions
+cu = ta.crossunder(close, lower)
+co = ta.crossover(close, upper)
+bbCross = co or cu
+dotCross = ta.cross(wt1, wt2)
+isBullish = dotCross and (wt2 - wt1 > 0)
+isBearish = dotCross and (wt2 - wt1 <= 0)
+dotColor = isBullish ? redDotColor : greenDotColor
+
+// Main Plots
+plot(
+     mfiPositive,
+     "MFI (positive)",
+     style=plot.style_area,
+     color=mfiPositiveColor,
+     display=display.pane + display.price_scale
+     )
+
+plot(
+     mfiNegative,
+     "MFI (negative)",
+     style=plot.style_area,
+     color=mfiNegativeColor,
+     display=display.pane + display.price_scale
+     )
+
+
+// Plot the zero line for reference
+hline(
+      price = 0,
+      title = "Center Line",
+      color = color.gray
+      )
+
+plot(
+     wt1,
+     style=plot.style_area,
+     color=color.new(color.rgb(137, 211, 250), 50),
+     title="wt1",
+     display=display.pane
+     )
+
+plot(
+     wt2,
+     style=plot.style_area,
+     color=color.new(color.blue, 50),
+     title="wt2",
+     display=display.pane
+     )
+
+plot(
+     wt1 - wt2,
+     color=color.yellow,
+     style=plot.style_area,
+     title="VWAP",
+     display=display.pane + display.price_scale
+     )
+
+// Dot drawing workaround: use two different plots for dynamic size effect
+plot(
+     dotCross and not bbCross ? wt2 : na,
+     color=color.black,
+     style=plot.style_circles,
+     linewidth=smallDotSize + 2,
+     title="Dot BG - Normal",
+     display=display.pane
+     )
+
+plot(
+     dotCross and not bbCross ? wt2 : na,
+     color=dotColor,
+     style=plot.style_circles,
+     linewidth=smallDotSize,
+     title="Dot - Normal",
+     display=display.pane
+     )
+
+plot(
+     dotCross and bbCross ? wt2 : na,
+     color=color.black,
+     style=plot.style_circles,
+     linewidth=(smallDotSize * largeDotMultiplier) + 4,
+     title="Dot BG - BB Confirm",
+     display=display.pane
+     )
+
+plot(
+     dotCross and bbCross ? wt2 : na,
+     color=dotColor,
+     style=plot.style_circles,
+     linewidth=(smallDotSize * largeDotMultiplier) + 2,
+     title="Dot - BB Confirm",
+     display=display.pane
+     )
+
+hline(
+     price=obLevel,
+     title="Wave-trend Overbought",
+     color=color.new(color.blue, 20),
+     linestyle = hline.style_solid,
+     linewidth=1
+     )
+
+hline(
+     price=osLevel,
+     title="Wave-trend Oversold",
+     color=color.new(color.blue, 20),
+     linestyle = hline.style_solid,
+     linewidth=1
+     )
+
+hline(
+     price=mfiObLevel - 50,
+     title="MFI Overbought",
+     color=mfiObColor,
+     linestyle = hline.style_solid,
+     linewidth=1
+     )
+
+hline(
+     price=mfiOsLevel - 50,
+     title="MFI Oversold",
+     color=mfiOsColor,
+     linestyle = hline.style_solid,
+     linewidth=1
+     )
+
+hline(
+     price=((mfiObLevel + mfiOsLevel) / 2),
+     title="MFI Mid-range",
+     color=mfiMidColor,
+     linestyle = hline.style_dashed,
+     linewidth=1
+     )
+
+
+// Alerts
+// alertcondition(
+//      dotCross and bbCross,
+//      title="Buy/Sell signal with Bollinger Band Crossed",
+//      message="Market Cipher B: Dot AND BB cross on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Bollinger Band Cross",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Buy/Sell Signal",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Buy Signal",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Sell Signal",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      mfi > 60,
+//      title="MFI Oversold",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      mfi < 20,
+//      title="MFI Undersold",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Wave-trend Oversold",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+// alertcondition(
+//      bbCross,
+//      title="Wave-trend Undersold",
+//      message="Market Cipher B: Price crossed Bollinger Band on {{ticker}} at {{time}}"
+//      )
+
+var label paneLabel = na
+
+message = mfiCentered > 0 ? "🔔 Money flow is good 🔔" : "Money flow is BAD"
+mfiColor = mfiCentered > 0 ? mfiPositiveColor : mfiNegativeColor
+label.delete(paneLabel)
+
+
+// script to detect bull/bear divs
+
+// Input lengths
+// n1 = input.int(10, title="Channel Length")
+// n2 = input.int(21, title="Average Length")
+
+// Calculate momentum wave
+// ap = hlc3 
+// esa = ta.ema(ap, channelLength)
+// d = ta.ema(math.abs(ap - esa), channelLength)
+// ci = (ap - esa) / (0.015 * d)
+// tci = ta.ema(ci, averageLength)
+// wt1 = tci
+// wt2 = ta.sma(wt1, 4)
+
+// Detect local troughs (negative momentum wave bottoms)
+troughCond = wt2 < 0 and ta.lowestbars(wt2, 5) == 2
+
+var float lastTroughValue = na
+var float lastTroughPrice = na
+var int lastTroughBar = na
+
+var float prevTroughValue = na
+var float prevTroughPrice = na
+var int prevTroughBar = na
+
+if troughCond
+    prevTroughValue := lastTroughValue
+    prevTroughPrice := lastTroughPrice
+    prevTroughBar := lastTroughBar
+
+    lastTroughValue := wt2
+    lastTroughPrice := close
+    lastTroughBar := bar_index
+
+// Compare the two troughs for bullish divergence
+bool bullishDiv = false
+if not na(prevTroughValue) and not na(lastTroughValue)
+    // Momentum getting stronger (less negative), price lower -> bullish divergence
+    bullishDiv := lastTroughValue > prevTroughValue and lastTroughPrice < prevTroughPrice
+
+// Detect local peaks (positive momentum wave tops)
+peakCond = wt2 > 0 and ta.highestbars(wt2, 5) == 2
+
+var float lastPeakValue = na
+var float lastPeakPrice = na
+var int lastPeakBar = na
+
+var float prevPeakValue = na
+var float prevPeakPrice = na
+var int prevPeakBar = na
+
+if peakCond
+    prevPeakValue := lastPeakValue
+    prevPeakPrice := lastPeakPrice
+    prevPeakBar := lastPeakBar
+
+    lastPeakValue := wt2
+    lastPeakPrice := close
+    lastPeakBar := bar_index
+
+// Compare the two peaks for bearish divergence
+bearishDiv = false
+if not na(prevPeakValue) and not na(lastPeakValue)
+    // Momentum weakening (lower high), price higher -> bearish divergence
+    bearishDiv := lastPeakValue < prevPeakValue and lastPeakPrice > prevPeakPrice
+
+// Plotting the detected troughs and peaks
+plotshape(troughCond, title="Momentum Trough", location=location.top, color=color.red, style=shape.triangleup, size=size.large)
+plotshape(peakCond, title="Momentum Peak", location=location.bottom, color=color.blue, style=shape.triangledown, size=size.large)
+
+// Plot bullish divergence marker
+plotshape(bullishDiv ? lastTroughPrice : na, title="Bullish Divergence", location=location.top, color=color.lime, style=shape.labelup, text="Bull Div")
+
+// Plot bearish divergence marker
+plotshape(bearishDiv ? lastPeakPrice : na, title="Bearish Divergence", location=location.bottom, color=color.orange, style=shape.labeldown, text="Bear Div")
+
+
+// detect divergences
+
+// === Function to calculate wt2 ===
+getWT2(src, n1, n2) =>
+    esa = ta.ema(src, n1)
+    d = ta.ema(math.abs(src - esa), n1)
+    ci = (src - esa) / (0.015 * d)
+    tci = ta.ema(ci, n2)
+    wt1 = tci
+    ta.sma(wt1, 4)
+
+// === Fetch wt2 and close from 15m timeframe ===
+[wt2_15m, close_15m] = request.security(syminfo.tickerid, "15", [getWT2(hlc3, channelLength, averageLength), close])
+
+// === Detect peaks/troughs on 15m (simplified) ===
+var float prevLowWT_15m = na
+var float prevLowPrice_15m = na
+var float lastLowWT_15m = na
+var float lastLowPrice_15m = na
+
+var float prevHighWT_15m = na
+var float prevHighPrice_15m = na
+var float lastHighWT_15m = na
+var float lastHighPrice_15m = na
+
+htfTroughCond15m = wt2_15m < 0 and ta.lowestbars(wt2_15m, 5) == 2
+htfPeakCond15m   = wt2_15m > 0 and ta.highestbars(wt2_15m, 5) == 2
+
+if htfTroughCond15m
+    prevLowWT_15m := lastLowWT_15m
+    prevLowPrice_15m := lastLowPrice_15m
+    lastLowWT_15m := wt2_15m
+    lastLowPrice_15m := close_15m
+
+if htfPeakCond15m
+    prevHighWT_15m := lastHighWT_15m
+    prevHighPrice_15m := lastHighPrice_15m
+    lastHighWT_15m := wt2_15m
+    lastHighPrice_15m := close_15m
+
+// === Detect Bullish & Bearish Divergence on 15m ===
+bullDiv15m = enableHTF15m and not na(prevLowWT_15m) and lastLowWT_15m > prevLowWT_15m and lastLowPrice_15m < prevLowPrice_15m
+bearDiv15m = enableHTF15m and not na(prevHighWT_15m) and lastHighWT_15m < prevHighWT_15m and lastHighPrice_15m > prevHighPrice_15m
+
+// === Plot divergence signals from 15m ===
+plotshape(bullDiv15m, title="15m Bullish Divergence", location=location.top, color=bullColor15m, style=shape.labelup, text="15m Bull")
+plotshape(bearDiv15m, title="15m Bearish Divergence", location=location.bottom, color=bearColor15m, style=shape.labeldown, text="15m Bear")
+
+// Plot bullish divergence marker
+plotshape(
+     bullishDiv,
+     title="Bullish Divergence",
+     location=location.bottom,
+     color=color.green,
+     style=shape.triangleup,
+     size=size.small,
+     text="Bull"
+     )
+var bearDivLabel = label.new(
+     x=bar_index,
+     y=na,                         // Use y=na or a fixed value
+     xloc=xloc.bar_index,
+     yloc=yloc.abovebar,             // 👈 This makes it go in the indicator pane
+     style=label.style_triangledown,
+     textcolor=color.white,
+     size=size.tiny,
+     color=mfiColor,
+     force_overlay = true
+     )
+var bullDivLabel = label.new(
+     x=bar_index,
+     y=na,                         // Use y=na or a fixed value
+     xloc=xloc.bar_index,
+     yloc=yloc.abovebar,             // 👈 This makes it go in the indicator pane
+     style=label.style_triangledown,
+     textcolor=color.white,
+     size=size.tiny,
+     color=mfiColor,
+     force_overlay = true
+     )
+var panelLabel = bullishDiv ? bullDivLabel : bearDivLabel
+
+// Plot bearish divergence marker
+plotshape(
+     bearishDiv,
+     title="Bearish Divergence",
+     location=location.top,
+     color=color.red,
+     style=shape.triangledown,
+     size=size.small,
+     text="Bear"
+     )
+
+// Alert conditions
+alertcondition(
+     bullishDiv,
+     title="Bullish Divergence Alert",
+     message="🐂 Bullish divergence detected on {{ticker}} at {{time}}"
+     )
+
+alertcondition(
+     bearishDiv,
+     title="Bearish Divergence Alert",
+     message="🐻 Bearish divergence detected on {{ticker}} at {{time}}"
+     )

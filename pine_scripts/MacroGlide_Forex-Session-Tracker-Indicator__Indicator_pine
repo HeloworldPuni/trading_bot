@@ -1,0 +1,219 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © MacroGlide
+
+//@version=5
+indicator("Forex Session Tracker [MacroGlide]", overlay=true)
+
+// Session inputs
+sa_enabled = input(true, 'New York Session', inline='SA-Line1', group='Session A')
+sa_ses = input.session('1300-2200', '', inline='SA-Line2', group='Session A')
+sa_color = input.color(color.blue, 'Session Color', inline='SA-Line3', group='Session A')
+sa_line_color = input.color(color.new(color.blue, 20), "Open Price Line Color", inline='SA-Line4', group='Session A')
+sa_avg_sessions = input.int(10, 'Avg Sessions', inline='SA-Line5', group='Session A')
+
+sb_enabled = input(true, 'London Session', inline='SB-Line1', group='Session B')
+sb_ses = input.session('0700-1600', '', inline='SB-Line2', group='Session B')
+sb_color = input.color(color.red, 'Session Color', inline='SB-Line3', group='Session B')
+sb_line_color = input.color(color.new(color.red, 20), "Open Price Line Color", inline='SB-Line4', group='Session B')
+sb_avg_sessions = input.int(10, 'Avg Sessions', inline='SB-Line5', group='Session B')
+
+sc_enabled = input(true, 'Tokyo Session', inline='SC-Line1', group='Session C')
+sc_ses = input.session('0000-0900', '', inline='SC-Line2', group='Session C')
+sc_color = input.color(color.purple, 'Session Color', inline='SC-Line3', group='Session C')
+sc_line_color = input.color(color.new(color.purple, 20), "Open Price Line Color", inline='SC-Line4', group='Session C')
+sc_avg_sessions = input.int(10, 'Avg Sessions', inline='SC-Line5', group='Session C')
+
+sd_enabled = input(true, 'Sydney Session', inline='SD-Line1', group='Session D')
+sd_ses = input.session('2100-0600', '', inline='SD-Line2', group='Session D')
+sd_color = input.color(color.yellow, 'Session Color', inline='SD-Line3', group='Session D')
+sd_line_color = input.color(color.new(color.yellow, 20), "Open Price Line Color", inline='SD-Line4', group='Session D')
+sd_avg_sessions = input.int(10, 'Avg Sessions', inline='SD-Line5', group='Session D')
+
+// Option to show/hide the dashboard
+show_dashboard = input(true, 'Show Dashboard', group='Dashboard')
+
+// Timezones settings
+tz_incr = input.int(0, 'UTC (+/-)', group='Timezone')
+use_exchange = input(false, 'Use Exchange Timezone', group='Timezone')
+
+// Determine if the current bar is within a session
+tf = timeframe.period
+var tz = use_exchange ? syminfo.timezone : str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+is_sa = sa_enabled and time(tf, sa_ses, tz) != 0
+is_sb = sb_enabled and time(tf, sb_ses, tz) != 0
+is_sc = sc_enabled and time(tf, sc_ses, tz) != 0
+is_sd = sd_enabled and time(tf, sd_ses, tz) != 0
+
+// Initialize variables to track session start prices
+var float sa_start = na
+var float sb_start = na
+var float sc_start = na
+var float sd_start = na
+
+var float sa_change = na
+var float sb_change = na
+var float sc_change = na
+var float sd_change = na
+
+var float sa_avg_change = na
+var float sb_avg_change = na
+var float sc_avg_change = na
+var float sd_avg_change = na
+
+// Track the minimum and maximum prices for each session
+var float sa_min = na
+var float sa_max = na
+var float sb_min = na
+var float sb_max = na
+var float sc_min = na
+var float sc_max = na
+var float sd_min = na
+var float sd_max = na
+
+// Update the minimum and maximum prices during the active session
+if is_sa
+    sa_min := na(sa_min) ? low : math.min(sa_min, low)
+    sa_max := na(sa_max) ? high : math.max(sa_max, high)
+else
+    sa_min := na
+    sa_max := na
+
+if is_sb
+    sb_min := na(sb_min) ? low : math.min(sb_min, low)
+    sb_max := na(sb_max) ? high : math.max(sb_max, high)
+else
+    sb_min := na
+    sb_max := na
+
+if is_sc
+    sc_min := na(sc_min) ? low : math.min(sc_min, low)
+    sc_max := na(sc_max) ? high : math.max(sc_max, high)
+else
+    sc_min := na
+    sc_max := na
+
+if is_sd
+    sd_min := na(sd_min) ? low : math.min(sd_min, low)
+    sd_max := na(sd_max) ? high : math.max(sd_max, high)
+else
+    sd_min := na
+    sd_max := na
+
+// Update start prices at the beginning of each session
+if (is_sa and na(sa_start))
+    sa_start := open
+if (is_sb and na(sb_start))
+    sb_start := open
+if (is_sc and na(sc_start))
+    sc_start := open
+if (is_sd and na(sd_start))
+    sd_start := open
+
+// Calculate session price changes at the end of each session and reset start prices
+var box sa_box = na
+var box sb_box = na
+var box sc_box = na
+var box sd_box = na
+
+if (not is_sa and not na(sa_start)) 
+    sa_change := close[1] - sa_start
+    if not na(sa_box)
+        label.new((box.get_left(sa_box) + box.get_right(sa_box)) / 2, box.get_top(sa_box), text="NYC Change: " + str.tostring(sa_change), color=color.new(color.blue, 100), style=label.style_label_down, textcolor=color.new(color.white, 50), size=size.small)  // Add label with price change for the New York session
+    sa_start := na
+sa_avg_change := ta.sma(sa_change, sa_avg_sessions)
+
+if (not is_sb and not na(sb_start)) 
+    sb_change := close[1] - sb_start
+    if not na(sb_box)
+        label.new((box.get_left(sb_box) + box.get_right(sb_box)) / 2, box.get_top(sb_box), text="LND Change: " + str.tostring(sb_change), color=color.new(color.red, 100), style=label.style_label_down, textcolor=color.new(color.white, 50), size=size.small)  // Add label with price change for the London session
+    sb_start := na
+sb_avg_change := ta.sma(sb_change, sb_avg_sessions)
+
+if (not is_sc and not na(sc_start)) 
+    sc_change := close[1] - sc_start
+    if not na(sc_box)
+        label.new((box.get_left(sc_box) + box.get_right(sc_box)) / 2, box.get_top(sc_box), text="TKY Change: " + str.tostring(sc_change), color=color.new(color.purple, 100), style=label.style_label_down, textcolor=color.new(color.white, 50), size=size.small)  // Add label with price change for the Tokyo session
+    sc_start := na
+sc_avg_change := ta.sma(sc_change, sc_avg_sessions)
+
+if (not is_sd and not na(sd_start)) 
+    sd_change := close[1] - sd_start
+    if not na(sd_box)
+        label.new((box.get_left(sd_box) + box.get_right(sd_box)) / 2, box.get_top(sd_box), text="SYD Change: " + str.tostring(sd_change), color=color.new(color.yellow, 100), style=label.style_label_down, textcolor=color.new(color.white, 50), size=size.small)  // Add label with price change for the Sydney session
+    sd_start := na
+sd_avg_change := ta.sma(sd_change, sd_avg_sessions)
+
+// Plot session start prices for debugging
+plot(is_sa ? sa_start : na, color=sa_line_color, title='NYC Start Price')
+plot(is_sb ? sb_start : na, color=sb_line_color, title='LND Start Price')
+plot(is_sc ? sc_start : na, color=sc_line_color, title='TKY Start Price')
+plot(is_sd ? sd_start : na, color=sd_line_color, title='SYD Start Price')
+
+// Set session range background color
+if not na(sa_min) and not na(sa_max)
+    if na(sa_box)
+        sa_box := box.new(left = bar_index, top = sa_max, right = bar_index, bottom = sa_min, bgcolor = color.new(sa_color, 80), border_width = 0)
+    box.set_right(sa_box, bar_index)
+    box.set_top(sa_box, sa_max)
+    box.set_bottom(sa_box, sa_min)
+else
+    sa_box := na
+
+if not na(sb_min) and not na(sb_max)
+    if na(sb_box)
+        sb_box := box.new(left = bar_index, top = sb_max, right = bar_index, bottom = sb_min, bgcolor = color.new(sb_color, 80), border_width = 0)
+    box.set_right(sb_box, bar_index)
+    box.set_top(sb_box, sb_max)
+    box.set_bottom(sb_box, sb_min)
+else
+    sb_box := na
+
+if not na(sc_min) and not na(sc_max)
+    if na(sc_box)
+        sc_box := box.new(left = bar_index, top = sc_max, right = bar_index, bottom = sc_min, bgcolor = color.new(sc_color, 80), border_width = 0)
+    box.set_right(sc_box, bar_index)
+    box.set_top(sc_box, sc_max)
+    box.set_bottom(sc_box, sc_min)
+else
+    sc_box := na
+
+if not na(sd_min) and not na(sd_max)
+    if na(sd_box)
+        sd_box := box.new(left = bar_index, top = sd_max, right = bar_index, bottom = sd_min, bgcolor = color.new(sd_color, 80), border_width = 0)
+    box.set_right(sd_box, bar_index)
+    box.set_top(sd_box, sd_max)
+    box.set_bottom(sd_box, sd_min)
+else
+    sd_box := na
+
+// Dashboard
+if show_dashboard
+    var table dashboard = table.new(position.top_right, 5, 6, border_width=1, frame_color=color.new(color.black, 100))
+
+    // Update the dashboard with current session data
+    table.cell(dashboard, 0, 0, "Session", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 0, 1, "Status", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 0, 2, "Last Change", text_color=color.white, bgcolor=color.blue)
+    table.cell(dashboard, 0, 3, "Avg Change", text_color=color.white, bgcolor=color.blue)
+
+    table.cell(dashboard, 1, 0, "New York", text_color=color.blue)
+    table.cell(dashboard, 1, 1, is_sa ? "Active" : "Inactive", text_color=color.white, bgcolor=is_sa ? color.green : color.red)
+    table.cell(dashboard, 1, 2, str.tostring(sa_change), text_color=color.white)
+    table.cell(dashboard, 1, 3, str.tostring(sa_avg_change), text_color=color.white)
+
+    table.cell(dashboard, 2, 0, "London", text_color=color.red)
+    table.cell(dashboard, 2, 1, is_sb ? "Active" : "Inactive", text_color=color.white, bgcolor=is_sb ? color.green : color.red)
+    table.cell(dashboard, 2, 2, str.tostring(sb_change), text_color=color.white)
+    table.cell(dashboard, 2, 3, str.tostring(sb_avg_change), text_color=color.white)
+
+    table.cell(dashboard, 3, 0, "Tokyo", text_color=color.purple)
+    table.cell(dashboard, 3, 1, is_sc ? "Active" : "Inactive", text_color=color.white, bgcolor=is_sc ? color.green : color.red)
+    table.cell(dashboard, 3, 2, str.tostring(sc_change), text_color=color.white)
+    table.cell(dashboard, 3, 3, str.tostring(sc_avg_change), text_color=color.white)
+
+    table.cell(dashboard, 4, 0, "Sydney", text_color=color.yellow)
+    table.cell(dashboard, 4, 1, is_sd ? "Active" : "Inactive", text_color=color.white, bgcolor=is_sd ? color.green : color.red)
+    table.cell(dashboard, 4, 2, str.tostring(sd_change), text_color=color.white)
+    table.cell(dashboard, 4, 3, str.tostring(sd_avg_change), text_color=color.white)
+
+

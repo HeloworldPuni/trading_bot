@@ -1,0 +1,72 @@
+//@version=5
+// Step 1. Script settings
+indicator(title="Double Exponential Moving Average", shorttitle="DEMA", 
+     overlay=true)
+
+// Input options
+srcData = input.source(close, title="Source Data")
+
+// Length settings
+len1 = input.int(21, title="Length DEMA #1", minval=1)
+len2 = input.int(0, title="Length DEMA #2", minval=0)
+len3 = input.int(0, title="Length DEMA #3", minval=0)
+
+// Visual options
+showSignals = input.bool(true, title="Show Signals?")
+
+// Step 2. Calculate indicator values
+// Function that calculates the DEMA
+DEMA(series, length) =>
+    if length > 0
+        emaValue = ta.ema(series, length)
+        2 * emaValue - ta.ema(emaValue, length)
+    else
+        na
+
+// Calculate the DEMA values
+demaVal1 = DEMA(srcData, len1)
+demaVal2 = DEMA(srcData, len2)
+demaVal3 = DEMA(srcData, len3)
+
+// Step 3. Determine indicator signals
+// See if there's a DEMA crossover
+demaCrossover = if len2 > 0 and len3 > 0
+    ta.crossover(demaVal1, demaVal2) and demaVal3 > demaVal3[1]
+else if len2 > 0 and len3 == 0
+    ta.crossover(demaVal1, demaVal2)
+else if len3 > 0 and len2 == 0
+    ta.crossover(demaVal1, demaVal3)
+else
+    ta.crossover(close, demaVal1)
+
+// Check if there's a DEMA crossunder
+demaCrossunder = if len2 > 0 and len3 > 0
+    ta.crossunder(demaVal1, demaVal2) and demaVal3 < demaVal3[1]
+else if len2 > 0 and len3 == 0
+    ta.crossunder(demaVal1, demaVal2)
+else if len3 > 0 and len2 == 0
+    ta.crossunder(demaVal1, demaVal3)
+else
+    ta.crossunder(close, demaVal1)
+
+// Step 4. Output indicator data
+// Plot DEMAs on the chart
+plot(demaVal1, color=color.orange, linewidth=2, title="DEMA #1")
+plot(demaVal2, color=color.blue, linewidth=2, title="DEMA #2")
+plot(demaVal3, color=color.fuchsia, linewidth=2, title="DEMA #3")
+
+// Highlight DEMA signals
+bgColour = demaCrossover ? color.new(color.green, 80) :
+     demaCrossunder ? color.new(color.red, 80) :
+     na
+
+bgcolor(showSignals ? bgColour : na)
+
+// Step 5. Create indicator alerts
+alertcondition(condition=demaCrossover,
+     title="Crossover",
+     message="DEMA generated a buy (crossover) signal")
+
+alertcondition(condition=demaCrossunder,
+     title="Crossunder",
+     message="DEMA generated a sell (crossunder) signal")

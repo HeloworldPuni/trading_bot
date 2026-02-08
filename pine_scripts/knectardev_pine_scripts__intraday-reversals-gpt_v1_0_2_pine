@@ -1,0 +1,181 @@
+//@version=5
+// =============================================================================
+// INDICATOR: Intraday reversals (gpt)
+// FILENAME: intraday-reversals-gpt_v1.0.2.pine
+// Version: v1.0.2
+// DATE:     2026-01-09
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.2 - revised visuals
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+indicator("Reversal Probabilities (VWAP + Slope) v5 (Stable Bands)", overlay=true, max_labels_count=500)
+
+bandMult = input.float(1.5, "VWAP Band Multiplier", step=0.1)
+stdevLen = input.int(40, "Band StDev Length (bars)", minval=5, maxval=500)
+rsiLen = input.int(14, "RSI Length", minval=2)
+rsiOB = input.int(70, "RSI Overbought", minval=50, maxval=95)
+rsiOS = input.int(35, "RSI Oversold", minval=5, maxval=50)
+slopeLen = input.int(20, "VWAP Slope Lookback", minval=5, maxval=200)
+slopeThrBps = input.float(2.0, "Slope Threshold (bps/bar)", step=0.5)
+slopePenalty = input.float(0.35, "Trend Penalty Factor", minval=0.0, maxval=1.0, step=0.05)
+
+showProbLabels = input.bool(true, "Show Probability Labels (events)")
+probThresh = input.float(60.0, "Event Threshold (prob %)", minval=0.0, maxval=100.0, step=1.0)
+dominanceMargin = input.float(10.0, "Dominance Margin (%)", minval=0.0, maxval=100.0, step=1.0)
+cooldownBars = input.int(8, "Cooldown Bars Between Events", minval=0, maxval=200)
+maxLabelsPerDay = input.int(80, "Max Labels Per Day", minval=0, maxval=500)
+
+evalBars = input.int(6, "Evaluate After N Bars", minval=1, maxval=200)
+evalMinMovePct = input.float(0.0, "Min Move % to Count (0 = any)", minval=0.0, maxval=10.0, step=0.1)
+showOutcomeLines = input.bool(true, "Show Outcome Vertical Lines")
+outcomeLineAlpha = input.int(60, "Outcome Line Transparency (0-100)", minval=0, maxval=100)
+labelPadAtr = input.float(0.6, "Label Padding (ATR)", minval=0.0, maxval=5.0, step=0.1)
+
+// ───── Stable VWAP + rolling deviation bands ─────
+src = hlc3
+vwap = ta.vwap(src)
+dev = ta.stdev(src - vwap, stdevLen)
+upperBand = vwap + bandMult * dev
+lowerBand = vwap - bandMult * dev
+
+plot(vwap, "VWAP", color=color.yellow)
+plot(upperBand, "VWAP +Band", color=color.red)
+plot(lowerBand, "VWAP -Band", color=color.green)
+
+// ───── Indicators ─────
+rsi = ta.rsi(close, rsiLen)
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+
+// ───── Raw scores (0–4) ─────
+downScore = 0
+downScore := downScore + ((not na(rsi) and rsi > rsiOB) ? 1 : 0)
+downScore := downScore + ((not na(upperBand) and high >= upperBand) ? 1 : 0)
+downScore := downScore + ((not na(emaFast) and not na(emaSlow) and emaFast < emaSlow) ? 1 : 0)
+downScore := downScore + (close < open ? 1 : 0)
+
+upScore = 0
+upScore := upScore + ((not na(rsi) and rsi < rsiOS) ? 1 : 0)
+upScore := upScore + ((not na(lowerBand) and low <= lowerBand) ? 1 : 0)
+upScore := upScore + ((not na(emaFast) and not na(emaSlow) and emaFast > emaSlow) ? 1 : 0)
+upScore := upScore + (close > open ? 1 : 0)
+
+baseDown = downScore * 25.0
+baseUp = upScore * 25.0
+
+// ───── VWAP slope (bps per bar) ─────
+rawSlope = (not na(vwap) and not na(vwap[slopeLen])) ? (vwap - vwap[slopeLen]) / slopeLen : na
+slopeBps = (not na(rawSlope) and not na(vwap) and vwap != 0) ? rawSlope / vwap * 10000.0 : na
+
+trendUp = not na(slopeBps) and slopeBps > slopeThrBps
+trendDown = not na(slopeBps) and slopeBps < -slopeThrBps
+
+downProb = nz(trendUp ? baseDown * slopePenalty : baseDown, 0.0)
+upProb = nz(trendDown ? baseUp * slopePenalty : baseUp, 0.0)
+
+// ───── Dominance gating ─────
+upDominant = upProb >= probThresh and (upProb - downProb) >= dominanceMargin
+downDominant = downProb >= probThresh and (downProb - upProb) >= dominanceMargin
+
+upEventRaw = upDominant and not upDominant[1]
+downEventRaw = downDominant and not downDominant[1]
+
+// ───── Cooldown + per-day label budget ─────
+newDay = ta.change(time("D"))
+var int lastEventBar = na
+var int labelsToday = 0
+if newDay
+    labelsToday := 0
+
+coolOk = na(lastEventBar) ? true : (bar_index - lastEventBar > cooldownBars)
+canProbLabel = showProbLabels and (labelsToday < maxLabelsPerDay) and coolOk
+
+upEvent = upEventRaw and coolOk
+downEvent = downEventRaw and coolOk
+
+plotshape(upEvent, title="Up Reversal Event", style=shape.triangleup, location=location.belowbar, size=size.small, color=color.lime)
+plotshape(downEvent, title="Down Reversal Event", style=shape.triangledown, location=location.abovebar, size=size.small, color=color.red)
+
+probTxt = "↑" + str.tostring(upProb, "#0") + " ↓" + str.tostring(downProb, "#0")
+
+atr = ta.atr(14)
+//yUp = low - atr * labelPadAtr
+//yDn = high + atr * labelPadAtr
+
+yUp = not na(lowerBand) ? lowerBand : (low - atr * labelPadAtr)
+yDn = not na(upperBand) ? upperBand : (high + atr * labelPadAtr)
+ 
+if upEvent and canProbLabel
+    label.new(bar_index, yUp, probTxt, style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0))
+if upEvent and canProbLabel
+    lastEventBar := bar_index
+if upEvent and canProbLabel
+    labelsToday := labelsToday + 1
+
+if downEvent and canProbLabel
+    label.new(bar_index, yDn, probTxt, style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+if downEvent and canProbLabel
+    lastEventBar := bar_index
+if downEvent and canProbLabel
+    labelsToday := labelsToday + 1
+
+// ───── Outcome evaluation after N bars ─────
+var int[] evBar = array.new_int()
+var float[] evPrice = array.new_float()
+var int[] evDir = array.new_int()
+
+if upEvent
+    array.push(evBar, bar_index)
+if upEvent
+    array.push(evPrice, close)
+if upEvent
+    array.push(evDir, 1)
+
+if downEvent
+    array.push(evBar, bar_index)
+if downEvent
+    array.push(evPrice, close)
+if downEvent
+    array.push(evDir, -1)
+
+var int total = 0
+var int correct = 0
+
+i = array.size(evBar) - 1
+for _ = 0 to 200
+    if i < 0
+        break
+    b = array.get(evBar, i)
+    p = array.get(evPrice, i)
+    d = array.get(evDir, i)
+    if bar_index >= b + evalBars
+        movePct = p != 0 ? (close - p) / p * 100.0 : 0.0
+        qualifies = math.abs(movePct) >= evalMinMovePct
+        isCorrect = (d == 1 and movePct > 0) or (d == -1 and movePct < 0)
+        if qualifies
+            total := total + 1
+        if qualifies and isCorrect
+            correct := correct + 1
+        if qualifies and showOutcomeLines
+            atr = ta.atr(14)
+            yTop = high + atr * 20.0
+            yBot = low - atr * 20.0
+            col = isCorrect ? color.new(color.lime, outcomeLineAlpha) : color.new(color.red, outcomeLineAlpha)
+            line.new(b, yBot, b, yTop, xloc=xloc.bar_index, extend=extend.none, color=col, width=2)
+        array.remove(evBar, i)
+        array.remove(evPrice, i)
+        array.remove(evDir, i)
+    i := i - 1
+
+hitRate = total > 0 ? (correct * 100.0) / total : na
+var table t = table.new(position.top_right, 1, 1)
+tableTxt = "EvalBars: " + str.tostring(evalBars) + "\nCorrect: " + str.tostring(correct) + "/" + str.tostring(total) + "\nHitRate: " + (na(hitRate) ? "n/a" : str.tostring(hitRate, "#0.0") + "%")
+table.cell(t, 0, 0, tableTxt, text_color=color.white, bgcolor=color.new(color.black, 60))
+
+plot(upProb, "UpProb (%)", display=display.data_window)
+plot(downProb, "DownProb (%)", display=display.data_window)
+plot(slopeBps, "VWAP slope (bps/bar)", display=display.data_window)
+   

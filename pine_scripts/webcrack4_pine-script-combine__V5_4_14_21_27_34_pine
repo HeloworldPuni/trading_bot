@@ -1,0 +1,647 @@
+//@version=5
+indicator("v5 Combination Optimized Fixed", "Combined Indicators v5 Fixed", overlay=true, max_lines_count=500, max_boxes_count=500, max_bars_back=500)
+
+// ==========================================
+// 0. Type Definitions
+// ==========================================
+type alerts
+    bool internalBullishBOS         = false
+    bool internalBearishBOS         = false
+    bool internalBullishCHoCH       = false
+    bool internalBearishCHoCH       = false
+    bool swingBullishBOS            = false
+    bool swingBearishBOS            = false
+    bool swingBullishCHoCH          = false
+    bool swingBearishCHoCH          = false
+    bool internalBullishOrderBlock  = false
+    bool internalBearishOrderBlock  = false
+    bool swingBullishOrderBlock     = false
+    bool swingBearishOrderBlock     = false
+    bool equalHighs                 = false
+    bool equalLows                  = false
+    bool bullishFairValueGap        = false
+    bool bearishFairValueGap        = false
+
+type trailingExtremes
+    float top
+    float bottom
+    int barTime
+    int barIndex
+    int lastTopTime
+    int lastBottomTime
+
+type fairValueGap
+    float top
+    float bottom
+    int bias
+    box topBox
+    box bottomBox
+
+type trend
+    int bias    
+
+type equalDisplay
+    line l_ine      = na
+    label l_abel    = na
+
+type pivot
+    float currentLevel
+    float lastLevel
+    bool crossed
+    int barTime     = time
+    int barIndex    = bar_index
+
+type orderBlock
+    float barHigh
+    float barLow
+    int barTime    
+    int bias
+
+// ==========================================
+// 1. Inputs Section
+// ==========================================
+macdType      = input.string("MACD-SOURCE", "MACD Method", options=["MACD-TRADITIONAL", "MACD-AS (HISTOGRAM)", "MACD-LEADER", "MACD-SOURCE"], group="MACD-X")
+fast_length   = input.int(12, "Fast Length", minval = 1, group="MACD-X")
+slow_length   = input.int(26, "Slow Length", minval = 1, group="MACD-X")
+macd_src      = input(close, "MACD Source", group="MACD-X")
+signal_length = input.int(9, "Signal Smoothing",  minval = 1, maxval = 50, group="MACD-X")
+sma_source    = input.string("EMA", "Oscillator MA Type" , options=["SMA", "EMA"], group="MACD-X")
+sma_signal    = input.string("EMA", "Signal Line MA Type", options=["SMA", "EMA"], group="MACD-X")
+macdSigCross  = input.bool(false, "Display MACD/Signal Crosses", group="MACD-X")
+highlight     = input.bool(true, "Highlight MACD/Signal Area", group="MACD-X")
+lookbackLength= input.int(200, "Overlay Display Length", minval = 10, maxval = 250, group="MACD-X") 
+oscPlacement  = input.string("Bottom", "Placement", options = ["Top", "Bottom"], inline="VOL", group="MACD-X")
+oscHight      = 12 - input.int(10, "Height" , minval = 1, maxval = 10  , inline="VOL", group="MACD-X")
+verticalAdj   = input.int(4, "Vertical Position", minval = 0, maxval = 10, group="MACD-X") / 10
+
+sourceInput = input.source(close, title="Source", group="Linear Regression")
+periodMode       = input.bool  (         false, "Use Long-Term Channel", group="Linear Regression")
+devMultiplier    = input.float (           2.0, "Deviation Multiplier", group="Linear Regression", step=0.1)
+colorInput       = input.color (  color.gray,       "", group="Linear Regression", inline="LR")
+lineStyle1       = input.string(       "Solid",             "", group="Linear Regression", inline="LR", options=["Solid", "Dotted", "Dashed"])
+extendStyle      = input.string("Extend Right",             "", group="Linear Regression", inline="LR", options=["Extend Right", "Extend Both", "Extend None", "Extend Left"])
+fillTransparency = input.int   (            93, "Fill Transp", group="Linear Regression", minval=0, maxval=100)
+channelTransparency = input.int   (            40, "Line Transp", group="Linear Regression", minval=0, maxval=100)
+showAutoSelectedPeriod =    input(true, "Show Auto-Selected Period", group="Linear Regression")
+showTrendStrength =         input(true, "Show Trend Strength", group="Linear Regression")
+showTrendAnnualizedReturn = input(true, "Show Annualized Return", group="Linear Regression")
+
+Filter           = input.bool(false,"ATR Body Filter", group="Trade Manager")
+Target          = input.float(1.3,"Target/Stop Multiplier", step = 0.1, group="Trade Manager")
+SLType           = input.string("Close", "SL Type", ["Close", "High/Low"], group="Trade Manager") == "Close"
+Risk            = input.float(100,"Risk Per Trade (USD)", group="Trade Manager")    
+ShowSL = input.bool(false,"Show SL Lines", group="Trade Manager")
+
+modeInput         = input.string( "Historical", "Mode", group = "SMC", options = ["Historical", "Present"])
+styleInput        = input.string( "Colored",    "Style", group = "SMC", options = ["Colored", "Monochrome"])
+showInternalsInput = input(true, "Show Internal Structure", group = "SMC")
+showStructureInput = input(true, "Show Swing Structure", group = "SMC")
+showSwingsInput    = input(false, "Show Swings Points", group = "SMC")
+showInternalOrderBlocksInput = input(true, "Internal Order Blocks", group = "SMC")
+showSwingOrderBlocksInput    = input(false, "Swing Order Blocks", group = "SMC")
+showEqualHighsLowsInput      = input(true, "Equal High/Low", group = "SMC")
+showFairValueGapsInput       = input(false, "Fair Value Gaps", group = "SMC")
+showPremiumDiscountZonesInput= input(false, "Premium/Discount Zones", group = "SMC")
+
+veryslowLength = input.int(200, minval=1, title="Very slow MA (Trend)", group="Extra MAs")
+
+
+// ==========================================
+// 2. Helper Functions
+// ==========================================
+ma(s, l, m) => m == "EMA" ? ta.ema(s, l) : ta.sma(s, l)
+
+confidence(pearsonR) =>
+    switch
+        pearsonR < 0.2  => "Extremely Weak"
+        pearsonR < 0.3  => "Very Weak"
+        pearsonR < 0.4  => "Weak"
+        pearsonR < 0.5  => "Mostly Weak"
+        pearsonR < 0.6  => "Somewhat Weak"
+        pearsonR < 0.7  => "Moderately Weak"
+        pearsonR < 0.8  => "Moderate"
+        pearsonR < 0.9  => "Moderately Strong"
+        pearsonR < 0.92 => "Mostly Strong"
+        pearsonR < 0.94 => "Strong"
+        pearsonR < 0.96 => "Very Strong"
+        pearsonR < 0.98 => "Exceptionally Strong"
+        =>                 "Ultra Strong"
+
+calcDev(float source, int length) =>
+    float logSource  = math.log(source)
+    var int period_1 = length - 1
+    if barstate.islast
+        float sumX = 0.0, float sumXX = 0.0, float sumYX = 0.0, float sumY = 0.0
+        for int i=1 to length
+            float lSrc = logSource[i-1]
+            sumX  += i
+            sumXX += i * i
+            sumYX += i * lSrc
+            sumY  +=     lSrc
+        float slope     = nz((length * sumYX - sumX * sumY) / (length * sumXX - sumX * sumX))
+        float average   = sumY / length
+        float intercept = average - (slope * sumX / length) + slope
+        float sumDev = 0.0, float sumDxx = 0.0, float sumDyy = 0.0, float sumDyx = 0.0
+        float regres = intercept + slope * period_1 * 0.5
+        float sumSlp = intercept
+        for int i=0 to period_1
+            float lSrc = logSource[i]
+            float dxt  =   lSrc - average
+            float dyt  = sumSlp - regres
+            lSrc   -= sumSlp
+            sumSlp += slope
+            sumDxx +=  dxt * dxt
+            sumDyy +=  dyt * dyt
+            sumDyx +=  dxt * dyt
+            sumDev += lSrc * lSrc
+        float unStdDev = math.sqrt(sumDev / period_1)
+        float divisor  =    sumDxx * sumDyy
+        float pearsonR = nz(sumDyx / math.sqrt(divisor))
+        [unStdDev, pearsonR, slope, intercept]
+    else
+        [na, na, na, na]
+
+f_volAdj(int len) => 
+    val = math.min(ta.atr(len) * 0.3, close * (0.3/100))
+    val[20] / 2
+
+// ==========================================
+// 3. MACD-X Logic & Drawing
+// ==========================================
+fast_ma = ma(macd_src, fast_length, sma_source)
+slow_ma = ma(macd_src, slow_length, sma_source)
+macd_val = fast_ma - slow_ma
+
+macd_calc = if macdType == "MACD-TRADITIONAL"
+    macd_val
+else if macdType == "MACD-AS (HISTOGRAM)"
+    macd_val - ma(macd_val, signal_length, sma_source)
+else if macdType == "MACD-LEADER"
+    macd_val + ma(macd_src - fast_ma, fast_length, sma_source) - ma(macd_src - slow_ma, slow_length, sma_source)
+else
+    ma(macd_src - math.avg(fast_ma, slow_ma), signal_length, sma_source)
+
+signal_line = ma(macd_calc, signal_length, sma_signal)
+hist_val    = macd_calc - signal_line
+
+// Alert logic
+longAlertCondition  = ta.crossover(macd_calc, signal_line)
+shortAlertCondition = ta.crossunder(macd_calc, signal_line)
+
+// Drawing Arrays
+var a_lines = array.new_line()
+var a_hist  = array.new_box()
+var a_fill  = array.new_linefill()
+
+priceHighest = ta.highest(high, lookbackLength)
+priceLowest  = ta.lowest (low , lookbackLength)
+priceChangeRate = (priceHighest - priceLowest) / priceHighest
+priceLowest    := priceLowest  * (1 - priceChangeRate * verticalAdj)
+priceHighest   := priceHighest * (1 + priceChangeRate * verticalAdj)
+oscHighest      = ta.highest(macd_calc, lookbackLength)
+histColor       = hist_val >= 0 ? (hist_val[1] < hist_val ? #006400 : color.green) : (hist_val[1] < hist_val ? color.red : #910000)
+
+if barstate.islast
+    if array.size(a_lines) > 0
+        for i = 1 to array.size(a_lines)
+            line.delete(array.shift(a_lines))
+    if array.size(a_hist) > 0
+        for i = 1 to array.size(a_hist)
+            box.delete(array.shift(a_hist))
+    if array.size(a_fill) > 0
+        for i = 1 to array.size(a_fill)
+            linefill.delete(array.shift(a_fill))
+
+    hightAdj = priceChangeRate / (oscHight != 0 ? oscHight : 1) // Avoid division by zero
+
+    for barIndex = 0 to lookbackLength - 1
+        if array.size(a_lines) < 500
+            val_base = oscPlacement == "Top" ? priceHighest : priceLowest
+            
+            // Draw Histogram Boxes
+            array.push(a_hist, box.new(bar_index[barIndex], val_base, bar_index[barIndex], val_base * (1 + hist_val[barIndex] / (oscHighest != 0 ? oscHighest : 1) * hightAdj), histColor[barIndex], 2))
+            
+            // Draw Lines
+            y1_macd = val_base * (1 + macd_calc[barIndex] / (oscHighest != 0 ? oscHighest : 1) * hightAdj)
+            y2_macd = val_base * (1 + macd_calc[barIndex + 1] / (oscHighest != 0 ? oscHighest : 1) * hightAdj)
+            array.push(a_lines, line.new(bar_index[barIndex], y1_macd, bar_index[barIndex + 1], y2_macd, xloc.bar_index, extend.none, #2962FF, line.style_solid, 1))
+            
+            y1_sig = val_base * (1 + signal_line[barIndex] / (oscHighest != 0 ? oscHighest : 1) * hightAdj)
+            y2_sig = val_base * (1 + signal_line[barIndex + 1] / (oscHighest != 0 ? oscHighest : 1) * hightAdj)
+            array.push(a_lines, line.new(bar_index[barIndex], y1_sig, bar_index[barIndex + 1], y2_sig, xloc.bar_index, extend.none, #FF6D00, line.style_solid, 1))
+
+            if highlight
+                array.push(a_fill, linefill.new(array.get(a_lines, 2 * barIndex), array.get(a_lines, 2 * barIndex + 1), macd_calc[barIndex] > signal_line[barIndex] ? color.new(#2962FF, 50) : color.new(#FF6D00, 50)))
+
+// ==========================================
+// 4. Linear Regression Channel Logic
+// ==========================================
+var array<int> Periods = periodMode ? array.from(na,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1050,1100,1150,1200) : array.from(na,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200)
+
+// Pre-calc deviations (condensed for readability)
+[sd01, pr01, sl01, ic01] = calcDev(sourceInput, Periods.get(1)), [sd02, pr02, sl02, ic02] = calcDev(sourceInput, Periods.get(2)), [sd03, pr03, sl03, ic03] = calcDev(sourceInput, Periods.get(3))
+[sd04, pr04, sl04, ic04] = calcDev(sourceInput, Periods.get(4)), [sd05, pr05, sl05, ic05] = calcDev(sourceInput, Periods.get(5)), [sd06, pr06, sl06, ic06] = calcDev(sourceInput, Periods.get(6))
+[sd07, pr07, sl07, ic07] = calcDev(sourceInput, Periods.get(7)), [sd08, pr08, sl08, ic08] = calcDev(sourceInput, Periods.get(8)), [sd09, pr09, sl09, ic09] = calcDev(sourceInput, Periods.get(9))
+[sd10, pr10, sl10, ic10] = calcDev(sourceInput, Periods.get(10)), [sd11, pr11, sl11, ic11] = calcDev(sourceInput, Periods.get(11)), [sd12, pr12, sl12, ic12] = calcDev(sourceInput, Periods.get(12))
+[sd13, pr13, sl13, ic13] = calcDev(sourceInput, Periods.get(13)), [sd14, pr14, sl14, ic14] = calcDev(sourceInput, Periods.get(14)), [sd15, pr15, sl15, ic15] = calcDev(sourceInput, Periods.get(15))
+[sd16, pr16, sl16, ic16] = calcDev(sourceInput, Periods.get(16)), [sd17, pr17, sl17, ic17] = calcDev(sourceInput, Periods.get(17)), [sd18, pr18, sl18, ic18] = calcDev(sourceInput, Periods.get(18))
+[sd19, pr19, sl19, ic19] = calcDev(sourceInput, Periods.get(19))
+
+if barstate.islast
+    float highestPearsonR = math.max(pr01, pr02, pr03, pr04, pr05, pr06, pr07, pr08, pr09, pr10, pr11, pr12, pr13, pr14, pr15, pr16, pr17, pr18, pr19)
+    int detectedPeriod = na
+    float detectedSlope = na, float detectedIntrcpt = na, float detectedStdDev = na
+    
+    // Select best fit
+    if highestPearsonR == pr01 
+        detectedPeriod := Periods.get(1), detectedSlope := sl01, detectedIntrcpt := ic01, detectedStdDev := sd01
+    else if highestPearsonR == pr02 
+        detectedPeriod := Periods.get(2), detectedSlope := sl02, detectedIntrcpt := ic02, detectedStdDev := sd02
+    else if highestPearsonR == pr03
+        detectedPeriod := Periods.get(3), detectedSlope := sl03, detectedIntrcpt := ic03, detectedStdDev := sd03
+    else if highestPearsonR == pr04
+        detectedPeriod := Periods.get(4), detectedSlope := sl04, detectedIntrcpt := ic04, detectedStdDev := sd04
+    else if highestPearsonR == pr05
+        detectedPeriod := Periods.get(5), detectedSlope := sl05, detectedIntrcpt := ic05, detectedStdDev := sd05
+    else if highestPearsonR == pr06
+        detectedPeriod := Periods.get(6), detectedSlope := sl06, detectedIntrcpt := ic06, detectedStdDev := sd06
+    else if highestPearsonR == pr07
+        detectedPeriod := Periods.get(7), detectedSlope := sl07, detectedIntrcpt := ic07, detectedStdDev := sd07
+    else if highestPearsonR == pr08
+        detectedPeriod := Periods.get(8), detectedSlope := sl08, detectedIntrcpt := ic08, detectedStdDev := sd08
+    else if highestPearsonR == pr09
+        detectedPeriod := Periods.get(9), detectedSlope := sl09, detectedIntrcpt := ic09, detectedStdDev := sd09
+    else if highestPearsonR == pr10
+        detectedPeriod := Periods.get(10), detectedSlope := sl10, detectedIntrcpt := ic10, detectedStdDev := sd10
+    else if highestPearsonR == pr11
+        detectedPeriod := Periods.get(11), detectedSlope := sl11, detectedIntrcpt := ic11, detectedStdDev := sd11
+    else if highestPearsonR == pr12
+        detectedPeriod := Periods.get(12), detectedSlope := sl12, detectedIntrcpt := ic12, detectedStdDev := sd12
+    else if highestPearsonR == pr13
+        detectedPeriod := Periods.get(13), detectedSlope := sl13, detectedIntrcpt := ic13, detectedStdDev := sd13
+    else if highestPearsonR == pr14
+        detectedPeriod := Periods.get(14), detectedSlope := sl14, detectedIntrcpt := ic14, detectedStdDev := sd14
+    else if highestPearsonR == pr15
+        detectedPeriod := Periods.get(15), detectedSlope := sl15, detectedIntrcpt := ic15, detectedStdDev := sd15
+    else if highestPearsonR == pr16
+        detectedPeriod := Periods.get(16), detectedSlope := sl16, detectedIntrcpt := ic16, detectedStdDev := sd16
+    else if highestPearsonR == pr17
+        detectedPeriod := Periods.get(17), detectedSlope := sl17, detectedIntrcpt := ic17, detectedStdDev := sd17
+    else if highestPearsonR == pr18
+        detectedPeriod := Periods.get(18), detectedSlope := sl18, detectedIntrcpt := ic18, detectedStdDev := sd18
+    else 
+        detectedPeriod := Periods.get(19), detectedSlope := sl19, detectedIntrcpt := ic19, detectedStdDev := sd19
+
+    // Draw Channel
+    var line upperLine = na, var linefill upperFill = na
+    var line baseLine = na
+    var line lowerLine = na, var linefill lowerFill = na
+    
+    ext_style_val = extendStyle == "Extend Right" ? extend.right : extendStyle == "Extend Both" ? extend.both : extendStyle == "Extend Left" ? extend.left : extend.none
+    l_style_val = lineStyle1 == "Dotted" ? line.style_dotted : lineStyle1 == "Dashed" ? line.style_dashed : line.style_solid
+
+    startPrice = math.exp(detectedIntrcpt + detectedSlope * (detectedPeriod - 1))
+    endPrice = math.exp(detectedIntrcpt)
+    startAtBar = bar_index - detectedPeriod + 1
+
+    if na(baseLine)
+        baseLine := line.new(startAtBar, startPrice, bar_index, endPrice, width=1, extend=ext_style_val, color=color.new(color.blue, 0), style=l_style_val)
+    else
+        line.set_xy1(baseLine, startAtBar, startPrice)
+        line.set_xy2(baseLine, bar_index, endPrice)
+    
+    upperStart = startPrice * math.exp(devMultiplier * detectedStdDev)
+    upperEnd = endPrice * math.exp(devMultiplier * detectedStdDev)
+    if na(upperLine)
+        upperLine := line.new(startAtBar, upperStart, bar_index, upperEnd, width=1, extend=ext_style_val, color=colorInput, style=l_style_val)
+    else
+        line.set_xy1(upperLine, startAtBar, upperStart)
+        line.set_xy2(upperLine, bar_index, upperEnd)
+    
+    lowerStart = startPrice / math.exp(devMultiplier * detectedStdDev)
+    lowerEnd = endPrice / math.exp(devMultiplier * detectedStdDev)
+    if na(lowerLine)
+        lowerLine := line.new(startAtBar, lowerStart, bar_index, lowerEnd, width=1, extend=ext_style_val, color=colorInput, style=l_style_val)
+    else
+        line.set_xy1(lowerLine, startAtBar, lowerStart)
+        line.set_xy2(lowerLine, bar_index, lowerEnd)
+    
+    if na(upperFill)
+        upperFill := linefill.new(upperLine, baseLine, color=color.new(colorInput, fillTransparency))
+    if na(lowerFill)
+        lowerFill := linefill.new(baseLine, lowerLine, color=color.new(colorInput, fillTransparency))
+
+    // Stats Table
+    var table t = na
+    if na(t)
+        t := table.new(position.bottom_right, 2, 3, bgcolor=color.new(color.gray, 90))
+    
+    text1 = periodMode ? "Auto Period (Long): " + str.tostring(detectedPeriod) : "Auto Period: " + str.tostring(detectedPeriod)
+    if showAutoSelectedPeriod
+        table.cell(t, 0, 0, text1, text_color=colorInput)
+    if showTrendStrength
+        table.cell(t, 0, 1, "Strength: " + confidence(highestPearsonR), text_color=colorInput)
+    
+    // CAGR Calc
+    float cagr = na
+    if not na(detectedPeriod) and bar_index >= detectedPeriod
+        multiplier = timeframe.isdaily ? 252 : timeframe.isweekly ? 52 : na
+        if not na(multiplier)
+            cagr := math.pow(close / close[detectedPeriod - 1], multiplier / detectedPeriod) - 1
+            if showTrendAnnualizedReturn
+                table.cell(t, 0, 2, "CAGR: " + str.tostring(cagr * 100, "#.#") + "%", text_color=colorInput)
+
+// ==========================================
+// 5. ATR Trade Manager Logic
+// ==========================================
+var float SCR = 0., var ATR = 0., var TradeOn = false
+var array<int> score = array.new_int(2,0)
+var bool ShortTrade = false, var bool TradeisON = false, var bool LongTrade = false
+var line res = na, var line sup = na, var line tpLine = na, var line SLLine = na
+var label LAB = na
+var float TP = 0.0, var float SL = 0.0, var float Res = 0.
+
+PF = f_volAdj(30)
+
+BodyRange() => math.abs(close - open) 
+BodyCon = bar_index > 100
+BodyCon1 = (Filter ? BodyRange() < ta.atr(5) * 1 : true)
+
+if timeframe.change("1D") and not TradeisON 
+    ATR := f_volAdj(30)
+    SCR := hl2 - (ATR* 15)
+    TradeOn := true
+    Res := SCR + (ATR* 25)
+    if bar_index > 0 // Safety
+        res := line.new(bar_index, Res, bar_index, Res, color = #5c439a, style = line.style_solid)
+        sup := line.new(bar_index, SCR, bar_index, SCR, color = #5c439a, style = line.style_solid)
+
+if TradeOn and not na(res) and not na(sup)
+    res.set_x2(bar_index)
+    sup.set_x2(bar_index)
+    linefill.new(res,sup,color = color.new(color.from_gradient(close,ta.lowest(5),ta.highest(10), #3a6186,#89253e),80))
+
+BUY = false, SELL = false
+if ta.crossover(close[1],Res) and BodyCon and BodyCon1
+    BUY := true
+if ta.crossunder(close[1],SCR) and BodyCon and BodyCon1
+    SELL := true
+
+// SL Calc
+longDiffSL2 = math.abs(close - Res)
+longDiffSL = math.abs(close - SCR)
+
+Long = BUY and not TradeisON     
+Short = SELL and not TradeisON
+TradeFire = Long or Short
+
+if Long and not TradeisON
+    LongTrade := true, ShortTrade := false
+if Short and not TradeisON
+    LongTrade := false, ShortTrade := true
+
+if TradeFire and not TradeisON
+    TP := Long ? close + (Target * longDiffSL) : close - (Target * longDiffSL2)
+    SL := Long ? close - longDiffSL : close + longDiffSL2
+    TradeisON := true
+    
+    line.new(bar_index, Long ? high : low, bar_index, TP, width=2, color = color.teal, style= line.style_dashed)
+    tpLine := line.new(bar_index, TP, bar_index+2, TP, style= line.style_dashed, color = color.teal)
+    if ShowSL     
+        SLLine := line.new(bar_index, SL, bar_index+2, SL, style= line.style_dashed, color = color.red)     
+    LAB := label.new(bar_index, TP, "Target", color = color.teal, style= label.style_label_left, size=size.small, textcolor = color.white)
+
+if TradeisON
+    line.set_x2(tpLine, bar_index)
+    label.set_x(LAB, bar_index+1)
+    if ShowSL
+        line.set_x2(SLLine, bar_index)
+    
+    if LongTrade
+        if high >= TP
+            label.set_color(LAB, color.green)
+            score.set(0, score.get(0)+1)
+            TradeisON := false
+        if (SLType ? close : low) <= SL
+            score.set(1, score.get(1)+1)
+            label.set_color(LAB, color.new(color.red,70))
+            TradeisON := false
+    else if ShortTrade
+        if low <= TP 
+            label.set_color(LAB, color.green)
+            score.set(0, score.get(0)+1)
+            TradeisON := false
+        if (SLType ? close : high) >= SL 
+            score.set(1, score.get(1)+1)
+            label.set_color(LAB, color.new(color.red,70))
+            TradeisON := false
+
+// Trade Stats Table
+var rwttb = table.new(position.top_right, 6, 6, bgcolor= color.new(color.gray,80))
+if barstate.islast
+    GrossP = score.get(0) * (Risk * Target)
+    GrossL =  score.get(1) * Risk
+    PNL = GrossP - GrossL
+    table.cell(rwttb, 0, 0, "Wins", text_color = #a3a3b1)
+    table.cell(rwttb, 1, 0, str.tostring(score.get(0)), text_color = #08c09b)
+    table.cell(rwttb, 0, 1, "Losses", text_color = #a3a3b1)
+    table.cell(rwttb, 1, 1, str.tostring(score.get(1)), text_color = #cd0202)
+    table.cell(rwttb, 0, 4, "PNL", text_color = #a3a3b1)
+    table.cell(rwttb, 1, 4, str.tostring(PNL), text_color = PNL >= 0 ? #1eddd4 : #cd0202)
+
+// ==========================================
+// 6. Smart Money Concepts (SMC) Implementation
+// ==========================================
+// Constants
+BULLISH_LEG = 1, BEARISH_LEG = 0
+BULLISH = 1, BEARISH = -1
+GREEN2 = #089981, RED2 = #F23645
+MONO_BULLISH = #b2b5be, MONO_BEARISH = #5d606b
+TINY = size.tiny, SMALL = size.small, NORMAL = size.normal
+
+// SMC Colors
+swingBullishColor = styleInput == "Monochrome" ? MONO_BULLISH : #089981
+swingBearishColor = styleInput == "Monochrome" ? MONO_BEARISH : #F23645
+fairValueGapBullishColor = styleInput == "Monochrome" ? color.new(MONO_BULLISH,70) : color.new(#00ff68, 70)
+fairValueGapBearishColor = styleInput == "Monochrome" ? color.new(MONO_BEARISH,70) : color.new(#ff0008, 70)
+premiumZoneColor = styleInput == "Monochrome" ? MONO_BEARISH : RED2
+discountZoneColor = styleInput == "Monochrome" ? MONO_BULLISH : GREEN2
+
+// SMC Variables
+var pivot swingHigh = pivot.new(na,na,false)
+var pivot swingLow = pivot.new(na,na,false)
+var pivot internalHigh = pivot.new(na,na,false)
+var pivot internalLow = pivot.new(na,na,false)
+var pivot equalHigh = pivot.new(na,na,false)
+var pivot equalLow = pivot.new(na,na,false)
+var trend swingTrend = trend.new(0)
+var trend internalTrend = trend.new(0)
+var equalDisplay equalHighDisplay = equalDisplay.new()
+var equalDisplay equalLowDisplay = equalDisplay.new()
+var array<fairValueGap> fairValueGaps = array.new<fairValueGap>()
+var array<float> parsedHighs = array.new<float>()
+var array<float> parsedLows = array.new<float>()
+var array<float> highs = array.new<float>()
+var array<float> lows = array.new<float>()
+var array<int> times = array.new<int>()
+var trailingExtremes trailing = trailingExtremes.new()
+var array<orderBlock> swingOrderBlocks = array.new<orderBlock>()
+var array<orderBlock> internalOrderBlocks = array.new<orderBlock>()
+var array<box> swingOrderBlocksBoxes = array.new<box>()
+var array<box> internalOrderBlocksBoxes = array.new<box>()
+alerts currentAlerts = alerts.new()
+var initialTime = time
+
+// Initialize OB Boxes
+if barstate.isfirst
+    if showSwingOrderBlocksInput
+        for index = 1 to 5
+            swingOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+    if showInternalOrderBlocksInput
+        for index = 1 to 5
+            internalOrderBlocksBoxes.push(box.new(na,na,na,na,xloc = xloc.bar_time,extend = extend.right))
+
+// Volatility for OB
+atrMeasure = ta.atr(200)
+volatilityMeasure = atrMeasure // Defaulting to ATR
+highVolatilityBar = (high - low) >= (2 * volatilityMeasure)
+parsedHigh = highVolatilityBar ? low : high
+parsedLow = highVolatilityBar ? high : low
+
+parsedHighs.push(parsedHigh), parsedLows.push(parsedLow)
+highs.push(high), lows.push(low), times.push(time)
+
+// SMC Functions
+leg(int size) =>
+    var leg = 0    
+    newLegHigh = high[size] > ta.highest(size)
+    newLegLow = low[size] < ta.lowest(size)
+    if newLegHigh
+        leg := 0 // Bearish leg
+    else if newLegLow
+        leg := 1 // Bullish leg
+    leg
+
+startOfNewLeg(int leg) => ta.change(leg) != 0
+startOfBearishLeg(int leg) => ta.change(leg) == -1
+startOfBullishLeg(int leg) => ta.change(leg) == +1
+
+drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh) =>
+    equalDisplay e_qualDisplay = equalHigh ? equalHighDisplay : equalLowDisplay
+    tag = equalHigh ? "EQH" : "EQL"
+    equalColor = equalHigh ? swingBearishColor : swingBullishColor
+    labelStyle = equalHigh ? label.style_label_down : label.style_label_up
+
+    if modeInput == "Present"
+        line.delete(e_qualDisplay.l_ine), label.delete(e_qualDisplay.l_abel)
+    e_qualDisplay.l_ine := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time[size],na,level), xloc = xloc.bar_time, color = equalColor, style = line.style_dotted)
+    labelPosition = math.round(0.5*(p_ivot.barIndex + bar_index - size))
+    e_qualDisplay.l_abel := label.new(chart.point.new(na,labelPosition,level), tag, xloc.bar_index, color = color(na), textcolor = equalColor, style = labelStyle, size = size.tiny)
+
+drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize) =>    
+    var line l_ine = line.new(na,na,na,na,xloc = xloc.bar_time)
+    var label l_abel = label.new(na,na)
+    if modeInput == "Present"
+        l_ine.delete(), l_abel.delete()
+    l_ine := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time,na,p_ivot.currentLevel), xloc.bar_time, color=structureColor, style=lineStyle)
+    l_abel := label.new(chart.point.new(na,math.round(0.5*(p_ivot.barIndex+bar_index)),p_ivot.currentLevel), tag, xloc.bar_index, color=color(na), textcolor=structureColor, style=labelStyle, size = labelSize)
+
+// Main SMC Logic Wrapper
+getCurrentStructure(int size, bool equalHighLow, bool internal) =>        
+    currentLeg = leg(size)
+    newPivot = startOfNewLeg(currentLeg)
+    if newPivot
+        if startOfBullishLeg(currentLeg)
+            pivot p_ivot = equalHighLow ? equalLow : internal ? internalLow : swingLow    
+            if equalHighLow and math.abs(p_ivot.currentLevel - low[size]) < 0.1 * atrMeasure                
+                drawEqualHighLow(p_ivot, low[size], size, false)
+            p_ivot.lastLevel := p_ivot.currentLevel, p_ivot.currentLevel := low[size]
+            p_ivot.crossed := false, p_ivot.barTime := time[size], p_ivot.barIndex := bar_index[size]
+            if not equalHighLow and not internal
+                trailing.bottom := p_ivot.currentLevel, trailing.barTime := p_ivot.barTime
+        else
+            pivot p_ivot = equalHighLow ? equalHigh : internal ? internalHigh : swingHigh
+            if equalHighLow and math.abs(p_ivot.currentLevel - high[size]) < 0.1 * atrMeasure
+                drawEqualHighLow(p_ivot,high[size],size,true)                
+            p_ivot.lastLevel := p_ivot.currentLevel, p_ivot.currentLevel := high[size]
+            p_ivot.crossed := false, p_ivot.barTime := time[size], p_ivot.barIndex := bar_index[size]
+            if not equalHighLow and not internal
+                trailing.top := p_ivot.currentLevel, trailing.barTime := p_ivot.barTime
+
+displayStructure(bool internal) =>
+    pivot p_ivot = internal ? internalHigh : swingHigh
+    trend t_rend = internal ? internalTrend : swingTrend
+    lineStyle = internal ? line.style_dashed : line.style_solid
+    labelSize = internal ? size.tiny : size.small
+    bullishColor = internal ? #089981 : swingBullishColor
+    bearishColor = internal ? #F23645 : swingBearishColor
+
+    if ta.crossover(close, p_ivot.currentLevel) and not p_ivot.crossed
+        string tag = t_rend.bias == BEARISH ? "CHoCH" : "BOS"
+        p_ivot.crossed := true
+        t_rend.bias := BULLISH
+        if (internal and showInternalsInput) or (not internal and showStructureInput)
+            drawStructure(p_ivot, tag, bullishColor, lineStyle, label.style_label_down, labelSize)
+
+    p_ivot := internal ? internalLow : swingLow    
+    if ta.crossunder(close, p_ivot.currentLevel) and not p_ivot.crossed
+        string tag = t_rend.bias == BULLISH ? "CHoCH" : "BOS"
+        p_ivot.crossed := true
+        t_rend.bias := BEARISH
+        if (internal and showInternalsInput) or (not internal and showStructureInput)
+            drawStructure(p_ivot, tag, bearishColor, lineStyle, label.style_label_up, labelSize)
+
+// Executing SMC
+getCurrentStructure(50, false, false) // Swings
+getCurrentStructure(5, false, true) // Internals
+if showEqualHighsLowsInput
+    getCurrentStructure(3, true, false)
+
+if showInternalsInput
+    displayStructure(true)
+if showStructureInput
+    displayStructure(false)
+
+
+// ==========================================
+// 7. TD Sequential (TD9) Optimized
+// ==========================================
+var cup = 0
+var cdown = 0
+if close > close[4]
+    cup += 1
+    cdown := 0
+else
+    cdown += 1
+    cup := 0
+
+if cup == 9
+    label.new(bar_index, high, text = "9", yloc = yloc.abovebar, style = label.style_none, textcolor = color.green)
+if cdown == 9
+    label.new(bar_index, high, text = "9", yloc = yloc.belowbar, style = label.style_none, textcolor = color.red)
+
+
+// ==========================================
+// 8. Visuals & Color Management
+// ==========================================
+// Trend MA Logic
+veryslowMA = ta.sma(close, veryslowLength)
+// Note: fastMA and slowMA are calculated in Section 3
+bartrendcolor = (close > fast_ma and close > slow_ma and close > veryslowMA and ta.change(slow_ma) > 0) ? color.green : (close < fast_ma and close < slow_ma and close < veryslowMA and ta.change(slow_ma) < 0) ? color.red : color.blue
+
+// Logic: Trade Signal > Trend Color > Default
+BearCon = TradeisON and ShortTrade
+BullCon = TradeisON and LongTrade
+finalColor = BearCon ? color.rgb(246, 7, 7) : BullCon ? color.rgb(4, 191, 101) : bartrendcolor
+
+barcolor(finalColor)
+plotcandle(open, high, low, close, color = finalColor, wickcolor = finalColor, bordercolor = finalColor)
+
+// Plot MAs
+plot(fast_ma, color=bartrendcolor, title="Fast MA")
+plot(slow_ma, color=bartrendcolor, linewidth=2, title="Slow MA")
+plot(veryslowMA, color=bartrendcolor, linewidth=4, title="Very Slow MA")
+
+// Background Highlights
+bg_col_trend = (slow_ma > veryslowMA and ta.crossover(hist_val, 0) and macd_calc > 0 and fast_ma > slow_ma and close[slow_length] > veryslowMA) ? color.green : (slow_ma < veryslowMA and ta.crossunder(hist_val, 0) and macd_calc < 0 and fast_ma < slow_ma and close[slow_length] < veryslowMA) ? color.red : na
+bgcolor(BearCon ? color.rgb(136, 4, 15, 90) : BullCon ? color.rgb(8, 191, 158,90) : bg_col_trend)

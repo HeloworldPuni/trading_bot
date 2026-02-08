@@ -1,0 +1,96 @@
+//@version=6
+indicator("FusionCloud: (EMA/RSI/MACD 多空動能判斷)", overlay=true)
+
+// === Input
+rsiLength   = input.int(14, "RSI 參數")
+macdFast    = input.int(12, "MACD 快線")
+macdSlow    = input.int(26, "MACD 慢線")
+macdSignal  = input.int(9, "MACD 信號線")
+emaShort    = input.int(5, "短期EMA (雲底)")
+emaMid      = input.int(21, "中期EMA (雲心)")
+emaLong     = input.int(55, "長期EMA (雲頂)")
+exitSensitivity = input.string("normal", "平倉靈敏度", options=["normal", "low", "high"])
+
+// === RSI & MACD
+rsi = ta.rsi(close, rsiLength)
+rsiMA = ta.sma(rsi, 5)
+_rsiCrossover = ta.crossover(rsi, rsiMA)
+_rsiCrossunder = ta.crossunder(rsi, rsiMA)
+rsiBull = _rsiCrossover
+rsiBear = _rsiCrossunder
+
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+macdHist = macdLine - signalLine
+_macdCrossover = ta.crossover(macdHist, 0)
+_macdCrossunder = ta.crossunder(macdHist, 0)
+macdBull = _macdCrossover
+macdBear = _macdCrossunder
+
+// === EMA 雲帶
+emaFast = ta.ema(close, emaShort)
+emaMiddle = ta.ema(close, emaMid)
+emaSlow = ta.ema(close, emaLong)
+emaBull = emaFast > emaMiddle and emaMiddle > emaSlow
+emaBear = emaFast < emaMiddle and emaMiddle < emaSlow
+
+plot1 = plot(emaFast, "雲底", color=color.green, linewidth=1)
+plot2 = plot(emaSlow, "雲頂", color=color.red, linewidth=1)
+plot(emaMiddle, "雲心", color=color.orange, linewidth=1)
+fill(plot1, plot2, color=emaBull ? color.new(color.green, 85) : emaBear ? color.new(color.red, 85) : na, title="雲帶填色")
+
+// === RW Momentum 作為反轉動量條件
+rwMo = ta.ema(ta.ema(close - close[1], 13), 9)
+
+// === 加速破位快訊
+momentumBurstBull = macdHist > macdHist[1] and macdHist[1] > macdHist[2] and macdHist > 0 and rwMo > 0
+momentumBurstBear = macdHist < macdHist[1] and macdHist[1] < macdHist[2] and macdHist < 0 and rwMo < 0
+
+// === 多空進出場明確訊號（避免重複出現）
+bullSignalCond = _rsiCrossover and macdHist > 0 and emaFast > emaMiddle
+bearSignalCond = _rsiCrossunder and macdHist < 0 and emaFast < emaMiddle
+
+var bool inLong = false
+var bool inShort = false
+
+bullSignal = (bullSignalCond or momentumBurstBull) and not inLong[1]
+bearSignal = (bearSignalCond or momentumBurstBear) and not inShort[1]
+
+inLong := bullSignal ? true : bearSignal ? false : inLong
+inShort := bearSignal ? true : bullSignal ? false : inShort
+
+longEntry = bullSignal
+shortEntry = bearSignal
+
+// === 平倉靈敏度條件控制
+exitLong = switch exitSensitivity
+    "high" => inLong and ((_rsiCrossunder or _macdCrossunder) or (rwMo < 0))
+    "low" => inLong and (_rsiCrossunder and _macdCrossunder and rwMo < 0 and close < emaMiddle)
+    => inLong and ((_rsiCrossunder and macdHist < macdHist[1]) or (_macdCrossunder and rwMo < 0))
+
+exitShort = switch exitSensitivity
+    "high" => inShort and ((_rsiCrossover or _macdCrossover) or (rwMo > 0))
+    "low" => inShort and (_rsiCrossover and _macdCrossover and rwMo > 0 and close > emaMiddle)
+    => inShort and ((_rsiCrossover and macdHist > macdHist[1]) or (_macdCrossover and rwMo > 0))
+
+// === 背景顏色顯示趨勢
+bgcolor(inLong ? color.new(color.green, 85) : na, title="多頭背景")
+bgcolor(inShort ? color.new(color.red, 85) : na, title="空頭背景")
+
+plotshape(longEntry, title="多頭進場", location=location.belowbar, color=color.lime, style=shape.labelup, text="多", textcolor=color.white)
+plotshape(shortEntry, title="空頭進場", location=location.abovebar, color=color.red, style=shape.labeldown, text="空", textcolor=color.white)
+
+plotshape(exitLong, title="多單出場", location=location.abovebar, color=color.teal, style=shape.cross, text="平多", textcolor=color.white)
+plotshape(exitShort, title="空單出場", location=location.belowbar, color=color.orange, style=shape.cross, text="平空", textcolor=color.white)
+
+revBull = _rsiCrossover and _macdCrossover and rwMo > 0
+revBear = _rsiCrossunder and _macdCrossunder and rwMo < 0
+
+plotshape(revBull, title="反多潛力", location=location.belowbar, color=color.aqua, style=shape.triangleup, text="↗", size=size.tiny)
+plotshape(revBear, title="反空潛力", location=location.abovebar, color=color.fuchsia, style=shape.triangledown, text="↘", size=size.tiny)
+
+alertcondition(longEntry, title="⚡ 多頭訊號", message="多頭訊號出現！")
+alertcondition(shortEntry, title="⚠️ 空頭訊號", message="空頭訊號出現！")
+alertcondition(exitLong, title="❎ 平多訊號", message="多單平倉建議")
+alertcondition(exitShort, title="❎ 平空訊號", message="空單平倉建議")
+alertcondition(revBull, title="↗ 反多潛力", message="可能反彈，留意短多機會")
+alertcondition(revBear, title="↘ 反空潛力", message="可能轉弱，留意短空機會")

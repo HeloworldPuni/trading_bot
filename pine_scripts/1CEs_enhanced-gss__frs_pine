@@ -1,0 +1,89 @@
+//@version=5
+strategy("📈 Fibonacci Strategy XAU/USD (Buy/Sell Inverse)", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ───── INPUTS ─────
+group_fibo = "🌀 Fibonacci Settings"
+length = input.int(50, title="Swing Lookback", group=group_fibo)
+fib_level1 = input.float(0.618, title="Fibonacci Level 1", group=group_fibo)
+fib_level2 = input.float(0.65, title="Fibonacci Level 2", group=group_fibo)
+fib_level3 = input.float(0.786, title="Fibonacci Level 3", group=group_fibo)
+
+group_trade = "⚙️ Trade Settings"
+sl_points = input.int(100, title="Stop Loss (points)", group=group_trade)
+tp_points = input.int(200, title="Take Profit (points)", group=group_trade)
+
+group_trend = "📊 Trend Filter"
+sma_length = input.int(200, title="SMA Length", group=group_trend)
+
+// ───── CALCULATIONS ─────
+// Identify swing highs/lows
+var float swing_high = na
+var float swing_low = na
+
+if ta.highestbars(high, length) == 0
+    swing_high := high
+if ta.lowestbars(low, length) == 0
+    swing_low := low
+
+// Fibonacci for Buy (normal: high → low)
+fib_buy_1 = swing_high - (swing_high - swing_low) * fib_level1
+fib_buy_2 = swing_high - (swing_high - swing_low) * fib_level2
+fib_buy_3 = swing_high - (swing_high - swing_low) * fib_level3
+
+// Fibonacci for Sell (inverse: low → high)
+fib_sell_1 = swing_low + (swing_high - swing_low) * fib_level1
+fib_sell_2 = swing_low + (swing_high - swing_low) * fib_level2
+fib_sell_3 = swing_low + (swing_high - swing_low) * fib_level3
+
+// Trend direction
+sma = ta.sma(close, sma_length)
+in_uptrend = close > sma
+in_downtrend = close < sma
+
+// ───── TRADE CONDITIONS ─────
+// Buy (price retraces into buy zone, in uptrend)
+buy_signal = close <= fib_buy_1 and close >= fib_buy_3 and in_uptrend
+
+// Sell (price retraces into inverse sell zone, in downtrend)
+sell_signal = close >= fib_sell_1 and close <= fib_sell_3 and in_downtrend
+
+// ───── STRATEGY EXECUTION ─────
+if buy_signal
+    strategy.entry("🟢 Buy", strategy.long)
+    strategy.exit("🎯 TP/SL Buy", from_entry="🟢 Buy",
+      stop=close - sl_points * syminfo.mintick,
+      limit=close + tp_points * syminfo.mintick)
+
+if sell_signal
+    strategy.entry("🔴 Sell", strategy.short)
+    strategy.exit("🎯 TP/SL Sell", from_entry="🔴 Sell",
+      stop=close + sl_points * syminfo.mintick,
+      limit=close - tp_points * syminfo.mintick)
+
+// ───── VISUALS ─────
+// Plot Fibonacci levels
+plot(fib_buy_1, title="🔸 Buy Fibo 0.618", color=color.orange, linewidth=1)
+plot(fib_buy_2, title="🔸 Buy Fibo 0.65", color=color.yellow, linewidth=1)
+plot(fib_buy_3, title="🔸 Buy Fibo 0.786", color=color.fuchsia, linewidth=1)
+
+plot(fib_sell_1, title="🔻 Sell Fibo 0.618", color=color.red, linewidth=1)
+plot(fib_sell_2, title="🔻 Sell Fibo 0.65", color=color.maroon, linewidth=1)
+plot(fib_sell_3, title="🔻 Sell Fibo 0.786", color=color.purple, linewidth=1)
+
+plot(sma, title="📈 Trend SMA", color=color.blue, linewidth=1)
+
+// Background highlights
+bgcolor(buy_signal ? color.new(color.green, 85) : na, title="Buy Signal Background")
+bgcolor(sell_signal ? color.new(color.red, 85) : na, title="Sell Signal Background")
+
+// ───── ALERT CONDITIONS ─────
+// Define conditions for real-time alerts
+alertcondition(buy_signal, title="🔔 Buy Signal", message="📈 BUY Signal on XAU/USD!")
+alertcondition(sell_signal, title="🔔 Sell Signal", message="📉 SELL Signal on XAU/USD!")
+
+// Optional: create automatic alerts for debugging (if needed)
+if buy_signal
+    alert("📈 BUY Signal on XAU/USD!", alert.freq_once_per_bar)
+
+if sell_signal
+    alert("📉 SELL Signal on XAU/USD!", alert.freq_once_per_bar)

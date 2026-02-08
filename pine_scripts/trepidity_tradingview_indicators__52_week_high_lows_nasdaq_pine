@@ -1,0 +1,13 @@
+//@version=5
+// // The script uses the MAHQ and the MALQ index and subtracts the second from the first. So you can see how many stocks in the Nasdaq make new highs or new lows on a 52 weeks basis and see the trend of the market.
+indicator(title = "52 Weeks Highs-Lows Nasdaq", shorttitle="52 Weeks Highs-Lows Nasdaq")
+
+newhigh = request.security ("MAHQ", "", close)
+newlow = request.security ("MALQ", "", close)
+draw = newhigh - newlow
+
+plot(0, title="Zero Line", color = color.yellow, linewidth=1, style=plot.style_line, editable=false, display=display.all)
+//plot(500, title="500 Line", color = color.green, linewidth=1, style=plot.style_line, editable=false, display=display.all)
+//plot(-500, title="-500 Line", color = color.red, linewidth=1, style=plot.style_line, editable=false, display=display.all)
+
+plot(draw, title="New Highs-Lows", color = draw>=0?color.green:color.red, style=plot.style_columns, linewidth=2)

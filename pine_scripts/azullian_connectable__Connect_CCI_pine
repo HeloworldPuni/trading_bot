@@ -1,0 +1,324 @@
+// ===LICENSE ===
+
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © Azullian
+
+// === VERSION ===
+
+//@version=5
+
+// === DECLARATIONS ===
+
+indicator('CCI / Connectable [Azullian]', shorttitle='CCI / Connectable [Azullian]', overlay=true)
+
+// === IMPORTS ===
+
+import azullian/azLibConnector/2 as azconnector
+
+// === CONSTANTS ===
+
+// ————— Constants: Timeframe options
+var TF00                        ="default"
+var TF01                        ="1S"
+var TF02                        ="5S"
+var TF03                        ="15S"
+var TF04                        ="30S"
+var TF05                        ="1"
+var TF06                        ="3"
+var TF07                        ="5"
+var TF08                        ="15"
+var TF09                        ="30"
+var TF10                        ="45"
+var TF11                        ="60"
+var TF12                        ="120"
+var TF13                        ="180"
+var TF14                        ="240"
+var TF15                        ="1D"
+var TF16                        ="5D"
+var TF17                        ="1W"
+var TF18                        ="1M"
+var TF19                        ="3M"
+var TF20                        ="12M"
+
+// ————— Constants: Signal Mode options
+var ALL                         = 'All'
+var ENTRIES_EXITS               = 'Entries & Exits'
+var ENTRIES                     = 'Entries Only'
+var EXITS                       = 'Exits Only'
+var ZONE                        = 'Zone'
+
+// ————— Constants: Signal Count options
+var EVERY                       = "Every"
+var SINGLE                      = "Single"
+var THS                         = "Single+Threshold"
+var THE                         = "Every+Threshold"
+
+// ————— Constants: Signal Category Threshold options
+var THRESHOLD                   = "Threshold"
+var NO_THRESHOLD                = "No Threshold"
+
+// ————— Constants: Connector Flow options
+var BOTH                        = "Both"
+var INDICATOR                   = "Indicator Only"
+var CONNECTOR                   = "Connector Only"
+
+// ————— Constants: Input Labels and Tips - Global settings
+var LBL_INDICATOR_ENERGY        = "🗲️"
+var LBL_INDICATOR_BRIGHTNESS    = "☼"
+var TIP_ENERGY_BRIGHTNESS       = "Energy % / Brightness %"
+
+var LBL_CONNECTOR               = "→"
+var LBL_CONNECTOR_MODE          = "⌥"
+var LBL_THRESHOLD_TYPE          = "Ⴤ"
+var TIP_INPUT_FLOW_THRESH       = "Input / Flow / Threshold type"
+
+var LBL_SIGNALS_MULTI           = "⥅"
+var LBL_SIGNALS_THRESH          = "⥇"
+var LBL_SIGNALS_LIMIT           = "⥱"
+var TIP_MULTI_THRESH_LIMIT      = "Signals Multiplier / Threshold / Limiter"
+
+// ————— Constants: Input Labels and Tips -  Weight system
+var LBL_SIGNAL_MODE             = 'SM'
+var LBL_SIGNAL_PERIOD           = 'SP'
+var LBL_SIGNAL_COUNT            = 'SC'
+var TIP_SIGNAL_MODE             = 'SM: Signal Mode / SP: Signal Period. # of historical bars to lookup the condition. / SC: Signal Count. Define how to count signals within Signal Period. Single: Count a single condition in period. Every: Count every condition in period. Threshold: Count a single condition if number of conditions in period equal or exceed threshold.'
+
+var LBL_EL                      = "EL"
+var LBL_XL                      = "XL"
+var LBL_ES                      = "ES"
+var LBL_XS                      = "XS"
+
+var LBL_LONG_COLOR              = "🡑"
+var LBL_SHORT_COLOR             = "🡓"
+var LBL_NEUTRAL_COLOR           = "↕"
+
+// ————— Constants: Input Labels and Tips -  Indicator
+var LBL_ENABLE                  = 'Enable Indicator'
+var TIP_CCI                     = 'CCI: An oscillator that helps identify price reversals, price extremes, and trend strength.'
+
+var LBL_SYMBOL                  = 'S'
+var LBL_TIMEFRAME               = 'T'
+var TIP_SYMBOL_TIMEFRAME        = "S: Symbol / T: Timeframe"
+
+var LBL_LENGTH                  = 'LE'
+var LBL_OVERBOUGHT              = 'OB'
+var LBL_OVERSOLD                = 'OS'
+var TIP_OB_OS                   = 'LE: Length / OB: Overbought / OS: Oversold'
+
+// ————— Constants: Defaults - Global settings
+var ENERGY_DEFAULT              = 10
+var ENERGY_MIN                  = 0
+var ENERGY_MAX                  = 100
+var ENERGY_STEP                 = 10
+var BRIGHTNESS_DEFAULT          = 85
+var BRIGHTNESS_MIN              = 0
+var BRIGHTNESS_MAX              = 100 
+var BRIGHTNESS_STEP             = 5
+var MULTIPLIER_DEFAULT          = 1
+var THRESHOLD_DEFAULT           = 12
+var THRESHOLD_MIN               = 0
+var THRESHOLD_MAX               = 499
+var LIMITER_DEFAULT             = 499
+var LIMITER_MIN                 = 0
+var LIMITER_MAX                 = 499
+var CONNECTOR_MODE_DEFAULT      = INDICATOR
+var SIGNALS_THRES_TYPE_DEFAULT  = NO_THRESHOLD
+
+// ————— Constants: Defaults - Indicator settings
+var ENABLE_DEFAULT              = true
+var SYMBOL_DEFAULT              = 'CRYPTOCAP:TOTAL'
+var TIMEFRAME_DEFAULT           = timeframe.period
+
+// ————— Constants: Defaults - Signal weight settings
+var SIGNAL_MIN                  = -12
+var SIGNAL_MAX                  = 12
+
+var SIGNAL_PERIODS_DEFAULT      = 0
+var SIGNAL_MODE_DEFAULT         = ENTRIES
+var SIGNAL_COUNT_DEFAULT        = SINGLE
+
+var EL_DEFAULT                  = 6
+var XL_DEFAULT                  = 6
+var ES_DEFAULT                  = 6
+var XS_DEFAULT                  = 6
+
+// ————— Constants: Colors
+var LONG_COLOR                  = color.rgb(149, 117, 205)
+var SHORT_COLOR                 = color.rgb(149, 117, 205)
+var CCI_COLOR                   = color.rgb(149, 117, 205)
+
+// ————— Constants: Icons
+var CAT_ICON                    = shape.diamond
+var CCI_ICON                    = CAT_ICON
+
+
+// === INPUTS ===
+
+// ————— Inputs: Visualisation settings
+var settingsGroup = "SETTINGS"
+i_indicatorEnergy = input.int(title=LBL_INDICATOR_ENERGY, defval=ENERGY_DEFAULT, minval=ENERGY_MIN, maxval=ENERGY_MAX, step=ENERGY_STEP, inline=LBL_INDICATOR_ENERGY, group=settingsGroup) / 100
+i_indicatorBrightness = input.int(title=LBL_INDICATOR_BRIGHTNESS, defval=BRIGHTNESS_DEFAULT, minval=BRIGHTNESS_MIN, maxval=BRIGHTNESS_MAX, step=BRIGHTNESS_STEP, inline=LBL_INDICATOR_ENERGY, group=settingsGroup, tooltip=TIP_ENERGY_BRIGHTNESS) / 100
+
+// ————— Inputs: Connector Settings
+i_connector = input.source(title=LBL_CONNECTOR, defval=close, inline=LBL_CONNECTOR, group=settingsGroup)
+i_connectorMode = input.string(title=LBL_CONNECTOR_MODE, defval=CONNECTOR_MODE_DEFAULT, options=[BOTH, INDICATOR, CONNECTOR], inline=LBL_CONNECTOR, group=settingsGroup)
+i_signalsThresholdType = input.string(title=LBL_THRESHOLD_TYPE, defval=SIGNALS_THRES_TYPE_DEFAULT, options=[NO_THRESHOLD, THRESHOLD], inline=LBL_CONNECTOR, group=settingsGroup, tooltip=TIP_INPUT_FLOW_THRESH)
+
+// ————— Inputs: Category Settings
+i_signalsMultiplier = input.int(title=LBL_SIGNALS_MULTI, defval=MULTIPLIER_DEFAULT, minval=SIGNAL_MIN, maxval=SIGNAL_MAX, inline=LBL_SIGNALS_MULTI, group=settingsGroup)
+i_signalsThreshold = input.int(title=LBL_SIGNALS_THRESH, defval=THRESHOLD_DEFAULT, minval=THRESHOLD_MIN, maxval=THRESHOLD_MAX, inline=LBL_SIGNALS_MULTI, group=settingsGroup)
+i_signalsLimiter = input.int(title=LBL_SIGNALS_LIMIT, defval=LIMITER_DEFAULT, minval=LIMITER_MIN, maxval=LIMITER_MAX, inline=LBL_SIGNALS_MULTI, group=settingsGroup, tooltip=TIP_MULTI_THRESH_LIMIT)
+
+// ————— Inputs: Indicator inputs
+var cciGroupNameSettings = 'CCI - Commodity Channel index'
+i_cciEnabled = input.bool(title=LBL_ENABLE, defval=ENABLE_DEFAULT, group=cciGroupNameSettings, tooltip=TIP_CCI)
+
+i_cciSymEnabled = input.bool(title=LBL_SYMBOL, defval=false, group=cciGroupNameSettings, inline=LBL_SYMBOL)
+i_cciSymbol = input.symbol(SYMBOL_DEFAULT, title='', inline=LBL_SYMBOL, group=cciGroupNameSettings)
+i_cciTimeFrameTmp = input.timeframe(defval=TF00, title=LBL_TIMEFRAME, options=[TF00,TF01,TF02,TF03,TF04,TF05,TF06,TF07,TF08,TF09,TF10,TF11,TF12,TF13,TF14,TF15,TF16,TF17,TF18,TF19,TF20], tooltip=TIP_SYMBOL_TIMEFRAME, inline=LBL_SYMBOL, group=cciGroupNameSettings) 
+i_cciTimeFrame = i_cciTimeFrameTmp == TF00 ? TIMEFRAME_DEFAULT : i_cciTimeFrameTmp
+
+i_ccisrc = hlc3
+i_ccilen = input.int(title=LBL_LENGTH, defval=20, minval=1, inline=LBL_LENGTH, group=cciGroupNameSettings)
+i_cciob = input.int(title=LBL_OVERBOUGHT, defval=100, minval=0, step=1, inline=LBL_LENGTH, group=cciGroupNameSettings)
+i_ccios = input.int(title=LBL_OVERSOLD, defval=-100, minval=-100, step=1, inline=LBL_LENGTH, group=cciGroupNameSettings, tooltip=TIP_OB_OS)
+
+var cciGroupNameWeight = 'SIGNAL WEIGHTS AND CONDITIONS'
+i_cciSignalMode = input.string(title=LBL_SIGNAL_MODE, defval=ENTRIES, options=[ALL, ENTRIES_EXITS, ENTRIES, EXITS, ZONE], group=cciGroupNameWeight, tooltip=TIP_SIGNAL_MODE, inline=LBL_SIGNAL_MODE)
+i_cciSignalPeriod = input.int(title=LBL_SIGNAL_PERIOD, defval=SIGNAL_PERIODS_DEFAULT, inline=LBL_SIGNAL_MODE, group=cciGroupNameWeight)
+i_cciSignalCount = input.string(title=LBL_SIGNAL_COUNT, defval=SINGLE, options=[SINGLE, EVERY, THS, THE], inline=LBL_SIGNAL_MODE, group=cciGroupNameWeight, tooltip=TIP_SIGNAL_MODE)
+
+i_cciES = input.int(title=LBL_ES, defval=ES_DEFAULT, minval=SIGNAL_MIN, maxval=SIGNAL_MAX, inline=LBL_ES, group=cciGroupNameWeight)
+i_cciXL =  input.int(title=LBL_XL, defval=XL_DEFAULT, minval=SIGNAL_MIN, maxval=SIGNAL_MAX, inline=LBL_ES, group=cciGroupNameWeight)
+i_cciSHORT_COLOR = input.color(title=LBL_SHORT_COLOR, defval=CCI_COLOR, inline=LBL_ES, group=cciGroupNameWeight)
+
+i_cciEL = input.int(title=LBL_EL, defval=EL_DEFAULT, minval=SIGNAL_MIN, maxval=SIGNAL_MAX, inline=LBL_EL, group=cciGroupNameWeight)
+i_cciXS = input.int(title=LBL_XS, defval=XS_DEFAULT, minval=SIGNAL_MIN, maxval=SIGNAL_MAX, inline=LBL_EL, group=cciGroupNameWeight)
+i_cciLONG_COLOR = input.color(title=LBL_LONG_COLOR, defval=CCI_COLOR, inline=LBL_EL, group=cciGroupNameWeight)
+
+
+// === FUNCTIONS ===
+
+// ————— Function: Check is in condition zone mode
+isZone(_sm) => _sm == ALL or _sm == ZONE
+
+// ————— Function: Check is in condition start mode
+isEntries(_sm) => _sm == ALL or _sm == ENTRIES
+
+// ————— Function: Check is in condition end mode
+isExits(_sm) => _sm == ALL or _sm == EXITS
+
+// ————— Function: Check is in condition start mode
+isEntriesAndExits(_sm) => _sm == ENTRIES_EXITS
+
+// ————— Function: Get the weight based on the L, XL, S, XS conditions and add or not the condition weight x bars back (0 = current)   
+getWeight(_series, _weight, _signalPeriod, _signalCount) =>
+    seriesWeight = 0
+    for i = 0 to _signalPeriod by 1
+        if _series[i] == true
+            seriesWeight += _weight
+            if _signalCount == SINGLE
+                break
+    if (_signalCount == THS or _signalCount == THE)
+        seriesWeight := (seriesWeight == (_weight * _signalPeriod)) ? _signalCount == THS ? _weight : seriesWeight : 0
+    seriesWeight
+
+// ————— Function: Multiply the value with given multiplier
+applyMultiplier(_s, _m) => _s * _m
+
+// ————— Function: Threshold the value with given threshold type and value
+applyThreshold(_s, _t, _th) => _t == NO_THRESHOLD or _s >= _th ? _s : 0
+
+// ————— Function: Limit the value with given limiter value
+applyLimiter(_s, _l) => _s > _l ? _l : _s
+
+// ————— Function: Get series where (up or under the candle) to draw the shape based on energy settings
+getPlotSeries(_long, _weightLong, _short, _weightShort, _nrg) =>
+    plotSeries = _long ? low - ta.tr * math.abs(_weightLong) * _nrg : _short ? high + ta.tr * math.abs(_weightShort) * _nrg : na
+    plotSeries
+
+// ————— Function: Get color based on brightness settings  
+getPlotColor(_long, _weightLong, _colorLong, _short, _weightShort, _colorShort, _bright) =>
+    plotColor = _long ? color.new(_colorLong, 100 - math.abs(_weightLong) / SIGNAL_MAX * 100 * _bright) : _short ? color.new(_colorShort, 100 - math.abs(_weightShort) / SIGNAL_MAX * 100 * _bright) : na
+    plotColor
+
+// ————— Function: Calculate CCI
+cciCalculate(_ccisrc, _ccilen, _cciob, _ccios, _cciSignalMode) =>
+    ma = ta.sma(_ccisrc, _ccilen)
+    cci = (_ccisrc - ma) / (0.015 * ta.dev(_ccisrc, _ccilen))
+
+    iscciOversoldCalc = cci < _ccios
+    iscciOversoldZone = iscciOversoldCalc and isZone(_cciSignalMode)
+    iscciOversoldEntry = iscciOversoldCalc[1] == false and iscciOversoldCalc == true and (isEntries(_cciSignalMode) or isEntriesAndExits(_cciSignalMode))
+    iscciOversoldExit = iscciOversoldCalc[1] == true and iscciOversoldCalc == false and (isExits(_cciSignalMode) or isEntriesAndExits(_cciSignalMode))
+    iscciOverboughtCalc = cci > i_cciob
+    iscciOverboughtZone = iscciOverboughtCalc and isZone(_cciSignalMode)
+    iscciOverboughtEntry = iscciOverboughtCalc[1] == false and iscciOverboughtCalc == true and (isEntries(_cciSignalMode) or isEntriesAndExits(_cciSignalMode))
+    iscciOverboughtExit = iscciOverboughtCalc[1] == true and iscciOverboughtCalc ==  false and (isExits(_cciSignalMode) or isEntriesAndExits(_cciSignalMode))
+
+    cciLongCalc = iscciOversoldZone or iscciOversoldEntry or iscciOversoldExit
+    cciShortCalc = iscciOverboughtZone or iscciOverboughtEntry or iscciOverboughtExit
+    [cciLongCalc, cciShortCalc]
+
+bool cciLong = false
+bool cciShort = false
+
+[_cciLong, _cciShort] = request.security(i_cciSymEnabled ? i_cciSymbol : syminfo.tickerid, i_cciTimeFrame, cciCalculate(i_ccisrc, i_ccilen, i_cciob, i_ccios, i_cciSignalMode))
+
+if i_cciEnabled
+    cciLong := _cciLong
+    cciShort := _cciShort
+
+
+// === CALCULATIONS ===
+
+// ————— Calculations: Calculate L, XL, S and XS weight values based on trading conditions, input weight settings, how many x bars back and wheter to include the weight for each occurrence or a single occurence.   
+signalEL = getWeight(cciLong, i_cciEL, i_cciSignalPeriod, i_cciSignalCount)
+signalXL = getWeight(cciShort, i_cciXL, i_cciSignalPeriod, i_cciSignalCount)
+signalES = getWeight(cciShort, i_cciES, i_cciSignalPeriod, i_cciSignalCount)
+signalXS = getWeight(cciLong, i_cciXS, i_cciSignalPeriod, i_cciSignalCount) 
+
+// ————— Calculations: Apply category weight settings - Multiplier
+signalEL := applyMultiplier(signalEL, i_signalsMultiplier)
+signalXL := applyMultiplier(signalXL, i_signalsMultiplier)
+signalES := applyMultiplier(signalES, i_signalsMultiplier)
+signalXS := applyMultiplier(signalXS, i_signalsMultiplier)
+
+// ————— Calculations: Apply category weight settings - Threshold
+signalEL := applyThreshold(signalEL, i_signalsThresholdType, i_signalsThreshold)
+signalXL := applyThreshold(signalXL, i_signalsThresholdType, i_signalsThreshold)
+signalES := applyThreshold(signalES, i_signalsThresholdType, i_signalsThreshold)
+signalXS := applyThreshold(signalXS, i_signalsThresholdType, i_signalsThreshold)
+
+// ————— Calculations: Apply category weight settings - Limiter
+signalEL := applyLimiter(signalEL, i_signalsLimiter)
+signalXL := applyLimiter(signalXL, i_signalsLimiter)
+signalES := applyLimiter(signalES, i_signalsLimiter)
+signalXS := applyLimiter(signalXS, i_signalsLimiter)
+
+// ————— Calculations: Extract passthrough EL, XL, ES and XS signal values from connector
+[ptSignalEL, ptSignalXL, ptSignalES, ptSignalXS] = azconnector.extract(i_connector)
+
+// ————— Calculations: Combine output L, XL, S and XS weight values to single number based on input settings
+connectorOut = switch i_connectorMode
+    BOTH => azconnector.compose(signalEL + ptSignalEL, signalXL + ptSignalXL, signalES + ptSignalES, signalXS + ptSignalXS)
+    INDICATOR => azconnector.compose(signalEL, signalXL, signalES, signalXS)
+    CONNECTOR => azconnector.compose(ptSignalEL, ptSignalXL, ptSignalES, ptSignalXS)
+
+
+// == VISUALS ===
+
+// ————— Plot Category Symbol
+var indicatorSymbol = CAT_ICON
+indicatorPlotSeries = getPlotSeries(signalEL >= i_signalsThreshold, signalEL, signalES >= i_signalsThreshold, signalES, i_indicatorEnergy)
+indicatorPlotColor = getPlotColor(signalEL >= i_signalsThreshold, signalEL, LONG_COLOR, signalES >= i_signalsThreshold, signalES, SHORT_COLOR, i_indicatorBrightness)
+plotshape(series=indicatorPlotSeries, style=indicatorSymbol, title='Settings Indicator', location=location.absolute, color=indicatorPlotColor, size=size.small)
+
+// ————— Plot Indicator Symbol
+cciPlotSeries = i_cciEnabled ? getPlotSeries(cciLong, i_cciEL == 0 ? i_cciXS : i_cciEL, cciShort, i_cciES == 0 ? i_cciXL : i_cciES, i_indicatorEnergy) : na
+cciPlotColor = i_cciEnabled ? getPlotColor(cciLong,  i_cciEL == 0 ? i_cciXS : i_cciEL, i_cciLONG_COLOR, cciShort,  i_cciES == 0 ? i_cciXL : i_cciES, i_cciSHORT_COLOR, i_indicatorBrightness) : na
+plotshape(series=cciPlotSeries, title=cciGroupNameSettings, style=CCI_ICON, location=location.absolute, color=cciPlotColor, size=size.tiny)
+
+
+// ————— Plot Strategy Connector
+plot(connectorOut, title='Signal connector', display=display.none)

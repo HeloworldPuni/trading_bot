@@ -1,0 +1,1127 @@
+//@version=5
+indicator("IJN Visualize-Z", "IJN Viz-Z", overlay = true , max_labels_count = 500 , max_lines_count = 500 , max_boxes_count = 500 , max_bars_back = 500)
+max_bars_back(time, 500)
+
+string g_MainOpt = 'Main Options'
+bool show_swingPoint = input.bool(true, 'Swing Points', group=g_MainOpt)
+bool show_marketStructure = input.bool(true, 'Market Structure', group=g_MainOpt)
+bool show_FVG = input.bool(true, title = 'Show FVGs',   group=g_MainOpt)
+bool show_iob = input.bool(true, 'Internal Order Blocks', group=g_MainOpt)
+bool show_sob = input.bool(true, 'Swing Order Blocks', group=g_MainOpt)
+bool show_preCh = input.bool(true, 'Predictive Channels' , group=g_MainOpt)
+bool show_pdZone = input.bool(true, 'Premium/Discount Zones' , group=g_MainOpt)
+bool show_srZone = input.bool(true, 'Support/Resistance Zone', group=g_MainOpt)
+bool show_srZoneDynamics = input.bool(true, 'Support/Resistance Dynamic Zones', group=g_MainOpt)
+
+// ------------------------------------------------
+//                     Constants
+// ------------------------------------------------
+
+color CLEAR = color.rgb(0,0,0,100)
+int n = bar_index
+int DEMAND_ZONE = 1
+int SUPPLY_ZONE = 2
+int TBD_ZONE = 0
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : Market Structure
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+string g_MS = 'Market Structure'
+bool show_internals = input.bool(true, 'Show Internal Structure' , group = g_MS)
+string show_ibull = input.string('All', 'Bullish Structure' , options = ['All', 'BOS', 'CHoCH'] , inline = 'ibull' , group = g_MS)
+color swing_ibull_css = input(#089981, '' , inline = 'ibull' , group = g_MS)
+string show_ibear = input.string('All', 'Bearish Structure' , options = ['All', 'BOS', 'CHoCH'] , inline = 'ibear' , group = g_MS)
+color swing_ibear_css = input.color(#f23645, '' , inline = 'ibear' , group = g_MS)
+bool ifilter_confluence = input.bool(false, 'Confluence Filter' , group = g_MS)
+string internal_structure_size = input.string('Tiny', 'Internal Label Size' , options = ['Tiny', 'Small', 'Normal'] , group = g_MS)
+bool show_Structure = input.bool(true, 'Show Swing Structure' , group = g_MS)
+string show_bull = input.string('All', 'Bullish Structure' , options = ['All', 'BOS', 'CHoCH'] , inline = 'bull' , group = g_MS)
+color swing_bull_css = input(#089981, '' , inline = 'bull' , group = g_MS)
+string show_bear = input.string('All', 'Bearish Structure' , options = ['All', 'BOS', 'CHoCH'] , inline = 'bear' , group = g_MS)
+color swing_bear_css = input.color(#f23645, '' , inline = 'bear' , group = g_MS)
+string swing_structure_size = input.string('Small', 'Swing Label Size' , options = ['Tiny', 'Small', 'Normal'] , group = g_MS)
+bool show_swings = input.bool(false, 'Show Swings Points' , inline = 'swings' , group = g_MS)
+int length = input.int(50, '' , minval = 10 , inline = 'swings' , group = g_MS)
+bool show_hl_swings = input.bool(true, 'Show Strong/Weak High/Low' , group = g_MS)
+int iob_showlast = input.int(5, 'Internal Order Blocks' , minval = 1 , inline = 'iob' , group = g_MS)
+int ob_showlast = input.int(5, 'Swing Order Blocks' , minval = 1 , inline = 'ob' , group = g_MS)
+string ob_filter = input.string('Atr', 'Order Block Filter' , options = ['Atr', 'Cumulative Mean Range'] , group = g_MS)
+color ibull_ob_css = input.color(color.new(#3179f5, 93), 'Internal Bullish OB' , group = g_MS)
+color ibear_ob_css = input.color(color.new(#f77c80, 93), 'Internal Bearish OB' , group = g_MS)
+color bull_ob_css = input.color(color.new(#1848cc, 93), 'Bullish OB' , group = g_MS)
+color bear_ob_css = input.color(color.new(#b22833, 93), 'Bearish OB' , group = g_MS)
+bool show_eq = input.bool(true, 'Equal High/Low' , group = g_MS)
+int eq_len = input.int(3, 'Bars Confirmation' , minval = 1 , group = g_MS)
+float eq_threshold = input.float(0.1, 'Threshold' , minval = 0 , maxval = 0.5 , step = 0.1 , group = g_MS)
+string eq_size = input.string('Tiny', 'Label Size' , options = ['Tiny', 'Small', 'Normal'] , group = g_MS)
+bool fvg_auto = input.bool(true, "Auto Threshold" , group = g_MS)
+string fvg_tf = input.timeframe('', "Timeframe" , group = g_MS)
+color bull_fvg_css = input.color(color.new(#00ff68, 70), 'Bullish FVG' , group = g_MS)
+color bear_fvg_css = input.color(color.new(#ff0008, 70), 'Bearish FVG' , group = g_MS)
+int fvg_extend = input.int(1, "Extend FVG" , minval = 0 , group = g_MS)
+bool show_pdhl = input.bool(false, 'Daily' , inline = 'daily' , group = g_MS)
+string pdhl_style = input.string('⎯⎯⎯', '' , options = ['⎯⎯⎯', '----', '····'] , inline = 'daily' , group = g_MS)
+color pdhl_css = input.color(#2157f3, '' , inline = 'daily' , group = g_MS)
+bool show_pwhl = input.bool(false, 'Weekly' , inline = 'weekly' , group = g_MS)
+string pwhl_style = input.string('⎯⎯⎯', '' , options = ['⎯⎯⎯', '----', '····'] , inline = 'weekly' , group = g_MS)
+color pwhl_css = input.color(#2157f3, '' , inline = 'weekly' , group = g_MS)
+bool show_pmhl = input.bool(false, 'Monthly' , inline = 'monthly' , group = g_MS)
+string pmhl_style = input.string('⎯⎯⎯', '' , options = ['⎯⎯⎯', '----', '····'] , inline = 'monthly' , group = g_MS)
+color pmhl_css = input.color(#2157f3, '' , inline = 'monthly' , group = g_MS)
+color premium_css = input.color(#5500ff, 'Premium Zone' , group = g_MS)
+color eq_css = input.color(#b2b5be, 'Equilibrium Zone' , group = g_MS)
+color discount_css = input.color(#089981, 'Discount Zone' , group = g_MS)
+int swingSize = input.int(20, 'Swing Length', group=g_MS)
+string bosConfType = input.string('Candle Close', 'BOS Confirmation', ['Candle Close', 'Wicks'], group=g_MS)
+color bosColor = input.color(color.rgb(112, 114, 119), 'Color', group=g_MS)
+string bosStyle = input.string('Dashed', 'Line Style', ['Solid', 'Dashed', 'Dotted'], group=g_MS)
+int bosWidth = input.int(1, 'Width', minval=1, group=g_MS)
+
+// -----------------------------------------------------------------------------------------------
+//   Functions
+// -----------------------------------------------------------------------------------------------
+atr = ta.atr(200)
+cmean_range = ta.cum(high - low) / n
+hl() => [high, low]
+get_ohlc()=> [close[1], open[1], high, low, high[2], low[2]]
+
+display_Structure(x, y, txt, css, dashed, down, lbl_size)=>
+    structure_line = line.new(x, y, n, y, color = css, style = dashed ? line.style_dashed : line.style_solid)
+    structure_lbl = label.new(int(math.avg(x, n)), y, txt, color = CLEAR, textcolor = css, style = down ? label.style_label_down : label.style_label_up, size = lbl_size)
+swings(len)=>
+    var os = 0
+    upper = ta.highest(len)
+    lower = ta.lowest(len)
+    os := high[len] > upper ? 0 : low[len] < lower ? 1 : os[1]
+    top = os == 0 and os[1] != 0 ? high[len] : 0
+    btm = os == 1 and os[1] != 1 ? low[len] : 0
+    [top, btm]
+ob_coord(use_max, loc, target_top, target_btm, target_left, target_type)=>
+    min = 99999999.
+    max = 0.
+    idx = 1
+    ob_threshold = ob_filter == 'Atr' ? atr : cmean_range 
+    if use_max
+        for i = 1 to (n - loc)-1
+            if (high[i] - low[i]) < ob_threshold[i] * 2
+                max := math.max(high[i], max)
+                min := max == high[i] ? low[i] : min
+                idx := max == high[i] ? i : idx
+    else
+        for i = 1 to (n - loc)-1
+            if (high[i] - low[i]) < ob_threshold[i] * 2
+                min := math.min(low[i], min)
+                max := min == low[i] ? high[i] : max
+                idx := min == low[i] ? i : idx
+
+    array.unshift(target_top, max)
+    array.unshift(target_btm, min)
+    array.unshift(target_left, time[idx])
+    array.unshift(target_type, use_max ? -1 : 1)
+display_ob(boxes, target_top, target_btm, target_left, target_type, show_last, swing, size)=>
+    for i = 0 to math.min(show_last-1, size-1)
+        get_box = array.get(boxes, i)
+        box.set_lefttop(get_box, array.get(target_left, i), array.get(target_top, i))
+        box.set_rightbottom(get_box, array.get(target_left, i), array.get(target_btm, i))
+        box.set_extend(get_box, extend.right)
+        color css = na
+        if swing
+            css := array.get(target_type, i) == 1 ? bull_ob_css : bear_ob_css
+            box.set_border_color(get_box, css)
+            box.set_bgcolor(get_box, css)
+        else
+            css := array.get(target_type, i) == 1 ? ibull_ob_css : ibear_ob_css
+            box.set_border_color(get_box, css)
+            box.set_bgcolor(get_box, css)
+get_line_style(style) =>
+    out = switch style
+        '⎯⎯⎯'  => line.style_solid
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+phl(h, l, tf, css)=>
+    var line high_line = line.new(na,na,na,na, xloc = xloc.bar_time, color = css, style = get_line_style(pdhl_style))
+    var label high_lbl = label.new(na,na, xloc = xloc.bar_time, text = str.format('P{0}H', tf), color = CLEAR, textcolor = css, size = size.small, style = label.style_label_left)
+    var line low_line = line.new(na,na,na,na, xloc = xloc.bar_time, color = css, style = get_line_style(pdhl_style))
+    var label low_lbl = label.new(na,na, xloc = xloc.bar_time, text = str.format('P{0}L', tf), color = CLEAR, textcolor = css, size = size.small, style = label.style_label_left)
+    hy = ta.valuewhen(h != h[1], h, 1)
+    hx = ta.valuewhen(h == high, time, 1)
+    ly = ta.valuewhen(l != l[1], l, 1)
+    lx = ta.valuewhen(l == low, time, 1)
+    if barstate.islast
+        ext = time + (time - time[1])*20
+        line.set_xy1(high_line, hx, hy)
+        line.set_xy2(high_line, ext, hy)
+        label.set_xy(high_lbl, ext, hy)
+        line.set_xy1(low_line, lx, ly)
+        line.set_xy2(low_line, ext, ly)
+        label.set_xy(low_lbl, ext, ly)
+lineStyle(x) =>
+    switch x
+        'Solid' => line.style_solid
+        'Dashed' => line.style_dashed
+        'Dotted' => line.style_dotted
+
+// -----------------------------------------------------------------------------------------------
+//   Global Variables
+// -----------------------------------------------------------------------------------------------
+var trend = 0, var itrend = 0
+var top_y = 0., var top_x = 0
+var btm_y = 0., var btm_x = 0
+var itop_y = 0., var itop_x = 0
+var ibtm_y = 0., var ibtm_x = 0
+var trail_up = high, var trail_dn = low
+var trail_up_x = 0,  var trail_dn_x = 0
+var top_cross = true,  var btm_cross = true
+var itop_cross = true, var ibtm_cross = true
+var txt_top = '',  var txt_btm = ''
+
+bull_choch_alert = false 
+bull_bos_alert   = false 
+bear_choch_alert = false 
+bear_bos_alert   = false 
+bull_ichoch_alert = false 
+bull_ibos_alert   = false 
+bear_ichoch_alert = false 
+bear_ibos_alert   = false 
+bull_iob_break = false 
+bear_iob_break = false
+bull_ob_break = false 
+bear_ob_break = false
+eqh_alert = false 
+eql_alert = false 
+
+var internal_structure_lbl_size = internal_structure_size == 'Tiny' 
+  ? size.tiny 
+  : internal_structure_size == 'Small' 
+  ? size.small 
+  : size.normal 
+
+var swing_structure_lbl_size = swing_structure_size == 'Tiny' 
+  ? size.tiny 
+  : swing_structure_size == 'Small' 
+  ? size.small 
+  : size.normal 
+
+var eqhl_lbl_size = eq_size == 'Tiny' 
+  ? size.tiny 
+  : eq_size == 'Small' 
+  ? size.small
+  : size.normal 
+
+[top, btm] = swings(length)
+[itop, ibtm] = swings(5)
+
+var iob_top = array.new_float(0)
+var iob_btm = array.new_float(0)
+var iob_left = array.new_int(0)
+var iob_type = array.new_int(0)
+
+var ob_top = array.new_float(0)
+var ob_btm = array.new_float(0)
+var ob_left = array.new_int(0)
+var ob_type = array.new_int(0)
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+// Pivot High
+var line extend_top = na
+var label extend_top_lbl = label.new(na, na, color = CLEAR, textcolor = swing_bear_css, style = label.style_label_down, size = size.tiny)
+if top
+    top_cross := true
+    txt_top := top > top_y ? 'HH' : 'LH'
+    line.delete(extend_top[1])
+    extend_top := line.new(n-length, top, n, top, color = swing_bear_css)
+    top_y := top
+    top_x := n - length
+    trail_up := top
+    trail_up_x := n - length
+if itop
+    itop_cross := true
+    itop_y := itop
+    itop_x := n - 5
+trail_up := math.max(high, trail_up)
+trail_up_x := trail_up == high ? n : trail_up_x
+if barstate.islast and show_hl_swings
+    line.set_xy1(extend_top, trail_up_x, trail_up)
+    line.set_xy2(extend_top, n + 20, trail_up)
+    label.set_x(extend_top_lbl, n + 20)
+    label.set_y(extend_top_lbl, trail_up)
+    label.set_text(extend_top_lbl, trend < 0 ? 'Strong High' : 'Weak High')
+// Pivot Low
+var line extend_btm = na 
+var label extend_btm_lbl = label.new(na, na, color = CLEAR, textcolor = swing_bull_css, style = label.style_label_up, size = size.tiny)
+if btm
+    btm_cross := true
+    txt_btm := btm < btm_y ? 'LL' : 'HL'
+    line.delete(extend_btm[1])
+    extend_btm := line.new(n - length, btm, n, btm, color = swing_bull_css)
+    btm_y := btm
+    btm_x := n-length
+    trail_dn := btm
+    trail_dn_x := n-length
+if ibtm
+    ibtm_cross := true
+    ibtm_y := ibtm
+    ibtm_x := n - 5
+trail_dn := math.min(low, trail_dn)
+trail_dn_x := trail_dn == low ? n : trail_dn_x
+if barstate.islast and show_hl_swings
+    line.set_xy1(extend_btm, trail_dn_x, trail_dn)
+    line.set_xy2(extend_btm, n + 20, trail_dn)
+    label.set_x(extend_btm_lbl, n + 20)
+    label.set_y(extend_btm_lbl, trail_dn)
+    label.set_text(extend_btm_lbl, trend > 0 ? 'Strong Low' : 'Weak Low')
+// Swing Low & High
+pivHi = ta.pivothigh(high, swingSize, swingSize)
+pivLo = ta.pivotlow(low, swingSize, swingSize)
+var float prevHigh = na
+var float prevLow = na
+var int prevHighIndex = na
+var int prevLowIndex = na
+var bool highActive = false
+var bool lowActive = false
+bool hh = false
+bool lh = false
+bool hl = false
+bool ll = false
+var int prevSwing = 0
+if not na(pivHi)
+    if pivHi >= prevHigh
+        hh := true
+        prevSwing := 2
+    else
+        lh := true
+        prevSwing := 1
+    prevHigh := pivHi
+    highActive := true
+    prevHighIndex := bar_index - swingSize
+if not na(pivLo)
+    if pivLo >= prevLow
+        hl := true
+        prevSwing := -1
+    else
+        ll := true
+        prevSwing := -2
+    prevLow := pivLo
+    lowActive := true
+    prevLowIndex := bar_index - swingSize
+bool highBroken = false
+bool lowBroken = false
+var int prevBreakoutDir = 0
+float highSrc = bosConfType == 'Candle Close' ? close : high
+float lowSrc = bosConfType == 'Candle Close' ? close : low
+if highSrc > prevHigh and highActive
+    highBroken := true
+    highActive := false
+if lowSrc < prevLow and lowActive
+    lowBroken := true
+    lowActive := false
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+// -- Pivot High BOS/CHoCH
+var bull_concordant = true
+if ifilter_confluence
+    bull_concordant := high - math.max(close, open) > math.min(close, open - low)
+if ta.crossover(close, itop_y) and itop_cross and top_y != itop_y and bull_concordant
+    bool choch = na
+    if itrend < 0
+        choch := true
+        bull_ichoch_alert := true
+    else 
+        bull_ibos_alert := true
+    txt = choch ? 'CHoCH' : 'BOS'
+    if show_internals and show_marketStructure
+        if show_ibull == 'All' or (show_ibull == 'BOS' and not choch) or (show_ibull == 'CHoCH' and choch)
+            display_Structure(itop_x, itop_y, txt, swing_ibull_css, true, true, internal_structure_lbl_size)
+    itop_cross := false
+    itrend := 1
+    if show_iob
+        ob_coord(false, itop_x, iob_top, iob_btm, iob_left, iob_type)
+if hh and show_swingPoint
+    label.new(bar_index - swingSize, pivHi, 'HH', color=CLEAR, style=label.style_label_down, textcolor=chart.fg_color)
+if lh and show_swingPoint
+    label.new(bar_index - swingSize, pivHi, 'LH', color=CLEAR, style=label.style_label_down, textcolor=chart.fg_color)
+if hl and show_swingPoint
+    label.new(bar_index - swingSize, pivLo, 'HL', color=CLEAR, style=label.style_label_up, textcolor=chart.fg_color)
+if ll and show_swingPoint
+    label.new(bar_index - swingSize, pivLo, 'LL', color=CLEAR, style=label.style_label_up, textcolor=chart.fg_color)
+
+// Generating the BOS Lines
+if highBroken and show_marketStructure
+    line.new(prevHighIndex, prevHigh, bar_index, prevHigh, color=bosColor, style=lineStyle(bosStyle), width=bosWidth)
+    label.new(math.floor(bar_index - (bar_index - prevHighIndex) / 2), prevHigh, prevBreakoutDir == -1  ? 'CHoCH' : 'BOS', color=CLEAR, textcolor=bosColor, size=size.tiny)
+    prevBreakoutDir := 1
+
+// Detect bullish Structure
+if ta.crossover(close, top_y) and top_cross
+    bool choch = na
+    if trend < 0
+        choch := true
+        bull_choch_alert := true
+    else 
+        bull_bos_alert := true
+    txt = choch ? 'CHoCH' : 'BOS'
+    if show_Structure and show_marketStructure
+        if show_bull == 'All' or (show_bull == 'BOS' and not choch) or (show_bull == 'CHoCH' and choch)
+            display_Structure(top_x, top_y, txt, swing_bull_css, false, true, swing_structure_lbl_size)
+    if show_sob
+        ob_coord(false, top_x, ob_top, ob_btm, ob_left, ob_type)
+    top_cross := false
+    trend := 1
+
+// -- Pivot Low BOS/CHoCH
+var bear_concordant = true
+if ifilter_confluence
+    bear_concordant := high - math.max(close, open) < math.min(close, open - low)
+
+// Generating the BOS Lines
+if lowBroken and show_marketStructure
+    line.new(prevLowIndex, prevLow, bar_index, prevLow, color=bosColor, style=lineStyle(bosStyle), width=bosWidth)
+    label.new(math.floor(bar_index - (bar_index - prevLowIndex) / 2), prevLow, prevBreakoutDir == 1  ? 'CHoCH' : 'BOS', color=CLEAR, textcolor=bosColor, style=label.style_label_up, size=size.tiny)
+    prevBreakoutDir := -1
+
+// Detect internal bearish Structure
+if ta.crossunder(close, ibtm_y) and ibtm_cross and btm_y != ibtm_y and bear_concordant
+    bool choch = false
+    if itrend > 0
+        choch := true
+        bear_ichoch_alert := true
+    else 
+        bear_ibos_alert := true
+    txt = choch ? 'CHoCH' : 'BOS'
+
+    if show_internals and show_marketStructure
+        if show_ibear == 'All' or (show_ibear == 'BOS' and not choch) or (show_ibear == 'CHoCH' and choch)
+            display_Structure(ibtm_x, ibtm_y, txt, swing_ibear_css, true, false, internal_structure_lbl_size)
+    ibtm_cross := false
+    itrend := -1
+    if show_iob
+        ob_coord(true, ibtm_x, iob_top, iob_btm, iob_left, iob_type)
+
+// Detect bearish Structure
+if ta.crossunder(close, btm_y) and btm_cross
+    bool choch = na
+    if trend > 0
+        choch := true
+        bear_choch_alert := true
+    else 
+        bear_bos_alert := true
+    txt = choch ? 'CHoCH' : 'BOS'
+    if show_Structure and show_marketStructure
+        if show_bear == 'All' or (show_bear == 'BOS' and not choch) or (show_bear == 'CHoCH' and choch)
+            display_Structure(btm_x, btm_y, txt, swing_bear_css, false, false, swing_structure_lbl_size)
+    if show_sob
+        ob_coord(true, btm_x, ob_top, ob_btm, ob_left, ob_type)
+    btm_cross := false
+    trend := -1
+
+// -- Order Blocks
+var iob_boxes = array.new_box(0)
+var ob_boxes = array.new_box(0)
+
+for element in iob_type
+    index = array.indexof(iob_type, element)
+    if close < array.get(iob_btm, index) and element == 1
+        array.remove(iob_top, index) 
+        array.remove(iob_btm, index) 
+        array.remove(iob_left, index) 
+        array.remove(iob_type, index)
+        bull_iob_break := true
+    else if close > array.get(iob_top, index) and element == -1
+        array.remove(iob_top, index) 
+        array.remove(iob_btm, index)
+        array.remove(iob_left, index) 
+        array.remove(iob_type, index)
+        bear_iob_break := true
+
+for element in ob_type
+    index = array.indexof(ob_type, element)
+    if close < array.get(ob_btm, index) and element == 1
+        array.remove(ob_top, index) 
+        array.remove(ob_btm, index) 
+        array.remove(ob_left, index) 
+        array.remove(ob_type, index)
+        bull_ob_break := true
+    else if close > array.get(ob_top, index) and element == -1
+        array.remove(ob_top, index) 
+        array.remove(ob_btm, index)
+        array.remove(ob_left, index) 
+        array.remove(ob_type, index)
+        bear_ob_break := true
+
+iob_size = array.size(iob_type)
+ob_size = array.size(ob_type)
+if barstate.isfirst
+    if show_iob
+        for i = 0 to iob_showlast-1
+            array.push(iob_boxes, box.new(na,na,na,na, xloc = xloc.bar_time))
+    if show_sob
+        for i = 0 to ob_showlast-1
+            array.push(ob_boxes, box.new(na,na,na,na, xloc = xloc.bar_time))
+
+if iob_size > 0
+    if barstate.islast
+        display_ob(iob_boxes, iob_top, iob_btm, iob_left, iob_type, iob_showlast, false, iob_size)
+if ob_size > 0
+    if barstate.islast
+        display_ob(ob_boxes, ob_top, ob_btm, ob_left, ob_type, ob_showlast, true, ob_size)
+
+// -- EQH/EQL
+var eq_prev_top = 0.
+var eq_top_x = 0
+var eq_prev_btm = 0.
+var eq_btm_x = 0
+if show_eq and show_marketStructure
+    eq_top = ta.pivothigh(eq_len, eq_len)
+    eq_btm = ta.pivotlow(eq_len, eq_len)
+    if eq_top 
+        max = math.max(eq_top, eq_prev_top)
+        min = math.min(eq_top, eq_prev_top)
+        if max < min + atr * eq_threshold
+            eqh_line = line.new(eq_top_x, eq_prev_top, n-eq_len, eq_top, color = swing_bear_css, style = line.style_dotted)
+            eqh_lbl = label.new(int(math.avg(n-eq_len, eq_top_x)), eq_top, 'EQH', color = #00000000, textcolor = swing_bear_css, style = label.style_label_down, size = eqhl_lbl_size)
+            eqh_alert := true
+        eq_prev_top := eq_top
+        eq_top_x := n-eq_len
+    if eq_btm 
+        max = math.max(eq_btm, eq_prev_btm)
+        min = math.min(eq_btm, eq_prev_btm)
+        if min > max - atr * eq_threshold
+            eql_line = line.new(eq_btm_x, eq_prev_btm, n-eq_len, eq_btm, color = swing_bull_css, style = line.style_dotted)
+            eql_lbl = label.new(int(math.avg(n-eq_len, eq_btm_x)), eq_btm, 'EQL', color = #00000000, textcolor = swing_bull_css, style = label.style_label_up, size = eqhl_lbl_size)
+            eql_alert := true
+        eq_prev_btm := eq_btm
+        eq_btm_x := n-eq_len
+
+// -- Fair Value Gaps
+var bullish_fvg_max = array.new_box(0)
+var bullish_fvg_min = array.new_box(0)
+var bearish_fvg_max = array.new_box(0)
+var bearish_fvg_min = array.new_box(0)
+float bullish_fvg_avg = na
+float bearish_fvg_avg = na
+bullish_fvg_cnd = false
+bearish_fvg_cnd = false
+[src_c1, src_o1, src_h, src_l, src_h2, src_l2] = request.security(syminfo.tickerid, fvg_tf, get_ohlc())
+if show_FVG
+    delta_per = (src_c1 - src_o1) / src_o1 * 100
+    change_tf = timeframe.change(fvg_tf)
+    threshold = fvg_auto ? ta.cum(math.abs(change_tf ? delta_per : 0)) / n * 2 : 0
+    //FVG conditions
+    bullish_fvg_cnd := src_l > src_h2
+      and src_c1 > src_h2 
+      and delta_per > threshold
+      and change_tf
+    bearish_fvg_cnd := src_h < src_l2 
+      and src_c1 < src_l2 
+      and -delta_per > threshold
+      and change_tf
+    //FVG Areas
+    if bullish_fvg_cnd
+        array.unshift(bullish_fvg_max, box.new(n-1, src_l, n + fvg_extend, math.avg(src_l, src_h2), border_color = bull_fvg_css, bgcolor = bull_fvg_css))
+        array.unshift(bullish_fvg_min, box.new(n-1, math.avg(src_l, src_h2), n + fvg_extend, src_h2, border_color = bull_fvg_css, bgcolor = bull_fvg_css))
+    if bearish_fvg_cnd
+        array.unshift(bearish_fvg_max, box.new(n-1, src_h, n + fvg_extend, math.avg(src_h, src_l2), border_color = bear_fvg_css, bgcolor = bear_fvg_css))
+        array.unshift(bearish_fvg_min, box.new(n-1, math.avg(src_h, src_l2), n + fvg_extend, src_l2, border_color = bear_fvg_css, bgcolor = bear_fvg_css))
+    for bx in bullish_fvg_min
+        if low < box.get_bottom(bx)
+            box.delete(bx)
+            box.delete(array.get(bullish_fvg_max, array.indexof(bullish_fvg_min, bx)))
+    for bx in bearish_fvg_max
+        if high > box.get_top(bx)
+            box.delete(bx)
+            box.delete(array.get(bearish_fvg_min, array.indexof(bearish_fvg_max, bx)))
+
+// -- Previous day/week high/lows
+[pdh, pdl] = request.security(syminfo.tickerid, 'D', hl(), lookahead = barmerge.lookahead_on) //Daily high/low
+[pwh, pwl] = request.security(syminfo.tickerid, 'W', hl(), lookahead = barmerge.lookahead_on) //Weekly high/low
+[pmh, pml] = request.security(syminfo.tickerid, 'M', hl(), lookahead = barmerge.lookahead_on) //Monthly high/low
+if show_pdhl
+    phl(pdh, pdl, 'D', pdhl_css)
+if show_pwhl
+    phl(pwh, pwl, 'W', pwhl_css)
+if show_pmhl
+    phl(pmh, pml, 'M', pmhl_css)
+
+// -- Premium/Discount/Equilibrium zones
+var premium = box.new(na, na, na, na, bgcolor = color.new(premium_css, 80), border_color = na)
+var premium_lbl = label.new(na, na, text = 'Premium', color = CLEAR, textcolor = premium_css, style = label.style_label_down, size = size.small)
+var eq = box.new(na, na, na, na, bgcolor = color.rgb(120, 123, 134, 80), border_color = na)
+var eq_lbl = label.new(na, na, text = 'Equilibrium', color = CLEAR, textcolor = eq_css, style = label.style_label_left, size = size.small)
+var discount = box.new(na, na, na, na, bgcolor = color.new(discount_css, 80), border_color = na)
+var discount_lbl = label.new(na, na, text = 'Discount', color = CLEAR, textcolor = discount_css, style = label.style_label_up, size = size.small)
+//Show Premium/Discount Areas
+if barstate.islast and show_pdZone
+    avg = math.avg(trail_up, trail_dn)
+    box.set_lefttop(premium, math.max(top_x, btm_x), trail_up)
+    box.set_rightbottom(premium, n + 20, .95 * trail_up + .05 * trail_dn)
+    label.set_xy(premium_lbl, int(math.avg(math.max(top_x, btm_x), n)), trail_up)
+    box.set_lefttop(eq, math.max(top_x, btm_x), .525 * trail_up + .475*trail_dn)
+    box.set_rightbottom(eq, n + 20, .525 * trail_dn + .475 * trail_up)
+    label.set_xy(eq_lbl, n + 20, avg)
+    box.set_lefttop(discount, math.max(top_x, btm_x), .95 * trail_dn + .05 * trail_up)
+    box.set_rightbottom(discount, n + 20, trail_dn)
+    label.set_xy(discount_lbl, int(math.avg(math.max(top_x, btm_x), n)), trail_dn)
+
+// -----------------------------------------------------------------------------------------------
+//   Alerts
+// -----------------------------------------------------------------------------------------------
+alertcondition(bull_ibos_alert, 'Internal Bullish BOS', 'Internal Bullish BOS formed')
+alertcondition(bull_ichoch_alert, 'Internal Bullish CHoCH', 'Internal Bullish CHoCH formed')
+alertcondition(bear_ibos_alert, 'Internal Bearish BOS', 'Internal Bearish BOS formed')
+alertcondition(bear_ichoch_alert, 'Internal Bearish CHoCH', 'Internal Bearish CHoCH formed')
+alertcondition(bull_bos_alert, 'Bullish BOS', 'Internal Bullish BOS formed')
+alertcondition(bull_choch_alert, 'Bullish CHoCH', 'Internal Bullish CHoCH formed')
+alertcondition(bear_bos_alert, 'Bearish BOS', 'Bearish BOS formed')
+alertcondition(bear_choch_alert, 'Bearish CHoCH', 'Bearish CHoCH formed')
+alertcondition(bull_iob_break, 'Bullish Internal OB Breakout', 'Price broke bullish internal OB')
+alertcondition(bear_iob_break, 'Bearish Internal OB Breakout', 'Price broke bearish internal OB')
+alertcondition(bull_ob_break, 'Bullish Swing OB Breakout', 'Price broke bullish swing OB')
+alertcondition(bear_ob_break, 'Bearish Swing OB Breakout', 'Price broke bearish swing OB')
+alertcondition(eqh_alert, 'Equal Highs', 'Equal highs detected')
+alertcondition(eql_alert, 'Equal Lows', 'Equal lows detected')
+alertcondition(bullish_fvg_cnd, 'Bullish FVG', 'Bullish FVG formed')
+alertcondition(bearish_fvg_cnd, 'Bearish FVG', 'Bearish FVG formed')
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : FVG & MSS
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+int len = input.int(5, title = 'Length', inline = 'MS', minval = 3, maxval = 10, group = g_MS)
+bool i_BPR = input.bool(false, title = 'Balance Price Range', group = g_MS)
+string i_FVG = input.string('FVG', title = 'Options', options=['FVG', 'IFVG'], tooltip = 'Fair Value Gaps\nor\nImplied Fair Value Gaps', group = g_MS)
+int visBxs = input.int(2, title = '# Visible FVG\'s', minval = 1, maxval = 20, tooltip = 'In the same direction', group = g_MS)
+color cFVGbl = input.color (color.new(#00e676, 0), title = 'Bullish FVG  ', inline = 'FVGbl', group = g_MS)
+color cFVGblBR = input.color (color.new(#808000, 0), title = 'Break', inline = 'FVGbl', group = g_MS)
+color cFVGbr = input.color (color.new(#ff5252, 0), title = 'Bearish FVG ', inline = 'FVGbr', group = g_MS)
+color cFVGbrBR = input.color (color.new(#FF0000, 0), title = 'Break', inline = 'FVGbr', group = g_MS)
+
+// -----------------------------------------------------------------------------------------------
+//   Global Variables
+// -----------------------------------------------------------------------------------------------
+perc_Body  = 0.36 // input.int(   36, minval=1, maxval=36) / 100
+bxBack = 10 // input.int(   10, minval=0, maxval=10)
+per = true
+
+type FVG 
+    box box 
+    bool active
+    int  pos 
+
+var FVG []bFVG_UP = array.new<FVG>()
+var FVG []bFVG_DN = array.new<FVG>()
+var FVG []bBPR_UP = array.new<FVG>()
+var FVG []bBPR_DN = array.new<FVG>()
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+mx         = math.max(close , open)
+mn         = math.min(close , open)
+body       = math.abs(close - open)
+meanBody   = ta.sma  (body, len)
+
+L_body = high - mx < body * perc_Body and mn - low < body * perc_Body
+L_bodyUP = body > meanBody and L_body and close > open
+L_bodyDN = body > meanBody and L_body and close < open
+imbalanceUP = L_bodyUP[1] and (i_FVG == 'FVG' ? low  > high[2] : low  < high[2])
+imbalanceDN = L_bodyDN[1] and (i_FVG == 'FVG' ? high < low [2] : high > low [2])
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+if barstate.isfirst
+    for i = 0 to visBxs -1
+        bFVG_UP.unshift(FVG.new(box(na), false))
+        bFVG_DN.unshift(FVG.new(box(na), false))
+        if i_BPR
+            bBPR_UP.unshift(FVG.new(box(na), false))
+            bBPR_DN.unshift(FVG.new(box(na), false))
+
+if imbalanceUP and per and show_FVG 
+    if imbalanceUP[1]
+        bFVG_UP.get(0).box.set_lefttop    (n -2, low    )
+        bFVG_UP.get(0).box.set_rightbottom(n +8, high[2])
+    else
+        bFVG_UP.unshift(FVG.new(
+          box.new(
+           n -2
+         ,    i_FVG == 'FVG' ? low : high[2]
+         , n, i_FVG == 'FVG' ? high[2] : low
+         , bgcolor     = i_BPR ? color(na) : color.new(cFVGbl, 90)
+         , border_color= i_BPR ? color(na) : color.new(cFVGbl, 65)
+         , text_color  = i_BPR ? color(na) : color.new(cFVGbl, 65)
+         , text_size=size.small
+         , text=i_FVG
+         )
+         , true)
+         )
+        bFVG_UP.pop().box.delete()
+
+if imbalanceDN and per and show_FVG 
+    if imbalanceDN[1]
+        bFVG_DN.get(0).box.set_lefttop    (n -2, low[2])
+        bFVG_DN.get(0).box.set_rightbottom(n +8, high  )
+    else
+        bFVG_DN.unshift(FVG.new(
+         box.new(
+           n -2
+         ,    i_FVG == 'FVG' ? low[2] : high
+         , n, i_FVG == 'FVG' ? high   : low[2]
+         , bgcolor     = i_BPR ? color(na) : color.new(cFVGbr, 90)
+         , border_color= i_BPR ? color(na) : color.new(cFVGbr, 65)
+         , text_color  = i_BPR ? color(na) : color.new(cFVGbr, 65)
+         , text_size=size.small
+         , text=i_FVG
+         )
+         , true)
+         )
+        bFVG_DN.pop().box.delete()
+
+//FVG's breaks
+for i = 0 to math.min(bxBack, bFVG_UP.size() -1)
+    getUPi = bFVG_UP.get(i)
+    if getUPi.active
+        getUPi.box.set_right(bar_index +8)
+        if low  < getUPi.box.get_top() and not i_BPR
+            getUPi.box.set_border_style(line.style_dashed)
+        if low  < getUPi.box.get_bottom()
+            if not i_BPR
+                getUPi.box.set_bgcolor(color.new(cFVGblBR, 95))
+                getUPi.box.set_border_style(line.style_dotted)
+            getUPi.box.set_right(bar_index)
+            getUPi.active := false
+
+for i = 0 to math.min(bxBack, bFVG_DN.size() -1)
+    getDNi = bFVG_DN.get(i)
+    if getDNi.active
+        getDNi.box.set_right(bar_index +8)
+        if high > getDNi.box.get_bottom() and not i_BPR
+            getDNi.box.set_border_style(line.style_dashed)
+        if high > getDNi.box.get_top()
+            if not i_BPR
+                getDNi.box.set_bgcolor(color.new(cFVGbrBR, 95))
+                getDNi.box.set_border_style(line.style_dotted)
+            getDNi.box.set_right(bar_index)
+            getDNi.active := false
+
+if i_BPR
+    for i = 0 to math.min(bxBack, bBPR_UP.size() -1)
+        getUPi = bBPR_UP.get(i)
+        if getUPi.active
+            getUPi.box.set_right(bar_index +8)
+            switch getUPi.pos 
+                -1 =>
+                    if high > getUPi.box.get_bottom()
+                        getUPi.box.set_border_style(line.style_dashed)
+                    if high > getUPi.box.get_top   ()
+                        getUPi.box.set_bgcolor(color.new(cFVGblBR, 95))
+                        getUPi.box.set_border_style(line.style_dotted)
+                        getUPi.box.set_right(bar_index)
+                        getUPi.active := false
+                1 =>
+                    if low  < getUPi.box.get_top   ()
+                        getUPi.box.set_border_style(line.style_dashed)
+                    if low  < getUPi.box.get_bottom()
+                        getUPi.box.set_bgcolor(color.new(cFVGblBR, 95))
+                        getUPi.box.set_border_style(line.style_dotted)
+                        getUPi.box.set_right(bar_index)
+                        getUPi.active := false
+    
+    for i = 0 to math.min(bxBack, bBPR_DN.size() -1)
+        getDNi = bBPR_DN.get(i)
+        if getDNi.active
+            getDNi.box.set_right(bar_index +8)
+            switch getDNi.pos 
+                -1 =>
+                    if high > getDNi.box.get_bottom()
+                        getDNi.box.set_border_style(line.style_dashed)
+                    if high > getDNi.box.get_top   ()
+                        getDNi.box.set_bgcolor(color.new(cFVGbrBR, 95))
+                        getDNi.box.set_border_style(line.style_dotted)
+                        getDNi.box.set_right(bar_index)
+                        getDNi.active := false
+                1 =>
+                    if low  < getDNi.box.get_top   ()
+                        getDNi.box.set_border_style(line.style_dashed)
+                    if low  < getDNi.box.get_bottom()
+                        getDNi.box.set_bgcolor(color.new(cFVGbrBR, 95))
+                        getDNi.box.set_border_style(line.style_dotted)
+                        getDNi.box.set_right(bar_index)
+                        getDNi.active := false
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : Predictive Channels
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+
+string g_preCh = 'Predictive Channels'
+float mult  = input.float(5, 'Factor', minval = 0, group=g_preCh)
+float slope = input.float(50, minval = 0, group=g_preCh) * mult
+color r2Css = input.color(#f23645, 'Upper Resistance', inline = 'resistance', group=g_preCh)
+color r1Css = input.color(color.new(#f23645, 50), 'Lower', inline = 'resistance', group=g_preCh)
+color s1Css = input.color(color.new(#089981, 50), 'Upper Support    ', inline = 'support', group=g_preCh)
+color s2Css = input.color(#089981, 'Lower', inline = 'support', group=g_preCh)
+color avgCss = input.color(#787b86, 'Average', group=g_preCh)
+color areaBull = input.color(color.new(#089981, 80), 'Fill', inline = 'area', group=g_preCh)
+color areaBear = input.color(color.new(#f23645, 80), '', inline = 'area', group=g_preCh)
+
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+
+var pc_avg = close
+var os = 1
+var pc_hold_atr = 0.
+
+atr_mult = nz(ta.atr(200)) * mult
+pc_avg := math.abs(close - pc_avg) > atr_mult ? close 
+  : pc_avg + os * pc_hold_atr / slope
+pc_hold_atr := pc_avg == close ? atr_mult / 2 : pc_hold_atr
+os := pc_avg > pc_avg[1] ? 1 : pc_avg < pc_avg[1] ? -1 : os
+pc_R2 = pc_avg + pc_hold_atr
+pc_R1 = pc_avg + pc_hold_atr/2
+pc_S1 = pc_avg - pc_hold_atr/2
+pc_S2 = pc_avg - pc_hold_atr
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+
+plot_0 = plot(show_preCh ? close : na, color = na, display = display.none, editable = false)
+plot_avg = plot(show_preCh ? pc_avg : na, 'Average', close == pc_avg ? na : avgCss)
+
+plot(show_preCh ? pc_R2 : na, 'Upper Resistance', close == pc_avg ? na : r2Css)
+plot(show_preCh ? pc_R1 : na, 'Lower Resistance', close == pc_avg ? na : r1Css)
+plot(show_preCh ? pc_S1 : na, 'Upper Support', close == pc_avg ? na : s1Css)
+plot(show_preCh ? pc_S2 : na, 'Lower Support', close == pc_avg ? na : s2Css)
+
+topcss = close > pc_avg ? areaBull : color.new(chart.bg_color, 100)
+btmcss = close < pc_avg ? areaBear : color.new(chart.bg_color, 100)
+fill(plot_0, plot_avg, pc_R2, pc_S2, topcss, btmcss)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : Zones
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+string g_dsZone = 'Demand/Supply Zones'
+int indecision_factor = input.int(2, 'Min. Factor', minval = 1, group = g_dsZone)
+int volume_periods = input.int(20, 'Previous Periods', minval = 1, group = g_dsZone)
+int volume_chg = input.int(10, 'Volume Change (%)', minval = 1, group = g_dsZone)
+int confirm_bars = input.int(5, 'Confirmation Bars', minval = 1, group = g_dsZone)
+string invalidation = input.string('Close', 'Invalidation Method', options = ['Close', 'Wick'], group = g_dsZone)
+int showlast = input.int(10, 'Show Last', minval = 1, group = g_dsZone)
+color demand_zone_css = input.color(color.new(#66bb6a, 93), 'Demand', inline = "Zones", group = g_dsZone)
+color supply_zone_css = input.color(color.new(#f77c80, 93), 'Supply', inline = "Zones", group = g_dsZone)
+color indecision_zone_css = input.color(color.new(#777575, 93), 'Indecision', inline = "Zones",group = g_dsZone)
+bool show_srZone_text = input.bool(false, 'Show Text', group = g_dsZone)
+string text_size = input.string('Small', 'Text Size', options = ['Tiny', 'Small', 'Normal'], group = g_dsZone)
+
+// -----------------------------------------------------------------------------------------------
+//   Global Variables
+// -----------------------------------------------------------------------------------------------
+var zone_boxes = array.new_box(0)
+var zone_labels = array.new_label(0)
+
+type Zone
+    float top
+    float bottom
+    float volume
+    int left
+    int type = 0
+    color css
+    int reached = 0
+    int bars_outside = 0
+
+var zones = array.new<Zone>(0)
+var last_zone_reached = Zone.new()
+bool demand_zone_confirmed = false
+bool supply_zone_confirmed = false
+bool price_enter_supply_zone = false
+bool price_enter_demand_zone = false
+var label_size = text_size == 'Tiny' ? size.tiny: text_size == 'Small' ? size.small : size.normal
+
+type sr
+    float y
+    float area
+    int x
+    bool support
+
+// -----------------------------------------------------------------------------------------------
+//   Functions
+// -----------------------------------------------------------------------------------------------
+get_volume(include_current_bar, bars) =>
+    past_vol = array.new_float(0)
+    for i = include_current_bar ? 0: 1 to bars
+        array.push(past_vol, volume[i])
+    array.avg(past_vol)
+is_indecision_bar() =>
+    float high_change = 0.
+    float low_change = 0.
+    float body_change = math.abs((close - open) / open)   
+    if close > open
+        high_change := math.abs((high - close) / close)
+        low_change := math.abs((low - open) / open)
+    else 
+        high_change := math.abs((high - open) / open)
+        low_change := math.abs((low - close) / close)
+    float factor = math.floor(math.max(high_change, low_change) / body_change)
+    factor := na(factor) or factor > 999999 ? 999999 : factor
+    bool add_as_new_zone = false  
+    if factor >= indecision_factor   
+        add_as_new_zone := true     
+        
+        for zone in zones
+            //if the candle its include in some previous candle don't add
+            if (high < zone.top and high > zone.bottom) and (low < zone.top and low > zone.bottom)
+                add_as_new_zone := false
+                break
+            else if zone.type == DEMAND_ZONE and (low < zone.top and low > zone.bottom) and (high >= zone.top)
+                add_as_new_zone := false
+                break
+            else if zone.type == SUPPLY_ZONE and (high < zone.top and high > zone.bottom) and (low <= zone.bottom)
+                add_as_new_zone := false
+                break
+    add_as_new_zone
+valid_zone(zone, bclose, bhigh, blow) =>        
+    if zone.type == DEMAND_ZONE 
+        demand_bar_price = invalidation == 'Close' ? bclose : blow
+        demand_bar_price >= zone.bottom //and bopen > zone.bottom          
+    else if zone.type == SUPPLY_ZONE 
+        supply_bar_price = invalidation == 'Close' ? bclose : bhigh
+        supply_bar_price <= zone.top //and bopen < zone.top
+    else 
+        true
+    
+bar_reached_zone(zone, wick) =>
+    (wick >= zone.bottom and wick <= zone.top) or (close >= zone.bottom and close <= zone.top) or (open >= zone.bottom and open <= zone.top)
+
+is_lateral_movement(zone, candles) =>
+    int inside = 0
+    for i = 1 to candles
+        if (close[i] < zone.top and close[i] > zone.bottom) and (open[i] < zone.top and open[i] > zone.bottom)
+            inside += 1
+    inside >= candles
+
+confirm_zone(zone) =>
+    valid_zone = true
+    new_volume = get_volume(true, confirm_bars)
+    zone.volume := math.round((new_volume - zone.volume) / zone.volume * 100, 0) 
+    if math.max(open, close) > zone.top
+        zone.type := DEMAND_ZONE
+        zone.css := demand_zone_css            
+    else if math.min(open, close) < zone.bottom
+        zone.type := SUPPLY_ZONE
+        zone.css := supply_zone_css
+    if math.abs(zone.volume) >= volume_chg 
+      and zone.type != TBD_ZONE 
+      and not is_lateral_movement(zone, confirm_bars)                      
+        for i = 0 to confirm_bars - 1
+            if not valid_zone(zone, close[i], high[i], low[i])
+                valid_zone := false                
+                break            
+    else         
+        valid_zone := false                
+    valid_zone
+        
+display_zones(boxes, labels, dzones, show_last, zsize) =>
+    for i = 0 to math.min(show_last - 1, zsize - 1)
+        zindex = zsize - (1 + i)
+        get_box = array.get(boxes, i)
+        get_label = array.get(labels, i)
+        zone = array.get(dzones, zindex)
+        box.set_lefttop(get_box, zone.left, zone.top)
+        box.set_rightbottom(get_box, zone.left, zone.bottom)
+        box.set_border_color(get_box, zone.css)
+        box.set_bgcolor(get_box, zone.css)
+        if show_srZone_text
+            if zone.type == TBD_ZONE
+                label.new(bar_index + 30, zone.bottom, 'TBD', color=CLEAR, textcolor=color.new(zone.css, 0), size=label_size)
+            else
+                label.new(bar_index + 30, zone.bottom, "Volume change: " + str.tostring(zone.volume) + "%\nReached: " + str.tostring(zone.reached), color=CLEAR, textcolor=color.new(zone.css, 0), size=label_size)
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+if barstate.isfirst
+    for i = 0 to showlast - 1
+        array.push(zone_boxes, box.new(na,na,na,na, xloc = xloc.bar_time , extend = extend.right))   
+        array.push(zone_labels, label.new(na,na,na, size = label_size, style = label.style_none))
+
+if barstate.isconfirmed    
+    if is_indecision_bar()
+        period_volume = get_volume(include_current_bar = false, bars = volume_periods)
+        array.push(zones, Zone.new(top = high, bottom = low, volume = period_volume, left = time, css= indecision_zone_css))
+
+    for zone in zones     
+        index = array.indexof(zones, zone)
+        if zone.type == TBD_ZONE and zone.left == time[confirm_bars]
+            // Confirm zone o delete it           
+            if confirm_zone(zone)
+                demand_zone_confirmed := zone.type == DEMAND_ZONE
+                supply_zone_confirmed := zone.type == SUPPLY_ZONE
+                for i = 1 to confirm_bars
+                    pindex = index + 1
+                    if pindex < array.size(zones)
+                        array.remove(zones, pindex) 
+            else 
+                array.remove(zones, index)
+            break
+
+    for zone in zones      
+        index = array.indexof(zones, zone)
+        if not valid_zone(zone, close, high, low) 
+            if last_zone_reached.left == zone.left
+                last_zone_reached := Zone.new()
+            array.remove(zones, index)
+        else    
+            // Check if price reached any zone
+            if zone.type == DEMAND_ZONE and bar_reached_zone(zone, low)            
+                zone.reached += 1    
+                price_enter_demand_zone := true
+
+            if zone.type == SUPPLY_ZONE and bar_reached_zone(zone, high)            
+                zone.reached += 1                
+                price_enter_supply_zone := true
+
+            if price_enter_demand_zone or price_enter_supply_zone
+                zone.bars_outside := 0
+                last_zone_reached := zone
+
+    if last_zone_reached.type == DEMAND_ZONE and close > last_zone_reached.top //and open > last_zone_reached.top            
+        last_zone_reached.bars_outside += 1
+    else if last_zone_reached.type == SUPPLY_ZONE and close < last_zone_reached.bottom //and open < last_zone_reached.bottom
+        last_zone_reached.bars_outside += 1
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+if barstate.islast
+    int zones_size = array.size(zones)
+    if zones_size > 0 and show_srZone
+        display_zones(zone_boxes, zone_labels, zones, showlast, zones_size)
+
+// -----------------------------------------------------------------------------------------------
+//   Alerts
+// -----------------------------------------------------------------------------------------------
+alertcondition(price_enter_demand_zone or price_enter_supply_zone, 'Zone Reached', "The price reached a zone")
+alertcondition(price_enter_demand_zone, 'Reached Demand Zone', 'The price reached a DEMAND zone')
+alertcondition(price_enter_supply_zone, 'Reached Supply Zone', 'The price reached a SUPPLY zone')
+alertcondition(demand_zone_confirmed or supply_zone_confirmed, 'New Zone Confirmed', 'There is new zone')
+alertcondition(demand_zone_confirmed, 'Demand Zone Confirmed', 'There is new DEMAND zone')
+alertcondition(supply_zone_confirmed, 'Supply Zone Confirmed', 'There is new SUPPLY zone')
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : Dynamic Zones
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+string g_dsDZ = 'Demand/Supply Dynamic Zones'
+float dz_mult = input.float(8., 'Multiplicative Factor', minval = 0, step = .5, group = g_dsDZ)
+int atrLen = input.int(50, 'ATR Length', minval = 0, group = g_dsDZ)
+int extLast = input.int(4, 'Extend Last', minval = 0, group = g_dsDZ)
+color supCss = input.color(#089981, 'Support', inline = 'sup', group = g_dsDZ)
+color supAreaCss = input.color(color.new(#089981, 80), 'Areas', inline = 'sup', group = g_dsDZ)
+color resCss = input.color(#f23645, 'Resistance', inline = 'res', group = g_dsDZ)
+color resAreaCss = input.color(color.new(#f23645, 80), 'Areas', inline = 'res', group = g_dsDZ)
+bool extLvls = input.bool(true, 'Extend Levels', group = g_dsDZ)
+bool extArea = input.bool(true, 'Extend Areas', group = g_dsDZ)
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+var dz_records = array.new<sr>(0)  
+var float dz_avg = close
+var hold_atr = 0.
+var dz_os = 0
+breakout_atr = nz(ta.atr(atrLen)) * dz_mult
+dz_avg := math.abs(close - dz_avg) > breakout_atr ? close : dz_avg
+hold_atr := dz_avg == close ? breakout_atr : hold_atr
+dz_os := dz_avg > dz_avg[1] ? 1 : dz_avg < dz_avg[1] ? 0 : dz_os
+upper_res = dz_os == 0 ? dz_avg + hold_atr / dz_mult : na
+lower_res = dz_os == 0 ? dz_avg + hold_atr / dz_mult / 2 : na
+upper_sup = dz_os == 1 ? dz_avg - hold_atr / dz_mult / 2: na
+lower_sup = dz_os == 1 ? dz_avg - hold_atr / dz_mult : na
+
+if close == dz_avg
+    if dz_os == 1
+        dz_records.unshift(sr.new(lower_sup, upper_sup, time, true))
+    else
+        dz_records.unshift(sr.new(upper_res, lower_res, time, false))
+
+var dz_lines = array.new<line>(0)
+var dz_boxes = array.new<box>(0)
+
+if barstate.isfirst and extLast > 0
+    for i = 0 to extLast-1
+        if extLvls
+            dz_lines.push(line.new(na,na,na,na, xloc.bar_time, style = line.style_dashed))
+        if extArea
+            dz_boxes.push(box.new(na,na,na,na,na, xloc = xloc.bar_time))
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+if barstate.islast and extLast > 0
+    for i = 0 to extLast-1
+        get_sr = dz_records.get(i)
+        if extLvls and show_srZoneDynamics
+            line.new(get_sr.x, get_sr.y, time, get_sr.y, xloc=xloc.bar_time, style=line.style_dashed, color=get_sr.support ? supCss : resCss)
+        if extArea and show_srZoneDynamics
+            get_box = dz_boxes.get(i)
+            get_box.set_lefttop(get_sr.x, get_sr.area)
+            get_box.set_rightbottom(time, get_sr.y)
+            get_box.set_bgcolor(get_sr.support ? supAreaCss : resAreaCss)
+
+plot_upper_sup = plot(show_srZoneDynamics ? upper_sup: na, 'Upper Support', na
+  , style = plot.style_linebr)
+plot_lower_sup = plot(show_srZoneDynamics ? lower_sup: na, 'Lower Support', close == dz_avg ? na : supCss
+  , style = plot.style_linebr)
+plot_upper_res = plot(show_srZoneDynamics ? upper_res: na, 'Upper Resistance', close == dz_avg ? na : resCss
+  , style = plot.style_linebr)
+plot_lower_res = plot(show_srZoneDynamics ? lower_res: na, 'Lower Resistance', na
+  , style = plot.style_linebr)
+fill(plot_upper_sup, plot_lower_sup, supAreaCss, 'Support Area')
+fill(plot_upper_res, plot_lower_res, resAreaCss, 'Resistance Area')

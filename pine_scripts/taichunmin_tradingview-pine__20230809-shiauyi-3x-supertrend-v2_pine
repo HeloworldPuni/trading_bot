@@ -1,0 +1,58 @@
+//@version=4
+// 1. 進場條件：進場做多的條件是三個 Supertrend 指標都處於上升趨勢，而進場做空的條件是三個 Supertrend 指標都處於下降趨勢。
+// 2. 止損和止盈設定： 在進場做多時，將根據過去10根1小時K線的最低價格來設定止損，盈虧比1:1.5。在進場做空時，則根據過去10根1小時K線的最高價格來設定止損，同樣盈虧比1:1.5。
+// 交易對BTC/USDT
+// 建議運行週期 : 4小時
+strategy("3xSupertrend Strategy", overlay=true, format=format.price, precision=2)
+
+i_period1 = input(title="ATR Period 1", type=input.integer, defval=10)
+i_period2 = input(title="ATR Period 2", type=input.integer, defval=11)
+i_period3 = input(title="ATR Period 3", type=input.integer, defval=12)
+
+i_src = input(hl2, title="Source")
+i_multiplier1 = input(title="ATR Multiplier 1", type=input.float, step=0.1, defval=1.0)
+i_multiplier2 = input(title="ATR Multiplier 2", type=input.float, step=0.1, defval=2.0)
+i_multiplier3 = input(title="ATR Multiplier 3", type=input.float, step=0.1, defval=3.0)
+
+i_changeATR = input(title="Change ATR Calculation Method ?", type=input.bool, defval=true)
+i_showSignals = input(title="Show Buy/Sell Signals ?", type=input.bool, defval=true)
+
+f_getATR(_period) =>
+    _atr2 = sma(tr, _period)
+    _atr = i_changeATR ? atr(_period) : _atr2
+    _atr
+
+f_getSupertrend(_src, _multiplier, _period) =>
+    _atr = f_getATR(_period)
+    _up = _src - (_multiplier * _atr)
+    _up1 = nz(_up[1], _up)
+    _up := close[1] > _up1 ? max(_up, _up1) : _up
+    _dn = _src + (_multiplier * _atr)
+    _dn1 = nz(_dn[1], _dn)
+    _dn := close[1] < _dn1 ? min(_dn, _dn1) : _dn
+    _trend = 1
+    _trend := nz(_trend[1], _trend)
+    _trend := _trend == -1 and close > _dn1 ? 1 : _trend == 1 and close < _up1 ? -1 : _trend
+    [_up, _dn, _trend]
+
+[supertrend1_up, supertrend1_dn, supertrend1_trend] = f_getSupertrend(i_src, i_multiplier1, i_period1)
+[supertrend2_up, supertrend2_dn, supertrend2_trend] = f_getSupertrend(i_src, i_multiplier2, i_period2)
+[supertrend3_up, supertrend3_dn, supertrend3_trend] = f_getSupertrend(i_src, i_multiplier3, i_period3)
+
+buyCondition = supertrend1_trend == 1 and supertrend2_trend == 1 and supertrend3_trend == 1
+sellCondition = supertrend1_trend == -1 and supertrend2_trend == -1 and supertrend3_trend == -1
+
+strategy.entry("Buy", strategy.long, when=buyCondition)
+strategy.entry("Sell", strategy.short, when=sellCondition)
+
+// 計算追蹤止盈條件
+atrValue = f_getATR(i_period3)
+trail1 = atrValue * 2
+trail2 = atrValue * 8
+
+// 設定分區追蹤止盈
+strategy.exit("Trail1 Long", from_entry="Buy", trail_offset=trail1)
+strategy.exit("Trail2 Long", from_entry="Buy", trail_offset=trail2)
+
+strategy.exit("Trail1 Short", from_entry="Sell", trail_offset=trail1)
+strategy.exit("Trail2 Short", from_entry="Sell", trail_offset=trail2)

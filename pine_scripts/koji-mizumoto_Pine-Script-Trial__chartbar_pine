@@ -1,0 +1,91 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+// 参考サイト：Pine Script™ (v5) の覚書 - 作ってみる：日足と週足と月足を描くインジケータの作成 (1)
+// URL:https://note.com/rca_co_jp/n/n65f06c3b0207
+// 備考：1ページ目のURL、情報元のサイト（コード）は5分割してある
+
+//@version=5
+indicator("日足・週足・月足")
+
+// 線の太さ、パラメーター
+width = input.int(4, 'width', 1 ,4)
+
+type candle_colors
+    color bullish   // 陽線
+    color bearish   // 陰線
+
+var candleColor = candle_colors.new()
+
+type candle_body
+    int t           // time
+    int tc          // time_close
+    float o         // open
+    float c         // close
+    bool bullish    // boll or bear
+
+// 不要？
+// var dayCandle = candle_body.new()           // 日足
+// var weekCandle = candle_body.new()          // 週足
+// var monthCandle = candle_body.new()         // 月足
+
+candleColor.bullish := input.color(color.new(color.lime, 75), title='bullish')
+candleColor.bearish := input.color(color.new(color.red, 75), title='bearish')
+
+// 日足以上の場合の描画がおかしくなるので、if na(xxx)分岐にする
+dayCandle = request.security(syminfo.tickerid, 'D', candle_body.new(time, time_close, open, close, open<=close))
+if na(dayCandle)
+    dayCandle := candle_body.new()
+weekCandle = request.security(syminfo.tickerid, 'W', candle_body.new(time, time_close, open, close, open<=close))
+if na(weekCandle)
+    weekCandle := candle_body.new()
+monthCandle = request.security(syminfo.tickerid, 'M', candle_body.new(time, time_close, open, close, open<=close))
+if na(monthCandle)
+    monthCandle := candle_body.new()
+
+// 日足・週足・月足の更新タイミングを知るための変数
+bool newD = ta.change(dayCandle.t)!= 0
+bool newW = ta.change(weekCandle.t)!= 0
+bool newM = ta.change(monthCandle.t)!= 0
+
+// 日足と週足と月足のboxのデフォルト値を関数化
+new_day_candle() => box.new(na, na, na, na, xloc = xloc.bar_time, border_color = na)
+new_week_candle() => box.new(na, na, na, na, border_width = width, border_style = line.style_dotted,
+     xloc = xloc.bar_time, bgcolor = na)
+new_Month_candle() => box.new(na, na, na, na, border_width = width, xloc = xloc.bar_time, bgcolor = na)
+
+// candle_body型の変数を引数としてboxを更新する部分をmethod化
+method update_day(box b, candle_body c, candle_colors cc) =>
+    b.set_lefttop(c.t, c.o)
+    b.set_rightbottom(c.tc-timeframe.in_seconds()*1000,c.c)
+    b.set_bgcolor(c.bullish ? cc.bullish : cc.bearish)
+
+method update_week(box b, candle_body c, candle_colors cc) =>
+    b.set_lefttop(c.t, c.o)
+    b.set_rightbottom(c.tc-timeframe.in_seconds()*1000,c.c)
+    b.set_border_color(c.bullish ? cc.bullish : cc.bearish)
+
+method update_month(box b, candle_body c, candle_colors cc) =>
+    b.set_lefttop(c.t, c.o)
+    b.set_rightbottom(c.tc-timeframe.in_seconds()*1000,c.c)
+    b.set_border_color(c.bullish ? cc.bullish : cc.bearish)
+
+// ローソクとboxを描画する
+// 日足(あるいは週足や月足)が切り替わらない場合、既存の足の値を最新値に更新し、切り替わったら新しい足を描く。
+if timeframe.in_seconds() < timeframe.in_seconds('D')
+    var D = new_day_candle()
+    if newD
+        D:= new_day_candle()
+    D.update_day(dayCandle, candleColor)
+
+if timeframe.in_seconds() < timeframe.in_seconds('W')
+    var W = new_week_candle()
+    if newW
+        W:= new_week_candle()
+    W.update_week(weekCandle, candleColor)
+
+if timeframe.in_seconds() < timeframe.in_seconds('M')
+    var M = new_Month_candle()
+    if newM     // 参考元ではnewWとなっていたが、記載ミス？
+        M:= new_Month_candle()
+    M.update_month(monthCandle, candleColor)

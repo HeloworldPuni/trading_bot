@@ -1,0 +1,101 @@
+//@version=6
+// Simple MACD Strategy With TP/SL Plot Lines
+// ------------------------------------------------------------
+//  • Entries:  MACD line crossing over/under its signal line.
+//  • Exits:    Fixed Risk-Reward using ATR distance.
+//  • Visuals:  Two vertical lines on every entry bar
+//              – GREEN vertical line = Take-Profit level
+//              – RED   vertical line = Stop-Loss level
+//  Author: AI Assistant (2025-06-12)
+// ------------------------------------------------------------
+
+//=== Strategy Declaration ===
+strategy("MACD TP/SL Visualizer", overlay=true,
+         default_qty_type=strategy.fixed,
+         default_qty_value=1,
+         initial_capital=10000,
+         currency=currency.USD)
+
+//============================================================
+// User Inputs
+//============================================================
+// MACD parameters
+fastLen      = input.int(12,  "MACD Fast Length",  minval=1)
+slowLen      = input.int(26,  "MACD Slow Length",  minval=1)
+signalLen    = input.int(9,   "MACD Signal Length",minval=1)
+
+// Risk management parameters
+atrPeriod    = input.int(14,  "ATR Period",        minval=1)
+atrMult      = input.float(1, "ATR Multiplier (Stop)", step=0.1, minval=0.1)
+riskReward   = input.float(2, "Risk-Reward Multiple (TP)", step=0.1, minval=0.1)
+
+//============================================================
+// Indicator Calculations
+//============================================================
+// --- MACD ---
+[macdLine, signalLine, _] = ta.macd(close, fastLen, slowLen, signalLen)
+
+// --- ATR for adaptive stop sizing ---
+atrValue = ta.atr(atrPeriod)
+
+//============================================================
+// Entry Conditions
+//============================================================
+longCond  = ta.crossover(macdLine, signalLine)
+shortCond = ta.crossunder(macdLine, signalLine)
+
+//============================================================
+// Execute Trades & Plot TP/SL Lines
+//============================================================
+// Helper function to create TP/SL boxes that span two bars (entry bar and next bar)
+f_plot_boxes(_entryBarIdx, _entryPx, _tpPx, _slPx) =>
+    // Determine width: from entry bar to the next bar
+    _rightIdx = _entryBarIdx + 1
+
+    // Take-Profit BOX (GREEN)
+    box.new(left=_entryBarIdx, top=math.max(_entryPx, _tpPx), right=_rightIdx, bottom=math.min(_entryPx, _tpPx), border_color=color.new(color.green, 0), bgcolor=color.new(color.green, 80), xloc=xloc.bar_index)
+
+    // Stop-Loss BOX (RED)
+    box.new(left=_entryBarIdx, top=math.max(_entryPx, _slPx), right=_rightIdx, bottom=math.min(_entryPx, _slPx), border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 80), xloc=xloc.bar_index)
+
+// === LONG ENTRY ===
+if longCond and strategy.position_size == 0
+    entryPrice = close
+    stopPrice  = entryPrice - atrValue * atrMult
+    // Make sure stop is at least one tick below entry
+    if stopPrice >= entryPrice
+        stopPrice := entryPrice - syminfo.mintick
+    riskDist   = entryPrice - stopPrice
+    tpPrice    = entryPrice + riskDist * riskReward
+
+    strategy.entry("Long", strategy.long)
+    strategy.exit("ExitLong", from_entry="Long", stop=stopPrice, limit=tpPrice)
+
+    // Plot the TP/SL boxes
+    f_plot_boxes(bar_index, entryPrice, tpPrice, stopPrice)
+
+// === SHORT ENTRY ===
+if shortCond and strategy.position_size == 0
+    entryPrice = close
+    stopPrice  = entryPrice + atrValue * atrMult
+    if stopPrice <= entryPrice
+        stopPrice := entryPrice + syminfo.mintick
+    riskDist   = stopPrice - entryPrice
+    tpPrice    = entryPrice - riskDist * riskReward
+
+    strategy.entry("Short", strategy.short)
+    strategy.exit("ExitShort", from_entry="Short", stop=stopPrice, limit=tpPrice)
+
+    // Plot the TP/SL boxes
+    f_plot_boxes(bar_index, entryPrice, tpPrice, stopPrice)
+
+//============================================================
+// Visualization Aids
+//============================================================
+// (Optional) MACD lines can be plotted by removing overlay=true from strategy()
+// to create a separate pane, or by using plot() directly at top scope.
+// They are omitted here to keep the chart clean and avoid scope errors.
+
+//============================================================
+// End of Script
+//============================================================ 

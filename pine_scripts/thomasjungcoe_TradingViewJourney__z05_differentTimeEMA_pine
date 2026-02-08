@@ -1,0 +1,17 @@
+//@version=5
+indicator(title="My Test for empty string", overlay=true)
+
+// Calculate and plot two Exponential Moving Averages on different timeframes
+emaFast = ta.ema(request.security(syminfo.tickerid, "1", close), 5)
+emaSlow = ta.ema(request.security(syminfo.tickerid, "5", close), 5)
+
+plot(emaFast, color=color.orange, title="EMA Fast")
+plot(emaSlow, color=color.teal, linewidth=2, title="EMA Slow")
+
+// Calculate the conditions for the arrows
+crossUp = ta.cross(emaFast, emaSlow) and emaFast > emaSlow
+crossDown = ta.cross(emaFast, emaSlow) and emaFast < emaSlow
+
+// Plot the arrows
+plotshape(crossUp, color=color.blue, style=shape.arrowup, location=location.abovebar, text = "B")
+plotshape(crossDown, color=color.red, style=shape.arrowdown, location=location.belowbar, text = "S")

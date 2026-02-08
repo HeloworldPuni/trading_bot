@@ -1,0 +1,94 @@
+//@version=5
+strategy("Surikbs", overlay = true)
+higherTF = input.timeframe("D")
+//Previous days
+prevCloseHTF = request.security(syminfo.tickerid, higherTF, close[1], lookahead=barmerge.lookahead_on)
+prevOpenHTF = request.security(syminfo.tickerid, higherTF, open[1], lookahead=barmerge.lookahead_on)
+prevHighHTF = request.security(syminfo.tickerid, higherTF, high[1], lookahead=barmerge.lookahead_on)
+prevLowHTF = request.security(syminfo.tickerid, higherTF, low[1], lookahead=barmerge.lookahead_on)
+
+//Current day CPR  
+pivotstd = (prevHighHTF + prevLowHTF + prevCloseHTF) / 3
+bcpr = (prevHighHTF + prevLowHTF) / 2
+tcpr = (pivotstd - bcpr) + pivotstd
+
+r1 = pivotstd * 2 - prevLowHTF
+s1 = pivotstd * 2 - prevHighHTF
+r2 = pivotstd + ( prevHighHTF - prevLowHTF )
+s2 = pivotstd - ( prevHighHTF - prevLowHTF )
+r3 = prevHighHTF + 2 * ( pivotstd - prevLowHTF )
+s3 = prevLowHTF - 2 * ( prevHighHTF - pivotstd )
+
+width = 1
+newday = pivotstd[1] == pivotstd
+tfallowed = timeframe.period == "1" or timeframe.period == "3" or timeframe.period == "5" or timeframe.period == "15" or timeframe.period == "30" or timeframe.period == "10" or timeframe.period == "D"
+
+plot(tfallowed and newday ? s1 : na, color=color.orange, title="S1", style=plot.style_circles, linewidth=width)
+plot(tfallowed and newday ? s2 : na, color=color.orange, title="S2", style=plot.style_circles, linewidth=width)
+plot(tfallowed and newday ? s3 : na, color=color.orange, title="S3", style=plot.style_circles, linewidth=width)
+plot(tfallowed and newday ? r1 : na, color=color.orange, title="R1", style=plot.style_circles, linewidth=width)
+plot(tfallowed and newday ? r2 : na, color=color.orange, title="R2", style=plot.style_circles, linewidth=width)
+plot(tfallowed and newday ? r3 : na, color=color.orange, title="R3", style=plot.style_circles, linewidth=width)
+
+plot(tfallowed and newday ? pivotstd : na, color=color.purple, title="HLC3", style=plot.style_circles, linewidth = width + 1)
+plot(tfallowed and newday ? tcpr : na, color=color.blue, title="HL2", style=plot.style_circles, linewidth = width + 1)
+plot(tfallowed and newday ? bcpr : na, color=color.blue, title="2HLC3-HL2", style=plot.style_circles, linewidth = width + 1)
+
+plot(tfallowed and newday ? prevHighHTF : na, "PDH", color=color.green, style=plot.style_linebr, linewidth = width)
+plot(tfallowed and newday ? prevLowHTF : na, "PDL", color=color.red, style=plot.style_linebr, linewidth = width)
+
+t25_sma_len = 25
+t25_sma_src = close
+t25_sma_out = ta.ema(t25_sma_src, t25_sma_len)
+plot(t25_sma_out, color=color.red, title="25 SMA")
+
+t12_sma_len = 12
+t12_sma_src = close
+t12_sma_out = ta.ema(t12_sma_src, t12_sma_len)
+plot(t12_sma_out, color=color.green, title="12 SMA")
+
+t200_sma_len = 200
+t200_sma_src = close
+t200_sma_out = ta.ema(t200_sma_src, t200_sma_len)
+plot(t200_sma_out, color=color.orange, title="200 SMA")
+
+fastLength = input.int(12, minval=1)
+slowLength = input.int(200,minval=1)
+signalLength=input.int(9,minval=1)
+fastMA = ta.ema(close, fastLength)
+slowMA = ta.ema(close, slowLength)
+macd = fastMA - slowMA
+signal = ta.sma(macd, signalLength)
+pos =  0
+
+atr = ta.atr(14)
+var trailPrice = 0.0
+var barIndex = 10
+ll = ta.lowest(low, 7)
+hh = ta.highest(high, 7)
+
+t_trailPrice = strategy.position_size > 0 ? ll - atr: hh + atr 
+
+if (t_trailPrice > trailPrice or trailPrice == 0.0 ) and strategy.position_size > 0
+    trailPrice := t_trailPrice
+
+if (t_trailPrice < trailPrice or trailPrice == 0.0) and strategy.position_size < 0
+    trailPrice := t_trailPrice
+
+
+if signal < macd and t12_sma_out > trailPrice + ( trailPrice * 0.000) 
+    pos := 1
+if signal > macd and t12_sma_out + ( t12_sma_out * 0.000) < trailPrice 
+    pos := -1
+
+
+if pos == 1
+    strategy.entry("Buy", strategy.long)
+
+if pos == -1 
+    strategy.entry("Sell", strategy.short)
+
+// Draw SL
+plot(trailPrice, color = color.purple, title = "Trailing SL")
+
+barcolor(t12_sma_out > trailPrice ? color.green : t12_sma_out < trailPrice ? color.red : na )

@@ -1,0 +1,32 @@
+// Source: https://kodify.net/tradingview/lines/get-time/
+// How to get the time coordinates of a TradingView trend line?
+
+//@version=4
+study(title="Capture recent prices with lines", overlay=true)
+
+// Calculate the recent highs/lows
+hiHighs = highest(high, 10)[1]
+loLows  = lowest(low, 10)[1]
+
+// Make both trend lines once
+var highLine = line.new(x1=na, y1=na, x2=na, y2=na,
+     color=color.green, width=3, xloc=xloc.bar_time)
+
+var lowLine = line.new(x1=na, y1=na, x2=na, y2=na,
+     color=color.red, width=3, xloc=xloc.bar_time)
+
+// Update the lines' location on every bar
+line.set_xy1(id=highLine, x=time[10], y=hiHighs)
+line.set_xy2(id=highLine, x=time, y=hiHighs)
+
+line.set_xy1(id=lowLine, x=time[10], y=loLows)
+line.set_xy2(id=lowLine, x=time, y=loLows)
+
+// But on the last bar, if there's real-time data,
+// extend both lines an additional 3 days in the future
+if (barstate.isrealtime)
+    line.set_x2(id=highLine, x=line.get_x2(id=highLine) +
+         (3 * 86400000))
+    line.set_x2(id=lowLine, x=line.get_x2(id=lowLine) +
+         (3 * 86400000))
+         

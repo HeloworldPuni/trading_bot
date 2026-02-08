@@ -1,0 +1,36 @@
+//@version=5
+indicator("Fibonacci Retracement Strategy", overlay=true)
+
+// Function to find the recent swing high and swing low
+swingHigh = ta.highest(high, 20)
+swingLow = ta.lowest(low, 20)
+
+// Calculate Fibonacci levels
+fib_0 = swingLow
+fib_23_6 = swingLow + (swingHigh - swingLow) * 0.236
+fib_38_2 = swingLow + (swingHigh - swingLow) * 0.382
+fib_50 = swingLow + (swingHigh - swingLow) * 0.5
+fib_61_8 = swingLow + (swingHigh - swingLow) * 0.618
+fib_78_6 = swingLow + (swingHigh - swingLow) * 0.786
+fib_100 = swingHigh
+
+// Plot Fibonacci levels
+plot(fib_0, title="Fibonacci 0%", color=color.red, linewidth=1)
+plot(fib_23_6, title="Fibonacci 23.6%", color=color.orange, linewidth=1)
+plot(fib_38_2, title="Fibonacci 38.2%", color=color.yellow, linewidth=1)
+plot(fib_50, title="Fibonacci 50%", color=color.green, linewidth=1)
+plot(fib_61_8, title="Fibonacci 61.8%", color=color.blue, linewidth=1)
+plot(fib_78_6, title="Fibonacci 78.6%", color=color.purple, linewidth=1)
+plot(fib_100, title="Fibonacci 100%", color=color.red, linewidth=1)
+
+// Buy and Sell signals
+buy_signal = ta.crossover(close, fib_61_8) or ta.crossover(close, fib_78_6)
+sell_signal = ta.crossunder(close, fib_38_2) or ta.crossunder(close, fib_23_6)
+
+// Plot Buy and Sell signals
+plotshape(series=buy_signal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY")
+plotshape(series=sell_signal, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL")
+
+// Alerts
+alertcondition(buy_signal, title="Buy Alert", message="Buy Signal Detected")
+alertcondition(sell_signal, title="Sell Alert", message="Sell Signal Detected")

@@ -1,0 +1,27 @@
+// Source: https://kodify.net/tradingview/lines/new/
+// How to code trend lines in TradingView’s Pine Script?
+
+//@version=4
+study(title="Basic trend line example", overlay=true)
+
+// Make both trend lines just once
+var highLine = line.new(x1=bar_index[10], y1=close[10],
+     x2=bar_index, y2=close, color=color.green,
+     extend=extend.both)
+
+var lowLine = line.new(x1=bar_index[10], y1=close[10],
+     x2=bar_index, y2=close, color=color.red,
+     extend=extend.both)
+
+// Look for new 20-bar highs and lows
+newHigh = (high == highest(high, 20))
+newLow  = (low == lowest(low, 20))
+
+// Update the lines when there's a new high or low
+if (newHigh)
+    line.set_xy1(id=highLine, x=bar_index[10], y=high)
+    line.set_xy2(id=highLine, x=bar_index, y=high)
+
+if (newLow)
+    line.set_xy1(id=lowLine, x=bar_index[10], y=low)
+    line.set_xy2(id=lowLine, x=bar_index, y=low)

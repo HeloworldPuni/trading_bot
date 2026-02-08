@@ -1,0 +1,218 @@
+//@version=5
+strategy("EMA Ribbon - Apenas Tendência de Alta", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ============================================================================
+// 📊 ESTRATÉGIA EMA RIBBON - TRADING DE TENDÊNCIA DE ALTA
+// ============================================================================
+//
+// 🎯 PROPÓSITO:
+// Esta estratégia identifica e opera apenas em tendências de alta usando um conjunto
+// de 7 EMAs (20, 25, 30, 35, 40, 45, 50) que formam um "ribbon" (fita).
+// 
+// 🔧 FUNCIONAMENTO:
+// 1. TENDÊNCIA DE ALTA: Todas as 7 EMAs devem estar alinhadas em ordem crescente
+//    e todas subindo simultaneamente
+// 2. SINAL DE ENTRADA: Preço toca uma EMA e depois rompe a máxima do candle anterior
+// 3. STOP LOSS: Colocado na EMA imediatamente abaixo da EMA tocada
+// 4. TAKE PROFIT: Calculado com base na relação risco/recompensa configurável
+//
+// 📈 CARACTERÍSTICAS:
+// - Foco exclusivo em tendências de alta (bullish bias)
+// - Detecção de toques em EMAs como pontos de entrada
+// - Gestão de risco automática baseada na estrutura das EMAs
+// - Risk/Reward configurável (padrão 1:3)
+// - Visualização clara da tendência com background colorido
+//
+// ⏰ TIMEFRAME IDEAL: M15, H1, H4
+// 💱 PARES RECOMENDADOS: EUR/USD, GBP/USD, USD/JPY
+// 🎯 TIPO: Trend Following (Seguimento de Tendência)
+// ⭐ DIFICULDADE: ⭐⭐⭐ (Intermediário)
+//
+// ============================================================================
+
+// ============================================================================
+// PARÂMETROS DE ENTRADA
+// ============================================================================
+risk_reward_ratio = input.float(3.0, "Risk/Reward Ratio", minval=1.0, maxval=10.0, step=0.1)
+show_ema_plots = input.bool(true, "Mostrar Plotagem das EMAs")
+show_ema_labels = input.bool(true, "Mostrar Labels das EMAs")
+show_price_levels = input.bool(true, "Mostrar Níveis de Preço (Entrada/Stop/TP)")
+
+// ============================================================================
+// CÁLCULO DAS EMAs (VERSÃO ESTÁVEL)
+// ============================================================================
+// Usar ta.ema padrão - o comportamento de "movimentação" no zoom é normal
+// As EMAs são calculadas corretamente baseadas nos dados disponíveis
+ema_20 = ta.ema(close, 20)
+ema_25 = ta.ema(close, 25)
+ema_30 = ta.ema(close, 30)
+ema_35 = ta.ema(close, 35)
+ema_40 = ta.ema(close, 40)
+ema_45 = ta.ema(close, 45)
+ema_50 = ta.ema(close, 50)
+
+// ============================================================================
+// CÁLCULO DA UNIDADE MÍNIMA
+// ============================================================================
+unidade_minima = close < 10 ? 0.00001 : close < 1000 ? 0.001 : 0.01
+
+// ============================================================================
+// VERIFICAÇÃO DE TENDÊNCIA DE ALTA
+// ============================================================================
+// Condição 1: Alinhamento das EMAs (ordem crescente)
+alinhamento_emas = ema_20 > ema_25 and ema_25 > ema_30 and ema_30 > ema_35 and ema_35 > ema_40 and ema_40 > ema_45 and ema_45 > ema_50
+
+// Condição 2: Todas as EMAs subindo (acima das EMAs do candle anterior)
+momentum_alta = ema_20 > ema_20[1] and ema_25 > ema_25[1] and ema_30 > ema_30[1] and ema_35 > ema_35[1] and ema_40 > ema_40[1] and ema_45 > ema_45[1] and ema_50 > ema_50[1]
+
+// Tendência de alta completa
+tendencia_alta = alinhamento_emas and momentum_alta
+
+// ============================================================================
+// DETECÇÃO DE TOQUE EM EMAs (CANDLE ANTERIOR)
+// ============================================================================
+// Verificar se a mínima do candle anterior tocou alguma EMA
+toque_ema_anterior = false
+ema_tocada_anterior = 0
+
+if low[1] <= ema_20[1] and low[1] > ema_25[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 20
+else if low[1] <= ema_25[1] and low[1] > ema_30[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 25
+else if low[1] <= ema_30[1] and low[1] > ema_35[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 30
+else if low[1] <= ema_35[1] and low[1] > ema_40[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 35
+else if low[1] <= ema_40[1] and low[1] > ema_45[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 40
+else if low[1] <= ema_45[1] and low[1] > ema_50[1]
+    toque_ema_anterior := true
+    ema_tocada_anterior := 45
+
+// ============================================================================
+// DETECÇÃO DE TOQUE EM EMAs (CANDLE ATUAL - PARA VISUALIZAÇÃO)
+// ============================================================================
+toque_ema_atual = false
+ema_tocada_atual = 0
+
+if low <= ema_20 and low > ema_25
+    toque_ema_atual := true
+    ema_tocada_atual := 20
+else if low <= ema_25 and low > ema_30
+    toque_ema_atual := true
+    ema_tocada_atual := 25
+else if low <= ema_30 and low > ema_35
+    toque_ema_atual := true
+    ema_tocada_atual := 30
+else if low <= ema_35 and low > ema_40
+    toque_ema_atual := true
+    ema_tocada_atual := 35
+else if low <= ema_40 and low > ema_45
+    toque_ema_atual := true
+    ema_tocada_atual := 40
+else if low <= ema_45 and low > ema_50
+    toque_ema_atual := true
+    ema_tocada_atual := 45
+
+// ============================================================================
+// LÓGICA DE ENTRADA
+// ============================================================================
+// Condições para entrada
+condicao_entrada = tendencia_alta and toque_ema_anterior and strategy.position_size == 0
+rompimento_maxima = high > high[1]
+
+// Sinal de entrada completo
+sinal_entrada = condicao_entrada and rompimento_maxima
+
+// ============================================================================
+// CÁLCULO DE PREÇOS (ENTRADA, STOP, TAKE PROFIT)
+// ============================================================================
+var float preco_entrada = na
+var float preco_stop = na
+var float preco_take_profit = na
+
+if sinal_entrada
+    preco_entrada := high[1]
+    
+    // Calcular stop loss baseado na EMA tocada
+    if ema_tocada_anterior == 20
+        preco_stop := ema_25[1] - unidade_minima
+    else if ema_tocada_anterior == 25
+        preco_stop := ema_30[1] - unidade_minima
+    else if ema_tocada_anterior == 30
+        preco_stop := ema_35[1] - unidade_minima
+    else if ema_tocada_anterior == 35
+        preco_stop := ema_40[1] - unidade_minima
+    else if ema_tocada_anterior == 40
+        preco_stop := ema_45[1] - unidade_minima
+    else if ema_tocada_anterior == 45
+        preco_stop := ema_50[1] - unidade_minima
+    
+    // Calcular take profit (relação risco/recompensa)
+    risco = preco_entrada - preco_stop
+    preco_take_profit := preco_entrada + (risk_reward_ratio * risco)
+
+// ============================================================================
+// EXECUÇÃO DA ESTRATÉGIA
+// ============================================================================
+if sinal_entrada
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit", "Long", stop=preco_stop, limit=preco_take_profit)
+
+// ============================================================================
+// PLOTAGEM DAS EMAs
+// ============================================================================
+plot(show_ema_plots ? ema_20 : na, "EMA 20", color=color.white, linewidth=2)
+plot(show_ema_plots ? ema_25 : na, "EMA 25", color=color.rgb(193, 186, 130), linewidth=1)
+plot(show_ema_plots ? ema_30 : na, "EMA 30", color=color.rgb(193, 186, 130), linewidth=1)
+plot(show_ema_plots ? ema_35 : na, "EMA 35", color=color.rgb(193, 186, 130), linewidth=1)
+plot(show_ema_plots ? ema_40 : na, "EMA 40", color=color.rgb(193, 186, 130), linewidth=1)
+plot(show_ema_plots ? ema_45 : na, "EMA 45", color=color.rgb(193, 186, 130), linewidth=1)
+plot(show_ema_plots ? ema_50 : na, "EMA 50", color=color.rgb(193, 186, 130), linewidth=1)
+
+// ============================================================================
+// PLOTAGEM DOS PREÇOS DE ENTRADA, STOP E TAKE PROFIT
+// ============================================================================
+// Plotar labels com texto dos níveis de preço APENAS quando houver sinal de entrada
+if show_price_levels and sinal_entrada
+    label.new(bar_index, preco_entrada, "Entry", 
+              color=color.orange, textcolor=color.white, 
+              style=label.style_label_down, size=size.small)
+    
+    label.new(bar_index, preco_stop, "Stop", 
+              color=color.red, textcolor=color.white, 
+              style=label.style_label_up, size=size.small)
+    
+    label.new(bar_index, preco_take_profit, "Take", 
+              color=color.blue, textcolor=color.white, 
+              style=label.style_label_down, size=size.small)
+
+// ============================================================================
+// LABELS E MARCADORES
+// ============================================================================
+// Labels para toques em EMAs
+if show_ema_labels and toque_ema_atual
+    label.new(bar_index, low, text=str.tostring(ema_tocada_atual), 
+              color=color.yellow, textcolor=color.black, 
+              style=label.style_label_up, size=size.small)
+
+// Marcadores de entrada removidos
+
+// ============================================================================
+// BACKGROUND COLOR PARA TENDÊNCIA
+// ============================================================================
+bgcolor(tendencia_alta ? color.new(color.green, 95) : na, title="Tendência de Alta")
+
+// ============================================================================
+// ALERTAS
+// ============================================================================
+// Para estratégias, usar alert() em vez de alertcondition()
+if sinal_entrada
+    alert("Sinal de compra detectado - EMA " + str.tostring(ema_tocada_anterior) + " tocada", alert.freq_once_per_bar)
+
+

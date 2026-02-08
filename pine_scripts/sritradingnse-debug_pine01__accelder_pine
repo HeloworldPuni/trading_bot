@@ -1,0 +1,51 @@
+// LICENSE: CC0 (https://creativecommons.org/publicdomain/zero/1.0/)
+
+//@version=6
+indicator(title="Elder Impulse System - ACCD (AD-based Volume Weighted)", shorttitle="Elder Impulse ACCD", overlay=true)
+
+// Inputs
+fast_length = input.int(title="Fast Length", defval=12, minval=1)
+slow_length = input.int(title="Slow Length", defval=26, minval=1)
+signal_length = input.int(title="Signal Smoothing", defval=9, minval=1, maxval=50)
+sma_source = input.string(title="Oscillator MA Type", defval="EMA", options=["SMA", "EMA"])
+sma_signal = input.string(title="Signal Line MA Type", defval="EMA", options=["SMA", "EMA"])
+ema_length = input.int(title="EMA Length", defval=13, minval=1)
+
+// Volume validation
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+// Calculate Accumulation/Distribution Line
+ad = ta.cum(close==high and close==low or high==low ? 0 : ((2*close-low-high)/(high-low))*volume)
+
+// Volume-Weighted MACD on AD
+close_vol_fast = ta.ema(ad * volume, fast_length)
+vol_fast = ta.ema(volume, fast_length)
+vw_ad_fast = close_vol_fast / vol_fast
+
+close_vol_slow = ta.ema(ad * volume, slow_length)
+vol_slow = ta.ema(volume, slow_length)
+vw_ad_slow = close_vol_slow / vol_slow
+
+macd_vw = vw_ad_fast - vw_ad_slow
+signal = sma_signal == "SMA" ? ta.sma(macd_vw, signal_length) : ta.ema(macd_vw, signal_length)
+hist = macd_vw - signal
+
+// EMA for Elder Impulse trend component (using price for trend, MACD for momentum)
+ema = ta.ema(close, ema_length)
+
+// Calculate Elder Impulse conditions
+elder_bulls = (ema > ema[1]) and (hist > hist[1])
+elder_bears = (ema < ema[1]) and (hist < hist[1])
+elder_color = elder_bulls ? color.green : elder_bears ? color.red : color.blue
+
+// Logging conditions
+if barstate.isconfirmed
+    ema_change = ema > ema[1] ? "UP" : "DOWN"
+    hist_change = hist > hist[1] ? "UP" : "DOWN"
+    log.info("Bar: EMA=" + str.tostring(ema, "#.00") + " (" + ema_change + "), HIST=" + str.tostring(hist, "#.00") + " (" + hist_change + "), Color=" + (elder_bulls ? "GREEN" : elder_bears ? "RED" : "BLUE"))
+
+// Plotting
+barcolor(elder_color)

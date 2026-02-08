@@ -1,0 +1,33 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bobina22
+//@version=5
+indicator("ICT Kill Zones", overlay=false)
+
+time_zone = input.string(title="Time Zone", defval="GMT+0", options=[
+     "GMT-10","GMT-7", "GMT-6", "GMT-5", "GMT-4", "GMT-3", "GMT+0", "GMT+1", "GMT+2",
+     "GMT+3", "GMT+3:30", "GMT+4","GMT+5", "GMT+5:30", "GMT+6", "GMT+7", "GMT+8",
+     "GMT+9", "GMT+9:30", "GMT+10:30", "GMT+10", "GMT+11", "GMT+13", "GMT+13:45"])
+
+asian_range = input.session(title="Asian Range", defval="2300-0400:1234567")
+london_open = input.session(title="London Open", defval="0600-0900:1234567")
+newyork_open = input.session(title="New York Open", defval="1100-1300:1234567")
+london_close = input.session(title="London Close", defval="1400-1600:1234567")
+newyork_session = input.session(title="New York Session", defval="1230-1500:1234567")
+newyork_session_am = input.session(title="New York Session Morning", defval="1230-1600:1234567")
+newyork_session_pm = input.session(title="New York Session Afternoon", defval="1700-2030:1234567")
+
+as_r = time(timeframe.period, asian_range, time_zone)
+lo_o = time(timeframe.period, london_open, time_zone)
+ny_o = time(timeframe.period, newyork_open, time_zone)
+lo_c = time(timeframe.period, london_close, time_zone)
+ny_s = time(timeframe.period, newyork_session, time_zone)
+ny_s_am = time(timeframe.period, newyork_session_am, time_zone)
+ny_s_pm = time(timeframe.period, newyork_session_pm, time_zone)
+
+plot(na(as_r) ? na : 1, title="Asian Range", color=color.red, style=plot.style_linebr)
+plot(na(lo_o) ? na : 1, title="London Open", color=color.orange, style=plot.style_linebr)
+plot(na(ny_o) ? na : 1, title="New York Open", color=color.olive, style=plot.style_linebr)
+plot(na(lo_c) ? na : 1, title="London Close", color=color.orange, style=plot.style_linebr)
+plot(na(ny_s) ? na : 1.5, title="New York Session", color=color.green, style=plot.style_linebr)
+plot(na(ny_s_am) ? na : 2, title="New York Session Morning", color=color.blue, style=plot.style_linebr)
+plot(na(ny_s_pm) ? na : 2, title="New York Session Afternoon", color=color.blue, style=plot.style_linebr)

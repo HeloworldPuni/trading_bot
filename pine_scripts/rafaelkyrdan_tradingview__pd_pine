@@ -1,0 +1,158 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=5
+indicator("PD Arrays with Alerts", overlay = true, max_bars_back = 5000, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+//=======Variables=======//
+var table1 = table.new(position = position.top_right, columns = 4, rows = 6, border_width = 0, border_color = color.gray)
+
+var label[] stHigh = array.new<label>()
+var label[] itHigh = array.new<label>()
+var label[] ltHigh = array.new<label>()
+var label[] stLow = array.new<label>()
+var label[] itLow = array.new<label>()
+var label[] ltLow = array.new<label>()
+
+var lineTrend = array.new_line()
+
+_Last_BoS = input.bool(true, title = "show only: ", inline = "1", group = "Trend / BOS")
+_col_bos = input.int(5, title = "", minval = 0, maxval = 50, step = 1, inline = "1", group = "Trend / BOS")
+_BoSColorbl = input.color(color.green, title = "Long", inline = "2", group = "Trend / BOS")
+_BoSStylebl = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], inline = "2", group = "Trend / BOS")
+_BoSColorbr = input.color(color.red, title = "Short", inline = "3", group = "Trend / BOS")
+_BoSStylebr = input.string("Solid", "", options = ["Solid", "Dashed", "Dotted"], inline = "3", group = "Trend / BOS")
+
+_BoSStyleblS = _BoSStylebl == "Solid" ? line.style_solid : _BoSStylebl == "Dotted" ? line.style_dotted : line.style_dashed
+_BoSStylebrS = _BoSStylebr == "Solid" ? line.style_solid : _BoSStylebr == "Dotted" ? line.style_dotted : line.style_dashed
+
+var float hh = 0.0
+var float ll = 0.0
+var int ph = 0
+var int pl = 0
+var int eqll = 0
+var int eqlh = 0
+var string trend = "range"
+var color trendcolor = color.gray
+var posline = array.new_int()
+var poslineend = array.new_int()
+
+//#Bos
+if stHigh.size() > 1 and stLow.size() > 1
+    hh := label.get_y(stHigh.get(stHigh.size() - 1))
+    ll := label.get_y(stLow.get(stLow.size() - 1))
+    ph := label.get_x(stHigh.get(stHigh.size() - 1))
+    pl := label.get_x(stLow.get(stLow.size() - 1))
+
+    for i = array.size(stLow) - 1 to 1 by 1
+        if ph == label.get_x(stLow.get(i))
+            eqll := label.get_x(stLow.get(i))
+            break
+        if ph > label.get_x(stLow.get(i))
+            break
+
+    for i = array.size(stHigh) - 1 to 1 by 1
+        if pl == label.get_x(stHigh.get(i))
+            eqlh := label.get_x(stHigh.get(i))
+            break
+        if pl > label.get_x(stHigh.get(i))
+            break
+
+    if array.size(posline) == 0
+        array.push(posline, 0)
+
+    if array.size(poslineend) == 0
+        array.push(poslineend, 0)
+
+    if close[1] > hh and array.get(posline, 0) != ph and ph != eqll
+        trend := "bull"
+        trendcolor := color.green
+        array.push(posline, ph)
+        array.push(poslineend, bar_index)
+        array.push(lineTrend, line.new(ph, hh, bar_index, hh, xloc.bar_index, extend.none, _BoSColorbl, _BoSStyleblS, 1))
+        alert("Trend changed to bull", alert.freq_once_per_bar)
+
+    if close[1] < ll and array.get(posline, 0) != pl and pl != eqlh
+        trend := "bear"
+        trendcolor := color.red
+        array.push(posline, pl)
+        array.push(poslineend, bar_index)
+        array.push(lineTrend, line.new(pl, ll, bar_index, ll, xloc.bar_index, extend.none, _BoSColorbr, line.style_solid, 1))
+        alert("Trend changed to bear", alert.freq_once_per_bar)
+
+    if array.size(lineTrend) > _col_bos and _Last_BoS
+        ln = array.shift(lineTrend)
+        line.delete(ln)
+    if array.size(posline) > 1
+        array.shift(posline)
+    if array.size(poslineend) > 1
+        array.shift(poslineend)
+
+//#endBos
+_Last_Block = input.bool(true, title = "show only: ", inline = "1", group = "Order Block")
+_col_Block = input.int(5, title = "", minval = 0, maxval = 50, step = 1, inline = "1", group = "Order Block")
+_BlockColorbl = input.color(color.rgb(76, 175, 80, 90), title = "Long", inline = "2", group = "Order Block")
+_Blocktextbl = input.string("ob", title = "", inline = "2", group = "Order Block")
+_BlockColorbr = input.color(color.rgb(175, 76, 76, 90), title = "SHORT", inline = "3", group = "Order Block")
+_Blocktextbr = input.string("ob", title = "", inline = "3", group = "Order Block")
+
+var OrderBlock = array.new_box()
+var posboxOB = array.new_int()
+var int col_setap = 0
+var int indOB = 0
+var float OBtl = 0.0  // top
+var float OBbl = 0.0  // bottom
+var int FFBullob = 0  // full fill order Block
+var int bord = 0
+var int posbox = 0
+var color bgOB = color.rgb(0, 0, 0, 90)
+var string bgtext = " "
+//#orderBlock
+if array.size(posboxOB) == 0
+    array.push(posboxOB, 0)
+
+if stHigh.size() > 1 and stLow.size() > 1
+    col_setap := bar_index - array.get(posline, 0)
+    OBtl := 0
+    FFBullob := bar_index
+    for i = bar_index - array.get(poslineend, 0) to col_setap by 1
+        if open[i] > close[i] and trend == "bull"  // SHORT true
+            if high[i] < high[col_setap]  // lower than last Fractals
+                OBtl := high[i]
+                OBbl := low[i]
+                indOB := bar_index - i
+                bord := 0
+                bgOB := _BlockColorbl
+                bgtext := _Blocktextbl
+                break
+        if open[i] < close[i] and trend == "bear"  // LONG true
+            if low[i] > low[col_setap]
+                OBtl := high[i]
+                OBbl := low[i]
+                indOB := bar_index - i
+                bord := 0
+                bgOB := _BlockColorbr
+                bgtext := _Blocktextbr
+                break
+    if OBtl != 0
+        for i = 0 to bar_index - array.get(poslineend, 0) by 1
+            if OBbl < close[i] and trend == "bull"
+                FFBullob := bar_index - i
+                break
+            if OBtl > close[i] and trend == "bear"
+                FFBullob := bar_index - i
+                break
+        array.push(posboxOB, array.get(posline, 0))
+        array.push(OrderBlock, box.new(indOB, OBtl, FFBullob, OBbl, xloc = xloc.bar_index, border_width = bord, bgcolor = bgOB, text = bgtext, text_halign = text.align_right, text_valign = text.align_center, text_wrap = text.wrap_none, text_size = size.small, text_color = color.rgb(0, 0, 0, 70)))
+        alert("Order block created", alert.freq_once_per_bar)
+        if array.size(OrderBlock) >= 2
+            if box.get_left(array.get(OrderBlock, array.size(OrderBlock) - 2)) == box.get_left(array.get(OrderBlock, array.size(OrderBlock) - 1))
+                box.delete(array.get(OrderBlock, array.size(OrderBlock) - 2))
+                array.remove(OrderBlock, array.size(OrderBlock) - 2)
+            else
+                box.set_bgcolor(array.get(OrderBlock, array.size(OrderBlock) - 2), color.rgb(0, 0, 0, 0))
+                box.set_border_width(array.get(OrderBlock, array.size(OrderBlock) - 2), 1)
+    if array.size(posboxOB) > 1
+        array.shift(posboxOB)
+    if array.size(OrderBlock) > _col_Block and _Last_Block
+        box.delete(array.shift(OrderBlock))
+//#end orderBlock

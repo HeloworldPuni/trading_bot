@@ -1,0 +1,281 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// The Apex Trend & Liquidity Master is a hybrid trading system designed to align traders with the dominant market trend while identifying key structural price levels. Unlike simple moving average crossovers or standalone support/resistance tools, this script integrates a volatility-adaptive "Trend Cloud" with a "Smart Liquidity" engine.
+
+// This integration allows the script to offer unique filtering capabilities, such as hiding counter-trend liquidity zones to reduce chart noise and focus on high-probability continuations.
+// 
+// How It Works
+// 
+// Adaptive Trend Cloud The backbone of the system is the Trend Cloud, calculated using a Hull Moving Average (HMA) base with ATR bands. The cloud expands and contracts based on market volatility.
+// 
+// Green Cloud: Bullish Regime. The market is trending up; look for long opportunities.
+// 
+// Red Cloud: Bearish Regime. The market is trending down; look for short opportunities.
+// 
+// Smart Liquidity Zones (with Integration) The script automatically detects Pivot Highs and Lows to draw Supply (Resistance) and Demand (Support) zones. These zones persist until price breaks through them (mitigation).
+// 
+// Integration Feature: A "Filter Zones by Trend" option is included in the settings. When enabled, this feature connects the Trend Cloud to the Liquidity Engine:
+// 
+// It will only display Demand zones when the Trend Cloud is Bullish.
+// 
+// It will only display Supply zones when the Trend Cloud is Bearish.
+// 
+// Note on Lag: Zones are based on pivots (default lookback: 10). A zone appears on the chart 10 bars after the pivot forms. These are historical structural levels.
+// 
+// Signal Filters Buy and Sell labels are generated when the Trend Cloud changes color, but they are filtered to ensure quality:
+// 
+// Volume Filter: Signals only appear if the current volume is higher than the 20-period average.
+// 
+// RSI Filter: Prevents buying when RSI is overbought (>70) or selling when oversold (<30).
+// 
+// Live HUD An on-chart dashboard provides real-time data on:
+// 
+// Trend Bias: Direction of the cloud.
+// 
+// Momentum: RSI strength (Weak/Neutral/Strong).
+// 
+// Volume: High vs. Low activity.
+// 
+// Usage Guide
+// 
+// Identify the Trend: Use the background fill color to determine if you should be looking for longs (Green) or shorts (Red).
+// 
+// Wait for Structure: Look for price to pull back into a "Smart Liquidity" zone. For example, in a Green Trend, wait for price to touch a Green Demand box.
+// 
+// Confirm with Momentum: Check the Dashboard. Ideally, you want to see "Strong" momentum aligning with your trade direction.
+// 
+// Settings: If the chart is too cluttered, enable "Filter Zones by Trend" in the settings menu to hide counter-trend boxes.
+// 
+// Credits & Attribution This script combines original integration logic with adapted open-source concepts:
+// 
+// Smart Liquidity Logic: The method for generating Supply/Demand boxes via Pivot Highs/Lows and array management is adapted from open-source logic commonly used in Smart Money Concepts (SMC) indicators, notably popularized by LuxAlgo and the broader Pine community.
+// 
+// Trend Logic: The volatility cloud utilizes standard Hull Moving Average (HMA) and ATR formulas.
+// 
+// Disclaimer This indicator is provided for educational and informational purposes only. It does not constitute financial advice. Past performance of pivot levels or trend signals does not guarantee future results.
+
+
+//@version=6
+indicator("Apex Trend & Liquidity Master V2.1", overlay=true, max_boxes_count=50, max_lines_count=50)
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1. SYSTEM CONFIGURATION & INPUTS
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Trend Engine Settings ---
+grp_trend = "Trend Architecture"
+ma_type   = input.string("HMA", "Trend Algorithm", options=["EMA", "SMA", "HMA", "RMA"], group=grp_trend, tooltip="Select the moving average type for the baseline calculation. HMA (Hull) offers the best balance of speed and smoothness.")
+len_main  = input.int(55, "Trend Length", minval=10, group=grp_trend, tooltip="The lookback period for the trend baseline. Higher numbers make the trend cloud smoother but slower to react; lower numbers make it faster but more prone to chop.")
+mult      = input.float(1.5, "Volatility Multiplier", step=0.1, group=grp_trend, tooltip="Controls the width of the trend cloud based on ATR. A higher multiplier creates a wider cloud that filters out more noise.")
+src       = input.source(close, "Source", group=grp_trend, tooltip="The price data used for calculations (default is Close).")
+
+// --- Liquidity & Structure ---
+grp_liq   = "Liquidity & Structure"
+show_liq  = input.bool(true, "Show Smart Liquidity Zones", group=grp_liq, tooltip="Toggle the visibility of Supply (Resistance) and Demand (Support) boxes.")
+liq_len   = input.int(10, "Pivot Lookback", group=grp_liq, tooltip="The sensitivity for finding Swing Highs/Lows. Higher values find more significant structural levels but appear with more lag. Note: Zones appear after this many bars.")
+zone_ext  = input.int(5, "Zone Extension", group=grp_liq, tooltip="How many bars into the future the liquidity boxes are drawn. They will automatically extend until price touches them.")
+filter_liq = input.bool(false, "Filter Zones by Trend?", group=grp_liq, tooltip="INTEGRATION FEATURE: If enabled, the script will hide counter-trend zones. It will only show Demand zones when the Trend Cloud is Bullish, and Supply zones when the Trend Cloud is Bearish.")
+
+// --- Filter Logic ---
+grp_filt  = "Signal Filters"
+use_vol   = input.bool(true, "Volume Filter", group=grp_filt, tooltip="If enabled, Buy/Sell signals will only appear if the current bar's volume is higher than the 20-period average.")
+use_rsi   = input.bool(false, "RSI Filter", group=grp_filt, tooltip="If enabled, this prevents Buy signals when the market is Overbought (>70) and Sell signals when the market is Oversold (<30).")
+
+// --- Visual Customization ---
+grp_vis   = "Visual Interface"
+c_bull    = input.color(#00E676, "Bullish Color", group=grp_vis, tooltip="Color for the Bullish Trend Cloud, Demand Zones, and Buy Labels.")
+c_bear    = input.color(#FF1744, "Bearish Color", group=grp_vis, tooltip="Color for the Bearish Trend Cloud, Supply Zones, and Sell Labels.")
+c_neu     = input.color(#78909C, "Neutral/Chop Color", group=grp_vis, tooltip="Color used for neutral momentum or ranging candles.")
+c_text    = input.color(#FFFFFF, "Text Color", group=grp_vis, tooltip="Color for all text overlays (Signal labels, Dashboard text, Zone labels).")
+show_bar  = input.bool(true, "Color Candles", group=grp_vis, tooltip="If enabled, the candlesticks on the chart will be colored to match the current Trend Cloud status.")
+
+// --- Dashboard (HUD) ---
+grp_hud   = "Dashboard Styling"
+show_hud  = input.bool(true, "Show HUD", group=grp_hud, tooltip="Toggle the on-chart dashboard panel.")
+hud_pos   = input.string("Top Right", "Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=grp_hud, tooltip="Select which corner of the chart the dashboard appears in.")
+hud_bg    = input.color(color.new(#000000, 30), "Background", group=grp_hud, tooltip="Background color and transparency of the dashboard panel.")
+hud_sz    = input.string("Small", "Size", options=["Tiny", "Small", "Normal"], group=grp_hud, tooltip="Scale the size of the dashboard text.")
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2. CORE CALCULATIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Helper Function: Dynamic MA Calculation ---
+get_ma(type, source, length) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "HMA" => ta.hma(source, length)
+        "RMA" => ta.rma(source, length)
+        => ta.ema(source, length)
+
+// --- Trend Cloud Logic ---
+// We calculate a baseline MA and add ATR bands to create a "Cloud"
+baseline = get_ma(ma_type, src, len_main)
+atr      = ta.atr(len_main)
+upper    = baseline + (atr * mult)
+lower    = baseline - (atr * mult)
+
+// Trend State Determination
+var int trend = 0
+if close > upper
+    trend := 1 // Bullish
+else if close < lower
+    trend := -1 // Bearish
+else
+    trend := trend // Maintain previous state (filter chop)
+
+// Trend Strength (for Visualization)
+is_strong_bull = trend == 1 and close > upper
+is_strong_bear = trend == -1 and close < lower
+
+// --- Volume & Momentum Logic ---
+vol_ma    = ta.sma(volume, 20)
+high_vol  = volume > vol_ma
+rsi_val   = ta.rsi(close, 14)
+rsi_ok_buy = not use_rsi or rsi_val < 70
+rsi_ok_sell = not use_rsi or rsi_val > 30
+
+// ════════════════════════════════════════════════════════════════════════════
+// 3. SMART LIQUIDITY ENGINE
+// Credit: Logic adapted from common open-source SMC & Supply/Demand concepts (e.g. LuxAlgo structure)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Detect Pivots
+ph = ta.pivothigh(high, liq_len, liq_len)
+pl = ta.pivotlow(low, liq_len, liq_len)
+
+// Arrays to manage drawing liquidity blocks
+var box[] supply_zones = array.new_box()
+var box[] demand_zones = array.new_box()
+
+// Function to keep array size managed (Performance)
+manage_zones(arr) =>
+    if array.size(arr) > 5
+        box.delete(array.shift(arr))
+
+// INTEGRATION LOGIC: Check trend state at the time the pivot occurred
+// We look back 'liq_len' bars to see what the trend was when the pivot formed
+trend_at_pivot = trend[liq_len]
+
+// Supply (Resistance) Creation
+// We add a check: If 'filter_liq' is true, only draw Supply if trend was NOT Bullish
+should_draw_supply = show_liq and (not filter_liq or trend_at_pivot == -1)
+
+if not na(ph) and should_draw_supply
+    // Top of box = Pivot High, Bottom = Highest Body in range
+    float box_top = high[liq_len]
+    float box_bot = math.max(open[liq_len], close[liq_len])
+    
+    b = box.new(bar_index - liq_len, box_top, bar_index + zone_ext, box_bot, 
+         border_color=color.new(c_bear, 60), bgcolor=color.new(c_bear, 85), 
+         text="Supply", text_color=color.new(c_text, 50), text_size=size.tiny)
+    array.push(supply_zones, b)
+    manage_zones(supply_zones)
+
+// Demand (Support) Creation
+// We add a check: If 'filter_liq' is true, only draw Demand if trend was NOT Bearish
+should_draw_demand = show_liq and (not filter_liq or trend_at_pivot == 1)
+
+if not na(pl) and should_draw_demand
+    // Bottom of box = Pivot Low, Top = Lowest Body in range
+    float box_bot = low[liq_len]
+    float box_top = math.min(open[liq_len], close[liq_len])
+    
+    b = box.new(bar_index - liq_len, box_top, bar_index + zone_ext, box_bot, 
+         border_color=color.new(c_bull, 60), bgcolor=color.new(c_bull, 85), 
+         text="Demand", text_color=color.new(c_text, 50), text_size=size.tiny)
+    array.push(demand_zones, b)
+    manage_zones(demand_zones)
+
+// Active Zone Management (Extend or Mitigate)
+if barstate.islast
+    // Manage Supply
+    if array.size(supply_zones) > 0
+        for i = array.size(supply_zones) - 1 to 0
+            b = array.get(supply_zones, i)
+            // If price closes above the zone, delete it (Mitigated)
+            if close > box.get_bottom(b)
+                box.delete(b)
+                array.remove(supply_zones, i)
+            else
+                box.set_right(b, bar_index + 10)
+    
+    // Manage Demand
+    if array.size(demand_zones) > 0
+        for i = array.size(demand_zones) - 1 to 0
+            b = array.get(demand_zones, i)
+            // If price closes below the zone, delete it (Mitigated)
+            if close < box.get_top(b)
+                box.delete(b)
+                array.remove(demand_zones, i)
+            else
+                box.set_right(b, bar_index + 10)
+
+// ════════════════════════════════════════════════════════════════════════════
+// 4. SIGNAL GENERATION & PLOTTING
+// ════════════════════════════════════════════════════════════════════════════
+
+// Filter Conditions
+cond_vol = not use_vol or high_vol
+
+// Entry Signals
+sig_buy = trend == 1 and trend[1] != 1 and cond_vol and rsi_ok_buy
+sig_sell = trend == -1 and trend[1] != -1 and cond_vol and rsi_ok_sell
+
+// Plot Trend Cloud
+col_fill = trend == 1 ? c_bull : c_bear
+p1 = plot(upper, "Upper Band", color=color.new(col_fill, 100))
+p2 = plot(lower, "Lower Band", color=color.new(col_fill, 100))
+fill(p1, p2, color=color.new(col_fill, 80), title="Trend Cloud")
+
+// Plot Signals
+plotshape(sig_buy, "Buy Signal", shape.labelup, location.belowbar, c_bull, 0, "BUY", c_text, size=size.small)
+plotshape(sig_sell, "Sell Signal", shape.labeldown, location.abovebar, c_bear, 0, "SELL", c_text, size=size.small)
+
+// Candle Coloring
+bar_col = trend == 1 ? c_bull : trend == -1 ? c_bear : c_neu
+barcolor(show_bar ? bar_col : na)
+
+// ════════════════════════════════════════════════════════════════════════════
+// 5. PROFESSIONAL DASHBOARD (HUD)
+// ════════════════════════════════════════════════════════════════════════════
+
+if show_hud
+    var table hud = table.new(
+         hud_pos == "Top Right" ? position.top_right : hud_pos == "Top Left" ? position.top_left : hud_pos == "Bottom Right" ? position.bottom_right : position.bottom_left, 
+         2, 4, 
+         bgcolor=hud_bg, 
+         border_width=1, 
+         border_color=color.new(c_neu, 60))
+
+    if barstate.islast
+        // Determine Text Size
+        t_size = hud_sz == "Tiny" ? size.tiny : hud_sz == "Small" ? size.small : size.normal
+        
+        // Header
+        table.cell(hud, 0, 0, "APEX MASTER", text_color=c_text, bgcolor=color.new(col_fill, 20), text_size=t_size, text_halign=text.align_left)
+        table.cell(hud, 1, 0, "LIVE", text_color=c_text, bgcolor=color.new(col_fill, 20), text_size=t_size, text_halign=text.align_right)
+
+        // Trend Status
+        t_txt = trend == 1 ? "BULLISH" : "BEARISH"
+        table.cell(hud, 0, 1, "Trend Bias", text_color=c_text, text_size=t_size, text_halign=text.align_left)
+        table.cell(hud, 1, 1, t_txt, text_color=col_fill, text_size=t_size, text_halign=text.align_right)
+
+        // Momentum (RSI)
+        mom_txt = rsi_val > 60 ? "STRONG" : rsi_val < 40 ? "WEAK" : "NEUTRAL"
+        mom_col = rsi_val > 60 ? c_bull : rsi_val < 40 ? c_bear : c_neu
+        table.cell(hud, 0, 2, "Momentum", text_color=c_text, text_size=t_size, text_halign=text.align_left)
+        table.cell(hud, 1, 2, mom_txt, text_color=mom_col, text_size=t_size, text_halign=text.align_right)
+
+        // Volume State
+        vol_txt = high_vol ? "HIGH" : "LOW"
+        vol_col = high_vol ? c_bull : c_neu
+        table.cell(hud, 0, 3, "Volume", text_color=c_text, text_size=t_size, text_halign=text.align_left)
+        table.cell(hud, 1, 3, vol_txt, text_color=vol_col, text_size=t_size, text_halign=text.align_right)
+
+// ════════════════════════════════════════════════════════════════════════════
+// 6. ALERTS
+// ════════════════════════════════════════════════════════════════════════════
+
+alertcondition(sig_buy, "Apex Buy Alert", "Long Entry Signal Detected on {{ticker}}")
+alertcondition(sig_sell, "Apex Sell Alert", "Short Entry Signal Detected on {{ticker}}")

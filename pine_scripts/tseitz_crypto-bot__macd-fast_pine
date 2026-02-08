@@ -1,0 +1,98 @@
+//@version=4
+strategy("MACD Fast W Shorts Add Long", overlay=true, calc_on_every_tick=false, initial_capital=1000, default_qty_value=100, default_qty_type=strategy.cash, currency=currency.USD)
+
+// days to test
+daysBackMax = input(defval=30, title="Max Days Back to Test", minval=0)
+daysBackMin = input(defval=0, title="Min Days Back to Test", minval=0)
+msBackMax = 1000 * 60 * 60 * 24 * daysBackMax
+msBackMin = 1000 * 60 * 60 * 24 * daysBackMin
+isWithinTimeBounds = (msBackMax == 0 or (time > (timenow - msBackMax))) and (msBackMin == 0 or (time < (timenow - msBackMin)))
+
+allowShorts = input(defval=true, title="Allow Shorts?", type=input.bool)
+allowAdds = input(defval=true, title="Allow Adds?", type=input.bool)
+
+var isLong = false
+var isShort = false
+var addLongClose = 0.0
+
+// MACD
+fast = 12, slow = 26
+fastMA = ema(close, fast)
+slowMA = ema(close, slow)
+macd = fastMA - slowMA
+// mapMacdFast = macd + fastMA
+signal = ema(macd, 9)
+// mapSignal = signal + fastMA
+
+var macdEntry = 0.0
+
+getMACD(index) =>
+    thisFastMA = ema(close[index], fast)
+    thisSlowMA = ema(close[index], slow)
+    thisMacd = thisFastMA - thisSlowMA
+
+macd0 = getMACD(0)
+macd1 = getMACD(1)
+macd2 = getMACD(2)
+macd3 = getMACD(3)
+
+// macdDirUp = macd > signal
+// macdDirDown = macd < signal
+// aboveVwap = open > vwap
+// belowVwap = open < vwap
+
+// smaLength = input(defval=3, title="SMA Length", minval=0, step=2)
+
+greenCandle = (close > open)
+redCandle = (close < open)
+
+// sma = sma(close, smaLength)
+
+// plot(mapMacdFast, linewidth=1, color=color.blue)
+// plot(mapSignal, color=color.orange)
+
+long = not isLong and macd < 0 and macd > macd1 and macd < signal
+closeLong = isLong and macd > 0 and macd < macd1 and macd > signal
+stopLong = isLong and crossunder(macd, signal)
+reopenLong = not isLong and open > vwap and macd > macd1 and macd <= signal
+addLong = isLong and macd < macdEntry and macd > macd1 and macd < signal and macd1 < macd2
+short = not isLong and macd > 0 and macd < macd1 and macd < macd2 and macd >= signal
+addShort = isShort and macd > macdEntry and macd > macd1 and macd > signal and macd1 > macd2
+closeShort = isShort and macd < 0 and macd > macd1 and macd < signal
+
+// plotshape(stopLong, title="Stop", text="Stop Long", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.green, textcolor=color.white, transp=0)
+
+bgcolor(color=long ? color.green : na)
+bgcolor(color=reopenLong or addLong ? color.yellow : na)
+bgcolor(color=short ? color.red : na)
+bgcolor(color=addShort ? color.orange : na)
+
+if long or reopenLong
+    isLong := true
+    isShort := false
+    macdEntry := macd
+
+if closeLong
+    isLong := false
+    isShort := false
+
+if short
+    isLong := false
+    isShort := true
+    macdEntry := macd
+
+if closeShort
+    isShort := false
+    isLong := false
+
+strategy.entry("long", long=true, when=(long or reopenLong) and isWithinTimeBounds)
+strategy.order("long", long=true, when=addLong and allowAdds and isWithinTimeBounds, comment="add")
+strategy.close("long", when=closeLong and isWithinTimeBounds)
+strategy.entry("short", long=false, when=short and allowShorts and isWithinTimeBounds)
+strategy.close("short", when=(closeShort or (long or reopenLong)) and allowShorts and isWithinTimeBounds)
+
+// if (strategy.position_size > 0)
+//     strategy.exit(id="stop long", stop=longStopPrice)
+
+// if (strategy.position_size < 0)
+//     strategy.exit(id="stop short", stop=shortStopPrice)

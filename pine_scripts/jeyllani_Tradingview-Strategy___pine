@@ -1,0 +1,1421 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © FriedChickenWing 🐔
+
+//@version=5
+
+strategy(title='⏱ MTF C Strategy A ⏱', overlay=false, default_qty_type=strategy.percent_of_equity, calc_on_every_tick=false, default_qty_value=100, commission_type=strategy.commission.percent, initial_capital=1000, commission_value=0.04)
+
+//------------------------------------------------------------------------------
+// Tootips Text
+//------------------------------------------------------------------------------
+
+string sourceI                 = '🌲 𝗕𝗔𝗥 𝗦𝗢𝗨𝗥𝗖𝗘 🌲' + '\n' + '\n' + 'All the Referential of the Calculations are done with previous closed bar.' + '\n' + '\n' + 'Calls to other timeframes uses the previous closed bar.' + '\n' + '\n' + 'Enabling Current Bar for entry or exit will use the current live bar, if you.re backtesting it will give you results with bias.' + '\n' + '\n' + 'Graphically, you won\'t see Repainting Bar'
+
+string sourceInfo              = '🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱' + '\n' + '\n' + 'The Curve Source will be used as a computational reference to calculate the correlations between 8 timeframes and also as the source of the strategy entry or/and exit. ' + '\n' + '\n' + '❗ By choosing several sources, it will be the average of the sources placed in EMA exponential moving average by default, You can choose SMA simple moving average instead of EMA.' + '\n' + '\n' + 'If the average of all is selected and one or more other additional curves chosen: the chosen curve (s) will be additionally counted in the weighting:' + '\n' + '\n' + 'Example: (total average + 1 curve) / 2 ' + '\n' + '\n' + 'For each source involved in the average, it can be adjusted independently.' + '\n' + '\n' + 'Each curve has a reference color that can be configured below. In case of averaging the adjustment.s is-are under - ⚪ 𝗔𝗩𝗘𝗥𝗔𝗚𝗘 & 𝗣𝗔𝗜𝗥𝗦 ⚪ / All or-and Pairs.'
+
+string coppocktooltip          = '🔶 Coppock Curve 🔶' + '\n' + '\n' + 'The Coppock Curve is 10-period weighted moving average of the 14-period RoC + 11-period RoC' + '\n' + '\n' + 'The RoC is the Rate of Change momentum oscillator which moves above and below the zero line.' + '\n' + '\n' + 'The default setting for the indicator is 11 and 14 periods.' + '\n' + '\n' + 'For example, instead of using 11 or 14, if you were to use 7 and 10, the curve would give more weight to recent price action.'
+
+string ccitooltip              = '🟣 The Commodity Channel Index 🟣' + '\n' + '\n' + 'The CCI measures the current price level relative to an average price level over a given period of time.' + '\n' + '\n' + 'The parameter adjusts the length of the period used when selected individually as the source or in conjunction with others.'
+
+string rvgitooltip             = '🟢 The Relative Vigor Index 🟢' + '\n' + '\n' + 'RVI is a momentum indicator used in technical analysis that measures the strength of a trend by comparing a security.s closing price to its trading range while smoothing the results using a simple moving average (SMA).' + '\n' + '\n' + 'The RVI indicator is calculated in a similar fashion to the stochastics oscillator but it compares the close relative to the open rather than comparing the close relative to the low.' + '\n' + '\n' + '❗ For the calculation of this curve, an average between signal and RVI is carried out, You can select one independently of the other ❗'
+
+string efitooltip              = '⚫ Elder.s force index ⚫ ' + '\n' + '\n' + 'EFI is calculated by subtracting yesterday.s close from today.s close and multiplying the result by today.s volume.' + '\n' + '\n' + 'If closing prices are higher today than yesterday, the force is positive.' + '\n' + '\n' + 'If closing prices are lower than yesterday.s, the force is negative.'
+
+string MACDtooltip             = '🔴 Moving Average Convergence Divergence 🔴' + '\n' + '\n' + 'The MACD is calculated by subtracting the 26-period exponential moving average (EMA) from the 12-period EMA.' + '\n' + '\n' + '❗ For the calculation of this curve, an average between MACD and SIGNAL is carried out.❗' + '\n' + '\n' + 'You can select one independently of the other and Hist Only that is MACD - SIGNAL.'
+
+string SRSItooltip             = '🟤 The Stochastic Relative Strength Index 🟤' + '\n' + '\n' + 'StochRSI is based on RSI readings. The RSI has an input value, typically 14, which tells the indicator how many periods of data it is using in its calculation.' + '\n' + '\n' + 'RSI is a derivative of price. Meanwhile, StochRSI is derivative of RSI itself, or a second derivative of price. One of the key differences is how quickly the indicators move. ' + '\n' + '\n' + 'StochRSI moves very quickly from overbought to oversold, or vice versa, while the RSI is a much slower moving indicator.' + '\n' + '\n' + '❗ For the calculation of this curve, an average between Stochastic RSI K and Stochastic RSI D is carried out. ❗' + '\n' + '\n' + 'You can select one independently of the other.'
+
+string StochasticTooltip       = '🟠 Stochastic Oscillator 🟠' + '\n' + '\n' + 'Stochastic is a momentum indicator comparing a particular closing price of a security to a range of its prices over a certain period of time. ' + '\n' + '\n' + 'It is used to generate overbought and oversold trading signals, utilizing a 0–100 bounded range of values.' + '\n' + '\n' + 'The difference between the slow and fast Stochastic Oscillator is the Slow %K incorporates a %K slowing period of 3 that controls the internal smoothing of %K. ' + '\n' + '\n' + 'Setting the smoothing period to 1 is equivalent to plotting the Fast Stochastic Oscillator' + '\n' + '\n' + '❗ For the calculation of this curve, an average between Stochastic K and Stochastic D is carried out.❗' + '\n' + '\n' + 'You can select one independently of the other.'
+
+string Trixtooltip             = '🔵 The Triple Exponential Average 🔵' + '\n' + '\n' + 'TRIX is a momentum indicator that shows the percentage change in a moving average that has been smoothed exponentially three times.' + '\n' + '\n' + 'The triple smoothing of moving averages is designed to filter out price movements that are considered insignificant or unimportant.'
+
+string AveragePairsTooltip     = '⚪ Average & Pairs ⚪' + '\n' + '\n' + 'If a pair or more curve sources are selected in 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘, the default calculation is based on an EMA and the length defined from the related input.' + '\n' + '\n' + 'If Average of all the curves is selected, independently the default calculation is based on an EMA and the length defined from the related input.' + '\n' + '\n' + '❗ If you select Use SMA‎‏‏‎‎‎‎‎‎‎‏‏‎‎‎‏‏‎‎‎‏‏‎ the length is defined from the same input. ❗'
+
+string CurvesTTooltip          = '📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐 ' + '\n' + '\n' + 'Corresponds to the source of the timeframes used to calculate the correlations.' + '\n' + '\n' + 'They are always in pairs of 2.' + '\n' + '\n' + 'Example :' + '\n' + '\n' + '[A] and [A]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        = Timeframe1 and Timeframe2                                                        = Curve [A]'
+
+string CorrLenTooltip          = '📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗟𝗘𝗡𝗚𝗧𝗛 📐' + '\n' + '\n' + 'Corresponds to the length of the bars used for each source.' + '\n' + '\n' + 'Example : Length                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              = 2' + '\n' + '\n' + '[A]                                                          = | 15 | minutes bar and [𝗔]                                                                                                                                                                             = | 20 | minutes bar' + '\n' + '\n' + '[A] [A]                                  = | 15 | 15 |' + '\n' + '[𝗔] [𝗔]                                                                                                                                                                                = | 20 | 20 |' + '\n' + '\n' + 'Output  = Correlation Curve [A] for 2 bars'
+
+string HighClvlTooltip         = '📐‎ ‎‎‏‏‎‏‏‎𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗛𝗜𝗚𝗛 𝗟𝗘𝗩𝗘𝗟 📐' + '\n' + '\n' + 'Corresponds to one of the main source for Long or Short orders and can be (if choosed in 0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣ for Long1 - Short1) a source for Exit. ' + '\n' + '\n' + 'Changing will automatically set the high positive and negative correlation at a same level.' + '\n' + '\n' + 'Example :' + '\n' + '\n' + '1 to 0.75 <                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            => change -1 to -75'
+
+string SlopeConditionTooltip   = '📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 ‎‎‎‏‏‎‏‏‎📐' + '\n' + '\n' + 'By default, the calculation is performed with a positive correlation of 1 for the Long and / or Short conditions.' + '\n' + '\n' + 'With the Use -1 Only button the reference will be strictly -1.' + '\n' + 'You can add a negative correlation -1 such as 1 and -1.' + '\n' + '\n' + 'When it is by default or in the form of add, the level adjustment is in 📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗛𝗜𝗚𝗛 𝗟𝗘𝗩𝗘𝗟 📐 for the positive and negative values together.'
+
+
+string CurveTimeSourceTooltip  = '⏱ 𝗖𝗨𝗥𝗩𝗘 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 ⏱' + '\n' + '\n' + 'Change the time source of the selected 🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱, this will change the slope as well. ' + '\n' + '\n' + 'The impact will be on the calculations used for ' + '\n' + '\n' + '- (🍎 𝗦𝗛𝗢𝗥𝗧 🍎 or/and 🍏 𝗟𝗢𝗡𝗚 🍏 and ' + '\n' + '- 0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣.' + '\n' + '\n' + 'Example of condition: if The Curve is rising or falling since 1 bar then Entry. ' + '\n' + '\n' + 'The source is the default current timeframe of the chart, by changing this option to a higher timeframe, the source will be different for the Curve.' + '\n' + '\n' + 'For example it could be less sensitive to fluctuations and smoother.'
+
+
+string SlopelenTooltip         = '📏 𝗦𝗟𝗢𝗣𝗘 𝗟𝗘𝗡𝗚𝗧𝗛 📏' + '\n' + '\n' + 'Corresponds to the length of the slope of the curve. ' + '\n' + '\n' + 'Slope1 🎨 will only affect graphically.' + '\n' + 'The Slope2 🔱 will affect graphically and the calculations for the strategy.' + '\n' + '\n' + 'Example: ' + '\n' + '(y_b - y_a) / (x_b - x_a) ' + '\n' + 'where b is the present time and a the past time. ' + '\n' + 'y the curve and x the bars time period.' + '\n' + '\n' + 'The input length therefore corresponds to the number of bars passed.'
+
+string LengthCondTooltip       = '📏 𝗟𝗘𝗡𝗚𝗧𝗛 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 📏' + '\n' + '\n' + 'Corresponds to the computational reference used for entries and exits' + '\n' + '\n' + 'Rising impact 🍏 𝗟𝗢𝗡𝗚 🍏 and 0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣.' + '\n' + 'Falling impact 🍎 𝗦𝗛𝗢𝗥𝗧 🍎 and 0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣.' + '\n' + '\n' + 'Example of condition: ' + '\n' + '\n' + 'if The Curve and The Slope are rising or falling since n bar then Entry/Exit.'
+
+string LongEntryTooltip        = '🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝' + '\n' + '\n' + 'Corresponds to the type of policy used for the Long Entries. ' + '\n' + '\n' + 'You can combine several entries or to use the opposite condition (the one used to enter in 🍎 𝗦𝗛𝗢𝗥𝗧 🍎).' + '\n' + '\n' + 'Each combination is independently considered as A or B, A or C, A or B or C ...' + '\n' + '\n' + 'You can add an RSI condition which is :' + '\n' + '\n' + 'RSI(n) * crossover * RSI(n-1)' + '\n' + '\n' + '(You can set the n past bar considered as crossed by the current RSI)'
+
+string ShortEntryTooltip       = '🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝' + '\n' + '\n' + '❗ You must activate a Short Exit condition to have this option working. ❗ ' + '\n' + '\n' + 'Corresponds to the type of policy used for the Short Entries. ' + '\n' + '\n' + 'You can combine several entries or to use the opposite condition (the one used to enter in 🍏 𝗟𝗢𝗡𝗚 🍏).' + '\n' + '\n' + 'Each combination is independently considered as A or B, A or C, A or B or C ...' + '\n' + '\n' + 'You can add an RSI condition which is :' + '\n' + '\n' + 'RSI(n) * crossunder * RSI(n-1)' + '\n' + '\n' + '(You can set the n past bar considered as crossed by the current RSI)'
+
+
+string StopLossTooltip         = '🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛' + '\n' + '\n' + 'Stoploss can be set as trailed or not with the possibility of a take profit at several levels.' + '\n' + '\n' + 'If the trailing is activated, the TP2% corresponds to the offset of the StopLoss.' + '\n' + '\n' + '❗ It is not possible to combine the stoploss with other exits. But you can use Stoploss for Longs and other exits for Shorts❗'
+
+string OtherExitTooltip        = '0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣' + '\n' + '\n' + 'Default is the Curve, you can use the Slope2 as a source and set the falling/rising period length or reverse the condition for the exit. ' + '\n' + '\n' + 'You can set the length of the Slope2 in the input 📏 𝗦𝗟𝗢𝗣𝗘 𝗟𝗘𝗡𝗚𝗧𝗛 📏/Slope2 🔱. ' + '\n' + '\n' + '❗ Setting a different length in 📏 𝗦𝗟𝗢𝗣𝗘 𝗟𝗘𝗡𝗚𝗧𝗛 📏' + '\n' + '/Slope2 🔱 will impact ' + '\n' + '🍏 𝗟𝗢𝗡𝗚 🍏 or 🍎 𝗦𝗛𝗢𝗥𝗧 🍎 calculation if selected. ❗' + '\n' + '\n' + 'You can combine all the exit conditions except with the stoploss, each combination is independent.'
+
+string CCIexitTooltip          = '1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣' + '\n' + '\n' + 'The Commodity Channel Index' + '\n' + '\n' + '❎ LONG Exits, the setting is by default set as: if the CCI>                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     = LEVEL then exit. ' + '\n' + 'You can reverse the condition so that, if the CCI < = LEVEL then exit.' + '\n' + '\n' + '⛔ SHORT Exits, the setting is by default as: if the CCI <                                                                                                            = LEVEL, then exit. ' + '\n' + 'You can reverse the condition so that, if CCI>  = LEVEL then exit.' + '\n' + '\n' + 'You can combine all the exit conditions except with the stoploss, each combination is independent.'
+
+string RSIExitTooltip          = '2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣' + '\n' + '\n' + 'The relative strength index measures the magnitude of recent price changes to evaluate overbought or oversold conditions in the price of an instrument.' + '\n' + 'Common interpretation of the RSI are that values of 70 or above indicate that a security is becoming overbought or overvalued and may be primed for a trend reversal or corrective pullback in price. ' + '\n' + 'An RSI reading of 30 or below indicates an oversold or undervalued condition.' + '\n' + '\n' + '❎ LONG Exits, the setting is by default set as: if the RSI >                                                                                                                                                                                                                                                                                                                                                             = LEVEL then exit. ' + '\n' + 'You can reverse the condition so that, if the RSI < = LEVEL then exit.' + '\n' + '\n' + '⛔ SHORT Exits, the setting is by default as: if the RSI <                                                                                                            = LEVEL, then exit. ' + '\n' + 'You can reverse the condition so that, if RSI > = LEVEL then exit.' + '\n' + '\n' + '⬆⬇ The length and the offset sets the values for both.' + '\n' + '\n' + 'You can combine all the exit conditions except with the stoploss, each combination is independent.'
+
+string BBExitTooltip           = '3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣' + '\n' + '\n' + 'Bollinger Bands are two standard deviations (Std) positively and negatively away from a simple moving average.' + '\n' + '\n' + 'You can independently adjust the standard deviation.' + '\n' + '\n' + 'Upper                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          = ❎ LONG Lower                                                                     = ⛔ SHORT.' + '\n' + '\n' + '⬆⬇ The length and the offset sets the values for both.' + '\n' + '\n' + 'You can combine all the exit conditions except with the stoploss, each combination is independent.'
+
+string ROCExitTooltip          = '4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣' + '\n' + '\n' + 'Rate of change is used to mathematically describe the percentage change in value over a defined period of time, and it represents the momentum of a variable. ' + '\n' + 'the rate of change is represented by the slope of a line.' + '\n' + '\n' + '❎ LONG : The condition used is previous ROC > 0 and a * present ROC falling period that can be set in the input' + '\n' + '⛔ SHORT : The condition used is previous ROC < 0 and a * present rising period that can be set in the input' + '\n' + '\n' + 'You can combine all the exit conditions except with the stoploss, each combination is independent.'
+
+string CommentTooltip          = '💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬' + '\n' + '\n' + 'If you want to use comments as alerts for this strategy, change the message of the alerts for' + '\n' + '\n' + 'If you are using json type of comments and it.s not working, try to unescape the json' + '\n' + '\n' + '{{strategy.order.comment}}'
+
+string StrategyTooltip         = '🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠' + '\n' + '\n' + 'You can choose the limit of daily trades and/or a daily sessions.' + '\n' + '\n' + 'Choosing a Drawdown limit will stop the strategy running if the % is reached.' + '\n' + '\n' + 'This settings will affect the whole strategy'
+
+
+// -------------------------------------------------------------------------- //
+//                                🅸🅽🅿🆄🆃🆂                                  //
+// -------------------------------------------------------------------------- //
+
+// Source
+
+    repainting =                                                      input.bool(title='⬅ Allow Repainting for Entries', defval=false, group='🌲 𝗕𝗔𝗥 𝗦𝗢𝗨𝗥𝗖𝗘 🌲', tooltip=sourceI)
+    exrepainting =                                                    input.bool(title='⬅ Allow Repainting for Exits', defval=false, inline='w1', group='🌲 𝗕𝗔𝗥 𝗦𝗢𝗨𝗥𝗖𝗘 🌲')
+    heikinashi =                                                      input.bool(title='⬅ Use Heikinashi Candles ', defval=false, inline='w12', group='🌲 𝗕𝗔𝗥 𝗦𝗢𝗨𝗥𝗖𝗘 🌲')
+
+    //------------------------------------------------------------------------------
+    // Correlation Type
+    //------------------------------------------------------------------------------
+
+    //kendal =                                                        input(title="⬳ 𝘒𝘦𝘯𝘥𝘢𝘭'𝘴 𝘙𝘢𝘯𝘬 𝘊𝘰𝘳𝘳𝘦𝘭𝘢𝘵𝘪𝘰𝘯", type=                            input.bool, defval=false,inline ="1", group = "𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗬𝗣𝗘 𝘋𝘦𝘧 𝘗𝘦𝘢𝘳𝘴𝘰𝘯")
+
+    //------------------------------------------------------------------------------
+    // Curve Source
+    //------------------------------------------------------------------------------
+
+    ecci =                                                            input.bool(title='⬅ 🟣 CCI', defval=false, inline='cci0', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱', tooltip=sourceInfo)
+    ecoppock =                                                        input.bool(title='⬅ 🔶 Coppock Curve', defval=true, inline='cci1', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    elders =                                                          input.bool(title='⬅ ⚫ EFI', defval=false, inline='cci2', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    emacd =                                                           input.bool(title='⬅ 🔴 MACD', defval=false, inline='cci3', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    ervgi =                                                           input.bool(title='⬅ 🟢 RVGI', defval=false, inline='cci4', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    estoch =                                                          input.bool(title='⬅ 🟠 Stochastic', defval=false, inline='cci5', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    esrsi =                                                           input.bool(title='⬅ 🟤 Stochastic RSI', defval=false, inline='cci6', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+    etrix =                                                           input.bool(title='⬅ 🔵 TRIX', defval=false, inline='cci7', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+
+    avgall =                                                          input.bool(title='⬅ ⚪ Average of all the curves', defval=false, inline='cci8', group='🌱 𝗖𝗨𝗥𝗩𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 🌱')
+
+    //------------------------------------------------------------------------------
+    // Coppock Curve Setting
+    //------------------------------------------------------------------------------
+
+    longRoCLength =                                                   input.int(title='Long RoC Length ‎‏‏‎ ➡', defval=14, inline='00', group='🔶 𝗖𝗢𝗣𝗣𝗢𝗖𝗞 𝗖𝗨𝗥𝗩𝗘 🔶', tooltip=coppocktooltip)
+    shortRoCLength =                                                  input.int(title='Short RoC Length ➡', defval=11, inline='00', group='🔶 𝗖𝗢𝗣𝗣𝗢𝗖𝗞 𝗖𝗨𝗥𝗩𝗘 🔶')
+    wmaLength =                                                       input.int(title='WMA Length ‎‏‏➡', defval=10, inline='01', group='🔶 𝗖𝗢𝗣𝗣𝗢𝗖𝗞 𝗖𝗨𝗥𝗩𝗘 🔶')
+    coppock_src =                                                     input.source(title='Source ‎‏‏➡', defval=close, inline='01', group='🔶 𝗖𝗢𝗣𝗣𝗢𝗖𝗞 𝗖𝗨𝗥𝗩𝗘 🔶')
+
+    //------------------------------------------------------------------------------
+    // CCI Settings
+    //------------------------------------------------------------------------------
+
+    cci_len =                                                         input.int(title='Length ‎‏‏‎ ➡', defval=32, minval=1, inline='00', group='🟣 𝗖𝗖𝗜 🟣', tooltip=ccitooltip)
+    cci_src =                                                         input.source(title='Source ➡', defval=hlc3, inline='00', group='🟣 𝗖𝗖𝗜 🟣')
+
+    //------------------------------------------------------------------------------
+    // EFI - Elders Force Volume Settings
+    //------------------------------------------------------------------------------
+
+    length_el =                                                       input.int(title='EMA Length ‎‏‏‎➡', defval=13, minval=1, group='⚫ 𝗘𝗙𝗜 ⚫', tooltip=efitooltip)
+
+    //------------------------------------------------------------------------------
+    // MACD Settings
+    //------------------------------------------------------------------------------
+
+    macdonly =                                                        input.bool(title='⬅ MACD Only ', defval=false, inline='macda', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴', tooltip=MACDtooltip)
+    signalonly =                                                      input.bool(title='⬅ Signal Only ', defval=false, inline='macda', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+    histo =                                                           input.bool(title='⬅ Hist Only', defval=false, inline='macda', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+
+    fast_length =                                                     input.int(title='Fast Length‎‏‏‎‎‎‎➡', defval=12, inline='macdl', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+    slow_length =                                                     input.int(title='Slow Length ➡', defval=26, inline='macdl', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+
+    signal_length =                                                   input.int(title='Signal Smooth ➡', minval=1, maxval=50, defval=9, inline='macdl', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+    macd_src =                                                        input.source(title='Source ➡', defval=close, inline='macdl', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+
+    smas =                                                            input.bool(title='⬅ Oscillator - Use SMA‎‏‏‎‎‎‏‏‎ ', defval=false, inline='macds', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+    sma_signal =                                                      input.bool(title='⬅ Signal - Use SMA', defval=false, inline='macds', group='🔴 𝗠𝗔𝗖𝗗 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘚,𝘔) 🔴')
+
+    //------------------------------------------------------------------------------
+    // Relative Vigor Index Settings
+    //------------------------------------------------------------------------------
+
+    sigonly =                                                         input.bool(title='⬅ Signal Only‎‏‏‎ ‎‏‏‎ ', defval=false, inline='rvgi', group='🟢 𝗥𝗩𝗚𝗜 🟢', tooltip=rvgitooltip)
+    lenrv =                                                           input.int(title=' Length ‎‏‏‎‎➡', defval=10, minval=1, inline='rvgi', group='🟢 𝗥𝗩𝗚𝗜 🟢')
+    rvionly =                                                         input.bool(title='⬅ RVI Only', defval=false, inline='rvgi', group='🟢 𝗥𝗩𝗚𝗜 🟢')
+    //offset =                                                        input(title="Length", type =                                                                      input.integer, defval = 0, minval=-500, maxval = 500, inline = "rvgi", group = "[RVGI - Relative Vigor Index Settings")
+
+    //------------------------------------------------------------------------------
+    // Stochastics Settings
+    //------------------------------------------------------------------------------
+
+    konly =                                                           input.bool(title='⬅ K Only', defval=false, inline='stok', group='🟠 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟠', tooltip=StochasticTooltip)
+    periodK =                                                         input.int(title='% Length ‎‏‏‎‎➡', defval=15, minval=1, inline='stok', group='🟠 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟠')
+    smoothK =                                                         input.int(title='Smooth ➡', defval=1, minval=1, inline='stok', group='🟠 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟠')
+
+    donly =                                                           input.bool(title='⬅ D Only', defval=false, inline='stocht', group='🟠 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟠')
+    periodD =                                                         input.int(title='➡ % Smooth ➡', defval=3, minval=1, inline='stocht', group='🟠 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟠')
+
+    //------------------------------------------------------------------------------
+    // Stochastics RSI Settings
+    //------------------------------------------------------------------------------
+
+    stoch_rsi_src =                                                   input.source(title='RSI Source ➡', defval=close, inline='00', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ', tooltip=SRSItooltip)
+
+    onlysrk =                                                         input.bool(title='⬅ K Only', defval=false, inline='stochk', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+    smoothrK =                                                        input.int(title='➡ % Length ➡', defval=3, minval=1, inline='stochk', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+
+    onlysrd =                                                         input.bool(title='⬅ D Only', defval=false, inline='stochd', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+    smoothD =                                                         input.int(title='➡ % Length ➡', defval=3, minval=1, inline='stochd', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+
+    lengthRSI =                                                       input.int(title='RSI Length ➡', defval=14, minval=1, inline='smoothr2', group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+    lengthStoch =                                                     input.int(title=' Stochastic Length ➡', defval=14, inline='smoothr2', minval=1, group='🟤 𝗦𝗧𝗢𝗖𝗛𝗔𝗦𝗧𝗜𝗖 𝗥𝗦𝗜 𝘥𝘦𝘧 𝘈𝘷𝘦𝘳𝘢𝘨𝘦(𝘒, 𝘋) 🟤 ')
+
+    //------------------------------------------------------------------------------
+    // Trix Settings
+    //------------------------------------------------------------------------------
+
+    trix_src =                                                        input.source(title='Source ➡', defval=close, inline='00', group='🔵 𝗧𝗥𝗜𝗫 🔵', tooltip=Trixtooltip)
+    tlength =                                                         input.int(title='Length ➡', defval=18, minval=1, inline='00', group='🔵 𝗧𝗥𝗜𝗫 🔵')
+
+    //------------------------------------------------------------------------------
+    // Average of all curves Settings
+    //------------------------------------------------------------------------------
+
+    avgsma =                                                          input.string(title='❗ All Curves', defval='EMA', options=['EMA', 'SMA'], inline='average', group='⚪ 𝗔𝗩𝗘𝗥𝗔𝗚𝗘 & 𝗣𝗔𝗜𝗥𝗦 ⚪', tooltip=AveragePairsTooltip)
+    alllen =                                                          input.int(title='Length ➡', defval=47, inline='average', group='⚪ 𝗔𝗩𝗘𝗥𝗔𝗚𝗘 & 𝗣𝗔𝗜𝗥𝗦 ⚪')
+
+    e_p_sma =                                                         input.string(title='❗ Pairs', defval='EMA', options=['EMA', 'SMA'], inline='pairs', group='⚪ 𝗔𝗩𝗘𝗥𝗔𝗚𝗘 & 𝗣𝗔𝗜𝗥𝗦 ⚪', tooltip=AveragePairsTooltip)
+    p_len =                                                           input.int(title='Length ➡', defval=47, inline='pairs', group='⚪ 𝗔𝗩𝗘𝗥𝗔𝗚𝗘 & 𝗣𝗔𝗜𝗥𝗦 ⚪')
+
+    //------------------------------------------------------------------------------
+    // Inputs for the main curve timeframe and correlation calculation timeframes
+    //------------------------------------------------------------------------------
+
+    t1 =                                                              input.timeframe(title='[A] ➡', defval='15', inline='a', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐', tooltip=CurvesTTooltip)
+    t2 =                                                              input.timeframe(title='[A] ➡', defval='30', inline='a', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t3 =                                                              input.timeframe(title='[B] ➡', defval='30', inline='b', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t4 =                                                              input.timeframe(title='[B] ➡', defval='45', inline='b', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t5 =                                                              input.timeframe(title='[C] ➡', defval='45', inline='c', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t6 =                                                              input.timeframe(title='[C] ➡', defval='60', inline='c', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t7 =                                                              input.timeframe(title='[D] ➡', defval='60', inline='d', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+    t8 =                                                              input.timeframe(title='[D] ➡', defval='90', inline='d', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 📐')
+
+    //------------------------------------------------------------------------------
+    // Inputs for the correlation lookback period (bars back/timeframe)
+    //------------------------------------------------------------------------------
+
+    lookback1 =                                                       input.int(2, title='[A] ➡', minval=2, inline='e', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗟𝗘𝗡𝗚𝗧𝗛 📐', tooltip=CorrLenTooltip)
+    lookback2 =                                                       input.int(2, title='[B] ➡', minval=2, inline='e', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗟𝗘𝗡𝗚𝗧𝗛 📐')
+    lookback3 =                                                       input.int(2, title='[C] ➡', minval=2, inline='f', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗟𝗘𝗡𝗚𝗧𝗛 📐')
+    lookback4 =                                                       input.int(2, title='[D] ➡', minval=2, inline='f', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗟𝗘𝗡𝗚𝗧𝗛 📐')
+
+
+    //------------------------------------------------------------------------------
+    // Choice to use -1 or 1 as high correlation for both sides - or only - for the strategy
+    //------------------------------------------------------------------------------
+
+    corr_level =                                                      input.float(title='High correlation level ➡ ±', defval=1, minval=0, maxval=1, step=0.05, group='📐‎ ‎‎‏‏‎‏‏‎𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗛𝗜𝗚𝗛 𝗟𝗘𝗩𝗘𝗟 📐‎‎‎‏‏‎‏‏‎', tooltip=HighClvlTooltip)
+
+    use_l1 =                                                          input.bool(title='⬅ Add -1 for Longs ', defval=true, inline='h', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 ‎‎‎‏‏‎‏‏‎📐', tooltip=SlopeConditionTooltip)
+    useonly1 =                                                        input.bool(title='⬅ Use -1 Only for Long', defval=false, inline='h', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 ‎‎‎‏‏‎‏‏‎📐')
+    use_s1 =                                                          input.bool(title='⬅ Add -1 for Short', defval=true, inline='i', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 ‎‎‎‏‏‎‏‏‎📐')
+    useonly2 =                                                        input.bool(title='⬅ Use -1 Only for Short', defval=false, inline='i', group='📐 𝗖𝗢𝗥𝗥𝗘𝗟𝗔𝗧𝗜𝗢𝗡 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 ‎‎‎‏‏‎‏‏‎📐')
+
+    //------------------------------------------------------------------------------
+    // Inputs for the strategy - rising period for the curve and the slope
+    // Curve referential timeframe
+    // Correlation Level
+    //------------------------------------------------------------------------------
+
+
+    tf_c =                                                            input.bool(title='⬅ Different Timeframe ➡', defval=false, inline='g', group='⏱ 𝗖𝗨𝗥𝗩𝗘 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 ⏱', tooltip=CurveTimeSourceTooltip)
+    c_tf =                                                            input.timeframe(title='Set to ➡', defval='', inline='g', group='⏱ 𝗖𝗨𝗥𝗩𝗘 𝗧𝗜𝗠𝗘 𝗦𝗢𝗨𝗥𝗖𝗘 ⏱')
+
+    //------------------------------------------------------------------------------
+    // Inputs for the slope length - Graphical and Affects the Strategy
+    //------------------------------------------------------------------------------
+
+    slopelen1 =                                                       input.int(title='1st Slope Length 🎨 ➡', defval=2, minval=1, inline='x', group='📏 𝗦𝗟𝗢𝗣𝗘 𝗟𝗘𝗡𝗚𝗧𝗛 📏', tooltip=SlopelenTooltip)
+    slopelen2 =                                                       input.int(title='2nd Slope Length 🔱 ➡', defval=3, minval=1, inline='x1', group='📏 𝗦𝗟𝗢𝗣𝗘 𝗟𝗘𝗡𝗚𝗧𝗛 📏')
+
+    //------------------------------------------------------------------------------
+    // Curve and slope length referential for the strategy
+    //------------------------------------------------------------------------------
+
+    curverising =                                                     input.int(title='⬆ Curve Rising ➡', defval=1, inline='j', group='📏 𝗟𝗘𝗡𝗚𝗧𝗛 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 📏', tooltip=LengthCondTooltip)
+    sloperising =                                                     input.int(title='⬆ Slope Rising ➡', defval=1, inline='j', group='📏 𝗟𝗘𝗡𝗚𝗧𝗛 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 📏')
+    curvefalling =                                                    input.int(title='⬇ Curve falling ➡', defval=1, inline='k', group='📏 𝗟𝗘𝗡𝗚𝗧𝗛 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 📏')
+    slopefalling =                                                    input.int(title='⬇ Slope falling ➡', defval=1, inline='k', group='📏 𝗟𝗘𝗡𝗚𝗧𝗛 𝗖𝗢𝗡𝗗𝗜𝗧𝗜𝗢𝗡 📏')
+
+    //------------------------------------------------------------------------------
+    // Session & Strategy Inputs
+    //------------------------------------------------------------------------------
+
+    einsession =                                                      input.bool(title='⬅ Time Session', defval=false, inline='00', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠', tooltip=StrategyTooltip)
+    insession =                                                       input.session(title='', defval='0000-0000', inline='00', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠')
+
+    limitorder =                                                      input.bool(title='⬅ Limit of Daily Trade', defval=false, inline='01', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠')
+    limit_order_qty =                                                 input.int(title='', defval=1, inline='01', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠')
+
+    edraw =                                                           input.bool(title='Max Drawdown', defval=false, inline='03', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠')
+    draw =                                                            input.int(title='%', defval=5, inline='03', group='🛠 𝗦𝗧𝗥𝗔𝗧𝗘𝗚𝗬 𝗦𝗘𝗧𝗧𝗜𝗡𝗚𝗦 🛠')
+
+    strategy.risk.max_intraday_filled_orders(count=limitorder ? limit_order_qty : 3600 * 24)
+    strategy.risk.max_drawdown(edraw ? draw : 100, strategy.percent_of_equity)
+    session = einsession ? time(timeframe.period, insession) : true
+
+    //------------------------------------------------------------------------------
+    // Entry Inputs
+    //------------------------------------------------------------------------------
+
+    Long1 =                                                           input.bool(title='⬆ Long 1', defval=true, inline='lo', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝', tooltip=LongEntryTooltip)
+    Long2 =                                                           input.bool(title='⇈ Long 2', defval=false, inline='lo1', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+    Long3 =                                                           input.bool(title='⤊ Long 3', defval=false, inline='w02', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+    simplex2l =                                                       input.int(title='⇛ 𝘓𝘦𝘯𝘨𝘵𝘩 ⇛', defval=1, inline='w02', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+
+    sil =                                                             input.bool(title='𝘚𝘩𝘰𝘳𝘵 1 𝘢𝘴 𝘓𝘰𝘯𝘨 ⬇⤴', defval=false, inline='lo', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+    sil2 =                                                            input.bool(title='𝘚𝘩𝘰𝘳𝘵 3 𝘢𝘴 𝘓𝘰𝘯𝘨 ⤋⤴', defval=false, inline='w02', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+
+    rsifl =                                                           input.bool(title='𝘈𝘥𝘥 ↥𝘙𝘚𝘐 𝘤𝘳𝘰𝘴𝘴𝘰𝘷𝘦𝘳 𝘙𝘚𝘐[bar ↦]', defval=false, inline='add', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+    addrsiLlvl =                                                      input.int(title='↦', defval=2, minval=2, maxval=10, inline='add', group='🗝 🍏 𝗟𝗢𝗡𝗚 🍏 🗝')
+
+
+
+    Short1 =                                                          input.bool(title='⬇ Short 1', defval=false, inline='lo1', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝', tooltip=ShortEntryTooltip)
+    Short2 =                                                          input.bool(title='⇊ Short 2', defval=false, inline='lo4', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+    Short3 =                                                          input.bool(title='⤋ Short 3', defval=false, inline='w03', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+    simplex2 =                                                        input.int(title='⇛ 𝘓𝘦𝘯𝘨𝘵𝘩 ⇛', defval=1, inline='w03', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+
+    lis =                                                             input.bool(title='𝘓𝘰𝘯𝘨 1 𝘢𝘴 𝘚𝘩𝘰𝘳𝘵 ⬆⤵', defval=false, inline='lo1', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+    lis2 =                                                            input.bool(title='𝘓𝘰𝘯𝘨 3 𝘢𝘴 𝘚𝘩𝘰𝘳𝘵 ⤊⤵', defval=false, inline='w03', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+
+    rsifs =                                                           input.bool(title='𝘈𝘥𝘥 ↧𝘙𝘚𝘐 𝘤𝘳𝘰𝘴𝘴𝘶𝘯𝘥𝘦𝘳 𝘙𝘚𝘐[bar ↦]', defval=false, inline='add2', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+    addrsiSlvl =                                                      input.int(title='↦ ', defval=2, minval=1, inline='add2', group='🗝🍎 𝗦𝗛𝗢𝗥𝗧 🍎 🗝')
+
+    //------------------------------------------------------------------------------
+    // EXIT : STOP LOSS INPUTS
+    //------------------------------------------------------------------------------
+
+    stoploss =                                                        input.bool(title='⬅ ⛔ Stop Loss', defval=false, inline='w1', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛', tooltip=StopLossTooltip)
+
+    percent2points(percent) =>
+    strategy.position_avg_price * percent / 100 / syminfo.mintick
+
+    sl = percent2points(                                              input.int(title='➡ %', defval=10, inline='w1', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛'))
+    tp1 = percent2points(                                             input.int(title='TP1 ➡ %', defval=6, inline='w', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛'))
+    tp2 = percent2points(                                             input.int(title='TP2 ➡ %', defval=10, inline='w', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛'))
+    tp3 = percent2points(                                             input.int(title='TP3 ➡ %', defval=10, inline='w', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛'))
+
+    activateTrailingOnThirdStep =                                     input.bool(false, title='⬅ Activate trailing on third stage ? TP3 = amount, TP2 = offset level', group='🏛 𝗦𝗧𝗢𝗣𝗟𝗢𝗦𝗦 𝘌𝘟𝘐𝘛 🏛')
+
+    //------------------------------------------------------------------------------
+    // EXIT : Simple Inputs
+    //------------------------------------------------------------------------------
+
+    otherexitl =                                                      input.bool(title='❎ LONG', defval=true, inline='v', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣', tooltip=OtherExitTooltip)
+    scl =                                                             input.bool(title='⬅ 𝘚𝘭𝘰𝘱𝘦2', defval=false, inline='v', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+    simplexl =                                                        input.int(title='➡ 𝘓𝘦𝘯𝘨𝘵𝘩 ➡', defval=3, inline='v', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+    invL =                                                            input.bool(title='⬅ 𝘜𝘴𝘦 𝘚𝘏𝘖𝘙𝘛 𝘦𝘹𝘪𝘵 𝘴𝘪𝘨𝘯𝘢𝘭 𝘧𝘰𝘳 𝘓𝘖𝘕𝘎', defval=false, inline='v9', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+
+    otherexits =                                                      input.bool(title='⛔ SHORT', defval=false, inline='v1', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+    scs =                                                             input.bool(title='⬅ 𝘚𝘭𝘰𝘱𝘦2', defval=false, inline='v1', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+    simplexs =                                                        input.int(title='➡ 𝘓𝘦𝘯𝘨𝘵𝘩 ➡', defval=3, inline='v1', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+    invS =                                                            input.bool(title='⬅ 𝘜𝘴𝘦 𝘓𝘖𝘕𝘎 𝘦𝘹𝘪𝘵 𝘴𝘪𝘨𝘯𝘢𝘭 𝘧𝘰𝘳 𝘚𝘏𝘖𝘙𝘛', defval=false, inline='v12', group='0️⃣ SIMPLE 𝘌𝘟𝘐𝘛 0️⃣')
+
+    //------------------------------------------------------------------------------
+    // EXIT : CCI Inputs
+    //------------------------------------------------------------------------------
+
+
+    cciexl =                                                          input.bool(title='❎ LONG', defval=false, inline='c01', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣', tooltip=CCIexitTooltip)
+    ccihigh =                                                         input.int(title='≥ level ➡', inline='c01', defval=50, group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+    CCIreverseL =                                                     input.bool(title='⬅ Reverse as ≤ level', defval=false, inline='c01', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+
+
+    cciexs =                                                          input.bool(title='⛔ SHORT', defval=false, inline='c02', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+    ccilow =                                                          input.int(title='≤ level ➡', defval=20, inline='c02', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+    CCIreverseS =                                                     input.bool(title='⬅ Reverse as ≥ level', defval=false, inline='c02', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+
+    cci_srce =                                                        input.source(title='Source ➡', defval=hlc3, inline='c03', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+    cci_lene =                                                        input.int(title='⬆⬇ CCI Length ➡', defval=20, inline='c03', group='1️⃣ 𝗖𝗖𝗜 𝘌𝘟𝘐𝘛 1️⃣')
+
+    //------------------------------------------------------------------------------
+    // EXIT: RSI Inputs
+    //------------------------------------------------------------------------------
+
+    rsiexl =                                                          input.bool(title='❎ LONG', defval=false, inline='rsi01', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣', tooltip=RSIExitTooltip)
+    rsihigh =                                                         input.int(title='≥ level ➡', defval=70, inline='rsi01', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+    RSIreverseL =                                                     input.bool(title='⬅ Reverse as ≤', defval=false, inline='rsi01', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+
+    rsiexs =                                                          input.bool(title='⛔ SHORT', defval=false, inline='rsi02', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+    rsilow =                                                          input.int(title='≤ level ➡', defval=30, inline='rsi02', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+    RSIreverseS =                                                     input.bool(title='⬅ Reverse as ≥ ➡', defval=false, inline='rsi02', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+
+    rsi_src =                                                         input.source(title='Source ➡', defval=close, inline='rsi03', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+    lengthRSIe =                                                      input.int(title='⬆⬇ RSI Length ➡', defval=14, inline='rsi03', group='2️⃣ 𝗥𝗦𝗜 𝘌𝘟𝘐𝘛 2️⃣')
+
+    //------------------------------------------------------------------------------
+    // EXIT : Bollinger Bands Inputs
+    //------------------------------------------------------------------------------
+
+    bb_src =                                                          input.source(title='Source➡', defval=close, inline='BB00', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣', tooltip=BBExitTooltip)
+
+    bbexl =                                                           input.bool(title='❎ LONG', defval=false, inline='BB01', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+    mult =                                                            input.float(title='➡ Std Upper ⬆ ➡', defval=2.0, minval=0.001, maxval=50, step=0.005, inline='BB01', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+
+    bbexs =                                                           input.bool(title='⛔ SHORT', defval=false, inline='BB02', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+    mult2 =                                                           input.float(title='➡ Std Lower ⬇ ➡', defval=2.0, minval=0.001, maxval=50, step=0.005, inline='BB02', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+
+    bblen =                                                           input.int(title='⬆⬇ Length ➡', defval=20, inline='BB03', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+    offset =                                                          input.int(title='⬆⬇ Offset ➡', defval=0, minval=-500, maxval=500, inline='BB03', group='3️⃣ 𝗕𝗼𝗹𝗹𝗶𝗻𝗴𝗲𝗿 𝗕𝗮𝗻𝗱𝘀 𝘌𝘟𝘐𝘛 3️⃣')
+
+
+    //------------------------------------------------------------------------------
+    // EXIT : ROC Inputs
+    //------------------------------------------------------------------------------
+
+    ROCL =                                                            input.bool(title='❎ LONG', defval=false, inline='rc1', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣', tooltip=ROCExitTooltip)
+    roc_fall =                                                        input.int(title='Falling ➡', defval=1, minval=1, inline='rc1', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣')
+
+    ROCS =                                                            input.bool(title='⛔ SHORT', defval=false, inline='rc2', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣')
+    roc_fal =                                                         input.int(title='rising ➡', defval=1, minval=1, inline='rc2', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣')
+
+    roc_src =                                                         input.source(title='Source ➡', defval=close, inline='rc3', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣')
+    ROClength =                                                       input.int(title='⬆⬇ ROC Length', defval=9, minval=1, inline='rc3', group='4️⃣ 𝗥𝗢𝗖 𝘌𝘟𝘐𝘛 4️⃣')
+
+    //------------------------------------------------------------------------------
+    // Inputs for backtesting departure time
+    //------------------------------------------------------------------------------
+
+    startDate =                                                       input.int(title='Day ➡', defval=1, minval=1, maxval=31, inline='z', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘚𝘵𝘢𝘳𝘵 ')
+    startMonth =                                                      input.int(title='Month ➡', defval=1, minval=1, maxval=12, inline='z', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘚𝘵𝘢𝘳𝘵 ')
+    startYear =                                                       input.int(title='Year ➡', defval=2021, minval=2000, maxval=2100, inline='z', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘚𝘵𝘢𝘳𝘵 ')
+
+    endDate =                                                         input.int(title='Day ➡', defval=1, minval=1, maxval=31, inline='z1', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘌𝘯𝘥 ')
+    endMonth =                                                        input.int(title='Month ➡', defval=1, minval=1, maxval=12, inline='z1', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘌𝘯𝘥 ')
+    endYear =                                                         input.int(title='Year ➡', defval=2022, minval=2000, maxval=2100, inline='z1', group='⏱ 𝗕𝗔𝗖𝗞𝗧𝗘𝗦𝗧𝗜𝗡𝗚 ⏱ 𝘌𝘯𝘥 ')
+
+    start = time >= timestamp(syminfo.timezone, startYear, startMonth, startDate, 0, 0) and time <= timestamp(syminfo.timezone, endYear, endMonth, endDate, 0, 0)
+
+    //------------------------------------------------------------------------------
+    // Settings for comments TP/SL and Exits
+    //------------------------------------------------------------------------------
+
+    comment =                                                         input.bool(title='⬅ Comments', defval=true, group='💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬', tooltip=CommentTooltip)
+
+    longcom =                                                         input.string(title='Long Entry ➡', defval='🐓', inline='11', group='💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬')
+    ex1 =                                                             input.string(title='Exit Long ➡', defval='🍗', inline='11', group='💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬')
+
+    shortcom =                                                        input.string(title='Short Entry ➡', defval='🦄', inline='22', group='💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬')
+    ex2 =                                                             input.string(title='Exit Short ➡', defval='🍔', inline='22', group='💬 𝗖𝗢𝗠𝗠𝗘𝗡𝗧 💬')
+
+    //------------------------------------------------------------------------------
+    // Label and Plotting options settings
+    //------------------------------------------------------------------------------
+
+    emean =                                                           input.bool(title='⬅ Mean', defval=true, inline='y8', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    meancolor =                                                       input.color(title='', defval=color.red, inline='y8', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    ecurve =                                                          input.bool(title='⬅ Curve', inline='y00', defval=true, group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    curvecolor1 =                                                     input.color(title='', defval=color.lime, inline='y00', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    curvecolor2 =                                                     input.color(title='', defval=color.red, inline='y00', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    eslope1 =                                                         input.bool(title='⬅ Slope1', inline='y0', defval=true, group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    slope1c =                                                         input.color(title='', defval=color.aqua, inline='y0', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    eslope2 =                                                         input.bool(title='⬅ Slope2', inline='y01', defval=true, group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    slope2c =                                                         input.color(title='', defval=color.aqua, inline='y01', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    fillc1 =                                                          input.color(title='Filling Color Slope > 0', defval=color.silver, inline='y02', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    fillc2 =                                                          input.color(title='< 0', defval=color.silver, inline='y02', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    //labels
+    label_level =                                                     input.bool(title='⬅ Label chang when correlations are at ± 1', inline='y1', defval=false, group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    label_color0 =                                                    input.color(title='Label Text', defval=color.green, inline='y2', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    label_color1 =                                                    input.color(title='', defval=color.purple, inline='y2', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    label_background1 =                                               input.color(title='Label Background', defval=color.black, inline='y2', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    label_background2 =                                               input.color(title='', defval=color.white, inline='y2', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    // Slopes
+    slopedots =                                                       input.bool(title='⬅ Dots on Slope when High Correlation level', inline='y4', defval=false, group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    dots_color1 =                                                     input.color(title='', defval=color.orange, inline='y4', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    dots_color2 =                                                     input.color(title='', defval=color.yellow, inline='y4', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    // Dots Borders - CF. Mean
+    dotplot =                                                         input.bool(title='⬅ Dots on Mean when ± 1', defval=true, inline='y5', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    dots_mcolor1 =                                                    input.color(title='', defval=color.orange, inline='y5', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    dots_mcolor2 =                                                    input.color(title='', defval=color.yellow, inline='y5', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    // Flags & Cross
+
+    elongf =                                                          input.bool(title='⬅ Long Entry Flags', defval=true, inline='y9', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    longc1 =                                                          input.color(title='L1', defval=color.green, inline='y9', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    longc2 =                                                          input.color(title='L2', defval=color.blue, inline='y9', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    longc3 =                                                          input.color(title='L3', defval=color.white, inline='y9', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    longcr =                                                          input.color(title='Reverse', defval=color.yellow, inline='y9', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    eshortf =                                                         input.bool(title='⬅ Short Entry Flag', defval=true, inline='y10', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    shortc1 =                                                         input.color(title='S1', defval=color.red, inline='y10', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    shortc2 =                                                         input.color(title='S2', defval=color.orange, inline='y10', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    shortc3 =                                                         input.color(title='S3', defval=color.purple, inline='y10', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    shortcr =                                                         input.color(title='Reverse', defval=color.yellow, inline='y10', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    exlongf =                                                         input.bool(title='⬅ Long Exit Cross', defval=true, inline='y11', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    exlongc =                                                         input.color(title='', defval=color.green, inline='y11', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    exshortf =                                                        input.bool(title='⬅ Short Exit Cross', defval=true, inline='y11', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    exshortc =                                                        input.color(title='', defval=color.red, inline='y11', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+    // Correlation Curves
+
+    corrplot =                                                        input.bool(title='⬅ Correlations curves', defval=false, inline='y6', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    corcola =                                                         input.color(title='[A]', defval=color.orange, inline='y6', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    corcolb =                                                         input.color(title='[B]', defval=color.yellow, inline='y6', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    corcolc =                                                         input.color(title='[C]', defval=color.fuchsia, inline='y6', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+    corcold =                                                         input.color(title='[D]', defval=color.aqua, inline='y6', group='🎨 𝗗𝗥𝗔𝗪S 🎨')
+
+// 🅸🅽🅿🆄🆃🆂 🅴🅽🅳          
+
+
+
+// -------------------------------------------------------------------------- //
+//                          🅲🅰🅻🅲🆄🅻🅰🆃🅸🅾🅽🆂                              //
+// -------------------------------------------------------------------------- //
+
+//------------------------------------------------------------------------------
+// Bollinger Bands Calculation
+//------------------------------------------------------------------------------
+
+basis = ta.sma(bb_src, bblen)
+dev = mult * ta.stdev(bb_src, bblen)
+dev02 = mult2 * ta.stdev(bb_src, bblen)
+upper = basis + dev
+lower = basis - dev02
+
+//------------------------------------------------------------------------------
+// Coppock Curve Calculation 
+//------------------------------------------------------------------------------
+
+coppock = ta.wma(ta.roc(coppock_src, longRoCLength) + ta.roc(coppock_src, shortRoCLength), wmaLength)
+
+//------------------------------------------------------------------------------
+// Trix Calculation     
+//------------------------------------------------------------------------------
+
+trix = 10000 * ta.change(ta.ema(ta.ema(ta.ema(math.log(trix_src), tlength), tlength), tlength))
+
+//------------------------------------------------------------------------------
+// CCI Calculation
+//------------------------------------------------------------------------------
+
+ma = ta.sma(cci_src, cci_len)
+cci = (cci_src - ma) / (0.015 * ta.dev(cci_src, cci_len))
+
+// CCI Used for the Exit - E
+
+mae = ta.sma(cci_srce, cci_lene)  // E
+ccie = (cci_srce - mae) / (0.015 * ta.dev(cci_srce, cci_lene))  // E
+
+//------------------------------------------------------------------------------
+// Stochastics Calculation
+//------------------------------------------------------------------------------
+
+sk = ta.sma(ta.stoch(close, high, low, periodK), smoothK)
+sd = ta.sma(sk, periodD)
+
+stoch = konly ? sk : donly ? sd : math.avg(sk, sd)
+
+//------------------------------------------------------------------------------
+// Stochastic RSI Calculation
+//------------------------------------------------------------------------------
+
+rsie = ta.rsi(rsi_src, lengthRSIe)  // RSI For exits
+
+rsi1 = ta.rsi(stoch_rsi_src, lengthRSI)
+srk = ta.sma(ta.stoch(rsi1, rsi1, rsi1, lengthStoch), smoothrK)
+srd = ta.sma(srk, smoothD)
+
+stochrsi = onlysrk ? srk : onlysrd ? srd : math.avg(srk, srd)
+
+//------------------------------------------------------------------------------
+// Elders Volume Force Calculation
+//------------------------------------------------------------------------------
+
+efi = ta.ema(ta.change(close) * volume, length_el)
+
+//------------------------------------------------------------------------------
+// MACDC Calculation
+//------------------------------------------------------------------------------
+
+fast_ma = smas ? ta.sma(macd_src, fast_length) : ta.ema(macd_src, fast_length)
+slow_ma = smas ? ta.sma(macd_src, slow_length) : ta.ema(macd_src, slow_length)
+
+_macd = fast_ma - slow_ma
+signal = sma_signal ? ta.sma(_macd, signal_length) : ta.ema(_macd, signal_length)
+
+hist = _macd - signal
+
+
+macd = macdonly ? _macd : signalonly ? signal : histo ? hist : math.avg(_macd, signal)
+
+//------------------------------------------------------------------------------
+// ROC Calculation
+//------------------------------------------------------------------------------
+
+ROC = 100 * (roc_src - roc_src[ROClength]) / roc_src[ROClength]
+
+
+//------------------------------------------------------------------------------
+// RVGI Calculation 
+//------------------------------------------------------------------------------
+
+rvi = math.sum(ta.swma(close - open), lenrv) / math.sum(ta.swma(high - low), lenrv)
+sig = ta.swma(rvi)
+
+rvgi = sigonly ? sig : rvionly ? rvi : math.avg(sig, rvi)
+
+//------------------------------------------------------------------------------
+// AVG ALL
+//------------------------------------------------------------------------------
+
+avg = avgsma == 'SMA' ? ta.sma(math.avg(coppock, trix, macd, stoch, stochrsi, efi, rvgi, cci), alllen) : avgsma == 'EMA' ? ta.ema(math.avg(coppock, trix, macd, stoch, stochrsi, efi, rvgi, cci), alllen) : ta.ema(math.avg(coppock, trix, macd, stoch, stochrsi, efi, rvgi, cci), alllen)
+
+// 🅲🅰🅻🅲🆄🅻🅰🆃🅸🅾🅽 🅴🅽🅳 
+
+//------------------------------------------------------------------------------
+// Timeframe functions
+//------------------------------------------------------------------------------
+
+tf_4(_symbol, _t4, _src4) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t4, _src4[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+c(_symbol, _c_tf, _src0) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _c_tf, _src0[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_1(_symbol, _t1, _src1) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t1, _src1[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_2(_symbol, _t2, _src2) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t2, _src2[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_3(_symbol, _t3, _src3) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t3, _src3[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_5(_symbol, _t5, _src5) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t5, _src5[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_6(_symbol, _t6, _src6) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t6, _src6[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_7(_symbol, _t7, _src7) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t7, _src7[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+tf_8(_symbol, _t8, _src8) =>
+    request.security(heikinashi ? ticker.heikinashi(_symbol) : _symbol, _t8, _src8[repainting ? 0 : 1], barmerge.gaps_off, barmerge.lookahead_off)
+
+//------------------------------------------------------------------------------
+// Kendal Correlation function
+//------------------------------------------------------------------------------
+
+//k(data1, data2, length) =>
+//    totalPairs                                                                        = length * (length - 1) / 2
+//    numerator                                                                         = 0.0
+//
+//    for i                                                                             = 0 to length - 1
+//        for j                                                                         = 0 to i
+//            numerator                                                                 := numerator + sign(data1[i] - data1[j]) * sign(data2[i] - data2[j])
+//
+//    numerator / totalPairs
+
+//------------------------------------------------------------------------------
+// Function for the Source Inputs 
+//------------------------------------------------------------------------------
+
+ci(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p) =>
+
+    a01 = a and b and c and d and e and f and g and h
+    a02 = a and b and c and d and e and f and g
+    a03 = a and b and c and d and e and f and h
+    a04 = a and b and c and d and e and f
+    a05 = a and b and c and d and e and g
+    a06 = a and b and c and d and e and h
+    a07 = a and b and c and d and e
+    a08 = a and b and c and d and f
+    a09 = a and b and c and d and g
+    a10 = a and b and c and d and h
+    a11 = a and b and c and d
+    a12 = a and b and c and e
+    a13 = a and b and c and f
+    a14 = a and b and c and g
+    a15 = a and b and c and h
+    a16 = a and b and c
+    a17 = a and b and d
+    a18 = a and b and e
+    a19 = a and b and f
+    a20 = a and b and g
+    a21 = a and b and h
+    a22 = a and b
+    a23 = a and c
+    a24 = a and d
+    a25 = a and e
+    a26 = a and f
+    a27 = a and g
+    a28 = a and h
+    a29 = a
+    a30 = b
+    a31 = c
+    a32 = d
+    a33 = e
+    a34 = f
+    a35 = g
+    a36 = h
+
+    b01 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, n, o, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, n, o, p), p_len) : na
+    b02 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, n, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, n, o), p_len) : na
+    b03 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, n, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, n, p), p_len) : na
+    b04 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, n), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, n), p_len) : na
+    b05 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, o), p_len) : na
+    b06 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m, p), p_len) : na
+    b07 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, m), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, m), p_len) : na
+    b08 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, n), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, n), p_len) : na
+    b09 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, o), p_len) : na
+    b10 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l, p), p_len) : na
+    b11 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, l), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, l), p_len) : na
+    b12 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, m), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, m), p_len) : na
+    b13 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, n), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, n), p_len) : na
+    b14 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, o), p_len) : na
+    b15 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k, p), p_len) : na
+    b16 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, k), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, k), p_len) : na
+    b17 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, l), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, l), p_len) : na
+    b18 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, m), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, m), p_len) : na
+    b19 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, n), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, n), p_len) : na
+    b20 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, o), p_len) : na
+    b21 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j, p), p_len) : na
+    b22 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, j), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, j), p_len) : na
+    b23 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, k), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, k), p_len) : na
+    b24 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, l), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, l), p_len) : na
+    b25 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, m), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, m), p_len) : na
+    b26 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, n), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, n), p_len) : na
+    b27 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, o), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, o), p_len) : na
+    b28 = e_p_sma == 'SMA' ? ta.sma(math.avg(i, p), p_len) : e_p_sma == 'EMA' ? ta.ema(math.avg(i, p), p_len) : na
+    b29 = i
+    b30 = j
+    b31 = k
+    b32 = l
+    b33 = m
+    b34 = n
+    b35 = o
+    b36 = p
+
+
+    Z = a01 ? b01 : a02 ? b02 : a03 ? b03 : a04 ? b04 : a05 ? b05 : a06 ? b06 : a07 ? b07 : a08 ? b08 : a09 ? b09 : a10 ? b10 : a11 ? b11 : a12 ? b12 : a13 ? b13 : a14 ? b14 : a15 ? b15 : a16 ? b16 : a17 ? b17 : a18 ? b18 : a19 ? b19 : a20 ? b20 : a21 ? b21 : a22 ? b22 : a23 ? b23 : a24 ? b24 : a25 ? b25 : a26 ? b26 : a27 ? b27 : a28 ? b28 : a29 ? b29 : a30 ? b30 : a31 ? b31 : a32 ? b32 : a33 ? b33 : a34 ? b34 : a35 ? b35 : a36 ? b36 : na
+    [Z]
+//------------------------------------------------------------------------------
+//Function to get the datas from other timeframes and to calculate the Pearson Correlation
+//------------------------------------------------------------------------------
+
+f(i) =>
+
+// taking datas from other timeframes
+
+    curve = c(syminfo.tickerid, tf_c ? c_tf : timeframe.period, i)  // Main Curve TF
+
+    lev1 = tf_1(syminfo.tickerid, t1, i)
+    lev2 = tf_2(syminfo.tickerid, t2, i)
+
+    lev3 = tf_3(syminfo.tickerid, t3, i)
+    lev4 = tf_4(syminfo.tickerid, t4, i)
+
+    lev5 = tf_5(syminfo.tickerid, t5, i)
+    lev6 = tf_6(syminfo.tickerid, t6, i)
+
+    lev7 = tf_7(syminfo.tickerid, t7, i)
+    lev8 = tf_8(syminfo.tickerid, t8, i)
+
+// Kendal Correlation    
+
+//    l1                                                                                = k(lev1, lev2, lookback1)
+//    l2                                                                                = k(lev3, lev4, lookback2)
+//    l3                                                                                = k(lev5, lev6, lookback3)
+//    l4                                                                                = k(lev7, lev8, lookback4)
+
+//float arrays
+
+    var level1 = array.new_float(lookback1, lev1)
+    var level2 = array.new_float(lookback1, lev2)
+
+    var level3 = array.new_float(lookback2, lev3)
+    var level4 = array.new_float(lookback2, lev4)
+
+    var level5 = array.new_float(lookback3, lev5)
+    var level6 = array.new_float(lookback3, lev6)
+
+    var level7 = array.new_float(lookback4, lev7)
+    var level8 = array.new_float(lookback4, lev8)
+
+//First in first out in the arrays 
+
+    array.shift(level1)
+    array.shift(level2)
+
+    array.shift(level3)
+    array.shift(level4)
+
+    array.shift(level5)
+    array.shift(level6)
+
+    array.shift(level7)
+    array.shift(level8)
+
+//Injecting values into the arrays
+
+    array.push(level1, lev1)
+    array.push(level2, lev2)
+
+    array.push(level3, lev3)
+    array.push(level4, lev4)
+
+    array.push(level5, lev5)
+    array.push(level6, lev6)
+
+    array.push(level7, lev7)
+    array.push(level8, lev8)
+
+// covariance calculation    
+
+    cov1 = array.covariance(level1, level2)
+    cov2 = array.covariance(level3, level4)
+
+    cov3 = array.covariance(level5, level6)
+    cov4 = array.covariance(level7, level8)
+
+// standard deviation calculation    
+
+    dev1 = array.stdev(level1)
+    dev2 = array.stdev(level2)
+
+    dev3 = array.stdev(level3)
+    dev4 = array.stdev(level4)
+
+    dev5 = array.stdev(level5)
+    dev6 = array.stdev(level6)
+
+    dev7 = array.stdev(level7)
+    dev8 = array.stdev(level8)
+
+// Pearson correlation calculations
+
+    c1 = -(cov1 / (dev1 * dev2))
+    c2 = -(cov2 / (dev3 * dev4))
+    c3 = -(cov3 / (dev5 * dev6))
+    c4 = -(cov4 / (dev7 * dev8))
+
+// correlations to string
+
+    texte1 = str.tostring(c1)
+    texte2 = str.tostring(c2)
+    texte3 = str.tostring(c3)
+    texte4 = str.tostring(c4)
+
+
+    [curve, c1, c2, c3, c4, texte1, texte2, texte3, texte4]
+// }
+
+//------------------------------------------------------------------------------
+// Setting if Multiple Sources are selected to return the average of them
+//------------------------------------------------------------------------------
+
+[damn] = ci(etrix, ecci, estoch, esrsi, elders, emacd, ervgi, ecoppock, trix, cci, stoch, stochrsi, efi, macd, rvgi, coppock)
+
+//------------------------------------------------------------------------------
+// Giving values to the function
+//------------------------------------------------------------------------------
+
+[curve, c1, c2, c3, c4, texte1, texte2, texte3, texte4] = f(avgall and damn ? math.avg(avg, damn) : avgall ? avg : damn)
+
+//------------------------------------------------------------------------------
+// Function for the slopes of the curve 
+//------------------------------------------------------------------------------
+
+fslope(i, _slopelen1, _slopelen2) =>
+
+    sl1 = (i - i[_slopelen1]) / _slopelen1  // slope 1
+    sl2 = (i - i[_slopelen2]) / _slopelen2  // slope 2
+
+    [sl1, sl2]
+
+[slope1, slope2] = fslope(curve, slopelen1, slopelen2)
+
+//------------------------------------------------------------------------------
+// Color conditions for the label 
+//------------------------------------------------------------------------------
+
+label_function(a1, a2, a3, a4, v1, v2) =>
+
+    x1 = c1 >= v1 and c2 >= v1 and c3 >= v1
+    x2 = c1 >= v1 and c2 >= v1 and c4 >= v1
+    x3 = c2 >= v1 and c3 >= v1 and c4 >= v1
+
+    xx = c1 >= v1 and c2 >= v1 and c3 >= v1 and c4 >= v1
+
+    y1 = c1 <= v1 and c2 <= v1 and c3 <= v1
+    y2 = c1 <= v1 and c2 <= v1 and c4 <= v1
+    y3 = c2 <= v1 and c3 <= v1 and c4 <= v1
+
+    yy = c1 <= v1 and c2 <= v1 and c3 <= v1 and c4 <= v1
+
+    x = x1 or x2 or x3 or xx
+    y = y1 or y2 or y3 or yy
+
+    [label_level ? xx : x, label_level ? yy : y]
+
+[highh, loww] = label_function(c1, c2, c3, c4, corr_level, -corr_level)  // Label function
+
+//------------------------------------------------------------------------------
+// Function for the strategy to isolate 2 correlations >= or/and <= high correlation level
+//------------------------------------------------------------------------------
+
+a(z1, z2, z3, z4, w1, w2) =>
+    a0 = z1 >= w1 and z2 <= w2
+    a1 = z1 >= w1 and z3 <= w2
+    a2 = z1 >= w1 and z4 <= w2
+
+    aa = z1 <= w2 and z2 >= w1
+    ab = z1 <= w2 and z3 >= w1
+    az = z1 <= w2 and z4 >= w1
+
+    a = a0 or a1 or a2 or aa or ab or az
+
+    b0 = z2 >= w1 and z3 <= w2
+    b1 = z2 >= w1 and z4 <= w2
+
+    ba = z2 <= w2 and z3 >= w1
+    bb = z2 <= w2 and z4 >= w1
+
+    b = b0 or b1 or ba or bb
+
+    z0 = z3 >= w1 and z4 <= w2
+    za = z3 <= w2 and z4 >= w1
+
+    z = z0 or za
+
+    d = a or b or z
+
+    [d]
+
+[comb] = a(c1, c2, c3, c4, corr_level, -corr_level)  // Conditional Correlation Levels Function -> Used for Long2 or Short2
+
+//------------------------------------------------------------------------------
+// -> Setting strict conditions as 4 correlations == 1 or -1 
+//------------------------------------------------------------------------------
+
+high1 = c1 >= corr_level and c2 >= corr_level and c3 >= corr_level and c4 >= corr_level
+low1 = c1 <= -corr_level and c2 <= -corr_level and c3 <= -corr_level and c4 <= -corr_level
+
+//------------------------------------------------------------------------------
+// -> Long1 - Short1 (d2)
+//------------------------------------------------------------------------------
+
+d1 = (ta.rising(curve, curverising)[repainting ? 0 : 1] and ta.rising(slope2, sloperising)[repainting ? 0 : 1] and (useonly1 ? low1 : use_l1 ? low1 or high1 : high1))[repainting ? 0 : 1]
+d2 = (ta.falling(curve, curvefalling)[repainting ? 0 : 1] and ta.falling(slope2, slopefalling)[repainting ? 0 : 1] and (useonly2 ? low1 : use_s1 ? low1 or high1 : high1))[repainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// Long2 - short2 
+//------------------------------------------------------------------------------
+
+d = comb[repainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// Exit Long1 (Condition2) - Exit Short1 (Condition1) // Reversable as Long
+//------------------------------------------------------------------------------
+
+condition1 = ta.falling(scl ? slope2 : curve, simplexl)[exrepainting ? 0 : 1]
+condition2 = ta.rising(scs ? slope2 : curve, simplexs)[exrepainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// Long3 - Short3 // Non-Reversable
+//------------------------------------------------------------------------------
+
+condition01 = ta.falling(curve, simplex2)[exrepainting ? 0 : 1]
+condition02 = ta.rising(curve, simplex2l)[exrepainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// RSI Option for Long and Short Entry
+//------------------------------------------------------------------------------
+
+addRL = ta.crossover(rsie, rsie[addrsiLlvl])[repainting ? 0 : 1]
+addRS = ta.crossunder(rsie, rsie[addrsiSlvl])[repainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// Confirmation that the order is based on a barclosed is close
+//------------------------------------------------------------------------------
+
+pos0 = strategy.position_size == 0
+bar_stat_in = repainting ? true : barstate.isconfirmed
+
+fcl(a, b, c, x, y, z) =>
+
+    c01 = a and b and c
+
+    c02 = a and b
+    c03 = a and c
+    c04 = b and c
+
+    c05 = a
+    c06 = b
+    c07 = c
+
+    c08 = x
+    c09 = y
+    c10 = z
+
+    [c01, c02, c03, c04, c05, c06, c07, c08, c09, c10]
+
+fcl0(a, b, c, v1, v2, v3, i1, i2, i3) =>
+
+    d01 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v2 ? i1 or i2 or c : v1 and v3 ? i1 or b or i3 : v2 and v3 ? a or i2 or i3 : v1 ? i1 or b or c : v2 ? a or i2 or c : v3 ? a or b or i3 : a or b or c
+
+    dx2 = v1 and v2 ? i1 or i2 : v1 ? i1 or b : v2 ? a or i2 : a or b
+    d02 = v3 ? i3 or dx2 : dx2
+
+    d3 = v1 and v3 ? i1 or i3 : v1 ? i1 or c : v3 ? a or i3 : a or c
+    d03 = v2 ? v2 or d3 : d3
+
+    d4 = v2 or v3 ? i2 or i3 : v2 ? i2 or c : v3 ? b or i3 : b or c
+    d04 = v1 ? i1 or d4 : d4
+
+    d05 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v3 ? i1 or i3 or b : v1 and v2 ? i1 or i2 or a : v2 or v3 ? i2 or i3 or a : v1 ? i1 or a : v2 ? i2 or a : v3 ? i3 or a : a
+    d06 = v1 and v2 and v3 ? i1 or i2 or i3 or b : v1 and v3 ? i1 or i3 or b : v1 and v2 ? i1 or i2 or b : v2 or v3 ? i2 or i3 or b : v1 ? i1 or b : v2 ? i2 or b : v3 ? i3 or b : b
+    d07 = v1 and v2 and v3 ? i1 or i2 or i3 or c : v1 and v3 ? i1 or i3 or c : v1 and v2 ? i1 or i2 or c : v2 or v3 ? i2 or i3 or c : v1 ? i1 or c : v2 ? i2 or c : v3 ? i3 or c : c
+
+    d08 = v1 and v2 and v3 ? i1 or i2 or i3 : v2 and v3 ? i1 or i2 or i3 : v2 ? i1 or i2 : v3 ? i1 or i3 : i1
+    d09 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v3 ? i1 or i2 or i3 : v1 ? i1 or i2 : v3 ? i2 or i3 : i2
+    d10 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v2 ? i1 or i2 or i3 : v1 ? i1 or i3 : v2 ? i2 or i3 : i3
+
+    [d01, d02, d03, d04, d05, d06, d07, d08, d09, d10]
+
+
+
+//------------------------------------------------------------------------------
+// Long Entry Conditions and Order
+//------------------------------------------------------------------------------
+
+[n01, n02, n03, n04, n05, n06, n07, n08, n09, n10] = fcl(Long1, Long2, Long3, sil, sil2, rsifl)
+[m01, m02, m03, m04, m05, m06, m07, m08, m09, m10] = fcl0(d1, d, condition02, sil, sil2, rsifl, d2, condition01, addRL)
+
+pizza = n01 ? m01 : n02 ? m02 : n03 ? m03 : n04 ? m04 : n05 ? m05 : n06 ? m06 : n07 ? m07 : n08 ? m08 : n09 ? m09 : n10 ? m10 : false
+
+if start and pos0 and bar_stat_in and pizza
+    strategy.entry('Long', strategy.long, comment=comment ? longcom : na)
+
+//------------------------------------------------------------------------------
+// Short Entry Conditions and Order 
+//------------------------------------------------------------------------------
+
+[o01, o02, o03, o04, o05, o06, o07, o08, o09, o10] = fcl(Short1, Short2, Short3, lis, lis2, rsifs)
+[p01, p02, p03, p04, p05, p06, p07, p08, p09, p10] = fcl0(d2, d, condition01, lis, lis2, rsifs, d1, condition02, addRS)
+
+salad = o01 ? p01 : o02 ? p02 : o03 ? p03 : o04 ? p04 : o05 ? p05 : o06 ? p06 : o07 ? p07 : o08 ? p08 : o09 ? p09 : o10 ? p10 : false
+
+if start and pos0 and bar_stat_in and salad
+    strategy.entry('Short', strategy.short, comment=comment ? shortcom : na)
+
+
+//------------------------------------------------------------------------------
+// Functions for Stop Loss and Take profit
+//------------------------------------------------------------------------------
+
+curProfitInPts() =>
+    if strategy.position_size > 0
+        (high - strategy.position_avg_price) / syminfo.mintick
+    else if strategy.position_size < 0
+        (strategy.position_avg_price - low) / syminfo.mintick
+    else
+        0
+
+calcStopLossPrice(OffsetPts) =>
+    if strategy.position_size > 0
+        strategy.position_avg_price - OffsetPts * syminfo.mintick
+    else if strategy.position_size < 0
+        strategy.position_avg_price + OffsetPts * syminfo.mintick
+    else
+        na
+
+calcProfitTrgtPrice(OffsetPts) =>
+    calcStopLossPrice(-OffsetPts)
+
+getCurrentStage() =>
+    var stage = 0
+    if strategy.position_size == 0
+        stage := 0
+        stage
+    if stage == 0 and strategy.position_size != 0
+        stage := 1
+        stage
+    else if stage == 1 and curProfitInPts() >= tp1
+        stage := 2
+        stage
+    else if stage == 2 and curProfitInPts() >= tp2
+        stage := 3
+        stage
+    stage
+
+calcTrailingAmountLevel(points) =>
+    var float level = na
+    level := calcProfitTrgtPrice(points)
+    if not na(level)
+        if strategy.position_size > 0
+            if not na(level[1])
+                level := math.max(level[1], level)
+                level
+            if not na(level)
+                level := math.max(high, level)
+                level
+        else if strategy.position_size < 0
+            if not na(level[1])
+                level := math.min(level[1], level)
+                level
+            if not na(level)
+                level := math.min(low, level)
+                level
+
+calcTrailingOffsetLevel(points, offset) =>
+    float result = na
+    amountLevel = calcTrailingAmountLevel(points)
+    if strategy.position_size > 0
+        trailActiveDiff = amountLevel - calcProfitTrgtPrice(points)
+        if trailActiveDiff > 0
+            result := trailActiveDiff + calcProfitTrgtPrice(offset)
+            result
+    else if strategy.position_size < 0
+        trailActiveDiff = calcProfitTrgtPrice(points) - amountLevel
+        if trailActiveDiff > 0
+            result := calcProfitTrgtPrice(offset) - trailActiveDiff
+            result
+    result
+
+//------------------------------------------------------------------------------
+// Conditions for Stop Loss and Take Profit 
+//------------------------------------------------------------------------------
+
+if stoploss
+
+    float stopLevel = na
+    float trailOffsetLevel = na
+    float profitLevel = activateTrailingOnThirdStep ? calcTrailingAmountLevel(tp3) : calcProfitTrgtPrice(tp3)
+
+    trailOffsetLevelTmp = calcTrailingOffsetLevel(tp3, tp2)
+
+    curStage = getCurrentStage()
+
+    if curStage == 1
+        abc = true
+        stopLevel := calcStopLossPrice(sl)
+        strategy.exit('Exit', 'Long', loss=sl, profit=tp3, comment=comment ? ex1 : 'SL or TP3')
+        strategy.exit('Exit', 'Short', loss=sl, profit=tp3, comment=comment ? ex2 : 'SL or TP3')
+
+    else if curStage == 2
+        stopLevel := calcStopLossPrice(0)
+        strategy.exit('Exit', 'Long', stop=stopLevel, profit=tp3, comment=comment ? ex1 : 'BH or TP3')
+        strategy.exit('Exit', 'Short', stop=stopLevel, profit=tp3, comment=comment ? ex2 : 'BH or TP3')
+
+    else if curStage == 3
+        stopLevel := calcStopLossPrice(-tp1)
+
+        if activateTrailingOnThirdStep
+            trailOffsetLevel := trailOffsetLevelTmp
+            strategy.exit('Exit', 'Long', stop=stopLevel, trail_points=tp3, trail_offset=tp3 - tp2, comment=comment ? ex1 : 'SL TP1 or trail TP3 with offset TP2')
+            strategy.exit('Exit', 'Short', stop=stopLevel, trail_points=tp3, trail_offset=tp3 - tp2, comment=comment ? ex2 : 'SL TP1 or trail TP3 with offset TP2')
+        else
+
+            strategy.exit('Exit', 'Long', stop=stopLevel, profit=tp3, comment=comment ? ex1 : 'TP1 or TP3')
+            strategy.exit('Exit', 'Short', stop=stopLevel, profit=tp3, comment=comment ? ex2 : 'TP1 or TP3')
+    else
+
+        strategy.cancel('Exit')
+        strategy.close_all(comment=comment ? ex1 + '\n' + ex2 : na)
+
+//------------------------------------------------------------------------------
+// EXIT : ROC Rate of Change Conditions
+//------------------------------------------------------------------------------
+
+rocEXL = ROC[exrepainting ? 0 + roc_fall : 1 + roc_fall] > 0 or ROC[exrepainting ? 1 + roc_fall : 2 + roc_fall] >= 0 and ta.falling(ROC, roc_fall)[exrepainting ? 0 : 1]
+rocEXS = ROC[exrepainting ? 0 + roc_fall : 1 + roc_fall] < 0 or ROC[exrepainting ? 1 + roc_fall : 2 + roc_fall] <= 0 and ta.rising(ROC, roc_fal)[exrepainting ? 0 : 1]
+
+//------------------------------------------------------------------------------
+// EXIT : Long and Short Exit Conditions
+//------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------
+// Confirmation that the order is based on a closed bar
+//------------------------------------------------------------------------------
+
+pos00 = strategy.position_size < 0
+pos01 = strategy.position_size > 0
+
+bar_stat_ex = exrepainting ? true : barstate.isconfirmed
+
+//------------------------------------------------------------------------------
+// EXIT : Long Condition.s
+//------------------------------------------------------------------------------
+
+rsiexitl = rsie[exrepainting ? 0 : 1] <= rsilow  // rsiexl -  a
+cciexitl = ccie[exrepainting ? 0 : 1] >= ccihigh  // cciexl - b
+oxitl = condition1  // otherexitl c
+bbexitl = bb_src[exrepainting ? 0 : 1] >= upper  // bbexl d
+rocexitl = ROC[exrepainting ? roc_fall : 1 + roc_fall] > 0 or ROC[exrepainting ? roc_fall : 1 + roc_fall] >= 0 and ta.falling(ROC, roc_fall)[exrepainting ? 0 : 1]  // ROCL e
+
+rsireversel = rsie[exrepainting ? 0 : 1] >= rsihigh  // RSIreverseL) V1 -> i1
+ccireversel = ccie[exrepainting ? 0 : 1] <= ccihigh  // CCIreverseL  V2 -> i2
+oinversel = condition2  // invL V3 -> i3
+
+//------------------------------------------------------------------------------
+// EXIT : Short Condition.s
+//------------------------------------------------------------------------------
+
+rsiexits = rsie[exrepainting ? 0 : 1] >= rsihigh  // rsiexl -  a
+cciexits = ccie[exrepainting ? 0 : 1] <= ccilow  // cciexl - b
+oxits = condition2  // otherexitl c
+bbexits = bb_src[exrepainting ? 0 : 1] <= lower  // bbexl d
+rocexits = ROC[exrepainting ? roc_fal : 1 + roc_fal] < 0 or ROC[exrepainting ? roc_fal : 1 + roc_fal] <= 0 and ta.rising(ROC, roc_fal)[exrepainting ? 0 : 1]  // ROCL e
+
+rsireverses = rsie[exrepainting ? 0 : 1] <= rsilow  // RSIreverseL) V1 -> i1
+ccireverses = ccie[exrepainting ? 0 : 1] >= ccilow  // CCIreverseL  V2 -> i2
+oinverses = condition1  // invS V3 -> i3
+
+//------------------------------------------------------------------------------
+// EXIT: Functions for the Inputs and Conditions
+//------------------------------------------------------------------------------
+
+fic(a, b, c, d, e, v1, v2, v3, i1, i2, i3) =>
+
+    s01 = v1 and v2 and v3 ? i1 or i2 or i3 or d or e : v1 and v2 ? i1 or i2 or c or d or e : v1 and v3 ? i1 or b or i3 or d or e : v2 and v3 ? a or i2 or i3 or d or e : a or b or c or d or e
+    s02 = v1 and v2 and v3 ? i1 or i2 or i3 or d : v1 and v2 ? i1 or i2 or c or d : v1 and v3 ? i1 or b or i3 or d : v2 and v3 ? a or i2 or i3 or d : a or b or c or d
+    s03 = v1 and v2 and v3 ? i1 or i2 or i3 or e : v1 and v2 ? i1 or i2 or c or e : v1 and v3 ? i1 or b or i3 or e : v2 and v3 ? a or i2 or i3 or e : a or b or c or e
+    s04 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v2 ? i1 or i2 or c : v1 and v3 ? i1 or b or i3 : v2 and v3 ? a or i2 or i3 : a or b or c
+
+    s5 = v1 and v2 ? i1 or i2 or d : v1 ? i1 or b or d : v2 ? a or i2 or d : a or b or d
+    s05 = v3 ? s5 or i3 : s5
+
+    s6 = v1 and v2 ? i1 or i2 or e : v1 ? i1 or b or e : v2 ? a or i2 or e : a or b or e
+    s06 = v3 ? s6 or i3 : s6
+
+    s7 = v2 and v3 ? i2 or i3 or d : v2 ? i2 or c or d : v3 ? b or i3 or d : a or b or c or d
+    s07 = v1 ? v1 or s7 : s7
+
+    s8 = v2 and v3 ? i2 or i3 or e : v2 ? i2 or c or e : v3 ? b or i3 or e : a or b or c or e
+    s08 = v1 ? v1 or s8 : s8
+
+    s9 = v2 ? i2 or d or e : c or d or e
+    s09 = v1 and v3 ? s9 or i1 or i3 : v1 ? i1 or s9 : v3 ? i3 or s9 : s9
+
+    s010 = v1 and v2 ? i1 or i2 : v1 ? i1 or b : v2 ? a or i2 : a or b
+    s10 = v3 ? i3 or s010 : s010
+
+    s011 = v1 and v3 ? i1 or i3 : v1 ? i1 or c : v3 ? a or i3 : a or c
+    s11 = v2 ? i2 or s011 : s011
+
+    s012 = v1 ? i1 or d : a or d
+    s12 = v2 and v3 ? i2 or i3 or s012 : v2 ? i2 or s012 : v3 ? i3 or s012 : s012
+
+    s013 = v1 ? i1 or e : a or e
+    s13 = v2 and v3 ? i2 or i3 or s013 : v2 ? i2 or s013 : v3 ? i3 or s013 : s013
+
+    s014 = v2 and v3 ? i2 or i3 : v2 ? i2 or c : v3 ? b or i3 : b or c
+    s14 = v1 ? v1 or s014 : s014
+
+    s015 = v2 ? i2 or d : b or d
+    s15 = v1 and v3 ? i1 or i3 or s015 : v1 ? i1 or s015 : v3 ? i3 or s015 : s015
+
+    s016 = v2 ? i2 or e : b or e
+    s16 = v1 and v3 ? i1 or i3 or s016 : v1 ? i1 or s016 : v3 ? i3 or s016 : s016
+
+    s017 = v3 ? i3 or d : c or d
+    s17 = v1 and v2 ? i1 or i2 or s017 : v1 ? i1 or s017 : v2 ? i2 or s017 : s017
+
+    s018 = v3 ? i3 or e : c or e
+    s18 = v1 and v2 ? i1 or i2 or s018 : v1 ? i1 or s018 : v2 ? i2 or s018 : s018
+
+    s019 = d or e
+    s19 = v1 and v2 and v3 ? i1 or i2 or i3 or s019 : v1 and v2 ? i1 or i2 or s019 : v1 and v3 ? i1 or i3 or s019 : v2 and v3 ? i2 or i3 or s019 : v1 ? i1 or s019 : v2 ? i2 or s019 : v3 ? i3 or s019 : s019
+
+    s20 = v1 and v2 and v3 ? i1 or i2 or i3 or a : v1 and v2 ? i1 or i2 or a : v1 and v3 ? i1 or i3 or a : v2 and v3 ? i2 or i3 or a : v1 ? i1 or a : v2 ? i2 or a : v3 ? i3 or a : a
+    s21 = v1 and v2 and v3 ? i1 or i2 or i3 or b : v1 and v2 ? i1 or i2 or b : v1 and v3 ? i1 or i3 or b : v2 and v3 ? i2 or i3 or b : v1 ? i1 or b : v2 ? i2 or b : v3 ? i3 or b : b
+    s22 = v1 and v2 and v3 ? i1 or i2 or i3 or c : v1 and v2 ? i1 or i2 or c : v1 and v3 ? i1 or i3 or c : v2 and v3 ? i2 or i3 or c : v1 ? i1 or c : v2 ? i2 or c : v3 ? i3 or c : c
+    s23 = v1 and v2 and v3 ? i1 or i2 or i3 or d : v1 and v2 ? i1 or i2 or d : v1 and v3 ? i1 or i3 or d : v2 and v3 ? i2 or i3 or d : v1 ? i1 or d : v2 ? i2 or d : v3 ? i3 or d : d
+    s24 = v1 and v2 and v3 ? i1 or i2 or i3 or e : v1 and v2 ? i1 or i2 or e : v1 and v3 ? i1 or i3 or e : v2 and v3 ? i2 or i3 or e : v1 ? i1 or e : v2 ? i2 or e : v3 ? i3 or e : e
+
+    s25 = v1 and v2 and v3 ? i1 or i2 or i3 : v2 and v3 ? i1 or i2 or i3 : v2 ? i1 or i2 : v3 ? i1 or i3 : i1
+    s26 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v3 ? i1 or i2 or i3 : v1 ? i1 or i2 : v3 ? i2 or i3 : i2
+    s27 = v1 and v2 and v3 ? i1 or i2 or i3 : v1 and v2 ? i1 or i2 or i3 : v1 ? i1 or i3 : v2 ? i2 or i3 : i3
+
+    [s01, s02, s03, s04, s05, s06, s07, s08, s09, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27]
+
+fco(a, b, c, d, e, x, y, z) =>
+    q01 = a and b and c and d and e
+
+    q02 = a and b and c and d
+    q03 = a and b and c and e
+
+    q04 = a and b and c
+    q05 = a and b and d
+    q06 = a and b and e
+
+    q07 = b and c and d
+    q08 = b and c and e
+    q09 = c and d and e
+
+    q10 = a and b
+    q11 = a and c
+    q12 = a and d
+    q13 = a and e
+
+    q14 = b and c
+    q15 = b and d
+    q16 = b and e
+
+    q17 = c and d
+    q18 = c and e
+
+    q19 = d and e
+
+    q20 = a
+    q21 = b
+    q22 = c
+    q23 = d
+    q24 = e
+
+    q25 = x
+    q26 = y
+    q27 = z
+
+
+    [q01, q02, q03, q04, q05, q06, q07, q08, q09, q10, q11, q12, q13, q14, q15, q16, q17, q18, q19, q20, q21, q22, q23, q24, q25, q26, q27]
+
+
+RC = start and not stoploss and session and bar_stat_ex
+//------------------------------------------------------------------------------
+// EXIT : Long Conditions and Order
+//------------------------------------------------------------------------------
+
+[q01, q02, q03, q04, q05, q06, q07, q08, q09, q10, q11, q12, q13, q14, q15, q16, q17, q18, q19, q20, q21, q22, q23, q24, q25, q26, q27] = fco(rsiexl, cciexl, otherexitl, bbexl, ROCL, RSIreverseL, CCIreverseL, invL)
+
+[s01, s02, s03, s04, s05, s06, s07, s08, s09, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27] = fic(rsiexitl, cciexitl, oxitl, bbexitl, rocEXL, RSIreverseL, CCIreverseL, rocexitl, rsireversel, ccireversel, oinversel)
+
+burrito = q01 ? s01 : q02 ? s02 : q03 ? s03 : q04 ? s04 : q05 ? s05 : q06 ? s06 : q07 ? s07 : q08 ? s08 : q09 ? s09 : q10 ? s10 : q11 ? s11 : q12 ? s12 : q13 ? s13 : q14 ? s14 : q15 ? s15 : q16 ? s16 : q17 ? s17 : q18 ? s18 : q19 ? s19 : q20 ? s20 : q21 ? s21 : q22 ? s22 : q23 ? s23 : q24 ? s24 : q25 ? s25 : q26 ? s26 : q27 ? s27 : false
+
+if RC and pos01 and bar_stat_ex and burrito
+    strategy.close('Long', qty_percent=100, comment=comment ? ex1 : 'Exit Long')
+
+//------------------------------------------------------------------------------
+// EXIT : Short Conditions and Order 
+//------------------------------------------------------------------------------
+
+[r01, r02, r03, r04, r05, r06, r07, r08, r09, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27] = fco(rsiexs, cciexs, otherexits, bbexs, ROCS, RSIreverseS, CCIreverseS, invS)
+[j01, j02, j03, j04, j05, j06, j07, j08, j09, j10, j11, j12, j13, j14, j15, j16, j17, j18, j19, j20, j21, j22, j23, j24, j25, j26, j27] = fic(rsiexits, cciexits, oxits, bbexits, rocexits, RSIreverseS, CCIreverseS, rocexits, rsireverses, ccireverses, oinverses)
+
+bigmac = r01 ? j01 : r02 ? j02 : r03 ? j03 : r04 ? j04 : r05 ? j05 : r06 ? j06 : r07 ? j07 : r08 ? j08 : r09 ? j09 : r10 ? j10 : r11 ? j11 : r12 ? j12 : r13 ? j13 : r14 ? j14 : r15 ? j15 : r16 ? j16 : r17 ? j17 : r18 ? j18 : r19 ? j19 : r20 ? j20 : r21 ? j21 : r22 ? j22 : r23 ? j23 : r24 ? j24 : r25 ? j25 : r26 ? j26 : r27 ? j27 : false
+
+if RC and pos00 and bar_stat_ex and bigmac
+    strategy.close('Short', qty_percent=100, comment=comment ? ex1 : 'Exit Short')
+
+//------------------------------------------------------------------------------
+// Label for showing the correlations values 
+//------------------------------------------------------------------------------
+
+lcurve1 = label.new(bar_index, 0, text='𝗖𝘂𝗿𝘃𝗲 𝟭 : ' + texte1 + '\n' + '𝗖𝘂𝗿𝘃𝗲 𝟮 :' + texte2 + '\n' + '𝗖𝘂𝗿𝘃𝗲 𝟯 :' + texte3 + '\n' + '𝗖𝘂𝗿𝘃𝗲 𝟰 :' + texte4, textcolor=highh or loww ? label_color0 : label_color1, textalign=text.align_center)
+label.delete(lcurve1[1])
+label.set_color(lcurve1, color=color.new(highh or loww ? label_background1 : label_background2, 20))
+label.set_style(lcurve1, style=label.style_label_upper_left)
+
+//------------------------------------------------------------------------------
+// Level Lines 
+//------------------------------------------------------------------------------
+
+hline(1, '1 Line', color=color.new(1 ? color.silver : na, 75), linestyle=hline.style_solid, linewidth=1)
+hline(0.75, '0.75 line', color=color.new(0.75 ? color.silver : na, 75), linestyle=hline.style_dashed)
+hline(0.5, '0.5 line', color=color.new(0.5 ? color.silver : na, 90), linestyle=hline.style_solid, linewidth=1)
+hline(0, '0 Line', color=color.new(0 ? color.black : na, 45), linestyle=hline.style_solid, linewidth=2)
+hline(-0.5, '-0.5 line', color=color.new(-.5 ? color.silver : na, 90), linestyle=hline.style_solid, linewidth=1)
+hline(-0.75, '-0.75 line', color=color.new(-.75 ? color.silver : na, 75), linestyle=hline.style_dashed)
+hline(-1, '-1 Line', color=color.new(-1 ? color.silver : na, 75), linestyle=hline.style_solid, linewidth=1)
+
+//------------------------------------------------------------------------------
+// Curve on top 
+//------------------------------------------------------------------------------
+
+red = ta.falling(curve, 1)
+lime = ta.rising(curve, 1)
+yellow = red[1] and lime
+
+curvePlotCondition = ecurve ? 1.3 + (etrix ? curve / 20 : ecci ? 1.5 + cci / 250 : estoch ? curve / 100 : elders ? 250000 + curve : emacd ? curve : avgall ? curve / 100 : ervgi ? curve : ecoppock ? curve / 90 : na) : na
+curveColorCondition = red ? curvecolor2 : lime ? curvecolor1 : na
+
+plot(curvePlotCondition, 'Curve Up', color=color.new(curveColorCondition, curvePlotCondition ? 0 : 100), linewidth=2)
+
+//------------------------------------------------------------------------------
+// Plotting the curve correlations
+//------------------------------------------------------------------------------
+
+plot(corrplot ? elders ? c1 * math.pow(10, 5) : c1 : na, 'Curve [A]', color=color.new(c1 ? corcola : na, corrplot ? 79 : 100), linewidth=1)
+plot(corrplot ? elders ? c2 * math.pow(10, 5) : c2 : na, 'Curve [B]', color=color.new(c2 ? corcolb : na, corrplot ? 79 : 100), linewidth=1)
+plot(corrplot ? elders ? c3 * math.pow(10, 5) : c3 : na, 'Curve [C]', color=color.new(c3 ? corcolc : na, corrplot ? 79 : 100), linewidth=1)
+plot(corrplot ? elders ? c4 * math.pow(10, 5) : c4 : na, 'Curve [D]', color=color.new(c4 ? corcold : na, corrplot ? 79 : 100), linewidth=1)
+
+//------------------------------------------------------------------------------
+// Plotting the slopes of the curve
+//------------------------------------------------------------------------------
+
+slpe1 = eslope1 ? ecci or estoch or esrsi ? elders or emacd or ervgi or avgall ? slope1 : slope1 / 100 : slope1 : na
+slpe2 = eslope2 ? ecci or estoch or esrsi ? elders or emacd or ervgi or avgall ? slope2 : slope2 / 100 : slope2 : na
+
+
+plot(slpe1, '1st slope', color=color.new(slope1 ? slope1c : na, 60), style=plot.style_area, linewidth=1)
+plot(slpe2, '2nd slope', color=color.new(slope2 ? slope2c : na, 60), style=plot.style_area, linewidth=1)
+
+//------------------------------------------------------------------------------
+// Filling the difference between the 2 slopes 
+//------------------------------------------------------------------------------
+
+fillSlope1 = plot(ecci or estoch or esrsi or avgall ? elders or emacd or ervgi ? slope1 : slope1 / 100 : slope1, '1st Slope Fill Color', color=color.new(na, 100), style=plot.style_area)
+fillSlope2 = plot(ecci or estoch or esrsi or avgall ? elders or emacd or ervgi ? slope2 : slope2 / 100 : slope2, '2nd Slope Fill Color', color=color.new(na, 100), style=plot.style_area)
+fill(fillSlope1, fillSlope2, title='Filling Color', color=color.new(slope1 < 0 and slope2 < 0 ? fillc1 : fillc2, 55))
+
+//------------------------------------------------------------------------------
+// Plotting shapes to appear when user define different conditions for entry
+//------------------------------------------------------------------------------
+
+longFlagCondition = elongf ? pos0 and pizza and (sil or sil2 or rsifl) ? pizza : pos0 and pizza and Long2 ? pizza : pos0 and pizza and Long3 ? pizza : pos0 and pizza ? pizza : na : false
+longFlagColor = pos0 and pizza and (sil or sil2 or rsifl) ? longcr : pos0 and pizza and Long2 ? longc2 : pos0 and pizza and Long3 ? longc3 : pos0 and pizza ? longc1 : na
+
+
+shortFlagCondition = eshortf ? pos0 and salad and (lis or lis2 or rsifs) ? pizza : pos0 and salad and Short2 ? salad : pos0 and salad and Short3 ? salad : pos0 and salad ? salad : na : false
+shortFlagColor = pos0 and salad and (lis or lis2 or rsifs) ? shortcr : pos0 and salad and Short2 ? shortc2 : pos0 and salad and Short3 ? shortc3 : pos0 and salad ? shortc1 : na
+
+plotshape(longFlagCondition, color=color.new(longFlagColor, pizza ? 0 : 100), title='Long Flags', style=shape.flag, location=location.bottom, size=size.tiny)
+plotshape(shortFlagCondition, color=color.new(shortFlagColor, salad ? 0 : 100), title='Short Flags', style=shape.flag, location=location.bottom, size=size.tiny)
+
+
+longExitFlagCondition = exlongf ? pos01 and burrito ? burrito : na : false
+longExitFlagColor = pos01 and burrito ? exlongc : na
+
+shortExitFlagCondition = exshortf ? pos00 and bigmac ? bigmac : na : false
+shortExitFlagColor = pos00 and bigmac ? exshortc : na
+
+plotshape(longExitFlagCondition, title='Exit Longs', color=color.new(longExitFlagColor, burrito ? 0 : 100), style=shape.cross, location=location.bottom, size=size.tiny)
+plotshape(shortExitFlagCondition, title='Exit Longs', color=color.new(shortExitFlagColor, bigmac ? 0 : 100), style=shape.cross, location=location.bottom, size=size.tiny)
+
+//------------------------------------------------------------------------------
+// Plotting the slope of the curve - different periods
+//------------------------------------------------------------------------------
+
+plot(high1 ? ecci or estoch or esrsi or avgall ? elders or emacd or ervgi ? slope1 : slope1 / 100 : slope1 : na, color=color.new(slope1 ? dots_color1 : na, slopedots ? 0 : 100), title='Red Dots', style=plot.style_circles, linewidth=2, editable=true)
+plot(low1 ? ecci or estoch or esrsi or avgall ? elders or emacd or ervgi ? slope2 : slope2 / 100 : slope2 : na, color=color.new(slope2 ? dots_color2 : na, slopedots ? 0 : 100), title='Green Dots', style=plot.style_circles, linewidth=2, editable=true)
+
+//------------------------------------------------------------------------------
+// Plotting the mean of the correlations (showing when all of them == -1 or 1)
+//------------------------------------------------------------------------------
+
+mean = elders ? math.avg(c1, c2, c3, c4) * math.pow(10, 5) : math.avg(c1, c2, c3, c4)
+
+plot(emean ? mean : na, color=color.new(emean ? meancolor : na, 0), style=plot.style_line, linewidth=2)
+plot(dotplot ? high1 ? mean : low1 ? mean : na : na, color=color.new(high1 ? dots_mcolor1 : low1 ? dots_mcolor2 : na, dotplot ? 0 : 100), style=plot.style_circles, linewidth=3)
+

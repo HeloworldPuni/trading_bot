@@ -1,0 +1,35 @@
+//@version=4
+study("daily closing price", shorttitle="dcp", overlay=true)
+cp = security(syminfo.tickerid, 'D', close) //day close price
+pre_cp = security(syminfo.tickerid, 'D', close[1]) // a day b4
+is_price_diff = cp[1] == cp
+plot_when = is_price_diff and not barstate.islast
+oneday = 86400000
+is_inSession = na(time('D', "0800-1600"))?false:true
+        
+plot(cp, title="day close price",style=plot.style_line,linewidth=1, color= plot_when ?color.white:color.new(color.white, 100))
+// if(is_inSession and barstate.islast)
+//     line.new(x1=time[1], y1=cp,x2=time + oneday, y2=cp, xloc=xloc.bar_time, color=color.white, width=1)
+// if(barstate.islast and not is_inSession)
+//     label.new(x=bar_index,y=high,text= barstate.isnew?'n':'o')
+//     line.new(x1=time[1], y1=barstate.isnew?cp:pre_cp, x2=time + oneday, y2=barstate.isnew?cp:pre_cp, xloc=xloc.bar_time, color=color.white, width=1)
+
+
+
+//////test/////
+// Create the inputs
+euSession = input(title="EU session", type= input.session, defval="0800-1530", confirm=true)
+usSession = input(title="EU+US session", type= input.session, defval="0800-2200")
+transparency = input(title="Transparency", type=input.integer, defval=50, minval=0, maxval=100)
+// The BarInSession function returns true when
+// the current bar is inside the session parameter
+BarInSession(sess) => time('D', sess) != 0
+// Set the colour variables for the ranges
+euColour = #6495ED // Cornflower blue
+usColour = #98FB98 // Pale green
+// Determine the chart's background colour
+chartColour = BarInSession(euSession) ? euColour : BarInSession(usSession) ? usColour :   na
+
+// Set the background colour
+//bgcolor(color=chartColour, transp=transparency)
+

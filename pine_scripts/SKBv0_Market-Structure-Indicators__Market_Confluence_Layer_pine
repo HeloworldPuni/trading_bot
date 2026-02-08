@@ -1,0 +1,913 @@
+//@version=6
+indicator("Market Confluence Layer (MCL)", overlay=true, max_lines_count=300, max_labels_count=220, max_boxes_count=160)
+
+// ==============================
+// CONSTANTS
+// ==============================
+const int   FVG_CAP = 60
+const int   MAX_FRACTALS_PERF_MODE = 80
+const int   MAX_FRACTALS_NORMAL    = 140
+const int   MAX_CONFLUENCE_ITEMS   = 60
+const int   AMP_PERIOD_C1 = 60
+const int   AMP_PERIOD_C2 = 120
+const int   AMP_PERIOD_C3 = 240
+const int   AMP_PERIOD_C4 = 300
+const float MIN_TICK_PROTECTION = 1e-6
+const float FLAT_SLOPE_THRESHOLD = 5.0
+const int   CONFLUENCE_BAR_OFFSET = 50
+const int   CONFLUENCE_LABEL_OFFSET = 4
+
+// ==============================
+// SETTINGS
+// ==============================
+grp_core = "Core"
+enableFVG       = input.bool(true,  "Fair Value Gaps",         group=grp_core)
+enableLiquidity = input.bool(true,  "Liquidity Sweeps",        group=grp_core)
+enableFractal   = input.bool(true,  "Fractal Confluence",      group=grp_core)
+enableAMP       = input.bool(true,  "Adaptive Market Profile", group=grp_core)
+enableEnergy    = input.bool(true,  "Energy Projection",       group=grp_core)
+enablePanels    = input.bool(true,  "Info Panel",              group=grp_core)
+enableChecklist = input.bool(true,  "Checklist/Matrix",        group=grp_core)
+enableAlerts    = input.bool(true,  "Alerts",                  group=grp_core)
+
+grp_ui = "UI"
+panelMode = input.string("Cards", "Panel layout", options=["Cards","Compact"], group=grp_ui)
+denseMode = input.bool(false, "Dense mode", group=grp_ui)
+
+grp_perf = "Performance"
+perfMode = input.bool(false, "Performance mode", group=grp_perf)
+perfThrottle = input.int(1, "Perf throttle (bars)", minval=1, maxval=10, group=grp_perf)
+uiThrottle   = input.int(1, "UI throttle (bars)", minval=1, maxval=20, group=grp_perf)
+calcThrottle = input.int(1, "Calc throttle (bars)", minval=1, maxval=20, group=grp_perf)
+
+grp_reg = "Regime"
+qLowPct  = input.int(35, "VolRatio low pct",  minval=5,  maxval=45, group=grp_reg)
+qHighPct = input.int(65, "VolRatio high pct", minval=55, maxval=95, group=grp_reg)
+qLen     = input.int(500,"Percentile window", minval=200,maxval=5000, group=grp_reg)
+
+grp_fvg = "FVG"
+fvgMinPct     = input.float(0.30, "Min gap %", minval=0.05, step=0.05, group=grp_fvg)
+fvgExtendBars = input.int(25,     "Extend (bars)", minval=5, step=5, group=grp_fvg)
+fvgFillMode   = input.string("Wick", "FVG fill mode", options=["Wick","BodyTouch","BodyFull"], group=grp_fvg)
+fvgBullColor  = input.color(color.new(#26a69a, 90), "Bullish color", group=grp_fvg)
+fvgBearColor  = input.color(color.new(#ef5350, 90), "Bearish color", group=grp_fvg)
+fvgCapDyn     = input.int(60, "FVG cap (runtime)", minval=10, maxval=200, group=grp_fvg)
+
+grp_liq = "Liquidity"
+pivotLen      = input.int(15,     "Pivot length",     minval=5,  group=grp_liq)
+pivotMaxAge   = input.int(200,    "Pivot max age",    minval=10, group=grp_liq)
+sweepSens     = input.float(0.85, "Wick/tail ratio",  minval=0.5, maxval=2.0, step=0.05, group=grp_liq)
+minTailPctATR = input.float(0.20, "Min tail vs ATR",  minval=0.05, step=0.05, group=grp_liq)
+minBodyPctATR = input.float(0.05, "Min body vs ATR",  minval=0.00, step=0.01, group=grp_liq)
+sweepCooldown = input.int(6,      "Cooldown (bars)",  minval=0,  group=grp_liq)
+sweepBullCol  = input.color(color.new(#2563eb, 70), "Bullish color", group=grp_liq)
+sweepBearCol  = input.color(color.new(#c026d3, 70), "Bearish color", group=grp_liq)
+allowDojiSweep   = input.bool(true,  "Allow doji sweeps (TR fallback)", group=grp_liq)
+dojiTrMinPctATR  = input.float(0.30, "TR fallback min vs ATR", minval=0.05, step=0.05, group=grp_liq)
+
+grp_conf = "Confluence"
+fibStr        = input.string("0.236,0.382,0.5,0.618,0.786,1.0,1.272,1.618,2.0,2.618,4.236", "Fib ratios", group=grp_conf)
+confTolPct    = input.float(0.35, "Tolerance %", minval=0.05, step=0.05, group=grp_conf)
+useDynWindow  = input.bool(false,  "Use ATR-based window", group=grp_conf)
+nearWindowFix = input.float(8.0,  "Fixed window %", minval=0.5, step=0.5, group=grp_conf)
+nearDynMult   = input.float(8.0,  "ATR window multiplier", minval=1.0, step=0.5, group=grp_conf)
+fracMaxLevels = input.int(8,      "Max levels per side", minval=1, maxval=12, group=grp_conf)
+minScore      = input.float(0.15, "Min score 0..1", minval=0.01, maxval=1.0, step=0.01, group=grp_conf)
+dedupTolPct   = input.float(0.5, "Merge tolerance %", minval=0.01, step=0.01, group=grp_conf)
+autoConfTol   = input.bool(false, "Auto conf tolerance (ATR-based)", group=grp_conf)
+confBeta      = input.float(1.0, "Auto conf beta", minval=0.1, step=0.1, group=grp_conf)
+nearDynMaxPct = input.float(15.0, "ATR window max %", minval=0.5, step=0.5, group=grp_conf)
+
+grp_guard = "Guards & Auto-Cal"
+confBudgetPerSide = input.int(8, "Confluence budget per side (draw)", minval=1, maxval=12, group=grp_guard)
+
+grp_amp = "AMP"
+ampAuto         = input.bool(true,  "Auto period (robust)", group=grp_amp)
+ampPeriodManual = input.int(200,    "Manual period", minval=20, maxval=500, group=grp_amp)
+ampDevMult      = input.float(2.0,  "Deviation mult", minval=0.1, step=0.1, group=grp_amp)
+ampLog          = input.bool(true,  "Log scale", group=grp_amp)
+ampExtSel       = input.string("Both", "Extend mode", options=["Right","Both"], group=grp_amp)
+drawWhenFlat    = input.bool(true,  "Draw channel if flat", group=grp_amp)
+minR            = input.float(0.25, "Min R for auto", minval=0.0, maxval=1.0, step=0.05, group=grp_amp)
+useAutoFlat     = input.bool(false, "Flat threshold by %/bar", group=grp_amp)
+flatPctPerBar   = input.float(0.03, "Flat % per bar", minval=0.005, step=0.005, group=grp_amp)
+
+grp_energy = "Energy"
+energyHorizon = input.int(24, "Horizon bars", minval=5, group=grp_energy)
+energyATRMult = input.float(1.0, "ATR mult", minval=0.5, step=0.1, group=grp_energy)
+energyColor   = input.color(color.new(#9333ea, 88), "Zone color", group=grp_energy)
+
+grp_check = "Checklist"
+checkLookback    = input.int(300, "Liquidity lookback (bars)", minval=1, maxval=500, group=grp_check)
+checkMinConf     = input.int(0,  "Min confluence per side",   minval=0, maxval=5, group=grp_check)
+checkSide        = input.string("Auto", "Trade side", options=["Auto","Long","Short"], group=grp_check)
+biasEdge         = input.float(0.5, "Bias edge (levels)", minval=0, group=grp_check)
+
+// ==============================
+// HELPERS
+// ==============================
+parseFibs(_s) =>
+    string[] parts = str.split(str.replace_all(_s, " ", ""), ",")
+    array<float> out = array.new<float>()
+    for p in parts
+        v = str.tonumber(p)
+        if not na(v)
+            array.push(out, v)
+    out
+
+var float[] FIBS = array.new_float()
+var string fibPrev = ""
+if barstate.isfirst or fibPrev != fibStr
+    array.clear(FIBS)
+    float[] tmp = parseFibs(fibStr)
+    for t in tmp
+        array.push(FIBS, t)
+    fibPrev := fibStr
+
+f_far(array<float> acc, float lvl) =>
+    bool result = true
+    for a in acc
+        if math.abs(lvl - a) / math.max(MIN_TICK_PROTECTION, math.abs(a)) * 100 <= dedupTolPct
+            result := false
+            break
+    result
+
+adj(x)   => ampLog ? math.exp(x) : x
+unadj(x) => ampLog ? math.log(x) : x
+
+extendFromStr(string s) =>
+    s == "Both" ? extend.both : extend.right
+
+isFilled(float top, float bot) =>
+    bodyTop = math.max(open, close)
+    bodyBot = math.min(open, close)
+    bool result = false
+    if fvgFillMode == "Wick"
+        result := (low <= bot and high >= top)
+    else if fvgFillMode == "BodyTouch"
+        result := (bodyTop >= bot and bodyBot <= top)
+    else
+        result := (bodyTop >= top and bodyBot <= bot)
+    result
+
+priceSrc = ampLog ? math.log(close) : close
+
+getReg(len) =>
+    int n = math.min(len, math.min(bar_index + 1, 300))
+    if n <= 1
+        [0.0, 0.0, 0.0, 0.0]
+    else
+        src = priceSrc
+        float sx  = n * (n + 1) / 2.0
+        float sx2 = n * (n + 1) * (2 * n + 1) / 6.0
+        float sy  = 0.0
+        float sxy = 0.0
+        for i = 0 to n - 1
+            sy  += src[i]
+            sxy += src[i] * (n - i)
+        float d = n * sx2 - sx * sx
+        float slope = d != 0 ? (n * sxy - sx * sy) / d : 0.0
+        float ic    = (sy - slope * sx) / n
+        float rss = 0.0, tss = 0.0, mean = sy / n
+        for j = 0 to n - 1
+            fit = ic + slope * (n - j)
+            rss += math.pow(src[j] - fit, 2.0)
+            tss += math.pow(src[j] - mean, 2.0)
+        float stdd = n > 1 ? math.sqrt(rss / (n - 1)) : 0.0
+        float r2   = tss > 0 ? 1.0 - rss / tss : 0.0
+        [stdd, math.sqrt(math.max(r2, 0.0)), slope, ic]
+
+// ==============================
+// GLOBAL DRAW REFS
+// ==============================
+var line ampU = na
+var line ampM = na
+var line ampL = na
+var linefill ampF1 = na
+var linefill ampF2 = na
+
+var line eUp = na
+var line eDn = na
+var linefill eFill = na
+
+var table ui = na
+
+var label dbg = na
+
+// ==============================
+// FVG synced arrays
+// ==============================
+var box[]   fvgBoxes = array.new_box()
+var float[] fvgMids  = array.new_float()
+var float[] fvgTop   = array.new_float()
+var float[] fvgBot   = array.new_float()
+
+fvg_add(bx, mid, top, bot) =>
+    array.push(fvgBoxes, bx)
+    array.push(fvgMids,  mid)
+    array.push(fvgTop,   top)
+    array.push(fvgBot,   bot)
+    while array.size(fvgBoxes) > fvgCapDyn
+        box bxOld = array.shift(fvgBoxes)
+        if not na(bxOld)
+            box.delete(bxOld)
+        array.shift(fvgMids)
+        array.shift(fvgTop)
+        array.shift(fvgBot)
+
+fvg_remove_at(int i) =>
+    if i >= 0 and i < array.size(fvgBoxes)
+        box bx = array.get(fvgBoxes, i)
+        if not na(bx)
+            box.delete(bx)
+        array.remove(fvgBot,   i)
+        array.remove(fvgTop,   i)
+        array.remove(fvgMids,  i)
+        array.remove(fvgBoxes, i)
+
+// ==============================
+// CORE SERIES
+// ==============================
+atr14   = ta.atr(14)
+vol50   = ta.stdev(close, 50)
+vol200  = ta.stdev(close, 200)
+volRatio= vol200 > 0 ? vol50 / vol200 : 1.0
+
+highest50 = ta.highest(high, 50)
+lowest50 = ta.lowest(low, 50)
+highest200 = ta.highest(high, 200)
+lowest200 = ta.lowest(low, 200)
+
+qLow  = ta.percentile_linear_interpolation(volRatio, qLen, qLowPct)
+qHigh = ta.percentile_linear_interpolation(volRatio, qLen, qHighPct)
+
+isCompression = volRatio < qLow
+isExpansion   = volRatio > qHigh
+
+phVal = ta.pivothigh(high, pivotLen, pivotLen)
+plVal = ta.pivotlow(low,  pivotLen, pivotLen)
+lastPH = ta.valuewhen(not na(phVal), phVal, 0)
+lastPL = ta.valuewhen(not na(plVal), plVal, 0)
+phBar  = ta.valuewhen(not na(phVal), bar_index, 0)
+plBar  = ta.valuewhen(not na(plVal), bar_index, 0)
+
+// ==============================
+// LIQUIDITY SWEEPS
+// ==============================
+var int cdBull = 0, cdBear = 0
+if cdBull > 0
+    cdBull -= 1
+if cdBear > 0
+    cdBear -= 1
+
+body      = math.abs(close - open)
+atrVal    = math.max(atr14, syminfo.mintick)
+bool hasBodyOrTR = (body >= minBodyPctATR * atrVal) or (allowDojiSweep and ta.tr(true) >= dojiTrMinPctATR * atrVal)
+den       = body == 0.0 ? syminfo.mintick : body
+wickRatio = (high - math.max(open, close)) / den
+tailRatio = (math.min(open, close) - low) / den
+
+pivotPLFresh = not na(lastPL) and not na(plBar) and (bar_index - plBar <= pivotMaxAge)
+pivotPHFresh = not na(lastPH) and not na(phBar) and (bar_index - phBar <= pivotMaxAge)
+
+bullSweepRaw = enableLiquidity and pivotPLFresh and hasBodyOrTR and (close - low)  >= minTailPctATR * atrVal and low  < lastPL and close > lastPL and tailRatio > sweepSens
+bearSweepRaw = enableLiquidity and pivotPHFresh and hasBodyOrTR and (high - close) >= minTailPctATR * atrVal and high > lastPH and close < lastPH and wickRatio > sweepSens
+
+bullSweep = barstate.isconfirmed and bullSweepRaw and cdBull == 0
+bearSweep = barstate.isconfirmed and bearSweepRaw and cdBear == 0
+
+if bullSweep
+    cdBull := sweepCooldown
+if bearSweep
+    cdBear := sweepCooldown
+
+barcolor(bullSweep ? sweepBullCol : bearSweep ? sweepBearCol : na)
+plotshape(bullSweep, title="Bull Sweep", style=shape.triangleup,   location=location.belowbar, color=color.new(#2563eb, 0), size=size.tiny)
+plotshape(bearSweep, title="Bear Sweep", style=shape.triangledown, location=location.abovebar,  color=color.new(#c026d3, 0), size=size.tiny)
+
+// ==============================
+// FVG (create + auto remove)
+// ==============================
+if enableFVG and barstate.isconfirmed
+    bullGap = not na(high[2]) and low > high[2] and (low - high[2]) / math.max(high[2], 1e-6) * 100 >= fvgMinPct
+    bearGap = not na(low[2])  and high < low[2]  and (low[2] - high) / math.max(low[2], 1e-6)  * 100 >= fvgMinPct
+    if bullGap
+        topB = low
+        botB = high[2]
+        midB = (topB + botB) / 2.0
+        bxB  = box.new(bar_index - 1, topB, bar_index + fvgExtendBars, botB, bgcolor=fvgBullColor, border_color=na)
+        fvg_add(bxB, midB, topB, botB)
+    if bearGap
+        topS = low[2]
+        botS = high
+        midS = (topS + botS) / 2.0
+        bxS  = box.new(bar_index - 1, topS, bar_index + fvgExtendBars, botS, bgcolor=fvgBearColor, border_color=na)
+        fvg_add(bxS, midS, topS, botS)
+
+    szF = array.size(fvgBoxes)
+    if szF > 0
+        for n = 0 to szF - 1
+            i = (szF - 1) - n
+            if i >= 0 and i < array.size(fvgBoxes)
+                tp = array.get(fvgTop, i)
+                bt = array.get(fvgBot, i)
+                top = math.max(tp, bt)
+                bot = math.min(tp, bt)
+                if isFilled(top, bot)
+                    fvg_remove_at(i)
+    
+    szF3 = array.size(fvgBoxes)
+    if szF3 > 0
+        for n = 0 to szF3 - 1
+            i = (szF3 - 1) - n
+            box b = array.get(fvgBoxes, i)
+            if not na(b) and bar_index > box.get_right(b)
+                fvg_remove_at(i)
+
+// ==============================
+// FRACTAL POOL
+// ==============================
+var float[] fractals = array.new_float()
+
+if enableFractal
+    if not na(phVal)
+        array.push(fractals, phVal)
+    if not na(plVal)
+        array.push(fractals, plVal)
+    
+    if bar_index % 10 == 0
+        if not na(highest50) and f_far(fractals, highest50)
+            array.push(fractals, highest50)
+        if not na(lowest50) and f_far(fractals, lowest50)
+            array.push(fractals, lowest50)
+        if not na(highest200) and f_far(fractals, highest200)
+            array.push(fractals, highest200)
+        if not na(lowest200) and f_far(fractals, lowest200)
+            array.push(fractals, lowest200)
+    
+    while array.size(fractals) > (perfMode ? MAX_FRACTALS_PERF_MODE : MAX_FRACTALS_NORMAL)
+        array.shift(fractals)
+
+// ==============================
+// CONFLUENCE CALCULATION
+// ==============================
+var float[] upL_global = array.new_float()
+var float[] upS_global = array.new_float() 
+var string[] upT_global = array.new_string()
+var float[] dnL_global = array.new_float()
+var float[] dnS_global = array.new_float()
+var string[] dnT_global = array.new_string()
+
+calcScore(float testLevel) =>
+    float best = 0.0
+    
+    if array.size(fractals) > 0
+        if array.size(fractals) >= 1
+            fp1 = array.get(fractals, 0)
+            if not na(fp1) and fp1 != 0
+                dist = math.abs(testLevel - fp1) / math.max(MIN_TICK_PROTECTION, math.abs(fp1)) * 100.0
+                if dist <= confTolPct
+                    best := math.max(best, 1.0 - dist / confTolPct)
+        
+        if array.size(fractals) >= 2
+            fp2 = array.get(fractals, 1)
+            if not na(fp2) and fp2 != 0
+                dist = math.abs(testLevel - fp2) / math.max(MIN_TICK_PROTECTION, math.abs(fp2)) * 100.0
+                if dist <= confTolPct
+                    best := math.max(best, 1.0 - dist / confTolPct)
+        
+        if array.size(fractals) >= 3
+            fp3 = array.get(fractals, 2)
+            if not na(fp3) and fp3 != 0
+                dist = math.abs(testLevel - fp3) / math.max(MIN_TICK_PROTECTION, math.abs(fp3)) * 100.0
+                if dist <= confTolPct
+                    best := math.max(best, 1.0 - dist / confTolPct)
+    
+    if array.size(fvgTop) > 0
+        tp = array.get(fvgTop, 0)
+        if not na(tp)
+            dist1 = math.abs(testLevel - tp) / math.max(MIN_TICK_PROTECTION, math.abs(tp)) * 100.0
+            if dist1 <= confTolPct
+                best := math.max(best, 1.0 - dist1 / confTolPct)
+    
+    if array.size(fvgBot) > 0
+        bt = array.get(fvgBot, 0)
+        if not na(bt)
+            dist2 = math.abs(testLevel - bt) / math.max(MIN_TICK_PROTECTION, math.abs(bt)) * 100.0
+            if dist2 <= confTolPct
+                best := math.max(best, 1.0 - dist2 / confTolPct)
+    
+    if array.size(fvgMids) > 0
+        md = array.get(fvgMids, 0)
+        if not na(md)
+            dist3 = math.abs(testLevel - md) / math.max(MIN_TICK_PROTECTION, math.abs(md)) * 100.0
+            if dist3 <= confTolPct
+                best := math.max(best, 1.0 - dist3 / confTolPct)
+    
+    best
+
+scoreColor(float s, bool upside) =>
+    color base = upside ? color.yellow : color.orange
+    int transparency = s >= 0.7 ? 20 : s >= 0.4 ? 40 : 60
+    color.new(base, transparency)
+
+var line[]  confLines  = array.new_line()
+var label[] confLabels = array.new_label()
+var int upCount = 0
+var int dnCount = 0
+
+clearConfluence() =>
+    if array.size(confLines) > 0
+        for i = 0 to array.size(confLines) - 1
+            line l = array.get(confLines, i)
+            if not na(l)
+                line.delete(l)
+    if array.size(confLabels) > 0
+        for i = 0 to array.size(confLabels) - 1
+            label lb = array.get(confLabels, i)
+            if not na(lb)
+                label.delete(lb)
+    array.clear(confLines)
+    array.clear(confLabels)
+
+if enableFractal and (barstate.islast or (bar_index % math.max(5, calcThrottle) == 0))
+    clearConfluence()
+    
+    array.clear(upL_global)
+    array.clear(upS_global)
+    array.clear(upT_global)
+    array.clear(dnL_global)
+    array.clear(dnS_global)
+    array.clear(dnT_global)
+    
+    float baseRange = math.max(atr14 * 6, (highest200 - lowest200) * 0.4)
+    float maxDistancePct = 20.0
+    
+    for fib in FIBS
+        upLevel = close + fib * baseRange
+        upDistance = math.abs(upLevel - close) / math.max(MIN_TICK_PROTECTION, close) * 100.0
+        
+        if upDistance <= maxDistancePct
+            upScore = calcScore(upLevel)
+            if upScore >= minScore
+                array.push(upL_global, upLevel)
+                array.push(upS_global, upScore)
+                array.push(upT_global, str.tostring(fib, "#.###"))
+        
+        dnLevel = close - fib * baseRange
+        dnDistance = math.abs(dnLevel - close) / math.max(MIN_TICK_PROTECTION, close) * 100.0
+        
+        if dnDistance <= maxDistancePct
+            dnScore = calcScore(dnLevel)
+            if dnScore >= minScore
+                array.push(dnL_global, dnLevel)
+                array.push(dnS_global, dnScore)
+                array.push(dnT_global, str.tostring(fib, "#.###"))
+    
+    upCount := array.size(upL_global)
+    dnCount := array.size(dnL_global)
+    
+    int maxDrawLevels = math.min(fracMaxLevels, confBudgetPerSide)
+        
+    if array.size(upL_global) > 0
+        int upLevels = array.size(upL_global)
+        int drawCount = math.min(maxDrawLevels, upLevels)
+        
+        for i = 0 to drawCount - 1
+            if i < array.size(upL_global) and i < array.size(upS_global) and i < array.size(upT_global)
+                level = array.get(upL_global, i)
+                score = array.get(upS_global, i)
+                tag = array.get(upT_global, i)
+                
+                lineColor = scoreColor(score, true)
+                lineWidth = score >= 0.7 ? 2 : 1
+                confLine = line.new(bar_index, level, bar_index + CONFLUENCE_BAR_OFFSET, level, color=lineColor, width=lineWidth, style=line.style_dotted, extend=extend.right)
+                
+                labelText = tag
+                confLabel = label.new(bar_index + CONFLUENCE_LABEL_OFFSET, level, labelText, color=color.new(lineColor, 70), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+                
+                array.push(confLines, confLine)
+                array.push(confLabels, confLabel)
+        
+    if array.size(dnL_global) > 0
+        int dnLevels = array.size(dnL_global)
+        int drawCount = math.min(maxDrawLevels, dnLevels)
+        
+        for i = 0 to drawCount - 1
+            if i < array.size(dnL_global) and i < array.size(dnS_global) and i < array.size(dnT_global)
+                level = array.get(dnL_global, i)
+                score = array.get(dnS_global, i)
+                tag = array.get(dnT_global, i)
+                
+                lineColor = scoreColor(score, false)
+                lineWidth = score >= 0.7 ? 2 : 1
+                confLine = line.new(bar_index, level, bar_index + CONFLUENCE_BAR_OFFSET, level, color=lineColor, width=lineWidth, style=line.style_dotted, extend=extend.right)
+                
+                labelText = tag
+                confLabel = label.new(bar_index + CONFLUENCE_LABEL_OFFSET, level, labelText, color=color.new(lineColor, 70), textcolor=color.white, style=label.style_label_left, size=size.tiny)
+                
+                array.push(confLines, confLine)
+                array.push(confLabels, confLabel)
+
+// ==============================
+// AMP
+// ==============================
+[dev1, r1, s1, ic1] = getReg(AMP_PERIOD_C1)
+[dev2, r2, s2, ic2] = getReg(AMP_PERIOD_C2)
+[dev3, r3, s3, ic3] = getReg(AMP_PERIOD_C3)
+[dev4, r4, s4, ic4] = getReg(AMP_PERIOD_C4)
+
+float signSum = math.sign(s1) + math.sign(s2) + math.sign(s3) + math.sign(s4)
+bool signConsistent = math.abs(signSum) >= 2
+
+int pick = ampPeriodManual
+if ampAuto and signConsistent
+    float[] rArr = array.from(r1, r2, r3, r4)
+    int[]    pArr= array.from(AMP_PERIOD_C1, AMP_PERIOD_C2, AMP_PERIOD_C3, AMP_PERIOD_C4)
+    int bestI = 1
+    float bestR = array.get(rArr, bestI)
+    for i = 0 to 3
+        rr = array.get(rArr, i)
+        pp = array.get(pArr, i)
+        bool prefer = (pp == AMP_PERIOD_C2 or pp == AMP_PERIOD_C3) and rr >= minR
+        bool upgrade = (prefer and rr > bestR) or ((array.get(pArr, bestI) != AMP_PERIOD_C2 and array.get(pArr, bestI) != AMP_PERIOD_C3) and rr > bestR)
+        if upgrade
+            bestI := i
+            bestR := rr
+    pick := bestR >= minR ? array.get(pArr, bestI) : ampPeriodManual
+
+var int ampBestP = ampPeriodManual
+ampBestP := ampAuto ? pick : ampPeriodManual
+
+float regBack = isCompression ? 1.5 : isExpansion ? 3.0 : 2.0
+int swBars    = (not na(phBar) and not na(plBar)) ? math.abs(phBar - plBar) : 0
+int loClamp   = math.round(1.25 * ampBestP)
+int hiClamp   = math.min(math.round(5.00 * ampBestP), 400)
+int baseBack  = math.round(regBack * ampBestP)
+int wantBack  = math.max(baseBack, swBars)
+int finalLook = math.max(loClamp, math.min(hiClamp, wantBack))
+
+[devB, rB, slopeB, icB] = getReg(finalLook)
+
+int   x1 = math.max(0, bar_index - finalLook + 1)
+int   x2 = bar_index
+int   nL = finalLook
+float yLeft  = adj(icB + slopeB * 1.0)
+float yRight = adj(icB + slopeB * nL)
+float dAmp   = ampDevMult * devB
+
+float uLeft  = ampLog ? adj(unadj(yLeft)  + dAmp) : yLeft  + dAmp
+float mLeft  = yLeft
+float lLeft  = ampLog ? adj(unadj(yLeft)  - dAmp) : yLeft  - dAmp
+float uRight = ampLog ? adj(unadj(yRight) + dAmp) : yRight + dAmp
+float mRight = yRight
+float lRight = ampLog ? adj(unadj(yRight) - dAmp) : yRight - dAmp
+
+float baseThrAmp  = FLAT_SLOPE_THRESHOLD * syminfo.mintick
+float slopeThrAmp = ampLog ? math.log(1 + baseThrAmp / math.max(MIN_TICK_PROTECTION, close)) : baseThrAmp
+float slopeThr_alt = useAutoFlat
+     ? (ampLog ? math.log(1.0 + flatPctPerBar/100.0)
+               : (flatPctPerBar/100.0) * math.max(MIN_TICK_PROTECTION, math.abs(close)))
+     : slopeThrAmp
+float slopeThr = slopeThr_alt
+bool isFlat = math.abs(slopeB) < slopeThr
+ 
+if not enableAMP and not na(ampU)
+    line.delete(ampU), line.delete(ampM), line.delete(ampL)
+    if not na(ampF1)
+        linefill.delete(ampF1)
+    if not na(ampF2)
+        linefill.delete(ampF2)
+    ampU := na, ampM := na, ampL := na, ampF1 := na, ampF2 := na
+
+if enableAMP and barstate.islast and (drawWhenFlat or not isFlat)
+    extNow = extendFromStr(ampExtSel)
+    if na(ampU)
+        ampU := line.new(x1, uLeft, x2, uRight, color=color.gray, extend=extNow)
+        ampL := line.new(x1, lLeft, x2, lRight, color=color.gray, extend=extNow)
+        ampM := line.new(x1, mLeft, x2, mRight, color=color.new(color.gray, 50), style=line.style_dashed, extend=extNow)
+    else
+        line.set_xy1(ampU, x1, uLeft), line.set_xy2(ampU, x2, uRight), line.set_extend(ampU, extNow)
+        line.set_xy1(ampL, x1, lLeft), line.set_xy2(ampL, x2, lRight), line.set_extend(ampL, extNow)
+        line.set_xy1(ampM, x1, mLeft), line.set_xy2(ampM, x2, mRight), line.set_extend(ampM, extNow)
+    if not na(ampF1)
+        linefill.delete(ampF1)
+    if not na(ampF2)
+        linefill.delete(ampF2)
+    ampF1 := linefill.new(ampU, ampM, color.new(#909497, 90))
+    ampF2 := linefill.new(ampM, ampL, color.new(#909497, 90))
+
+// ==============================
+// ENERGY PROJECTION
+// ==============================
+proj = energyATRMult * atr14 * math.sqrt(energyHorizon)
+upB  = close + proj
+dnB  = close - proj
+
+if not enableEnergy and not na(eUp)
+    line.delete(eUp), line.delete(eDn)
+    if not na(eFill)
+        linefill.delete(eFill)
+    eUp := na, eDn := na, eFill := na
+
+if enableEnergy
+    if na(eUp)
+        eUp := line.new(bar_index, upB, bar_index + energyHorizon, upB, color=color.new(color.purple, 50))
+        eDn := line.new(bar_index, dnB, bar_index + energyHorizon, dnB, color=color.new(color.purple, 50))
+    else
+        line.set_xy1(eUp, bar_index, upB), line.set_xy2(eUp, bar_index + energyHorizon, upB)
+        line.set_xy1(eDn, bar_index, dnB), line.set_xy2(eDn, bar_index + energyHorizon, dnB)
+    if not na(eFill)
+        linefill.delete(eFill)
+    eFill := linefill.new(eUp, eDn, energyColor)
+
+// ==============================
+// CHECKLIST PANEL
+// ==============================
+float nearTol_px = atr14 * 0.75
+float midTol = atr14 * 0.25
+ 
+bool trendUp_p    = slopeB >  +slopeThr
+bool trendDown_p  = slopeB <  -slopeThr
+bool nearLower_p  = not na(lRight) and math.abs(close - lRight) <= nearTol_px
+bool nearUpper_p  = not na(uRight) and math.abs(close - uRight) <= nearTol_px
+bool belowMid_p   = not na(mRight) and close <= mRight
+bool aboveMid_p   = not na(mRight) and close >= mRight
+
+bool nearMid_p    = not na(mRight) and math.abs(close - mRight) <= midTol
+bool locLong_p    = (belowMid_p or nearLower_p) and not nearMid_p
+bool locShort_p   = (aboveMid_p or nearUpper_p) and not nearMid_p
+
+bool confLong_p   = upCount >= checkMinConf
+bool confShort_p  = dnCount >= checkMinConf
+
+int  bSinceBull_p = ta.barssince(bullSweep)
+int  bSinceBear_p = ta.barssince(bearSweep)
+bool liqLong_p    = not na(bSinceBull_p) and bSinceBull_p <= checkLookback
+bool liqShort_p   = not na(bSinceBear_p) and bSinceBear_p <= checkLookback
+
+string sideAuto_p =
+     (upCount - dnCount) > biasEdge ? "Long" :
+     (dnCount - upCount) > biasEdge ? "Short" :
+     trendUp_p         ? "Long"  :
+     trendDown_p       ? "Short" :
+     liqLong_p         ? "Long"  :
+     liqShort_p        ? "Short" :
+     (not na(mRight) and close > mRight) ? "Long" :
+     (not na(mRight) and close < mRight) ? "Short" : "None"
+string sideSel_p = checkSide == "Auto" ? sideAuto_p : checkSide
+
+bool cTrend_p = sideSel_p == "Long" ? trendUp_p : sideSel_p == "Short" ? trendDown_p : false
+bool cLoc_p   = sideSel_p == "Long" ? locLong_p  : sideSel_p == "Short" ? locShort_p  : false
+bool cConf_p  = sideSel_p == "Long" ? confLong_p : sideSel_p == "Short" ? confShort_p : false
+bool liqAny_p = liqLong_p or liqShort_p
+bool cLiq_p   = sideSel_p == "Long"  ? liqLong_p
+              : sideSel_p == "Short" ? liqShort_p
+              : liqAny_p
+
+bool allGreen_p = cTrend_p and cLoc_p and cConf_p and cLiq_p
+
+string regimeTxt = isCompression ? "COMPRESS" : isExpansion ? "EXPAND" : "ACTIVE"
+
+string biasTxt = upCount > dnCount ? "UP (up="+str.tostring(upCount)+", dn="+str.tostring(dnCount)+") [Confluence]"
+                  : dnCount > upCount ? "DOWN (up="+str.tostring(upCount)+", dn="+str.tostring(dnCount)+") [Confluence]"
+                  : "BALANCED (up="+str.tostring(upCount)+", dn="+str.tostring(dnCount)+") [Confluence]"
+
+string liqDirTxt = na(bSinceBull_p) and na(bSinceBear_p) ? "NONE" : na(bSinceBear_p) ? "BUY" : na(bSinceBull_p) ? "SELL" : (bSinceBull_p < bSinceBear_p ? "BUY" : "SELL")
+string liqWord   = liqAny_p ? "Recent ("+liqDirTxt+")" : "Neutral"
+
+mvPct = proj / math.max(MIN_TICK_PROTECTION, math.abs(close)) * 100.0
+string moveTxt = str.format("{0,number,#.#}%", mvPct)
+string ampTxt  = "P=" + str.tostring(ampBestP) + "  R=" + str.tostring(rB, "#.##")
+string slopeDir = math.abs(slopeB) < slopeThr ? "FLAT" : slopeB > 0 ? "UP" : "DOWN"
+string slopeTxt = slopeDir + " (" + str.format("±{0,number,0.###}×thr", math.abs(slopeB)/slopeThr) + ")"
+
+mkbar(float h) =>
+    int seg = 8
+    int filled = int(math.floor(h / 100.0 * seg + 0.0001))
+    string bar = ""
+    for i = 0 to seg - 1
+        if i < filled
+            bar += "█"
+        else
+            bar += "░"
+    bar
+qLoShow = qLow, qHiShow = qHigh
+upDnTotal = math.max(1, upCount + dnCount)
+
+string trendNowTxt = trendUp_p ? "UP" : trendDown_p ? "DOWN" : "FLAT"
+string trendResTxt = cTrend_p ? "OK" : (sideSel_p=="Short" and trendUp_p) ? "Mismatch" : (sideSel_p=="Long" and trendDown_p) ? "Mismatch" : "X"
+
+bool useLong = sideSel_p == "Long"
+bool useShort= sideSel_p == "Short"
+string locNowTxt = useLong  ? (locLong_p  ? "LONG-ZONE"  : "NEUTRAL")
+                 : useShort ? (locShort_p ? "SHORT-ZONE" : "NEUTRAL")
+                 : "NEUTRAL"
+string locResTxt = cLoc_p ? "OK" : "X"
+
+string confNowTxt = useLong ? str.tostring(upCount) : useShort ? str.tostring(dnCount) : "0"
+string confResTxt = cConf_p ? "OK" : "X"
+
+string liqNowTxt  = liqAny_p ? "RECENT ("+liqDirTxt+")" : "NONE"
+string liqResTxt  = cLiq_p ? "OK" : "X"
+
+string sumTxt = allGreen_p ? (useLong ? "CONFIRM LONG" : useShort ? "CONFIRM SHORT" : "WAIT") : "WAIT"
+
+int approvalScore = (cTrend_p?25:0) + (cLoc_p?25:0) + (cConf_p?25:0) + (cLiq_p?25:0)
+string approvalStatus = approvalScore == 100 ? "FULL APPROVAL" : approvalScore >= 75 ? "HIGH APPROVAL" : approvalScore >= 50 ? "MEDIUM APPROVAL" : approvalScore >= 25 ? "LOW APPROVAL" : "NO APPROVAL"
+color approvalColor = approvalScore == 100 ? color.new(color.green, 0) : approvalScore >= 75 ? color.new(color.lime, 20) : approvalScore >= 50 ? color.new(color.yellow, 20) : approvalScore >= 25 ? color.new(color.orange, 20) : color.new(color.red, 20)
+
+float trendBarHeight = math.min(100, 100 * math.min(2.0, math.abs(slopeB) / slopeThr))
+float locBarHeight   = nearLower_p or nearUpper_p ? 100 : nearMid_p ? 30 : 60
+float confBarHeight  = math.min(100.0, (math.max(upCount, dnCount) / math.max(1.0, float(math.min(fracMaxLevels, confBudgetPerSide)))) * 100.0)
+int sinceAny = na(bSinceBull_p) and na(bSinceBear_p) ? na :
+               na(bSinceBull_p) ? bSinceBear_p :
+               na(bSinceBear_p) ? bSinceBull_p :
+               math.min(bSinceBull_p, bSinceBear_p)
+float liqBarHeight  = not na(sinceAny) and sinceAny <= checkLookback ? 100.0 * (checkLookback - sinceAny) / checkLookback : 0.0
+float overallScore  = approvalScore
+
+// ==============================
+// PANEL UI
+// ==============================
+ 
+if not enablePanels and not na(ui) and barstate.islast
+    table.clear(ui, 0, 0, 4, 13)
+
+if enablePanels and barstate.islast
+    if na(ui)
+        ui := table.new(position.top_right, 5, 14, bgcolor=color.new(#0a0a0a, 85), border_width=3, border_color=color.new(#2a2a2a, 70))
+    table.clear(ui, 0, 0, 4, 13)
+
+    color bgDark = color.new(#0a0a0a, 85)
+    color bgCard = color.new(#1a1a1a, 80)
+    color bgSuccess = color.new(#0d4f3c, 70)
+    color bgWarning = color.new(#4a3c0d, 70)
+    color bgError = color.new(#4a0d0d, 70)
+    color textPrimary = color.new(#ffffff, 0)
+    color textSecondary = color.new(#b0b0b0, 0)
+    color textAccent = color.new(#4ade80, 0)
+    color borderAccent = color.new(#3b82f6, 60)
+    
+    if panelMode == "Compact"
+        string edgeText = str.format("{0}% {1}", approvalScore, approvalStatus)
+        table.cell(ui, 0, 0, edgeText, text_color=textPrimary, text_halign=text.align_center, bgcolor=approvalColor, text_size=size.large)
+        table.merge_cells(ui, 0, 0, 4, 0)
+
+        string biasCardC = upCount > dnCount ? "BULL" : dnCount > upCount ? "BEAR" : "NEUTRAL"
+        string slopeArrow = slopeDir == "UP" ? "↗" : slopeDir == "DOWN" ? "↘" : "→"
+        string biasBadge = str.format("{0} {1}", biasCardC, slopeArrow)
+        table.cell(ui, 0, 1, biasBadge, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+
+        string confHeat = str.format("Conf {0}", mkbar(confBarHeight))
+        table.cell(ui, 1, 1, confHeat, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+
+        string liqHeat = str.format("Liq {0}", mkbar(liqBarHeight))
+        table.cell(ui, 2, 1, liqHeat, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+
+        string energyTxt2 = str.format("E H{0}×{1}", energyHorizon, str.format("{0,number,0.#}", energyATRMult))
+        table.cell(ui, 3, 1, energyTxt2, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+
+        string alertsTxt = enableAlerts ? "ALRT ON" : "ALRT OFF"
+        table.cell(ui, 4, 1, alertsTxt, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+
+        string overallStatusC = allGreen_p ? (useLong ? "LONG SIGNAL ACTIVE" : useShort ? "SHORT SIGNAL ACTIVE" : "WAITING FOR SIGNAL") : "WAITING FOR SIGNAL"
+        color overallBgC = allGreen_p ? (useLong ? color.new(#26a69a, 60) : useShort ? color.new(#ef5350, 60) : color.new(#4a3c0d, 60)) : color.new(#4a3c0d, 60)
+        table.cell(ui, 0, 2, overallStatusC, text_color=textPrimary, text_halign=text.align_center, bgcolor=overallBgC, text_size=size.large)
+        table.merge_cells(ui, 0, 2, 4, 2)
+
+        string statsTextC = str.format("R²: {0} | ATR: {1}", str.format("{0,number,0.##}", rB), str.format("{0,number,0.##}", atr14))
+        table.cell(ui, 0, 3, statsTextC, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+        table.merge_cells(ui, 0, 3, 4, 3)
+    else
+         
+        string headerText = str.format("{0}% {1}", approvalScore, approvalStatus)
+        table.cell(ui, 0, 0, headerText, text_color=textPrimary, text_halign=text.align_center, bgcolor=approvalColor, text_size=size.large)
+        table.merge_cells(ui, 0, 0, 4, 0)
+
+         
+        string regimeCard = denseMode ? (isCompression ? "COMP" : isExpansion ? "EXP" : "ACT") : regimeTxt
+        table.cell(ui, 0, 1, regimeCard, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=(denseMode ? size.small : size.normal))
+        
+        string moveCard = denseMode ? moveTxt : moveTxt
+        table.cell(ui, 1, 1, moveCard, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=(denseMode ? size.small : size.normal))
+        
+        string biasBase = upCount > dnCount ? (denseMode ? "BULL" : "BULL") : dnCount > upCount ? (denseMode ? "BEAR" : "BEAR") : (denseMode ? "NEUTRAL" : "NEUTRAL")
+        string slopeArrowC = slopeDir == "UP" ? "↗" : slopeDir == "DOWN" ? "↘" : "→"
+        string biasCard = denseMode ? str.format("{0}{1} R² {2}", biasBase == "NEUTRAL" ? "NEU" : biasBase == "BULL" ? "BULL" : "BEAR", slopeArrowC, str.format("{0,number,0.##}", rB)) : str.format("{0} {1} · R² {2}", biasBase, slopeArrowC, str.format("{0,number,0.##}", rB))
+        table.cell(ui, 2, 1, biasCard, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=(denseMode ? size.small : size.normal))
+        
+        string pvCard = denseMode ? str.format("P{0} · V{1}", ampBestP, str.format("{0,number,0.##}", volRatio)) : str.format("P{0}", ampBestP)
+        table.cell(ui, 3, 1, pvCard, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=(denseMode ? size.small : size.normal))
+        
+        if not denseMode
+            string volCard = str.format("Vol {0}", str.format("{0,number,0.##}", volRatio))
+            table.cell(ui, 4, 1, volCard, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.normal)
+        
+         
+        bool aBullFvgCond = enableFVG and barstate.isconfirmed and not na(high[2]) and low > high[2] and ((low - high[2]) / math.max(high[2], 1e-6) * 100 >= fvgMinPct)
+        bool aBearFvgCond = enableFVG and barstate.isconfirmed and not na(low[2]) and high < low[2] and ((low[2] - high) / math.max(low[2], 1e-6) * 100 >= fvgMinPct)
+        int alertsActive = (enableAlerts ? 1 : 0) * ((bullSweepRaw ? 1 : 0) + (bearSweepRaw ? 1 : 0) + (bullSweep ? 1 : 0) + (bearSweep ? 1 : 0) + (aBullFvgCond ? 1 : 0) + (aBearFvgCond ? 1 : 0) + ((volRatio < qLow) ? 1 : 0) + ((volRatio > qHigh) ? 1 : 0))
+        int fvgCountNow = array.size(fvgBoxes)
+
+        if denseMode
+            string trendPart = str.format("Trend {0} {1}", slopeDir, str.format("{0,number,0.##}×", math.abs(slopeB)/slopeThr))
+            string lineBadges = trendPart + " | " + liqWord + " | FVG " + str.tostring(fvgCountNow) + " | ALRT " + str.tostring(alertsActive) + " | E " + str.tostring(energyHorizon) + "×" + str.format("{0,number,0.#}", energyATRMult)
+            table.cell(ui, 0, 2, lineBadges, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.small)
+            table.merge_cells(ui, 0, 2, 4, 2)
+        else
+            string trendInfo = str.format("Trend {0} {1}", slopeDir, str.format("{0,number,0.##}×", math.abs(slopeB)/slopeThr))
+            table.cell(ui, 0, 2, trendInfo, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+
+            string liqInfo = liqWord
+            table.cell(ui, 1, 2, liqInfo, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+
+            string fvgInfo = str.format("FVG {0}", fvgCountNow)
+            table.cell(ui, 2, 2, fvgInfo, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+
+            string alertsInfo = "ALRT " + str.tostring(alertsActive)
+            table.cell(ui, 3, 2, alertsInfo, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+
+            string energyInfo = str.format("E H{0}×{1}", energyHorizon, str.format("{0,number,0.#}", energyATRMult))
+            table.cell(ui, 4, 2, energyInfo, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+
+
+         
+        string trendText = str.format("{0} Trend: {1}", cTrend_p ? "✓" : "✗", trendNowTxt)
+        color trendBg = cTrend_p ? bgSuccess : bgError
+        table.cell(ui, 0, 4, trendText, text_color=textPrimary, text_halign=text.align_left, bgcolor=trendBg, text_size=size.normal)
+        table.merge_cells(ui, 0, 4, 4, 4)
+
+        string locText = str.format("{0} Location: {1}", cLoc_p ? "✓" : "✗", locNowTxt)
+        color locBg = cLoc_p ? bgSuccess : bgError
+        table.cell(ui, 0, 5, locText, text_color=textPrimary, text_halign=text.align_left, bgcolor=locBg, text_size=size.normal)
+        table.merge_cells(ui, 0, 5, 4, 5)
+
+        string confText = str.format("{0} Confluence: {1} levels", cConf_p ? "✓" : "✗", confNowTxt)
+        color confBg = cConf_p ? bgSuccess : bgError
+        table.cell(ui, 0, 6, confText, text_color=textPrimary, text_halign=text.align_left, bgcolor=confBg, text_size=size.normal)
+        table.merge_cells(ui, 0, 6, 4, 6)
+
+        string liqText = str.format("{0} Liquidity: {1}", cLiq_p ? "✓" : "✗", liqNowTxt)
+        color liqBg = cLiq_p ? bgSuccess : bgError
+        table.cell(ui, 0, 7, liqText, text_color=textPrimary, text_halign=text.align_left, bgcolor=liqBg, text_size=size.normal)
+        table.merge_cells(ui, 0, 7, 4, 7)
+
+          
+        if denseMode
+            string progressLine = str.format("Vol {0} | Loc {1} | Mom {2} | Liq {3}", mkbar(math.min(100, volRatio * 100)), mkbar(locBarHeight), mkbar(math.min(100, math.abs(slopeB) / slopeThr * 50)), mkbar(liqBarHeight))
+            table.cell(ui, 0, 8, progressLine, text_color=textPrimary, text_halign=text.align_center, bgcolor=bgCard, text_size=size.small)
+            table.merge_cells(ui, 0, 8, 4, 8)
+        else
+            string volatilityBar = str.format("Volatility: {0}", mkbar(math.min(100, volRatio * 100)))
+            table.cell(ui, 0, 8, volatilityBar, text_color=textPrimary, text_halign=text.align_left, bgcolor=bgCard, text_size=size.normal)
+            table.merge_cells(ui, 0, 8, 2, 8)
+            
+            string locBar = str.format("Location: {0}", mkbar(locBarHeight))
+            table.cell(ui, 3, 8, locBar, text_color=textPrimary, text_halign=text.align_left, bgcolor=bgCard, text_size=size.normal)
+            table.merge_cells(ui, 3, 8, 4, 8)
+
+            string momentumBar = str.format("Momentum: {0}", mkbar(math.min(100, math.abs(slopeB) / slopeThr * 50)))
+            table.cell(ui, 0, 9, momentumBar, text_color=textPrimary, text_halign=text.align_left, bgcolor=bgCard, text_size=size.normal)
+            table.merge_cells(ui, 0, 9, 2, 9)
+            
+            string liqBar2 = str.format("Liquidity: {0}", mkbar(liqBarHeight))
+            table.cell(ui, 3, 9, liqBar2, text_color=textPrimary, text_halign=text.align_left, bgcolor=bgCard, text_size=size.normal)
+            table.merge_cells(ui, 3, 9, 4, 9)
+
+         
+        string overallStatus = allGreen_p ? (useLong ? "LONG SIGNAL ACTIVE" : "SHORT SIGNAL ACTIVE") : "WAITING FOR SIGNAL"
+        color overallBg = allGreen_p ? (useLong ? color.new(#26a69a, 60) : color.new(#ef5350, 60)) : color.new(#4a3c0d, 60)
+        table.cell(ui, 0, 10, overallStatus, text_color=textPrimary, text_halign=text.align_center, bgcolor=overallBg, text_size=size.large)
+        table.merge_cells(ui, 0, 10, 4, 10)
+
+         
+        string statsText = str.format("R²: {0} | ATR: {1}", str.format("{0,number,0.##}", rB), str.format("{0,number,0.##}", atr14))
+        table.cell(ui, 0, 12, statsText, text_color=textSecondary, text_halign=text.align_center, bgcolor=bgDark, text_size=size.normal)
+        table.merge_cells(ui, 0, 12, 4, 12)
+
+
+// ==============================
+// GLOBAL FLAGS FOR ALERTS
+// ==============================
+var bool   allGreenG = false
+var string sideSelG  = "None"
+allGreenG := allGreen_p
+sideSelG  := sideSel_p
+
+// ==============================
+// ALERTS
+// ==============================
+bool bullFvgCond = enableFVG and barstate.isconfirmed and not na(high[2]) and low > high[2] and ((low - high[2]) / math.max(high[2], 1e-6) * 100 >= fvgMinPct)
+bool bearFvgCond = enableFVG and barstate.isconfirmed and not na(low[2])  and high < low[2]  and ((low[2] - high) / math.max(low[2], 1e-6)  * 100 >= fvgMinPct)
+
+alertcondition(enableAlerts and bullSweepRaw, "Bullish Liquidity Sweep raw", "Bullish liquidity sweep detected (raw).")
+alertcondition(enableAlerts and bearSweepRaw, "Bearish Liquidity Sweep raw", "Bearish liquidity sweep detected (raw).")
+alertcondition(enableAlerts and bullSweep,    "Bullish Liquidity Sweep",     "Bullish liquidity sweep detected (confirmed).")
+alertcondition(enableAlerts and bearSweep,    "Bearish Liquidity Sweep",     "Bearish liquidity sweep detected (confirmed).")
+alertcondition(enableAlerts and bullFvgCond,  "Bullish FVG",                 "Bullish fair value gap formed.")
+alertcondition(enableAlerts and bearFvgCond,  "Bearish FVG",                 "Bearish fair value gap formed.")
+alertcondition(enableAlerts and (volRatio < qLow),  "Energy Accumulation", "Compression regime.")
+alertcondition(enableAlerts and (volRatio > qHigh), "Energy Expansion",    "Expansion regime.")
+alertcondition(enableChecklist and allGreenG and (sideSelG == "Long"),  "Checklist Confirm LONG",  "All checks green: LONG.")
+alertcondition(enableChecklist and allGreenG and (sideSelG == "Short"), "Checklist Confirm SHORT", "All checks green: SHORT.")

@@ -1,0 +1,52 @@
+//@version=5
+strategy("移動平均線 + RSI ストラテジーテスト", overlay=true)
+
+// --- 入力パラメータ ---
+short_term_length = input.int(5, title="短期移動平均線の期間", minval=1)
+middle_term_length = input.int(25, title="中期移動平均線の期間", minval=1)
+long_term_length = input.int(75, title="長期移動平均線の期間", minval=1)
+rsiLength = input.int(14, title="RSIの期間", minval=1)
+rsiTrendThreshold = input.int(50, title="RSIトレンド閾値 (上昇トレンド判定)", minval=0, maxval=100)
+
+// --- 移動平均線の計算 ---
+short_term_ma = ta.sma(close, short_term_length)
+middle_term_ma = ta.sma(close, middle_term_length)
+long_term_ma = ta.sma(close, long_term_length)
+
+// --- RSIの計算 ---
+rsiValue = ta.rsi(close, rsiLength)
+
+// --- 条件判定 ---
+// 移動平均線が短期 > 中期 > 長期で並んでいるか
+condition_order = short_term_ma > middle_term_ma and middle_term_ma > long_term_ma
+
+// 移動平均線が全て上昇しているか
+condition_upward = short_term_ma > short_term_ma[1] and middle_term_ma > middle_term_ma[1] and long_term_ma > long_term_ma[1]
+
+// RSIがトレンド閾値を超え、上昇しているか
+condition_rsi_trend = rsiValue > rsiTrendThreshold and rsiValue > rsiValue[1]
+
+// 全ての条件が満たされる場合にエントリー条件を成立
+buy_condition = condition_order and condition_upward and condition_rsi_trend
+
+// 条件が外れた場合のエグジット条件
+sell_condition = not buy_condition
+
+// --- ストラテジーのエントリーとエグジット ---
+// 買いエントリー
+if buy_condition
+    strategy.entry("Buy", strategy.long)
+
+// 売りエグジット
+if sell_condition
+    strategy.close("Buy")
+
+// --- プロット ---
+// 移動平均線を表示
+plot(short_term_ma, color=color.new(color.red, 0), linewidth=2, title="短期移動平均線")
+plot(middle_term_ma, color=color.new(color.blue, 0), linewidth=2, title="中期移動平均線")
+plot(long_term_ma, color=color.new(color.green, 0), linewidth=2, title="長期移動平均線")
+
+// RSIをサブウィンドウで表示
+hline(rsiTrendThreshold, "RSI 閾値", color=color.gray)
+plot(rsiValue, color=color.purple, linewidth=2, title="RSI 値")

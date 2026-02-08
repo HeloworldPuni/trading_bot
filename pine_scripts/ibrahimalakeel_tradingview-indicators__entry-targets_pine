@@ -1,0 +1,84 @@
+//@version=4
+study("Entry and Target Lines", shorttitle="Entry/Targets", overlay=true)
+
+entryPrice01 = 0.0
+entryPrice02 = 0.0
+target1Price0 = 0.0
+target2Price0 = 0.0
+target3Price0 = 0.0
+target4Price0 = 0.0
+target5Price0 = 0.0
+target6Price0 = 0.0
+stopLossPrice0 = 0.0
+
+// Define Entry and Target Prices
+entryPrice = input(entryPrice01, title="Entry Price 1")
+entryPrice2 = input(entryPrice02, title="Entry Price 2")
+target1Price = input(target1Price0, title="Target 1 Price")
+target2Price = input(target2Price0, title="Target 2 Price")
+target3Price = input(target3Price0, title="Target 3 Price")
+target4Price = input(target4Price0, title="Target 4 Price")
+target5Price = input(target5Price0, title="Target 5 Price")
+target6Price = input(target6Price0, title="Target 6 Price")
+stopLossPrice = input(stopLossPrice0, title="Stop Loss Price")
+
+// Calculate percentage for each target
+percentage1 = ((target1Price - entryPrice) / entryPrice) * 100
+percentage2 = ((target2Price - entryPrice) / entryPrice) * 100
+percentage3 = ((target3Price - entryPrice) / entryPrice) * 100
+percentage4 = ((target4Price - entryPrice) / entryPrice) * 100
+percentage5 = ((target5Price - entryPrice) / entryPrice) * 100
+percentage6 = ((target6Price - entryPrice) / entryPrice) * 100
+stopLossPercentage = ((stopLossPrice - entryPrice) / entryPrice) * 100
+
+// Plot Lines at Entry and Target Prices
+var lineEntry = line.new(x1=bar_index, y1=entryPrice, x2=bar_index, y2=entryPrice, color=color.green, width=2)
+var lineEntry2 = line.new(x1=bar_index, y1=entryPrice2, x2=bar_index, y2=entryPrice2, color=color.green, width=2)
+var lineTarget1 = line.new(x1=bar_index, y1=target1Price, x2=bar_index, y2=target1Price, color=color.fuchsia, width=2)
+var lineTarget2 = line.new(x1=bar_index, y1=target2Price, x2=bar_index, y2=target2Price, color=color.fuchsia, width=2)
+var lineTarget3 = line.new(x1=bar_index, y1=target3Price, x2=bar_index, y2=target3Price, color=color.fuchsia, width=2)
+var lineTarget4 = line.new(x1=bar_index, y1=target4Price, x2=bar_index, y2=target4Price, color=color.fuchsia, width=2)
+var lineTarget5 = line.new(x1=bar_index, y1=target5Price, x2=bar_index, y2=target5Price, color=color.fuchsia, width=2)
+var lineTarget6 = line.new(x1=bar_index, y1=target6Price, x2=bar_index, y2=target6Price, color=color.fuchsia, width=2)
+var lineStopLoss = line.new(x1=bar_index, y1=stopLossPrice, x2=bar_index, y2=stopLossPrice, color=color.red, width=2)
+
+// Plot Percentage and Price Text Labels for Target Prices
+label.delete(entryPrice)
+label.delete(entryPrice2)
+label.delete(target1)
+label.delete(target2)
+label.delete(target3)
+label.delete(target4)
+label.delete(target5)
+label.delete(target6)
+label.delete(stopLossPrice)
+
+label.entryPrice = label.new(x=bar_index + 60, y=entryPrice, text="Entry" + " | " + tostring(entryPrice, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.entryPrice2 = label.new(x=bar_index + 60, y=entryPrice2, text="Entry"+ " | " + tostring(entryPrice2, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target1 = label.new(x=bar_index + 60, y=target1Price, text=tostring(percentage1, format.percent) + " | " + tostring(target1Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target2 = label.new(x=bar_index + 60, y=target2Price, text=tostring(percentage2, format.percent) + " | " + tostring(target2Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target3 = label.new(x=bar_index + 60, y=target3Price, text=tostring(percentage3, format.percent) + " | " + tostring(target3Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target4 = label.new(x=bar_index + 60, y=target4Price, text=tostring(percentage4, format.percent) + " | " + tostring(target4Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target5 = label.new(x=bar_index + 60, y=target5Price, text=tostring(percentage5, format.percent) + " | " + tostring(target5Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.target6 = label.new(x=bar_index + 60, y=target6Price, text=tostring(percentage6, format.percent) + " | " + tostring(target6Price, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+label.stopLossPrice = label.new(x=bar_index + 60, y=stopLossPrice, text=tostring(stopLossPercentage, format.percent) + " | " + tostring(stopLossPrice, "#.########"), color=color.fuchsia, textcolor=color.white, style=label.style_label_center, size=size.small)
+
+// Update line positions
+line.set_x1(lineEntry, bar_index - 60)
+line.set_x2(lineEntry, bar_index + 60)
+line.set_x1(lineEntry2, bar_index - 60)
+line.set_x2(lineEntry2, bar_index + 60)
+line.set_x1(lineTarget1, bar_index - 60)
+line.set_x2(lineTarget1, bar_index + 60)
+line.set_x1(lineTarget2, bar_index - 60)
+line.set_x2(lineTarget2, bar_index + 60)
+line.set_x1(lineTarget3, bar_index - 60)
+line.set_x2(lineTarget3, bar_index + 60)
+line.set_x1(lineTarget4, bar_index - 60)
+line.set_x2(lineTarget4, bar_index + 60)
+line.set_x1(lineTarget5, bar_index - 60)
+line.set_x2(lineTarget5, bar_index + 60)
+line.set_x1(lineTarget6, bar_index - 60)
+line.set_x2(lineTarget6, bar_index + 60)
+line.set_x1(lineStopLoss, bar_index - 60)
+line.set_x2(lineStopLoss, bar_index + 60)

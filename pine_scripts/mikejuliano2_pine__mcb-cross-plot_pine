@@ -1,0 +1,39 @@
+//@version=4
+// This is just a simple script to plot a character when an oscillator crosses 0
+
+study(title="MCB - Cross Plot", format=format.price, overlay=true)
+
+wave = input(type=input.source, defval=hlc3, title="Wave to monitor (e.g. VWAP, MFI)")
+crossValue = input(title="Cross Value", defval=0)
+bullishColor = input(title="Bullish Color", defval=color.new(#1cd206, 0))
+bearishColor = input(title="Bearish Color", defval=color.new(#f21616, 0))
+characterToPlot = input(title="Character to plot", defval='V')
+charLocation = input(location.absolute, 'Character Location', options=['AboveBar', 'BelowBar', 'Absolute', 'Top', 'Bottom'])
+_size = input(size.tiny, 'Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge])
+offset = input(-1, 'Offset')
+marginModifier = input(0.3, 'Margin Modifier', minval=0.05, maxval=0.95, step=0.05)
+invertPosition = input(false, 'Invert Positiong', tooltip='Toggle above/below bar. Only works when location is set to Absolute.')
+
+hasBullishCross = wave > crossValue and wave[1] < crossValue
+hasBearishCross = wave < crossValue and wave[1] > crossValue
+hasAnyCross = hasBullishCross or hasBearishCross
+
+charColor = hasBearishCross ? bearishColor : bullishColor
+
+margin = (max((high-low), 20) * marginModifier)
+
+modifiedSeries = invertPosition 
+  ? low - margin
+  : high + margin
+  
+// modifiedSeries = low - (high - low)
+plotchar( 
+     series=hasAnyCross ? modifiedSeries : na,
+     title="Cross",
+     char=characterToPlot,
+     location=charLocation,
+     size=size.tiny,
+     color=charColor,
+     textcolor=charColor,
+     offset=offset
+     )

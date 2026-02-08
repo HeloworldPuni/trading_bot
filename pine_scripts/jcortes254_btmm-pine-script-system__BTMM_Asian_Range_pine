@@ -1,0 +1,534 @@
+//@version=5
+
+// =============================================================================
+// BTMM ASIAN RANGE - SESSION-BASED TRADING ZONES (FIXED VERSION)
+// =============================================================================
+// @description Asian session range detection with breakout analysis
+// @purpose High-probability breakout trading using Asian session accumulation
+// @method Session-based range analysis with institutional flow confirmation
+// @author BTMM Development Team
+// @version 2.1 - Fixed variable conflicts and duplications
+// @date 2025-07-07
+// =============================================================================
+
+indicator("BTMM Asian Range", "BTMM Asian", overlay=true, shorttitle="BTMM Asian",
+         max_boxes_count=50, max_lines_count=100, max_labels_count=100)
+
+// ============================================================================
+// 🌏 ASIAN SESSION CONFIGURATION
+// ============================================================================
+
+// === SESSION TIMING SETTINGS ===
+session_group = "⏰ Session Timing (Market Maker Cycle)"
+asian_session_time = input.session("1700-0000", "Asian Session (Accumulation)", group=session_group, tooltip="17:00-00:00 EST - Corrected timing")
+asian_pivot_reference = input.session("1700-1700", "Asian Pivot Reference (24h)", group=session_group, tooltip="24-hour reference for pivot lines (5PM to next day 5PM)")
+london_session_time = input.session("0200-0900", "London Session (Manipulation)", group=session_group, tooltip="02:00-09:00 EST - Prime trading")
+ny_session_time = input.session("0930-1700", "NY Session (Distribution)", group=session_group, tooltip="09:30-17:00 EST - Prime trading")
+show_session_boxes = input.bool(true, "Show Session Background", group=session_group)
+enable_stop_hunt_warnings = input.bool(true, "Enable Stop Hunt Warnings", group=session_group)
+
+// === ASIAN LEVEL SETTINGS ===
+asian_group = "🌏 Asian Level Analysis"
+show_asian_levels = input.bool(true, "Show Asian Levels", group=asian_group)
+show_asian_box = input.bool(true, "Show Asian Box", group=asian_group)
+show_level_labels = input.bool(true, "Show Level Labels", group=asian_group)
+show_quality_assessment = input.bool(true, "Show Quality Assessment", group=asian_group)
+extend_levels = input.int(50, "Extend Levels (bars)", minval=10, maxval=200, group=asian_group)
+track_asian_range = input.bool(true, "Track Asian Range", group=asian_group)
+asian_range_extension = input.bool(true, "Show Asian Range Extension", group=asian_group)
+asian_midpoint = input.bool(true, "Show Asian Midpoint", group=asian_group)
+optimal_asian_pips = input.int(50, "Optimal Asian Range (pips)", minval=20, maxval=120, group=asian_group)
+show_asian_stats = input.bool(true, "Show Asian Range Statistics", group=asian_group)
+
+// === STOP HUNT DETECTION ===
+stophunt_group = "🎯 Stop Hunt Detection"
+enable_stop_hunt_alerts = input.bool(true, "Enable Stop Hunt Detection", group=stophunt_group)
+stop_hunt_sensitivity = input.float(1.0, "Stop Hunt Sensitivity", minval=0.5, maxval=2.0, step=0.1, group=stophunt_group)
+show_liquidity_levels = input.bool(true, "Show Liquidity Sweep Levels", group=stophunt_group)
+liquidity_lookback = input.int(20, "Liquidity Level Lookback", minval=10, maxval=50, group=stophunt_group)
+
+// === ALERT CONFIGURATION ===
+alert_group = "🚨 Session Alert Settings"
+enable_session_alerts = input.bool(true, "Session Change Alerts", group=alert_group)
+enable_asian_range_alerts = input.bool(true, "Asian Range Break Alerts", group=alert_group)
+enable_stop_hunt_alerts_notify = input.bool(true, "Stop Hunt Alert Notifications", group=alert_group)
+alert_frequency = input.string("once_per_bar", "Alert Frequency", options=["once_per_bar", "once_per_bar_close"], group=alert_group)
+
+// === VISUAL SETTINGS ===
+visual_group = "🎨 Visual Configuration"
+line_width = input.int(2, "Line Width", minval=1, maxval=5, group=visual_group)
+label_size = input.string("normal", "Label Size", options=["tiny", "small", "normal", "large", "huge"], group=visual_group)
+transparency = input.int(85, "Box Transparency", minval=50, maxval=95, group=visual_group)
+show_session_labels = input.bool(true, "Show Session Labels", group=visual_group)
+label_offset = input.int(10, "Label Position Offset", minval=5, maxval=50, group=visual_group)
+
+// ============================================================================
+// ⏰ SESSION TIMING & MARKET MAKER CYCLE
+// ============================================================================
+
+// Session detection
+in_asian = time(timeframe.period, asian_session_time)
+in_asian_pivot = time(timeframe.period, asian_pivot_reference)
+in_london = time(timeframe.period, london_session_time)
+in_ny = time(timeframe.period, ny_session_time)
+
+is_asian = not na(in_asian)
+is_asian_pivot_active = not na(in_asian_pivot)
+is_london = not na(in_london)
+is_ny = not na(in_ny)
+
+// Market Maker Phase
+get_market_maker_phase() =>
+    phase = is_asian ? "ACCUMULATION" : is_london ? "MANIPULATION" : is_ny ? "DISTRIBUTION" : "CONSOLIDATION"
+    phase
+
+current_mm_phase = get_market_maker_phase()
+
+// Stop hunt detection
+current_hour = hour(time)
+current_minute = minute(time)
+
+pre_london_stop_hunt = (current_hour == 1 and current_minute >= 45) or (current_hour == 2 and current_minute <= 15)
+pre_ny_stop_hunt = (current_hour == 9 and current_minute >= 15 and current_minute <= 45)
+
+trading_allowed = (is_london or is_ny) and not pre_london_stop_hunt and not pre_ny_stop_hunt
+analysis_only = is_asian
+
+// ============================================================================
+// 📊 TECHNICAL INDICATORS
+// ============================================================================
+
+atr_14 = ta.atr(14)
+
+// Session backgrounds (disabled)
+// bgcolor(show_session_boxes and is_asian ? color.new(color.yellow, 95) : na, title="Asian Session")
+// bgcolor(show_session_boxes and is_london and trading_allowed ? color.new(color.blue, 98) : na, title="London Session")
+// bgcolor(show_session_boxes and is_ny and trading_allowed ? color.new(color.purple, 98) : na, title="NY Session")
+// bgcolor(show_session_boxes and (pre_london_stop_hunt or pre_ny_stop_hunt) ? color.new(color.red, 90) : na, title="Stop Hunt Window")
+
+// ============================================================================
+// 🌏 ASIAN LEVEL CALCULATIONS
+// ============================================================================
+
+var float asian_high = na
+var float asian_low = na
+var float asian_open = na
+var float asian_close = na
+var float asian_50_level = na
+var float asian_range = na
+var float asian_range_pips = na
+var int asian_start_bar = na
+var int asian_end_bar = na
+var bool asian_range_valid = false
+
+new_asian_session = is_asian and not is_asian[1]
+asian_session_ending = not is_asian and is_asian[1]
+
+// Session Transitions
+asian_session_start = new_asian_session
+london_session_start = not is_london[1] and is_london
+ny_session_start = not is_ny[1] and is_ny
+
+asian_session_end = asian_session_ending
+london_session_end = is_london[1] and not is_london
+ny_session_end = is_ny[1] and not is_ny
+
+// Current Session Identification
+current_session = is_asian ? "ASIAN" : is_london ? "LONDON" : is_ny ? "NY" : "OFF-HOURS"
+
+if is_asian
+    if new_asian_session
+        asian_open := open
+        asian_high := high
+        asian_low := low
+        asian_start_bar := bar_index
+        asian_range_valid := false
+    else
+        asian_high := math.max(asian_high, high)
+        asian_low := math.min(asian_low, low)
+
+if asian_session_ending
+    asian_close := close[1]
+    asian_end_bar := bar_index - 1
+    if not na(asian_high) and not na(asian_low)
+        asian_range_pips := math.abs(asian_high - asian_low) / syminfo.mintick * syminfo.pointvalue
+        asian_range_valid := asian_range_pips >= (optimal_asian_pips * 0.5) and asian_range_pips <= (optimal_asian_pips * 2.0)
+
+if not na(asian_high) and not na(asian_low)
+    asian_range := asian_high - asian_low
+    asian_50_level := (asian_high + asian_low) / 2
+
+// Asian Midpoint and Extensions
+asian_midpoint_level = not na(asian_high) and not na(asian_low) ? (asian_high + asian_low) / 2 : na
+asian_range_size = not na(asian_high) and not na(asian_low) ? asian_high - asian_low : na
+asian_high_extended = not na(asian_high) and not na(asian_range_size) ? asian_high + (asian_range_size * 0.5) : na
+asian_low_extended = not na(asian_low) and not na(asian_range_size) ? asian_low - (asian_range_size * 0.5) : na
+
+// ============================================================================
+// 🎯 ASIAN BOX QUALITY ASSESSMENT
+// ============================================================================
+
+asian_box_quality() =>
+    quality = "INVALID"
+    score = 0
+    range_pips_calc = 0.0
+
+    if not na(asian_range) and asian_range > 0
+        range_pips_calc := asian_range / syminfo.mintick
+
+        if range_pips_calc <= 30
+            quality := "OPTIMAL"
+            score := 5
+        else if range_pips_calc <= 50
+            quality := "GOOD"
+            score := 4
+        else if range_pips_calc <= 75
+            quality := "ACCEPTABLE"
+            score := 3
+        else if range_pips_calc <= 100
+            quality := "WIDE"
+            score := 2
+        else
+            quality := "TOO_WIDE"
+            score := 1
+
+    [quality, score, range_pips_calc]
+
+[asian_quality, quality_score, range_pips] = asian_box_quality()
+
+asian_level_strength() =>
+    strength = "WEAK"
+
+    if not na(asian_open) and not na(asian_50_level) and not na(asian_range) and asian_range > 0
+        open_to_50_ratio = math.abs(asian_open - asian_50_level) / asian_range
+
+        if open_to_50_ratio <= 0.1
+            strength := "PERFECT"
+        else if open_to_50_ratio <= 0.2
+            strength := "STRONG"
+        else if open_to_50_ratio <= 0.3
+            strength := "MODERATE"
+        else
+            strength := "WEAK"
+
+    strength
+
+level_strength = asian_level_strength()
+
+// ============================================================================
+// 🎯 STOP HUNT DETECTION
+// ============================================================================
+
+get_liquidity_levels() =>
+    var array<float> recent_highs = array.new<float>()
+    var array<float> recent_lows = array.new<float>()
+
+    if barstate.isconfirmed
+        if array.size(recent_highs) >= liquidity_lookback
+            array.shift(recent_highs)
+        if array.size(recent_lows) >= liquidity_lookback
+            array.shift(recent_lows)
+
+        array.push(recent_highs, high)
+        array.push(recent_lows, low)
+
+    highest_level = array.size(recent_highs) > 0 ? array.max(recent_highs) : na
+    lowest_level = array.size(recent_lows) > 0 ? array.min(recent_lows) : na
+
+    [highest_level, lowest_level]
+
+[liquidity_high, liquidity_low] = get_liquidity_levels()
+
+detect_stop_hunt() =>
+    if enable_stop_hunt_alerts and not na(liquidity_high) and not na(liquidity_low)
+        bullish_hunt = low <= liquidity_low * (1 - (stop_hunt_sensitivity * 0.001)) and close > low + (high - low) * 0.5
+        bearish_hunt = high >= liquidity_high * (1 + (stop_hunt_sensitivity * 0.001)) and close < high - (high - low) * 0.5
+        [bullish_hunt, bearish_hunt]
+    else
+        [false, false]
+
+[bullish_stop_hunt, bearish_stop_hunt] = detect_stop_hunt()
+
+// ============================================================================
+// 🎨 VISUAL ELEMENTS & LEVEL DRAWING
+// ============================================================================
+
+label_text_size = switch label_size
+    "tiny" => size.tiny
+    "small" => size.small
+    "normal" => size.normal
+    "large" => size.large
+    "huge" => size.huge
+    => size.normal
+
+// Draw Asian levels
+var line asian_high_line = na
+var line asian_low_line = na
+var line asian_open_line = na
+var line asian_50_line = na
+var box asian_range_box = na
+var label asian_quality_label = na
+
+if show_asian_levels and asian_session_ending and not na(asian_high)
+    if not na(asian_high_line)
+        line.delete(asian_high_line)
+        line.delete(asian_low_line)
+        line.delete(asian_open_line)
+        line.delete(asian_50_line)
+        box.delete(asian_range_box)
+        label.delete(asian_quality_label)
+
+    asian_high_line := line.new(bar_index, asian_high, bar_index + extend_levels, asian_high, color=color.new(color.yellow, 0), width=3, style=line.style_solid)
+    asian_low_line := line.new(bar_index, asian_low, bar_index + extend_levels, asian_low, color=color.new(color.yellow, 0), width=3, style=line.style_solid)
+    asian_open_line := line.new(bar_index, asian_open, bar_index + extend_levels, asian_open, color=color.new(color.orange, 30), width=line_width, style=line.style_dashed)
+    asian_50_line := line.new(bar_index, asian_50_level, bar_index + extend_levels, asian_50_level, color=color.new(color.yellow, 30), width=line_width, style=line.style_dotted)
+
+    if show_asian_box
+        box_color = switch asian_quality
+            "OPTIMAL" => color.new(color.yellow, 85)
+            "GOOD" => color.new(color.yellow, 85)
+            "ACCEPTABLE" => color.new(color.yellow, 85)
+            "WIDE" => color.new(color.yellow, 85)
+            "TOO_WIDE" => color.new(color.yellow, 85)
+            => color.new(color.yellow, 85)
+
+        asian_range_box := box.new(asian_start_bar, asian_high, asian_end_bar, asian_low, border_color=color.new(color.yellow, 30), bgcolor=box_color, border_width=2)
+
+    if show_quality_assessment
+        quality_text = "¥ ASIAN ANALYSIS\n" +
+                      "Quality: " + asian_quality + " (" + str.tostring(quality_score) + "/5)\n" +
+                      "Range: " + str.tostring(range_pips, "#") + " pips\n" +
+                      "Level Strength: " + level_strength
+
+        label_color = switch asian_quality
+            "OPTIMAL" => color.green
+            "GOOD" => color.lime
+            "ACCEPTABLE" => color.yellow
+            "WIDE" => color.orange
+            "TOO_WIDE" => color.red
+            => color.gray
+
+        asian_quality_label := label.new(bar_index + 5, asian_high + atr_14 * 0.5, quality_text, style=label.style_label_down, color=label_color, textcolor=color.white, size=label_text_size)
+
+// Asian Range Lines (only high, low, mid)
+plot(track_asian_range and not na(asian_high) ? asian_high : na, "Asian High", color=color.new(color.yellow, 0), linewidth=3, style=plot.style_line)
+plot(track_asian_range and not na(asian_low) ? asian_low : na, "Asian Low", color=color.new(color.yellow, 0), linewidth=3, style=plot.style_line)
+plot(asian_midpoint and not na(asian_midpoint_level) ? asian_midpoint_level : na, "Asian Midpoint", color=color.new(color.yellow, 30), linewidth=2, style=plot.style_stepline_diamond)
+
+// Remove other lines - keeping only Asian High, Low, and Midpoint
+// plot(asian_range_extension and not na(asian_high_extended) ? asian_high_extended : na, "Asian High Ext", color=color.new(color.yellow, 70), linewidth=1, style=plot.style_circles)
+// plot(asian_range_extension and not na(asian_low_extended) ? asian_low_extended : na, "Asian Low Ext", color=color.new(color.yellow, 70), linewidth=1, style=plot.style_circles)
+// plot(show_liquidity_levels and not na(liquidity_high) ? liquidity_high : na, "Liquidity High", color=color.new(color.red, 60), linewidth=1, style=plot.style_cross)
+// plot(show_liquidity_levels and not na(liquidity_low) ? liquidity_low : na, "Liquidity Low", color=color.new(color.green, 60), linewidth=1, style=plot.style_cross)
+
+// Session Labels (keeping these)
+if show_session_labels and barstate.islast
+    if not na(asian_high)
+        label.new(bar_index + label_offset, asian_high, "¥ Asian High", style=label.style_label_down, color=color.new(color.yellow, 0), textcolor=color.black, size=size.small)
+    if not na(asian_low)
+        label.new(bar_index + label_offset, asian_low, "¥ Asian Low", style=label.style_label_up, color=color.new(color.yellow, 0), textcolor=color.black, size=size.small)
+    if not na(asian_midpoint_level) and asian_midpoint
+        label.new(bar_index + label_offset, asian_midpoint_level, "¥ Asian Mid", style=label.style_label_left, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+
+// Stop Hunt Visual Alerts
+if bullish_stop_hunt
+    label.new(bar_index, low, "🎯 BULLISH HUNT", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.normal)
+
+if bearish_stop_hunt
+    label.new(bar_index, high, "🎯 BEARISH HUNT", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+
+// ============================================================================
+// 🚨 STOP HUNT WARNING SYSTEM
+// ============================================================================
+
+if enable_stop_hunt_warnings
+    if pre_london_stop_hunt and not pre_london_stop_hunt[1]
+        label.new(bar_index, high + atr_14 * 2,
+                 "⚠️ PRE-LONDON STOP HUNT\n" +
+                 "Avoid trading for 30 minutes\n" +
+                 "Institutions hunting stops\n" +
+                 "Time: " + str.format_time(time, "HH:mm"),
+                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+
+    if pre_ny_stop_hunt and not pre_ny_stop_hunt[1]
+        label.new(bar_index, high + atr_14 * 2,
+                 "⚠️ PRE-NY STOP HUNT\n" +
+                 "Avoid trading for 30 minutes\n" +
+                 "Institutions hunting stops\n" +
+                 "Time: " + str.format_time(time, "HH:mm"),
+                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+
+// ============================================================================
+// 📊 LEVEL INTERACTION ANALYSIS
+// ============================================================================
+
+price_at_asian_high = not na(asian_high) and math.abs(close - asian_high) <= atr_14 * 0.5
+price_at_asian_low = not na(asian_low) and math.abs(close - asian_low) <= atr_14 * 0.5
+price_at_asian_50 = not na(asian_50_level) and math.abs(close - asian_50_level) <= atr_14 * 0.5
+price_at_asian_open = not na(asian_open) and math.abs(close - asian_open) <= atr_14 * 0.5
+
+asian_high_break = not na(asian_high) and close > asian_high and close[1] <= asian_high
+asian_low_break = not na(asian_low) and close < asian_low and close[1] >= asian_low
+
+asian_high_test = price_at_asian_high and not asian_high_break
+asian_low_test = price_at_asian_low and not asian_low_break
+
+manipulation_at_high = asian_high_test and high > asian_high and close <= asian_high
+manipulation_at_low = asian_low_test and low < asian_low and close >= asian_low
+
+// ============================================================================
+// 📊 SESSION ANALYSIS DASHBOARD
+// ============================================================================
+
+if show_asian_stats and barstate.islast
+    // Main dashboard table - moved to top right, slightly bigger
+    var table session_table = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 15), border_width=1)
+
+    // Header - small text
+    table.cell(session_table, 0, 0, "METRIC", bgcolor=color.new(color.navy, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 1, 0, "CURRENT", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 2, 0, "SIGNAL", bgcolor=color.new(color.gray, 20), text_color=color.white, text_size=size.small)
+
+    // Current Session
+    session_color = current_session == "ASIAN" ? color.new(color.yellow, 20) : current_session == "LONDON" ? color.new(color.blue, 20) : current_session == "NY" ? color.new(color.green, 20) : color.new(color.gray, 20)
+    table.cell(session_table, 0, 1, "Session", bgcolor=color.new(color.purple, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 1, 1, current_session, bgcolor=session_color, text_color=color.white, text_size=size.small)
+    table.cell(session_table, 2, 1, current_mm_phase, bgcolor=session_color, text_color=color.white, text_size=size.small)
+
+    // Asian Range
+    range_color = asian_range_valid ? color.new(color.green, 20) : color.new(color.orange, 20)
+    table.cell(session_table, 0, 2, "Range", bgcolor=color.new(color.yellow, 20), text_color=color.black, text_size=size.small)
+    table.cell(session_table, 1, 2, not na(asian_range_pips) ? str.tostring(asian_range_pips, "#") + " pips" : "N/A", bgcolor=color.new(color.yellow, 30), text_color=color.black, text_size=size.small)
+    table.cell(session_table, 2, 2, asian_range_valid ? "✅ GOOD" : not na(asian_range_pips) ? "⚠️ WIDE" : "⏳ WAIT", bgcolor=range_color, text_color=color.white, text_size=size.small)
+
+    // Asian High/Low combined info
+    if not na(asian_high) and not na(asian_low)
+        high_broken = close > asian_high
+        low_broken = close < asian_low
+        level_status = high_broken ? "🚀 HIGH BREAK" : low_broken ? "📉 LOW BREAK" : "📊 IN RANGE"
+        level_color = high_broken ? color.new(color.lime, 20) : low_broken ? color.new(color.red, 20) : color.new(color.gray, 30)
+
+        table.cell(session_table, 0, 3, "Levels", bgcolor=color.new(color.orange, 20), text_color=color.white, text_size=size.small)
+        table.cell(session_table, 1, 3, str.tostring(asian_high, "#.####") + " / " + str.tostring(asian_low, "#.####"), bgcolor=color.new(color.orange, 30), text_color=color.white, text_size=size.small)
+        table.cell(session_table, 2, 3, level_status, bgcolor=level_color, text_color=color.white, text_size=size.small)
+
+    // Asian Midpoint
+    if not na(asian_50_level)
+        table.cell(session_table, 0, 4, "Midpoint", bgcolor=color.new(color.yellow, 20), text_color=color.black, text_size=size.small)
+        table.cell(session_table, 1, 4, str.tostring(asian_50_level, "#.####"), bgcolor=color.new(color.yellow, 30), text_color=color.black, text_size=size.small)
+        mid_status = math.abs(close - asian_50_level) <= atr_14 * 0.5 ? "⚖️ BALANCED" : close > asian_50_level ? "📈 BULLISH" : "📉 BEARISH"
+        table.cell(session_table, 2, 4, mid_status, bgcolor=color.new(color.yellow, 30), text_color=color.black, text_size=size.small)
+
+    // Combined Quality/Strength
+    quality_score_combined = quality_score + (level_strength == "PERFECT" ? 2 : level_strength == "STRONG" ? 1 : level_strength == "MODERATE" ? 0 : -1)
+    setup_quality = quality_score_combined >= 6 ? "💎 ELITE" : quality_score_combined >= 4 ? "🔥 GOOD" : quality_score_combined >= 2 ? "⚡ OK" : "🚫 POOR"
+    setup_color = quality_score_combined >= 6 ? color.new(color.green, 20) : quality_score_combined >= 4 ? color.new(color.lime, 20) : quality_score_combined >= 2 ? color.new(color.yellow, 20) : color.new(color.red, 20)
+
+    table.cell(session_table, 0, 5, "Setup", bgcolor=color.new(color.blue, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 1, 5, str.tostring(quality_score_combined) + "/7", bgcolor=setup_color, text_color=color.white, text_size=size.small)
+    table.cell(session_table, 2, 5, setup_quality, bgcolor=setup_color, text_color=color.white, text_size=size.small)
+
+    // Stop Hunt + Alerts combined
+    hunt_color = bullish_stop_hunt or bearish_stop_hunt ? color.new(color.red, 20) : color.new(color.gray, 30)
+    alert_active = (pre_london_stop_hunt or pre_ny_stop_hunt or bullish_stop_hunt or bearish_stop_hunt or asian_high_break or asian_low_break)
+    combined_status = bullish_stop_hunt ? "🐂 BULL HUNT" : bearish_stop_hunt ? "🐻 BEAR HUNT" : pre_london_stop_hunt ? "🕐 PRE-LONDON" : pre_ny_stop_hunt ? "🕘 PRE-NY" : asian_high_break ? "🚀 HIGH BREAK" : asian_low_break ? "📉 LOW BREAK" : "🟢 ALL CLEAR"
+
+    table.cell(session_table, 0, 6, "Alerts", bgcolor=color.new(color.maroon, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 1, 6, alert_active ? "ACTIVE" : "QUIET", bgcolor=hunt_color, text_color=color.white, text_size=size.small)
+    table.cell(session_table, 2, 6, combined_status, bgcolor=hunt_color, text_color=color.white, text_size=size.small)
+
+    // Trading Status
+    trading_status = trading_allowed ? "🟢 TRADE OK" : analysis_only ? "🟡 WATCH ONLY" : "🔴 AVOID"
+    trading_color = trading_allowed ? color.new(color.green, 20) : analysis_only ? color.new(color.yellow, 20) : color.new(color.red, 20)
+
+    table.cell(session_table, 0, 7, "Status", bgcolor=color.new(color.teal, 20), text_color=color.white, text_size=size.small)
+    table.cell(session_table, 1, 7, trading_allowed ? "TRADING" : analysis_only ? "STUDYING" : "WAITING", bgcolor=trading_color, text_color=color.white, text_size=size.small)
+    table.cell(session_table, 2, 7, trading_status, bgcolor=trading_color, text_color=color.white, text_size=size.small)
+
+// ============================================================================
+// 🚨 SESSION ALERTS
+// ============================================================================
+
+alert_freq = alert_frequency == "once_per_bar" ? alert.freq_once_per_bar : alert.freq_once_per_bar_close
+
+if enable_session_alerts
+    if asian_session_start
+        alert("🏮 ASIAN SESSION STARTED!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Timeframe: " + timeframe.period + "\n" +
+              "Phase: ACCUMULATION\n" +
+              "Expected: Range formation and accumulation", alert_freq)
+
+    if london_session_start
+        alert("🌍 LONDON SESSION STARTED!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Timeframe: " + timeframe.period + "\n" +
+              "Phase: MANIPULATION\n" +
+              "Expected: Asian range manipulation and liquidity sweeps", alert_freq)
+
+    if ny_session_start
+        alert("🇺🇸 NY SESSION STARTED!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Timeframe: " + timeframe.period + "\n" +
+              "Phase: DISTRIBUTION\n" +
+              "Expected: Trend distribution and continuation", alert_freq)
+
+if enable_asian_range_alerts and not na(asian_high) and not na(asian_low)
+    if ta.crossover(close, asian_high)
+        alert("🔥 ASIAN HIGH BREAK - BULLISH!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Asian High: " + str.tostring(asian_high, "#.#####") + "\n" +
+              "Current Price: " + str.tostring(close, "#.#####") + "\n" +
+              "Range Size: " + str.tostring(asian_range_pips, "#.#") + " pips", alert_freq)
+
+    if ta.crossunder(close, asian_low)
+        alert("🔥 ASIAN LOW BREAK - BEARISH!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Asian Low: " + str.tostring(asian_low, "#.#####") + "\n" +
+              "Current Price: " + str.tostring(close, "#.#####") + "\n" +
+              "Range Size: " + str.tostring(asian_range_pips, "#.#") + " pips", alert_freq)
+
+if enable_stop_hunt_alerts_notify
+    if bullish_stop_hunt
+        alert("🎯 BULLISH STOP HUNT DETECTED!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Liquidity swept below: " + str.tostring(liquidity_low, "#.#####") + "\n" +
+              "Recovery price: " + str.tostring(close, "#.#####") + "\n" +
+              "Session: " + current_session, alert_freq)
+
+    if bearish_stop_hunt
+        alert("🎯 BEARISH STOP HUNT DETECTED!\n" +
+              "Symbol: " + syminfo.ticker + "\n" +
+              "Liquidity swept above: " + str.tostring(liquidity_high, "#.#####") + "\n" +
+              "Rejection price: " + str.tostring(close, "#.#####") + "\n" +
+              "Session: " + current_session, alert_freq)
+
+// ============================================================================
+// 📤 DATA WINDOW OUTPUTS
+// ============================================================================
+
+plot(asian_high, "Asian_High", display=display.data_window)
+plot(asian_low, "Asian_Low", display=display.data_window)
+plot(asian_open, "Asian_Open", display=display.data_window)
+plot(asian_50_level, "Asian_50_Level", display=display.data_window)
+plot(asian_range, "Asian_Range", display=display.data_window)
+plot(range_pips, "Range_Pips", display=display.data_window)
+plot(quality_score, "Quality_Score", display=display.data_window)
+plot(is_asian ? 1 : 0, "In_Asian_Session", display=display.data_window)
+plot(is_london ? 1 : 0, "In_London_Session", display=display.data_window)
+plot(is_ny ? 1 : 0, "In_NY_Session", display=display.data_window)
+plot(trading_allowed ? 1 : 0, "Trading_Allowed", display=display.data_window)
+plot(analysis_only ? 1 : 0, "Analysis_Only", display=display.data_window)
+plot(price_at_asian_high ? 1 : 0, "At_Asian_High", display=display.data_window)
+plot(price_at_asian_low ? 1 : 0, "At_Asian_Low", display=display.data_window)
+plot(price_at_asian_50 ? 1 : 0, "At_Asian_50", display=display.data_window)
+plot(asian_high_break ? 1 : 0, "Asian_High_Break", display=display.data_window)
+plot(asian_low_break ? 1 : 0, "Asian_Low_Break", display=display.data_window)
+plot(manipulation_at_high ? 1 : 0, "Manipulation_High", display=display.data_window)
+plot(manipulation_at_low ? 1 : 0, "Manipulation_Low", display=display.data_window)
+plot(pre_london_stop_hunt ? 1 : 0, "Pre_London_Hunt", display=display.data_window)
+plot(pre_ny_stop_hunt ? 1 : 0, "Pre_NY_Hunt", display=display.data_window)
+plot(liquidity_high, "Liquidity_High", display=display.data_window)
+plot(liquidity_low, "Liquidity_Low", display=display.data_window)
+plot(bullish_stop_hunt ? 1 : 0, "Bullish_Stop_Hunt", display=display.data_window)
+plot(bearish_stop_hunt ? 1 : 0, "Bearish_Stop_Hunt", display=display.data_window)

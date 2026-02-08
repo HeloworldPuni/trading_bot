@@ -1,0 +1,35 @@
+//@version=5
+indicator("Multi-Ticker Realtime Table", overlay=true)
+
+// === USER CONFIGURATION ===
+// Add symbols you want to track
+symbols = input.string("AAPL,GOOGL,MSFT,NVDA", title="Symbols (comma-separated)")
+
+// === UTILITY FUNCTION ===
+// Function to get realtime data for external symbols
+f_get_data(_symbol) =>
+    price = request.security(_symbol, "1", close)
+    open_price = request.security(_symbol, "1", open)
+    change = (price - open_price) / open_price * 100
+    [price, change]
+
+// === SYMBOLS PARSING ===
+symbol_list = str.split(symbols, ",")
+rows = array.new_label()
+var table t = table.new(position.top_right, columns=3, rows=array.size(symbol_list) + 1, border_width=1)
+
+// === HEADER ROW ===
+if bar_index == 1
+    table.cell(t, 0, 0, text="Ticker", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(t, 1, 0, text="Price", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+    table.cell(t, 2, 0, text="% Chg", text_color=color.white, bgcolor=color.gray, text_size=size.small)
+
+// === POPULATE TABLE ===
+for i = 0 to array.size(symbol_list) - 1
+    sym = str.trim(array.get(symbol_list, i))
+    [p, c] = f_get_data(sym)
+    color chg_color = c >= 0 ? color.green : color.red
+    table.cell(t, 0, i + 1, text=sym, text_color=color.white)
+    table.cell(t, 1, i + 1, text=str.tostring(p, format.mintick), text_color=color.white)
+    table.cell(t, 2, i + 1, text=str.tostring(c, format.percent), text_color=chg_color)
+

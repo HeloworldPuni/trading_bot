@@ -1,0 +1,140 @@
+//@version=4
+study(title="base27 D(Super Signals)", shorttitle = "base27_D_Super_Signals")
+
+
+// Functions
+colorRed = #ef5350
+colorGreen = #26a69a
+colorGrey = #9598a1
+
+f_color(s) =>
+    sColor = colorGrey
+    if(s > 0)
+        sColor := color.new(colorGreen, 0)
+    if(s < 0)
+        sColor := color.new(colorRed, 0)
+    if(s == -1)
+        sColor := color.new(colorRed, 60)
+    if(s == 1)
+        sColor := color.new(colorGreen, 60)
+    if(s == -2)
+        sColor := color.new(colorRed, 48)
+    if(s == 2)
+        sColor := color.new(colorGreen, 48)
+    if(s == -3)
+        sColor := color.new(colorRed, 36)
+    if(s == 3)
+        sColor := color.new(colorGreen, 36)
+    if(s == -4)
+        sColor := color.new(colorRed, 24)
+    if(s == 4)
+        sColor := color.new(colorGreen, 24)
+    if(s == -5)
+        sColor := color.new(colorRed, 12)
+    if(s == 5)
+        sColor := color.new(colorGreen, 12)
+    if(s == -6)
+        sColor := color.new(colorRed, 0)
+    if(s == 6)
+        sColor := color.new(colorGreen, 0)
+    sColor
+
+//////////////////////////////////////////////////////////////////////////
+// Super Guppy
+//////////////////////////////////////////////////////////////////////////
+Lookback    = input(6, title="Alert Lookback Length")
+
+//Fast EMA
+emaF1  = ema(close, 3)
+emaF2  = ema(close, 5)
+emaF3  = ema(close, 7)
+emaF4  = ema(close, 9)
+emaF5  = ema(close, 11)
+emaF6  = ema(close, 13)
+emaF7  = ema(close, 15)
+emaF8  = ema(close, 17)
+emaF9  = ema(close, 19)
+emaF10 = ema(close, 21)
+emaF11 = ema(close, 23)
+emafast = (emaF1 + emaF2 + emaF3 + emaF4 + emaF5 + emaF6 + emaF7 + emaF8 + emaF9 + emaF10 + emaF11)/11
+
+//Slow EMA
+emaS1 = ema(close, 25)
+emaS2 = ema(close, 28)
+emaS3 = ema(close, 31)
+emaS4 = ema(close, 34)
+emaS5 = ema(close, 37)
+emaS6 = ema(close, 40)
+emaS7 = ema(close, 43)
+emaS8 = ema(close, 46)
+emaS9 = ema(close, 49)
+emaS10 = ema(close, 52)
+emaS11 = ema(close, 55)
+emaS12 = ema(close, 58)
+emaS13 = ema(close, 61)
+emaS14 = ema(close, 64)
+emaS15 = ema(close, 67)
+emaS16 = ema(close, 70)
+emaslow = (emaS1 + emaS2 + emaS3 + emaS4 + emaS5 + emaS6 + emaS7 + emaS8 + 
+          emaS9 + emaS10 + emaS11 + emaS12 + emaS13 + emaS14 + emaS15 + emaS16)/16
+
+//Fast EMA Color Rules
+colfastL = (emaF1 > emaF2 and emaF2 > emaF3 and emaF3 > emaF4 and emaF4 > emaF5 and emaF5 > emaF6 and emaF6 > emaF7 and emaF7 > emaF8 and emaF8 > emaF9 and emaF9 > emaF10 and emaF10 > emaF11)
+colfastS = (emaF1 < emaF2 and emaF2 < emaF3 and emaF3 < emaF4 and emaF4 < emaF5 and emaF5 < emaF6 and emaF6 < emaF7 and emaF7 < emaF8 and emaF8 < emaF9 and emaF9 < emaF10 and emaF10 < emaF11)
+//Slow EMA Color Rules
+colslowL = (emaS1 > emaS2 and emaS2 > emaS3 and emaS3 > emaS4 and emaS4 > emaS5 and emaS5 > emaS6 and emaS6 > emaS7 and emaS7 > emaS8) and
+           (emaS8 > emaS9 and emaS9 > emaS10 and emaS10 > emaS11 and emaS11 > emaS12 and emaS12 > emaS13 and emaS13 > emaS14 and emaS14 > emaS15 and emaS15 > emaS16)
+colslowS = (emaS1 < emaS2 and emaS2 < emaS3 and emaS3 < emaS4 and emaS4<emaS5 and emaS5<emaS6 and emaS6<emaS7 and emaS7<emaS8) and
+           (emaS8 < emaS9 and emaS9 < emaS10 and emaS10 < emaS11 and emaS11 < emaS12 and emaS12 < emaS13 and emaS13 < emaS14 and emaS14 < emaS15 and emaS15 < emaS16)
+
+//Fast EMA Final Color Rules
+colFinal = colfastL and emaS1 > emaS16 ? color.aqua : colfastS and emaS1 < emaS16 ? color.orange : color.gray
+//Slow EMA Final Color Rules
+colFinal2 = colslowL ? color.lime : colslowS ? color.red : color.gray
+
+// BUY & SELL
+buySwing = 0
+sellSwing = 0
+buySwing := colFinal[1] == color.gray and colFinal == color.aqua ? nz(buySwing[1]) > 0 ? buySwing[1] + 1 : 1 : 0
+sellSwing := colFinal[1] == color.gray  and colFinal == color.orange ? nz(sellSwing[1]) > 0 ? sellSwing[1] + 1 : 1 : 0
+
+// SG sIgnal
+s1 = 0
+s1  := s1[1] ? s1[1] : 0
+if (colFinal2[1] != color.lime and colFinal2 == color.lime)
+    s1 := 1
+if (s1[1] > 0 and buySwing==1 and barssince(nz(buySwing[1], 1)==1) > Lookback)
+    s1 := s1[1] + 1
+if (colFinal2[1] != color.red and colFinal2 == color.red)
+    s1 := -1
+if (s1[1] < 0 and sellSwing==1 and barssince(nz(sellSwing[1], 1)==1) > Lookback)
+    s1 := s1[1] - 1
+if((colFinal2[1] == color.lime and colFinal2 != color.lime) or (colFinal2[1] == color.red and colFinal2 != color.red))
+    s1 := 0
+
+
+// === ALT TIMEFRAME ===
+tf = input('3', type=input.resolution, title="Timeframe 2")
+TFEMA11 = security(syminfo.tickerid, tf, ema(close, 11))
+TFEMA34 = security(syminfo.tickerid, tf, ema(close, 34))
+
+// SIGNALER
+s3TopLine = plot(36, title = 'EMA(11, 34) TOP Line(MTF)', transp = 100)
+s3BottomLine = plot(30, title = 'EMA(11, 34) Line(MTF)', transp = 100)
+fill(s3TopLine, s3BottomLine, title = 'EMA(11, 34) Bar Colors(MTF)', color = f_color(TFEMA34 == TFEMA11 ? 0 : (TFEMA34 < TFEMA11 ? 1 : -1)))
+
+s2TopLine = plot(24, title = 'EMA(11, 34) TOP Line', transp = 100)
+s2BottomLine = plot(18, title = 'EMA(11, 34) BOTTOM Line', transp = 100)
+fill(s2TopLine, s2BottomLine, title = 'EMA(11, 34) Bar Colors', color = f_color(emaS4 == emaF5 ? 0 : (emaS4 < emaF5 ? 1 : -1)))
+
+s1TopLine = plot(12, title = 'Guppy TOP Line', transp = 100)
+s1BottomLine = plot(6, title = 'Guppy BOTTOM Line', transp = 100)
+fill(s1TopLine, s1BottomLine, title = 'Guppy Bar Colors', color = f_color(s1))
+
+// ALERTS
+alertcondition(cross(emaF5, emaS4), "EMA(11, 34) Signal", "EMA(11, 34) Signal")
+alertcondition(cross(TFEMA11, TFEMA34), "EMA(11, 34) Signal", "EMA(11, 34) Signal MTF")
+alertcondition(colFinal2[1] != color.lime and colFinal2 == color.lime, "SG - Long Start", "SG - Long Start")
+alertcondition(colFinal2[1] == color.lime and colFinal2 != color.lime, "SG - Long Stop", "SG - Long Stop")
+alertcondition(colFinal2[1] != color.red and colFinal2 == color.red, "SG - Short Start", "SG - Short Start")
+alertcondition(colFinal2[1] == color.red and colFinal2 != color.red, "SG - Short Stop", "SG - Short Stop")

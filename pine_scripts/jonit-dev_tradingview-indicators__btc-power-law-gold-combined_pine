@@ -1,0 +1,73 @@
+//@version=5
+indicator("BTC - Power Law Oscillator with Dynamic Bands + BTC vs Gold Signals", overlay=false)
+
+// Inputs from Power Law Oscillator
+length = input.int(200, minval=1, title="Percentile Calculation Period")
+upper_percentile = input.float(90, "Upper Percentile", minval=50, maxval=100)
+lower_percentile = input.float(45, "Lower Percentile", minval=0, maxval=50)
+
+// Inputs from BTC vs Gold
+btcSymbol = input.symbol("BTCUSD", "Bitcoin Symbol")
+goldSymbol = input.symbol("XAUUSD", "Gold Symbol")
+smoothPeriod = input.int(14, "Smoothing Period", minval=1)
+gold_upper = input.float(8, "Gold Upper Threshold")
+gold_lower = input.float(-2, "Gold Lower Threshold")
+
+// Fetch data
+btcClose = request.security(btcSymbol, timeframe.period, close)
+goldClose = request.security(goldSymbol, timeframe.period, close)
+
+// Power Law Oscillator Calculations
+var inceptionDate = timestamp(2009, 1, 3, 0, 0)
+daysSinceInception = (time - inceptionDate) / 86400000
+modelPrice = math.exp(5.71 * math.log(daysSinceInception) - 38.16)
+oscillator = ((btcClose - modelPrice) / modelPrice) * 100
+
+// Array for percentile
+var float[] osc_values = array.new_float(0)
+
+// Update array
+if barstate.isrealtime or barstate.isconfirmed
+    array.unshift(osc_values, oscillator)
+    if array.size(osc_values) > length
+        array.pop(osc_values)
+
+// Percentile function
+percentile(float[] arr, float percent) =>
+    arr_sorted = array.copy(arr)
+    array.sort(arr_sorted, order.ascending)
+    index = math.floor((array.size(arr_sorted) - 1) * percent / 100)
+    array.get(arr_sorted, index)
+
+// Bands for Power Law
+upperBand = percentile(osc_values, upper_percentile)
+lowerBand = percentile(osc_values, lower_percentile)
+
+// BTC vs Gold Calculations (for signals only)
+btcReturn = ta.roc(btcClose, 1)
+goldReturn = ta.roc(goldClose, 1)
+relativeStrength = btcReturn - goldReturn
+smoothedStrength = ta.ema(relativeStrength, smoothPeriod)
+
+// Conditions
+plo_overbought = oscillator > upperBand
+plo_oversold = oscillator < lowerBand
+gold_over = smoothedStrength > gold_upper
+gold_under = smoothedStrength < gold_lower
+
+// Plots for Power Law
+plot(oscillator, color=color.white, linewidth=2, title="Power Law Oscillator")
+plot(upperBand, color=color.red, linewidth=2, title="PLO Upper Band")
+plot(lowerBand, color=color.green, linewidth=2, title="PLO Lower Band")
+
+// Background colors for PLO
+bgcolor(plo_overbought ? color.new(color.red, 80) : na)
+bgcolor(plo_oversold ? color.new(color.green, 80) : na)
+
+// Background colors for Gold (independent, will overlay with PLO for intensification)
+bgcolor(gold_over ? color.new(color.red, 80) : na)
+bgcolor(gold_under ? color.new(color.green, 80) : na)
+
+// Add small emojis for intensified signals
+plotchar(plo_overbought and gold_over, "Intense Overbought", char="🔥", location=location.top, color=color.red, size=size.tiny)
+plotchar(plo_oversold and gold_under, "Intense Oversold", char="❄️", location=location.bottom, color=color.green, size=size.tiny)

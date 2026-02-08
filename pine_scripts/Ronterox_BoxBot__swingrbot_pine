@@ -1,0 +1,170 @@
+//@version=5
+//@author=Ricardo Montserrat
+strategy('Swing Rich Bot', shorttitle='Rsbot', precision=2, overlay=true, initial_capital=1000, currency='USD', calc_on_every_tick=true)
+
+// --- UT BOT ---
+
+UTBOT_TAG = 'UT Bot'
+
+KEY_VALUE = input(2, title='Key Vaule. \'This changes the sensitivity\'', group=UTBOT_TAG)
+ATR_PERIOD = input(1, title='ATR Period', group=UTBOT_TAG)
+
+// Average true range (ATR), high == high volatility, low == low volatility
+// Uses Moving Average of price to calculate volatility
+LOSS_TOLERATE_AMOUNT = KEY_VALUE * ta.atr(ATR_PERIOD)
+
+// TODO: Make this a variable for number of timeframes
+trailingStopATRs = array.new_float(size = 3, initial_value = .0) 
+utbot(timeframe, idx) =>
+    [tfClose] = request.security(syminfo.tickerid, timeframe, [close])
+
+    trailingStopATR = array.get(trailingStopATRs, idx) 
+    lastTrail = nz(trailingStopATR[1], .0)
+
+    closeHigh = tfClose > lastTrail
+    lastCloseHigh = tfClose[1] > lastTrail
+
+    higherClose = closeHigh ? tfClose - LOSS_TOLERATE_AMOUNT : tfClose + LOSS_TOLERATE_AMOUNT
+    lowerClose = not (closeHigh or lastCloseHigh) ? math.min(lastTrail, tfClose + LOSS_TOLERATE_AMOUNT) : higherClose
+    trailingStopATR := closeHigh and lastCloseHigh ? math.max(lastTrail, tfClose - LOSS_TOLERATE_AMOUNT) : lowerClose
+
+    ema = ta.ema(tfClose, 1)
+    above = ta.crossover(ema, trailingStopATR)
+    below = ta.crossover(trailingStopATR, ema)
+
+    uptrend = tfClose > trailingStopATR
+
+    [uptrend and above, not uptrend and below]
+
+[utbotBuy1, utbotSell1] = utbot('1', 0)
+[utbotBuy3, utbotSell3] = utbot('3', 1)
+[utbotBuy5, utbotSell5] = utbot('5', 2)
+
+// --- Box Bot ---
+
+BOXBOT_TAG = 'Box Bot'
+
+var color TRANSPARENT = color.new(color.white, 100)
+
+FAST_PERIOD_K = input.int(title='Fast Period', minval=1, defval=24, group=BOXBOT_TAG)
+// SLOW_PERIOD_D = input.int(title='Slow Period', minval=1, defval=3, group=BOXBOT_TAG)
+SMOOTH_FAST_PERIOD = input.int(title='Smooth', minval=1, defval=5, group=BOXBOT_TAG)
+
+OVERBOUGHT_LEVEL = input(title='Overbought Level', defval=70, group=BOXBOT_TAG)
+OVERSOLD_LEVEL = input(title='Oversold Level', defval=30, group=BOXBOT_TAG)
+
+boxbot(timeframe) =>
+    [tfClose, tfHigh, tfLow] = request.security(syminfo.tickerid, timeframe, [close, high, low])
+
+    fastPeriod = ta.sma(ta.stoch(tfClose, tfHigh, tfLow, FAST_PERIOD_K), SMOOTH_FAST_PERIOD)
+    // slowPeriod = ta.sma(fastPeriod, SLOW_PERIOD_D)
+
+    [fastPeriod, fastPeriod > OVERBOUGHT_LEVEL, fastPeriod < OVERSOLD_LEVEL]
+
+[_,overbought1, oversold1] = boxbot('1')
+[fastPeriod3, overbought3, oversold3] = boxbot('3')
+[fastPeriod5, overbought5, oversold5] = boxbot('5')
+
+// --- SMI Bot ---
+
+SMIBOT_TAG = 'SMI Bot'
+
+LOOKBACK_PERIOD = input.int(title='Stochastic Lookback', defval=13, minval=1, group=SMIBOT_TAG)
+SMOOTH_LEN1 = input.int(title='1st Smoothing Length', defval=25, minval=1, group=SMIBOT_TAG)
+SMOOTH_LEN2 = input.int(title='2nd Smoothing Length', defval=2, minval=1, group=SMIBOT_TAG)
+SIGNAL_LENGTH = input.int(title='Signal Length', defval=12, minval=1, group=SMIBOT_TAG)
+
+smibot(timeframe) =>
+    [tfClose] = request.security(syminfo.tickerid, timeframe, [close])
+
+    highestHigh = ta.highest(LOOKBACK_PERIOD)
+    lowestLow = ta.lowest(LOOKBACK_PERIOD)
+
+    numerator = ta.ema(ta.ema(tfClose - 0.5 * (highestHigh + lowestLow), SMOOTH_LEN1), SMOOTH_LEN2)
+    denominator = 0.5 * ta.ema(ta.ema(highestHigh - lowestLow, SMOOTH_LEN1), SMOOTH_LEN2)
+
+    smi = 100 * numerator / denominator
+    signal = ta.ema(smi, SIGNAL_LENGTH)
+
+    [smi > signal]
+
+[uptrend1] = smibot('1')
+[uptrend3] = smibot('3')
+[uptrend5] = smibot('5')
+
+// --- RT BOT ---
+
+RTBOT_TAG = 'RT Bot'
+
+BOX_CLOSENESS = input.int(title='Box Close Length', minval=1, defval=3, group=RTBOT_TAG)
+UTSIGNAL_CLOSENESS = input.int(title='UT Signal Close Length', minval=1, defval=3, group=RTBOT_TAG)
+
+BOX_CLOSE_TRADE_CLOSENEESS = input.int(title='Box Close Trade Length', minval=1, defval=3, group=RTBOT_TAG)
+UTSIGNAL_CLOSE_TRADE_CLOSENESS = input.int(title='UT Signal Close Trade Length', minval=1, defval=3, group=RTBOT_TAG)
+
+OVERBOUGHT_LEVEL_CLOSE_TRADE = input(title='Overbought Level Close Trade', defval=80, group=RTBOT_TAG)
+OVERSOLD_LEVEL_CLOSE_TRADE = input(title='Oversold Level Close Trade', defval=20, group=RTBOT_TAG)
+
+isclose(condition, length) =>
+    for i = 0 to length
+        if condition[i]
+            true
+
+getvalue(cond) => cond ? 1 : 0
+
+overbought = false
+oversold = false
+utBuy = false
+utSell = false
+uptrend = false
+
+if timeframe.period == '5'
+    overbought := isclose(overbought3, BOX_CLOSENESS) and isclose(overbought5, BOX_CLOSENESS)
+    oversold := isclose(oversold3, BOX_CLOSENESS) and isclose(oversold5, BOX_CLOSENESS)
+
+    utBuy := isclose(utbotBuy3, UTSIGNAL_CLOSENESS) and isclose(utbotBuy5, UTSIGNAL_CLOSENESS)
+    utSell := isclose(utbotSell3, UTSIGNAL_CLOSENESS) and isclose(utbotSell5, UTSIGNAL_CLOSENESS)
+
+    uptrend := uptrend5
+else
+    overbought := isclose(overbought3, BOX_CLOSENESS) and isclose(overbought1, BOX_CLOSENESS)
+    oversold := isclose(oversold3, BOX_CLOSENESS) and isclose(oversold1, BOX_CLOSENESS)
+
+    utBuy := isclose(utbotBuy3, UTSIGNAL_CLOSENESS) and isclose(utbotBuy1, UTSIGNAL_CLOSENESS)
+    utSell := isclose(utbotSell3, UTSIGNAL_CLOSENESS) and isclose(utbotSell1, UTSIGNAL_CLOSENESS)
+
+    uptrend := uptrend3
+
+call = utBuy and oversold and uptrend
+put = utSell and overbought and not uptrend
+
+var onput = false
+var oncall = false
+
+startcall = call and not oncall
+startput = put and not onput
+
+if startcall
+    strategy.entry('Call', strategy.long)
+    oncall := true
+else if startput
+    strategy.entry('Put', strategy.short)
+    onput := true
+
+callSignal = fastPeriod3 <= OVERSOLD_LEVEL_CLOSE_TRADE
+putSignal = fastPeriod3 >= OVERBOUGHT_LEVEL_CLOSE_TRADE
+
+if callSignal
+    strategy.close('Put')
+    onput := false
+else if putSignal
+    strategy.close('Call')
+    oncall := false
+
+greaterThanBefore = close > close[1]
+
+plotshape(startcall, location=location.belowbar, style=shape.labelup, size=size.huge, color=color.green)
+plotshape(startcall and greaterThanBefore, location=location.belowbar, style=shape.labelup, size=size.huge, color=color.blue)
+
+plotshape(startput, location=location.abovebar, style=shape.labeldown, size=size.huge, color=color.red)
+plotshape(startput and not greaterThanBefore, location=location.abovebar, style=shape.labeldown, size=size.huge, color=color.purple)

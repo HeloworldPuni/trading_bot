@@ -1,0 +1,112 @@
+//@version=5
+strategy("NIFTY/SENSEX ORB VWAP SCALPING - Tradetron", overlay=true,
+     initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=1,
+     commission_type=strategy.commission.percent,
+     commission_value=0.03)
+
+// ===== INPUTS =====
+i_instrument = input.string("NIFTY", "Instrument", options=["NIFTY", "SENSEX"])
+i_slPoints = input.float(15, "Stop Loss (Points)", minval=5, maxval=50)
+i_tp1Points = input.float(30, "Target 1 (Points)", minval=10, maxval=100)
+i_tp2Points = input.float(45, "Target 2 (Points)", minval=20, maxval=150)
+i_trailTrigger = input.float(20, "Trail Trigger (Points)", minval=5, maxval=50)
+i_strikeOffset = input.int(0, "Strike Offset (0=ATM, -1=ITM)", minval=-2, maxval=2)
+
+// ===== TIME FILTER (IST) =====
+startTime = timestamp("Asia/Kolkata", year, month, dayofmonth, 9, 20)
+endTime   = timestamp("Asia/Kolkata", year, month, dayofmonth, 15, 15)
+
+tradeAllowed = time >= startTime and time <= endTime
+
+// ===== INDICATORS =====
+ema9  = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+vwap  = ta.vwap(close)
+rsi   = ta.rsi(close, 14)
+volMA = ta.sma(volume, 20)
+
+// ===== OPENING RANGE (First 5 candles: 9:15–9:20 on 1-min chart) =====
+orbHigh = ta.highest(high, 5)
+orbLow  = ta.lowest(low, 5)
+
+// ===== BUY CONDITIONS =====
+buyCE = tradeAllowed and
+        close > vwap and
+        ema9 > ema21 and
+        rsi > 55 and rsi < 70 and
+        volume > volMA and
+        close > orbHigh
+
+buyPE = tradeAllowed and
+        close < vwap and
+        ema9 < ema21 and
+        rsi < 45 and rsi > 30 and
+        volume > volMA and
+        close < orbLow
+
+// ===== TRACK ENTRIES TO AVOID DUPLICATE ALERTS =====
+var bool inCETrade = false
+var bool inPETrade = false
+
+// Reset at day start
+if ta.change(time("D"))
+    inCETrade := false
+    inPETrade := false
+
+// ===== ENTRY WITH ALERTS =====
+if buyCE and not inCETrade
+    strategy.entry("BUY_CE", strategy.long)
+    inCETrade := true
+    inPETrade := false
+    alert('{"strategy":"ORB_VWAP_SCALP","action":"BUY","option_type":"CE","instrument":"' + i_instrument + '","strike_offset":' + str.tostring(i_strikeOffset) + ',"sl":' + str.tostring(i_slPoints) + ',"tp1":' + str.tostring(i_tp1Points) + ',"tp2":' + str.tostring(i_tp2Points) + ',"trail_trigger":' + str.tostring(i_trailTrigger) + '}', alert.freq_once_per_bar)
+
+if buyPE and not inPETrade
+    strategy.entry("BUY_PE", strategy.long)
+    inPETrade := true
+    inCETrade := false
+    alert('{"strategy":"ORB_VWAP_SCALP","action":"BUY","option_type":"PE","instrument":"' + i_instrument + '","strike_offset":' + str.tostring(i_strikeOffset) + ',"sl":' + str.tostring(i_slPoints) + ',"tp1":' + str.tostring(i_tp1Points) + ',"tp2":' + str.tostring(i_tp2Points) + ',"trail_trigger":' + str.tostring(i_trailTrigger) + '}', alert.freq_once_per_bar)
+
+// ===== EXIT CONDITIONS =====
+// Note: Actual SL/TP managed in Tradetron. This is for backtesting visualization.
+strategy.exit("CE_EXIT", "BUY_CE", profit=i_tp1Points*10, loss=i_slPoints*10)
+strategy.exit("PE_EXIT", "BUY_PE", profit=i_tp1Points*10, loss=i_slPoints*10)
+
+// ===== FORCE EXIT AT 3:15 PM =====
+if time >= endTime
+    if strategy.position_size != 0
+        strategy.close_all()
+        alert('{"strategy":"ORB_VWAP_SCALP","action":"EXIT_ALL","reason":"EOD_SQUAREOFF"}', alert.freq_once_per_bar)
+    inCETrade := false
+    inPETrade := false
+
+// ===== MANUAL EXIT ALERTS (when strategy closes position) =====
+if strategy.position_size == 0 and strategy.position_size[1] > 0
+    if inCETrade[1]
+        alert('{"strategy":"ORB_VWAP_SCALP","action":"EXIT","option_type":"CE","reason":"SL_TP_HIT"}', alert.freq_once_per_bar)
+    if inPETrade[1]
+        alert('{"strategy":"ORB_VWAP_SCALP","action":"EXIT","option_type":"PE","reason":"SL_TP_HIT"}', alert.freq_once_per_bar)
+
+// ===== PLOTS =====
+plot(ema9, "EMA 9", color=color.green, linewidth=2)
+plot(ema21, "EMA 21", color=color.red, linewidth=2)
+plot(vwap, "VWAP", color=color.blue, linewidth=2)
+plot(orbHigh, "ORB High", color=color.lime, style=plot.style_stepline)
+plot(orbLow, "ORB Low", color=color.fuchsia, style=plot.style_stepline)
+
+// ===== INFO TABLE =====
+var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Instrument", text_color=color.white)
+    table.cell(infoTable, 1, 0, i_instrument, text_color=color.yellow)
+    table.cell(infoTable, 0, 1, "SL", text_color=color.white)
+    table.cell(infoTable, 1, 1, str.tostring(i_slPoints) + " pts", text_color=color.red)
+    table.cell(infoTable, 0, 2, "Target 1", text_color=color.white)
+    table.cell(infoTable, 1, 2, str.tostring(i_tp1Points) + " pts", text_color=color.green)
+    table.cell(infoTable, 0, 3, "Target 2", text_color=color.white)
+    table.cell(infoTable, 1, 3, str.tostring(i_tp2Points) + " pts", text_color=color.green)
+    table.cell(infoTable, 0, 4, "Trail After", text_color=color.white)
+    table.cell(infoTable, 1, 4, str.tostring(i_trailTrigger) + " pts", text_color=color.orange)
+    table.cell(infoTable, 0, 5, "Strike", text_color=color.white)
+    table.cell(infoTable, 1, 5, i_strikeOffset == 0 ? "ATM" : "ATM" + str.tostring(i_strikeOffset), text_color=color.aqua)

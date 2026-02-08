@@ -1,0 +1,764 @@
+//@version=5
+//
+// Author: benso87
+//
+// Credit to:
+// The_Caretaker for BBWP and PMARP indicators 
+//
+indicator(title='DIY Entry Signals', shorttitle='DIY Signals', format=format.price, precision=2, timeframe='', timeframe_gaps=true, overlay=true, max_bars_back=500)
+
+noColor = color.new(color.white, transp=100)
+//////////////////////////////////////////////////////////////
+// Inputs
+
+// Signal Types
+includeLong		= input.bool   (true, title='Long', inline='1', group='Signal Types')
+includeShort	= input.bool   (true, title='Short', inline='2', group='Signal Types')
+onlyConfirmed   = input.bool   (true, title='Only Confirmed Candles', inline='3', group='Signal Types')
+useSigCheck     = input.bool   (false, title='No More Signals For # Bars', inline='5', group='Signal Types')
+sigCheckBars    = input.int    (10, title='', minval=1, maxval=50, inline='5', group='Signal Types')
+plotType        = input.string ('Shape', title='Signal Marker', options=['Shape', 'Dot', 'Bar'], group='Signal Types')
+barColorLong    = input.color  (#0bff00, title='Long Bar Color', group='Signal Types')
+barColorShort   = input.color  (#ff0014, title='Short Bar Color', group='Signal Types')
+
+// Price
+priceSource = input.source(close, title='Price Source', group='Price')
+
+// Volume
+vMaLength   = input.int (20, title='MA Length', minval=1, group='Volume')
+vMaType     = input.string ('SMA', title='MA Type', options=['SMA', 'EMA', 'WMA'], group='Volume')
+vMult     = input.float (1.5, title='Multiplier', minval=0, group='Volume', tooltip='Volume needs to be above this much times the previous volume bar to trigger a signal.')
+
+// Moving Averages
+maSource    = input.source  (close, title='Source', inline='source', group='Moving Averages')
+includeMA1	= input.bool	(false, title='', inline='MA 1', group='Moving Averages')
+ma1Color 	= input.color	(#ffeb3b, title='MA 1', inline='MA 1', group='Moving Averages')
+ma1Length 	= input.int		(21, title='Length', minval=1, inline='MA 1', group='Moving Averages')
+ma1Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 1', group='Moving Averages')
+includeMA2	= input.bool	(false, title='', inline='MA 2', group='Moving Averages')
+ma2Color 	= input.color	(#00e676, title='MA 2', inline='MA 2', group='Moving Averages')
+ma2Length 	= input.int		(55, title='Length', minval=1, inline='MA 2', group='Moving Averages')
+ma2Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 2', group='Moving Averages')
+includeMA3	= input.bool	(false, title='', inline='MA 3', group='Moving Averages')
+ma3Color 	= input.color	(#00bcd4, title='MA 3', inline='MA 3', group='Moving Averages')
+ma3Length 	= input.int		(100, title='Length', minval=1, inline='MA 3', group='Moving Averages')
+ma3Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 3', group='Moving Averages')
+includeMA4	= input.bool	(false, title='', inline='MA 4', group='Moving Averages')
+ma4Color 	= input.color	(#e040fb, title='MA 4', inline='MA 4', group='Moving Averages')
+ma4Length 	= input.int		(200, title='Length', minval=1, inline='MA 4', group='Moving Averages')
+ma4Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 4', group='Moving Averages')
+includeMA5	= input.bool	(false, title='', inline='MA 5', group='Moving Averages')
+ma5Color 	= input.color	(color.red, title='MA 5', inline='MA 5', group='Moving Averages')
+ma5Length 	= input.int		(300, title='Length', minval=1, inline='MA 5', group='Moving Averages')
+ma5Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 5', group='Moving Averages')
+includeMA6	= input.bool	(false, title='', inline='MA 6', group='Moving Averages')
+ma6Color 	= input.color	(color.blue, title='MA 6', inline='MA 6', group='Moving Averages')
+ma6Length 	= input.int		(400, title='Length', minval=1, inline='MA 6', group='Moving Averages')
+ma6Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 6', group='Moving Averages')
+includeMA7	= input.bool	(false, title='', inline='MA 7', group='Moving Averages')
+ma7Color 	= input.color	(color.white, title='MA 7', inline='MA 7', group='Moving Averages')
+ma7Length 	= input.int		(500, title='Length', minval=1, inline='MA 7', group='Moving Averages')
+ma7Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 7', group='Moving Averages')
+includeMA8	= input.bool	(false, title='', inline='MA 8', group='Moving Averages')
+ma8Color 	= input.color	(color.orange, title='MA 8', inline='MA 8', group='Moving Averages')
+ma8Length 	= input.int		(600, title='Length', minval=1, inline='MA 8', group='Moving Averages')
+ma8Type 	= input.string	('EMA', title='Type', options=['SMA','EMA'], inline='MA 8', group='Moving Averages')
+
+// Moving Average Crosses 
+maCrosses    = input.bool   (false, title='Highlight moving average crosses', group='Moving Average Crosses', inline='1')
+useCross1    = input.bool   (false, title='Pair 1', group='Moving Average Crosses', inline='pair1')
+cross1Color1 = input.color  (color.new(color.silver, transp=50), title='', group='Moving Average Crosses', inline='pair1')
+cross1Color2 = input.color  (color.new(color.purple, transp=50), title='', group='Moving Average Crosses', inline='pair1')
+cross1ma1Str = input.string ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair1')
+cross1ma2Str = input.string ('MA 2', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair1')
+useCross2    = input.bool   (false, title='Pair 2', group='Moving Average Crosses', inline='pair2')
+cross2Color1 = input.color  (color.new(color.yellow, transp=50), title='', group='Moving Average Crosses', inline='pair2')
+cross2Color2 = input.color  (color.new(color.red, transp=50), title='', group='Moving Average Crosses', inline='pair2')
+cross2ma1Str = input.string ('MA 2', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair2')
+cross2ma2Str = input.string ('MA 4', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair2')
+useCross3    = input.bool   (false, title='Pair 3', group='Moving Average Crosses', inline='pair3')
+cross3Color1 = input.color  (color.new(color.blue, transp=50), title='', group='Moving Average Crosses', inline='pair3')
+cross3Color2 = input.color  (color.new(color.orange, transp=50), title='', group='Moving Average Crosses', inline='pair3')
+cross3ma1Str = input.string ('MA 3', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair3')
+cross3ma2Str = input.string ('MA 4', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Moving Average Crosses', inline='pair3')
+
+// RSI
+rsiSource = input.source (close, title='Source', group='RSI')
+rsiPeriod = input.int    (14, minval=1, title='RSI Period', group='RSI')
+
+// Stochastic
+stochSource = input.source  (close, title='Source', group='Stochastic')
+periodK 	= input.int     (14, title='K Length', minval=1, group='Stochastic')
+smoothK 	= input.int     (3, title='K Smoothing', minval=1, group='Stochastic')
+periodD 	= input.int     (3, title='D Smoothing', minval=1, group='Stochastic')
+kdSig       = input.bool    (false, title='K & D', group='Stochastic', tooltip='Turn this on to only signal when both K and D are in the selected range.')
+
+// Stoch RSI
+srsiSmoothK = input.int    (3, title='K', minval=1, group='Stochastic RSI')
+srsiSmoothD = input.int    (3, title='D', minval=1, group='Stochastic RSI')
+srsiLength  = input.int    (14, title='Stoch Length', minval=1, group='Stochastic RSI')
+srsiKDSig   = input.bool   (false, title='K & D', group='Stochastic RSI', tooltip='Turn this on to only signal when both K and D are in the selected range.')
+srsiOwnRSI  = input.bool   (false, title='Use Separate RSI', group='Stochastic RSI', tooltip='If unchecked, use RSI from the RSI section. If checked, use RSI settings in this section')
+srsiSource  = input.source (close, title='RSI Source for Stoch RSI', group='Stochastic RSI', tooltip='Only used if "Use Seaprate RSI" is checked.')
+srsiPeriod  = input.int    (14, title='RSI Length for Stoch RSI', group='Stochastic RSI', tooltip='Only used if "Use Seaprate RSI" is checked.')
+
+// Bollinger Bands
+bbSource    = input.source (close, title='Source', group='Bollinger Bands')
+bbLength    = input.int    (20, minval=1, group='Bollinger Bands')
+bbMult      = input.float  (2.0, minval=0.001, maxval=50, title="StdDev", group='Bollinger Bands')
+bbBiasMAStr = input.string ('MA 4', title='Moving Average for Bias', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], group='Bollinger Bands', tooltip='Bias is determined by the BB midline being above or below the chosen moving average.')
+plotBB      = input.bool   (false, title='Plot', group='Bollinger Bands')
+bbFill      = input.color  (noColor, title='Fill Color', group='Bollinger Bands')
+biasFill    = input.bool   (false, title='Color Based on Bias', group='Bollinger Bands')
+longFill    = input.color  (color.new(color.green, transp=80), title='Long Bias', group='Bollinger Bands')
+shortFill   = input.color  (color.new(color.red, transp=80), title='Short Bias', group='Bollinger Bands')
+
+// BBWP
+bbwpPriceSource = input.source  (close, title='Source', inline='1', group='BBWP')
+bbwpBasisType   = input.string  ('SMA', title='Basis Type', options=['SMA', 'EMA', 'VWMA'], inline='1', group='BBWP')
+bbwpLength      = input.int     (13, title='Length', minval=1, inline='2', group='BBWP')
+bbwpLookback    = input.int     (252, title='Lookback', minval=1, inline='2', group='BBWP')
+bbwpMaType      = input.string  ('SMA', 'MA Type', options=['SMA', 'EMA', 'VWMA'], inline='3', group='BBWP')
+bbwpMaLength    = input.int     (5, 'MA Length', minval=1, inline='3', group='BBWP')
+
+// PMARP
+pmarpSource     = input.source  (close, title='Source', inline='1', group='PMARP')
+pmarpLookback	= input.int		(350, title='Lookback', minval=1, maxval=1900, inline='1', group='PMARP')
+pmarpLength     = input.int     (20, title='PMAR Length', minval=1, inline='2', group='PMARP')
+pmarpMAType     = input.string  ('VWMA', title='MA Type', options=[ 'SMA', 'EMA', 'HMA', 'RMA', 'VWMA' ], inline='2', group='PMARP')
+pmarpSigMAType  = input.string  ('SMA', title='Signal MA Type', options=[ 'SMA', 'EMA', 'HMA', 'RMA', 'VWMA' ], inline='3', group='PMARP')
+pmarpSigLength  = input.int     (20, title='PMAR SignalLength', minval=1, inline='3', group='PMARP')
+
+// ADX/DMI
+adxLength = input.int(14, title="ADX Length", group='ADX/DMI')
+diLength = input.int(14, title="DI Length", group='ADX/DMI')
+
+// VWAP
+vwapPlot        = input.bool(false, title='Plot VWAP', group='VWAP')
+hideonDWM       = input.bool(false, title="Hide VWAP on 1D or Above", group="VWAP")
+anchor          = input.string(defval = 'Session', title='Anchor Period', options=['Session', 'Week', 'Month', 'Year'], group='VWAP')
+vwapSrc         = input.source(hlc3, title='Source', group='VWAP')
+vwapColor       = input.color(color.blue, title='Color', group='VWAP')
+vwapWidth       = input.int(2, title='Line Width', minval=1, maxval=4, group='VWAP')
+vwapOffset      = input.int(0, title='Offset', group='VWAP')
+vwapShowBands   = input.bool(false, title='Calculate Bands', group='VWAP')
+vwapStDev       = input.float(1, title='Bands Multiplier', group='VWAP')
+
+// Days Off
+useOffDays  = input.bool (false, title='Days Off', group='Days Off')
+offSun      = input.bool (true, title='Sunday', group='Days Off')
+offMon      = input.bool (false, title='Monday', group='Days Off')
+offTue      = input.bool (false, title='Tuesday', group='Days Off')
+offWed      = input.bool (false, title='Wednesday', group='Days Off')
+offThur     = input.bool (false, title='Thursday', group='Days Off')
+offFri      = input.bool (false, title='Friday', group='Days Off')
+offSat      = input.bool (true, title='Saturday', group='Days Off')
+
+// Time Off
+useTimeOff   = input.bool (false, title='Time Off', group='Time Off')
+timeOffRange = input.session ('0500-1300', title='Time Off', group='Time Off')
+
+// Long Conditions
+usePriceAbMaLong    = input.bool    (false, title='Price Above', inline='price1', group='Long Conditions')
+priceAbMaLongStr    = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4'], inline='price1', group='Long Conditions')
+usePriceBlMaLong    = input.bool    (false, title='Price Below', inline='price2', group='Long Conditions')
+priceBlMaLongStr    = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4'], inline='price2', group='Long Conditions')
+useVolumeLong       = input.bool    (false, title='Volume', inline='volume1', group='Long Conditions')
+volumeAboveLong     = input.string  ('Both', title='Above', options=['MA', 'Mult', 'Both'], inline='volume1', group='Long Conditions', tooltip='See volume section for criteria used here.')
+i_ma1Above2   		= input.bool    (false, title='MA 1 > MA 2', inline='ma above 1', group='Long Conditions')
+i_ma2Above3   		= input.bool    (false, title='MA 2 > MA 3', inline='ma above 2', group='Long Conditions')
+i_ma3Above4   		= input.bool    (false, title='MA 3 > MA 4', inline='ma above 3', group='Long Conditions')
+i_ma4Above5   		= input.bool    (false, title='MA 4 > MA 5', inline='ma above 4', group='Long Conditions')
+i_ma5Above6   		= input.bool    (false, title='MA 5 > MA 6', inline='ma above 5', group='Long Conditions')
+i_ma6Above7   		= input.bool    (false, title='MA 6 > MA 7', inline='ma above 6', group='Long Conditions')
+i_ma7Above8   		= input.bool    (false, title='MA 7 > MA 8', inline='ma above 7', group='Long Conditions')
+useCross1UpLong     = input.bool    (false, title='Price Cross Up: MA 1', inline='cross up', group='Long Conditions')
+useCross2UpLong     = input.bool    (false, title='MA 2', inline='cross up', group='Long Conditions')
+useCross3UpLong     = input.bool    (false, title='MA 3', inline='cross up', group='Long Conditions')
+useCross4UpLong     = input.bool    (false, title='MA 4', inline='cross up', group='Long Conditions')
+useCross5UpLong     = input.bool    (false, title='MA 5', inline='cross up', group='Long Conditions')
+useCross6UpLong     = input.bool    (false, title='MA 6', inline='cross up', group='Long Conditions')
+useCross7UpLong     = input.bool    (false, title='MA 7', inline='cross up', group='Long Conditions')
+useCross8UpLong     = input.bool    (false, title='MA 8', inline='cross up', group='Long Conditions')
+useCross1DnLong     = input.bool    (false, title='Price Cross Down: MA 1', inline='cross dn', group='Long Conditions')
+useCross2DnLong     = input.bool    (false, title='MA 2', inline='cross dn', group='Long Conditions')
+useCross3DnLong     = input.bool    (false, title='MA 3', inline='cross dn', group='Long Conditions')
+useCross4DnLong     = input.bool    (false, title='MA 4', inline='cross dn', group='Long Conditions')
+useCross5DnLong     = input.bool    (false, title='MA 5', inline='cross dn', group='Long Conditions')
+useCross6DnLong     = input.bool    (false, title='MA 6', inline='cross dn', group='Long Conditions')
+useCross7DnLong     = input.bool    (false, title='MA 7', inline='cross dn', group='Long Conditions')
+useCross8DnLong     = input.bool    (false, title='MA 8', inline='cross dn', group='Long Conditions')
+useMATestLong       = input.bool    (false, title='MA Test (beta)', inline='ma test', group='Long Conditions', tooltip='Experimental. This will check to see if the candle touches the moving average and closes above it, or if the previous candle opened above and closed below, and the signal candle closes back above.')
+i_maTestedLong      = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], inline='ma test', group='Long Conditions')
+includeRSILong  	= input.bool    (false, title='RSI', inline='rsi', group='Long Conditions')
+rsiLowLong   		= input.float   (38, title='Above', inline='rsi', group='Long Conditions')
+rsiHighLong   		= input.float   (62, title='Below', inline='rsi', group='Long Conditions')
+useRsiCrossLong     = input.bool    (false, title='RSI cross', inline='rsi cross', group='Long Conditions')
+rsiCrossDirLong     = input.string  ('Above', title='', options=['Above', 'Below'], inline='rsi cross', group='Long Conditions')
+rsiCrossLevelLong   = input.float   (50, title='', minval=0, maxval=100, inline='rsi cross', group='Long Conditions')
+includeStochLong 	= input.bool    (false, title='Stoch', inline='stoch', group='Long Conditions')
+stochKAboveD  		= input.bool    (false, title='K > D', inline='stoch', group='Long Conditions')
+useStochRangeLong 	= input.bool    (false, title='Stoch In Range?',inline='stoch 2', group='Long Conditions')
+stochLowLong  		= input.float   (20, title='Low', inline='stoch 2', group='Long Conditions')
+stochHighLong  		= input.float   (80, title='High', inline='stoch 2', group='Long Conditions')
+includeSRSILong     = input.bool    (false, title='Stoch RSI', inline='srsi', group='Long Conditions')
+srsiLowLong         = input.float   (0, title='Low', minval=0, maxval=100, inline='srsi', group='Long Conditions')
+srsiHighLong        = input.float   (10, title='High', minval=0, maxval=100, inline='srsi', group='Long Conditions')
+includeBBLong       = input.bool    (false, title='Bollinger Bands', inline='bb', group='Long Conditions')
+includBBBiasLong    = input.bool    (false, title='Bias', inline='bb', group='Long Conditions', tooltip='Signal only if the BB midline is above the chose moving average.')
+includeBBTestLong   = input.bool    (false, title='Test Lower (Experimental)', inline='bb', group='Long Conditions', tooltip='Signal only on a test of the lower band.')
+includeBBRLong      = input.bool    (false, title='BB%B', inline='bb2', group='Long Conditions')
+bbrDirLong          = input.string  ('Below', title='', options=['Above', 'Below'], inline='bb2', group='Long Conditions')
+bbrLevelLong        = input.float   (0.1, title='', minval=-1, maxval=2, inline='bb2', group='Long Conditions')
+includeBBWPLong  	= input.bool    (false, title='BBWP', inline='bbwp', group='Long Conditions')
+bbwpMinLong 		= input.float	(0, title='Min', minval=0, maxval=100, step=0.01,	inline='bbwp', group='Long Conditions')
+bbwpMaxLong			= input.float	(35, title='Max', minval=0, maxval=100, step=0.01,	inline='bbwp', group='Long Conditions')
+includeBBWPMaDLong  = input.bool    (false, title='BBWP MA Direction', inline='bbwpMa', group='Long Conditions')
+bbwpMaDLong         = input.string  ('Down', title='', options=['Up', 'Down'], inline='bbwpMa', group='Long Conditions')
+includePMARPLong 	= input.bool    (false, title='PMARP', inline='pmarp', group='Long Conditions')
+pmarpLongAB     	= input.string  ('Below', title='', options=['Above', 'Below'], inline='pmarp', group='Long Conditions')
+pmarpThresholdLong	= input.float   (15, title='', inline='pmarp', group='Long Conditions')
+usePmarpCrossMaLong = input.bool    (false, title='PMARP Crossing MA', inline='pmarp2', group='Long Conditions')
+pmarpCrossDirLong   = input.string  ('Up', title='', options=['Up', 'Down'], inline='pmarp2', group='Long Conditions')
+useDMILong     		= input.bool    (false, title='DMI', inline='dmi', group='Long Conditions')
+dmiPNLong      		= input.string  ('Positive', title='', options=['Positive', 'Negative', 'Custom'], inline='dmi', group='Long Conditions')
+dmiABLong           = input.string  ('Above', title='DMI', options=['Above', 'Below'], inline='dmi 2', group='Long Conditions')
+dmiThresholdLong    = input.float   (20, title='', inline='dmi 2', tooltip='DMI level to be below or above for "Custom" option', group='Long Conditions')
+dmiFlipLong			= input.bool    (false, title='Only on flip', inline='dmi 3', group='Long Conditions', tooltip='Signal only on the bar where the DMI flip occurs.')
+useADXLong     		= input.bool    (false, title='ADX Range', inline='adx', group='Long Conditions')
+adxABLong      		= input.string  ('Below', title='', options=['Above', 'Below'], inline='adx', group='Long Conditions')
+adxThresholdLong  	= input.float   (20, title='', inline='adx', group='Long Conditions')
+useADXDirLong		= input.bool    (false, title='ADX Direction', inline='adx 2', group='Long Conditions')
+adxDirLong			= input.string  ('Rising', title='', options=['Rising', 'Falling'], inline='adx 2', group='Long Conditions')
+useVwapLong         = input.bool    (false, title='VWAP', inline='vwap', group='Long Conditions')
+vwapABLong          = input.string  ('Below', title='', options=['Above', 'Below'], inline='vwap', group='Long Conditions')
+vwapLevelLong       = input.string  ('VWAP', title='', options=['Top', 'VWAP', 'Bottom'], inline='vwap', group='Long Conditions')
+
+// Short Conditions
+usePriceAbMaShort   = input.bool    (false, title='Price Above', inline='price1', group='Short Conditions')
+priceAbMaShortStr   = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4'], inline='price1', group='Short Conditions')
+usePriceBlMaShort   = input.bool    (false, title='Price Below', inline='price2', group='Short Conditions')
+priceBlMaShortStr   = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4'], inline='price2', group='Short Conditions')
+useVolumeShort      = input.bool    (false, title='Volume', inline='volume1', group='Short Conditions')
+volumeAboveShort    = input.string  ('Both', title='Above', options=['MA', 'Mult', 'Both'], inline='volume1', group='Short Conditions', tooltip='See volume section for criteria used here.')
+i_ma1Below2   		= input.bool    (false, title='MA 1 < MA 2', inline='ma below 1', group='Short Conditions')
+i_ma2Below3   		= input.bool    (false, title='MA 2 < MA 3', inline='ma below 2', group='Short Conditions')
+i_ma3Below4   		= input.bool    (false, title='MA 3 < MA 4', inline='ma below 3', group='Short Conditions')
+i_ma4Below5   		= input.bool    (false, title='MA 4 < MA 5', inline='ma below 4', group='Short Conditions')
+i_ma5Below6   		= input.bool    (false, title='MA 5 < MA 6', inline='ma below 5', group='Short Conditions')
+i_ma6Below7   		= input.bool    (false, title='MA 6 < MA 7', inline='ma below 6', group='Short Conditions')
+i_ma7Below8   		= input.bool    (false, title='MA 7 < MA 8', inline='ma below 7', group='Short Conditions')
+useCross1UpShort    = input.bool    (false, title='Price Cross Up: MA 1', inline='cross up', group='Short Conditions')
+useCross2UpShort    = input.bool    (false, title='MA 2', inline='cross up', group='Short Conditions')
+useCross3UpShort    = input.bool    (false, title='MA 3', inline='cross up', group='Short Conditions')
+useCross4UpShort    = input.bool    (false, title='MA 4', inline='cross up', group='Short Conditions')
+useCross5UpShort    = input.bool    (false, title='MA 5', inline='cross up', group='Short Conditions')
+useCross6UpShort    = input.bool    (false, title='MA 6', inline='cross up', group='Short Conditions')
+useCross7UpShort    = input.bool    (false, title='MA 7', inline='cross up', group='Short Conditions')
+useCross8UpShort    = input.bool    (false, title='MA 8', inline='cross up', group='Short Conditions')
+useCross1DnShort    = input.bool    (false, title='Price Cross Down: MA 1', inline='cross dn', group='Short Conditions')
+useCross2DnShort    = input.bool    (false, title='MA 2', inline='cross dn', group='Short Conditions')
+useCross3DnShort    = input.bool    (false, title='MA 3', inline='cross dn', group='Short Conditions')
+useCross4DnShort    = input.bool    (false, title='MA 4', inline='cross dn', group='Short Conditions')
+useCross5DnShort    = input.bool    (false, title='MA 5', inline='cross dn', group='Short Conditions')
+useCross6DnShort    = input.bool    (false, title='MA 6', inline='cross dn', group='Short Conditions')
+useCross7DnShort    = input.bool    (false, title='MA 7', inline='cross dn', group='Short Conditions')
+useCross8DnShort    = input.bool    (false, title='MA 8', inline='cross dn', group='Short Conditions')
+useMATestShort      = input.bool    (false, title='MA Test (beta)', inline='ma test', group='Short Conditions', tooltip='Experimental. This will check to see if the candle touches the moving average and closes below it, or if the previous candle opened below and closed above, and the signal candle closes back below.')
+i_maTestedShort     = input.string  ('MA 1', title='', options=['MA 1', 'MA 2', 'MA 3', 'MA 4', 'MA 5', 'MA 6', 'MA 7', 'MA 8'], inline='ma test', group='Short Conditions')
+includeRSIShort  	= input.bool    (false, title='RSI', inline='rsi', group='Short Conditions')
+rsiLowShort   		= input.float   (38, title='Above', inline='rsi', group='Short Conditions')
+rsiHighShort  		= input.float   (62, title='Below', inline='rsi', group='Short Conditions')
+useRsiCrossShort    = input.bool    (false, title='RSI cross', inline='rsi cross', group='Short Conditions')
+rsiCrossDirShort    = input.string  ('Below', title='', options=['Above', 'Below'], inline='rsi cross', group='Short Conditions')
+rsiCrossLevelShort  = input.float   (50, title='', minval=0, maxval=100, inline='rsi cross', group='Short Conditions')
+includeStochShort 	= input.bool    (false, title='Stoch', inline='stoch', group='Short Conditions')
+stochKBelowD  		= input.bool    (false, title='K < D', inline='stoch', group='Short Conditions')
+useStochRangeShort  = input.bool    (false, title='Stoch In Range?',inline='stoch 2', group='Short Conditions')
+stochLowShort  		= input.float   (20, title='Low', inline='stoch 2', group='Short Conditions')
+stochHighShort  	= input.float   (80, title='High', inline='stoch 2', group='Short Conditions')
+includeSRSIShort    = input.bool    (false, title='Stoch RSI', inline='srsi', group='Short Conditions')
+srsiLowShort        = input.float   (90, title='Low', minval=0, maxval=100, inline='srsi', group='Short Conditions')
+srsiHighShort       = input.float   (100, title='High', minval=0, maxval=100, inline='srsi', group='Short Conditions')
+includeBBShort      = input.bool    (false, title='Bollinger Bands', inline='bb', group='Short Conditions')
+includBBBiasShort   = input.bool    (false, title='Bias', inline='bb', group='Short Conditions', tooltip='Signal only if the BB midline is below the chosen moving average.')
+includeBBTestShort  = input.bool    (false, title='Test Upper (Experimental)', inline='bb', group='Short Conditions', tooltip='Signal only on a test of the upper band.')
+includeBBRShort     = input.bool    (false, title='BB%B', inline='bb2', group='Short Conditions')
+bbrDirShort         = input.string  ('Above', title='', options=['Above', 'Below'], inline='bb2', group='Short Conditions')
+bbrLevelShort       = input.float   (0.9, title='', minval=-1, maxval=2, inline='bb2', group='Short Conditions')
+includeBBWPShort 	= input.bool    (false, title='BBWP', inline='bbwp', group='Short Conditions')
+bbwpMinShort 		= input.float	(0, title='Min', minval=0, maxval=100, step=0.01,	inline='bbwp', group='Short Conditions')
+bbwpMaxShort		= input.float	(35, title='Max', minval=0, maxval=100, step=0.01,	inline='bbwp', group='Short Conditions')
+includeBBWPMaDShort = input.bool    (false, title='BBWP MA Direction', inline='bbwpMa', group='Short Conditions')
+bbwpMaDShort        = input.string  ('Down', title='', options=['Up', 'Down'], inline='bbwpMa', group='Short Conditions')
+includePMARPShort 	= input.bool    (false, title='PMARP', inline='pmarp', group='Short Conditions')
+pmarpShortAB    	= input.string  ('Above', title='', options=['Above', 'Below'], inline='pmarp', group='Short Conditions')
+pmarpThresholdShort	= input.float   (85, title='', inline='pmarp', group='Short Conditions')
+usePmarpCrossMaShort= input.bool    (false, title='PMARP Crossing MA', inline='pmarp2', group='Short Conditions')
+pmarpCrossDirShort  = input.string  ('Down', title='', options=['Up', 'Down'], inline='pmarp2', group='Short Conditions')
+useDMIShort     	= input.bool    (false, title='DMI', inline='dmi', group='Short Conditions')
+dmiPNShort          = input.string  ('Positive', title='', options=['Positive', 'Negative', 'Custom'], inline='dmi', group='Short Conditions')
+dmiABShort          = input.string  ('Above', title='DMI', options=['Above', 'Below'], inline='dmi 2', group='Short Conditions')
+dmiThresholdShort   = input.float   (-20, title='', inline='dmi 2', tooltip='DMI level to be below or above for "Custom" option', group='Short Conditions')
+dmiFlipShort		= input.bool    (false, title='Only on flip', inline='dmi 3', group='Short Conditions', tooltip='Signal only on the bar where the DMI flip occurs.')
+useADXShort     	= input.bool    (false, title='ADX Range', inline='adx', group='Short Conditions')
+adxABShort     		= input.string  ('Below', title='', options=['Above', 'Below'], inline='adx', group='Short Conditions')
+adxThresholdShort  	= input.float   (20, title='', inline='adx', group='Short Conditions')
+useADXDirShort		= input.bool    (false, title='ADX Direction', inline='adx 2', group='Short Conditions')
+adxDirShort			= input.string  ('Rising', title='', options=['Rising', 'Falling'], inline='adx 2', group='Short Conditions')
+useVwapShort        = input.bool    (false, title='VWAP', inline='vwap', group='Short Conditions')
+vwapABShort         = input.string  ('Above', title='', options=['Above', 'Below'], inline='vwap', group='Short Conditions')
+vwapLevelShort      = input.string  ('VWAP', title='', options=['Top', 'VWAP', 'Bottom'], inline='vwap', group='Short Conditions')
+
+
+//////////////////////////////////////////////////////////////
+// Calculations
+
+// Function to calculate moving averages based on chosen type
+f_ma(source, length, type) =>
+    switch type
+        'SMA' => ta.sma(source, length)
+        'EMA' => ta.ema(source, length)
+        'RMA' => ta.rma(source, length)
+        'WMA' => ta.wma(source, length)
+
+// volume
+vMa = f_ma(volume, vMaLength, vMaType)
+
+vAboveMa = volume > vMa
+vAboveMult = volume >= volume[1] * vMult
+vAboveBoth = vAboveMa and vAboveMult
+
+vAboveLong = volumeAboveLong == 'MA' ? vAboveMa : volumeAboveLong == 'Mult' ? vAboveMult : vAboveBoth
+vAboveShort = volumeAboveShort == 'MA' ? vAboveMa : volumeAboveShort == 'Mult' ? vAboveMult : vAboveBoth
+
+// Moving Averages
+ma1 = f_ma(maSource, ma1Length, ma1Type)
+ma2 = f_ma(maSource, ma2Length, ma2Type)
+ma3 = f_ma(maSource, ma3Length, ma3Type)
+ma4 = f_ma(maSource, ma4Length, ma4Type)
+ma5 = f_ma(maSource, ma5Length, ma5Type)
+ma6 = f_ma(maSource, ma6Length, ma6Type)
+ma7 = f_ma(maSource, ma7Length, ma7Type)
+ma8 = f_ma(maSource, ma8Length, ma8Type)
+
+// Function to convert chosen MA to MA series
+f_convertMA (ma) =>
+    switch ma
+        'MA 1' => ma1
+        'MA 2' => ma2
+        'MA 3' => ma3
+        'MA 4' => ma4
+        'MA 5' => ma5
+        'MA 6' => ma6
+        'MA 7' => ma7
+        'MA 8' => ma8
+
+ma1Above2 	= ma1 > ma2
+ma1Above3 	= ma1 > ma3
+ma1Above4 	= ma1 > ma4
+ma1Above5 	= ma1 > ma5
+ma1Above6 	= ma1 > ma6
+ma1Above7 	= ma1 > ma7
+ma1Above8 	= ma1 > ma8
+
+ma2Above1 	= ma2 > ma1
+ma2Above3 	= ma2 > ma3
+ma2Above4 	= ma2 > ma4
+ma2Above5 	= ma2 > ma5
+ma2Above6 	= ma2 > ma6
+ma2Above7 	= ma2 > ma7
+ma2Above8 	= ma2 > ma8
+
+ma3Above1 	= ma3 > ma1
+ma3Above2 	= ma3 > ma2
+ma3Above4 	= ma3 > ma4
+ma3Above5 	= ma3 > ma5
+ma3Above6 	= ma3 > ma6
+ma3Above7 	= ma3 > ma7
+ma3Above8 	= ma3 > ma8
+
+ma4Above1 	= ma4 > ma1
+ma4Above2 	= ma4 > ma2
+ma4Above3 	= ma4 > ma3
+ma4Above5 	= ma4 > ma5
+ma4Above6 	= ma4 > ma6
+ma4Above7 	= ma4 > ma7
+ma4Above8 	= ma4 > ma8
+
+ma5Above1 	= ma5 > ma1
+ma5Above2 	= ma5 > ma2
+ma5Above3 	= ma5 > ma3
+ma5Above4 	= ma5 > ma4
+ma5Above6 	= ma5 > ma6
+ma5Above7 	= ma5 > ma7
+ma5Above8 	= ma5 > ma8
+
+ma6Above1 	= ma6 > ma1
+ma6Above2 	= ma6 > ma2
+ma6Above3 	= ma6 > ma3
+ma6Above4 	= ma6 > ma4
+ma6Above5 	= ma6 > ma5
+ma6Above7 	= ma6 > ma7
+ma6Above8 	= ma6 > ma8
+
+ma7Above1 	= ma7 > ma1
+ma7Above2 	= ma7 > ma2
+ma7Above3 	= ma7 > ma3
+ma7Above4 	= ma7 > ma4
+ma7Above5 	= ma7 > ma5
+ma7Above6 	= ma7 > ma6
+ma7Above8 	= ma7 > ma8
+
+ma8Above1 	= ma8 > ma1
+ma8Above2 	= ma8 > ma2
+ma8Above3 	= ma8 > ma3
+ma8Above4 	= ma8 > ma4
+ma8Above5 	= ma8 > ma5
+ma8Above6 	= ma8 > ma6
+ma8Above7 	= ma8 > ma7
+
+// Price crossing moving average checks
+pCrossUp1 = ta.crossover(close, ma1)
+pCrossUp2 = ta.crossover(close, ma2)
+pCrossUp3 = ta.crossover(close, ma3)
+pCrossUp4 = ta.crossover(close, ma4)
+pCrossUp5 = ta.crossover(close, ma5)
+pCrossUp6 = ta.crossover(close, ma6)
+pCrossUp7 = ta.crossover(close, ma7)
+pCrossUp8 = ta.crossover(close, ma8)
+
+pCrossDn1 = ta.crossunder(close, ma1)
+pCrossDn2 = ta.crossunder(close, ma2)
+pCrossDn3 = ta.crossunder(close, ma3)
+pCrossDn4 = ta.crossunder(close, ma4)
+pCrossDn5 = ta.crossunder(close, ma5)
+pCrossDn6 = ta.crossunder(close, ma6)
+pCrossDn7 = ta.crossunder(close, ma7)
+pCrossDn8 = ta.crossunder(close, ma8)
+
+pCrossLong = (not useCross1UpLong or pCrossUp1) and (not useCross2UpLong or pCrossUp2) and (not useCross3UpLong or pCrossUp3) and (not useCross4UpLong or pCrossUp4) and (not useCross5UpLong or pCrossUp5) and (not useCross6UpLong or pCrossUp6) and (not useCross7UpLong or pCrossUp7) and (not useCross8UpLong or pCrossUp8) and (not useCross1DnLong or pCrossDn1) and (not useCross2DnLong or pCrossDn2) and (not useCross3DnLong or pCrossDn3) and (not useCross4DnLong or pCrossDn4) and (not useCross5DnLong or pCrossDn5) and (not useCross6DnLong or pCrossDn6) and (not useCross7DnLong or pCrossDn7) and (not useCross8DnLong or pCrossDn8)
+pCrossShort = (not useCross1UpShort or pCrossUp1) and (not useCross2UpShort or pCrossUp2) and (not useCross3UpShort or pCrossUp3) and (not useCross4UpShort or pCrossUp4) and (not useCross5UpShort or pCrossUp5) and (not useCross6UpShort or pCrossUp6) and (not useCross7UpShort or pCrossUp7) and (not useCross8UpShort or pCrossUp8) and (not useCross1DnShort or pCrossDn1) and (not useCross2DnShort or pCrossDn2) and (not useCross3DnShort or pCrossDn3) and (not useCross4DnShort or pCrossDn4) and (not useCross5DnShort or pCrossDn5) and (not useCross6DnShort or pCrossDn6) and (not useCross7DnShort or pCrossDn7) and (not useCross8DnShort or pCrossDn8)
+
+// Moving average crossover checks
+cross1ma1 = f_convertMA(cross1ma1Str)
+cross1ma2 = f_convertMA(cross1ma2Str)
+cross2ma1 = f_convertMA(cross2ma1Str)
+cross2ma2 = f_convertMA(cross2ma2Str)
+cross3ma1 = f_convertMA(cross3ma1Str)
+cross3ma2 = f_convertMA(cross3ma2Str)
+
+cross1Up = maCrosses and useCross1 ? ta.crossover(cross1ma1, cross1ma2) : false
+cross1Down = maCrosses and useCross1 ? ta.crossunder(cross1ma1, cross1ma2) : false
+cross2Up = maCrosses and useCross2 ? ta.crossover(cross2ma1, cross2ma2) : false
+cross2Down = maCrosses and useCross2 ? ta.crossunder(cross2ma1, cross2ma2) : false
+cross3Up = maCrosses and useCross3 ? ta.crossover(cross3ma1, cross3ma2) : false
+cross3Down = maCrosses and useCross3 ? ta.crossunder(cross3ma1, cross3ma2) : false
+
+crossColor = cross3Up ? cross3Color1 : cross3Down ? cross3Color2 : cross2Up ? cross2Color1 : cross2Down ? cross2Color2 : cross1Up ? cross1Color1 : cross1Down ? cross1Color2 : na
+
+// Moving average test
+maTestedLong = f_convertMA(i_maTestedLong)
+maTestedShort = f_convertMA(i_maTestedShort)
+
+maTestLong = (low <= maTestedLong and close >= maTestedLong) or (open[1] >= maTestedLong[1] and close[1] <= maTestedLong[1] and close >= maTestedLong)
+maTestShort = (high >= maTestedShort and close <= maTestedShort) or (open[1] <= maTestedShort[1] and close[1] >= maTestedShort[1] and close <= maTestedShort)
+
+// Price check conversions
+priceAbMaLong = f_convertMA(priceAbMaLongStr)
+priceBlMaLong = f_convertMA(priceBlMaLongStr)
+priceAbMaShort = f_convertMA(priceAbMaShortStr)
+priceBlMaShort = f_convertMA(priceBlMaShortStr)
+
+// RSI
+up = ta.rma(math.max(ta.change(rsiSource), 0), rsiPeriod)
+down = ta.rma(-math.min(ta.change(rsiSource), 0), rsiPeriod)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+
+rsiCrossLong = rsiCrossDirLong == 'Above' ? ta.crossover(rsi, rsiCrossLevelLong) : ta.crossunder(rsi, rsiCrossLevelLong)
+rsiCrossShort = rsiCrossDirShort == 'Above' ? ta.crossover(rsi, rsiCrossLevelShort) : ta.crossunder(rsi, rsiCrossLevelShort)
+
+// Stochastic
+k = ta.sma(ta.stoch(stochSource, high, low, periodK), smoothK)
+d = ta.sma(k, periodD)
+
+stochInRangeLong = kdSig ? stochHighLong >= k and k >= stochLowLong and stochHighLong >= d and d >= stochLowLong : stochHighLong >= k and k >= stochLowLong
+stochInRangeShort = kdSig ? stochHighShort >= k and k >= stochLowShort and stochHighShort >= d and d >= stochLowShort : stochHighShort >= k and k >= stochLowShort
+
+// Stoch RSI
+sUp = ta.rma(math.max(ta.change(srsiSource), 0), srsiPeriod)
+sDown = ta.rma(-math.min(ta.change(srsiSource), 0), srsiPeriod)
+srsiRSI = sDown == 0 ? 100 : sUp == 0 ? 0 : 100 - (100 / (1 + sUp / sDown))
+
+rsiSelect = srsiOwnRSI ? srsiRSI : rsi
+
+srsiK = ta.sma(ta.stoch(rsiSelect, rsiSelect, rsiSelect, srsiLength), srsiSmoothK)
+srsiD = ta.sma(srsiK, srsiSmoothD)
+
+srsiInRangeLong = srsiKDSig ? srsiHighLong >= srsiK and srsiK >= srsiLowLong and srsiHighLong >= srsiD and srsiD >= srsiLowLong : srsiHighLong >= srsiK and srsiK >= srsiLowLong
+srsiInRangeShort = srsiKDSig ? srsiHighShort >= srsiK and srsiK >= srsiLowShort and srsiHighShort >= srsiD and srsiD >= srsiLowShort : srsiHighShort >= srsiK and srsiK >= srsiLowShort
+
+// Bollinger Bands
+basis = ta.sma(bbSource, bbLength)
+dev = bbMult * ta.stdev(bbSource, bbLength)
+upper = basis + dev
+lower = basis - dev
+bbr = (bbSource - lower) / (upper - lower)
+
+bbrSignalLong = bbrDirLong == 'Above' ? bbr >= bbrLevelLong : bbr <= bbrLevelLong
+bbrSignalShort = bbrDirShort == 'Above' ? bbr >= bbrLevelShort : bbr <= bbrLevelShort
+
+bbUpTest = (high >= upper and close < upper and close > basis) or (close[1] >= upper[1] and close < upper and close > basis)
+bbLowTest = (low <= lower and close > lower and close < basis) or (close[1] <= lower[1] and close > lower and close < basis)
+
+bbBiasMA = f_convertMA(bbBiasMAStr)
+longBias = basis > bbBiasMA
+shortBias = basis < bbBiasMA
+
+fillColor = biasFill and longBias ? longFill : biasFill and shortBias ? shortFill : bbFill
+
+// BBWP
+// Credit to The_Caretaker
+f_maType ( _price, _len, _type ) =>
+    _type == 'SMA' ? ta.sma ( _price, _len ) : _type == 'EMA' ? ta.ema ( _price, _len ) : ta.vwma ( _price, _len )
+
+f_bbwp ( _price, _bbwLen, _bbwpLen, _type ) =>
+    float _basis = f_maType ( _price, _bbwLen, _type )
+    float _dev = ta.stdev ( _price, _bbwLen )
+    _bbw = ( _basis + _dev - ( _basis - _dev )) / _basis
+    _bbwSum = 0.0
+    _len = bar_index < _bbwpLen ? bar_index : _bbwpLen
+    for _i = 1 to _len by 1
+        _bbwSum += ( _bbw[_i] > _bbw ? 0 : 1 )
+        _bbwSum
+    _return = bar_index >= _bbwLen ? ( _bbwSum / _len) * 100 : na
+    _return
+
+bbwp = f_bbwp ( bbwpPriceSource, bbwpLength, bbwpLookback, bbwpBasisType )
+bbwpMa = f_ma (bbwp, bbwpMaLength, bbwpMaType)
+
+bbwpMaDirection = bbwpMa > bbwpMa[1] ? 'Up' : bbwpMa < bbwpMa[1] ? 'Down' : na
+
+// PMARP
+// Credit to The_Caretaker
+f_prior_sum ( _P, _X ) =>
+    math.sum ( _P[1], _X - 1 )
+
+f_ma_val ( _P, _typ, _len ) =>
+    _typ == 'SMA' ? ta.sma ( _P, _len ) : _typ == 'EMA' ? ta.ema ( _P, _len ) : _typ == 'RMA' ? ta.rma ( _P, _len ) : _typ == 'HMA' ? ta.hma ( _P, _len ) : ta.vwma ( _P, _len )
+
+f_pmarp ( _price, _pmarLen, _pmarpLen, _type_p ) =>
+    _pmar = math.abs ( _price / f_ma_val ( _price, _type_p, _pmarLen ))
+    _pmarpSum = 0
+    _len = bar_index < _pmarpLen ? bar_index : _pmarpLen
+    for i = 1 to _len by 1
+        _pmarpSum += ( _pmar[i] > _pmar ? 0 : 1 )
+        _pmarpSum
+    _return = bar_index >= _pmarLen ? _pmarpSum / _len * 100 : na
+
+ma          = f_ma_val ( pmarpSource, pmarpMAType, pmarpLength )
+pmar        = pmarpSource / ma
+pmarp       = f_pmarp ( pmarpSource, pmarpLength, pmarpLookback, pmarpMAType ) 
+pmarpMa     = f_ma(pmarp, pmarpSigLength, pmarpSigMAType)
+
+pmarpCrossUp = ta.crossover(pmarp, pmarpMa)
+pmarpCrossDown = ta.crossunder(pmarp, pmarpMa)
+
+// ADX/DMI
+dUp = ta.change(high)
+dDown = -ta.change(low)
+plusDM = na(dUp) ? na : (dUp > dDown and dUp > 0 ? dUp : 0)
+minusDM = na(dDown) ? na : (dDown > dUp and dDown > 0 ? dDown : 0)
+trur = ta.rma(ta.tr, diLength)
+plus = fixnan(100 * ta.rma(plusDM, diLength) / trur)
+minus = fixnan(100 * ta.rma(minusDM, diLength) / trur)
+sum = plus + minus
+adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxLength)
+diff = plus - minus
+
+// VWAP
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+computeVWAP(src, isNewPeriod, stDevMultiplier) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+    var float sumSrcSrcVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	// sumSrcSrcVol calculates the dividend of the equation that is later used to calculate the standard deviation
+	sumSrcSrcVol := isNewPeriod ? volume * math.pow(src, 2) : volume * math.pow(src, 2) + sumSrcSrcVol[1]
+
+	_vwap = sumSrcVol / sumVol
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+
+	lowerBand = _vwap - stDev * stDevMultiplier
+	upperBand = _vwap + stDev * stDevMultiplier
+
+	[_vwap, lowerBand, upperBand]
+
+timeChange(period) =>
+	ta.change(time(period))
+
+isNewPeriod = switch anchor
+	"Session" => timeChange("D")
+	"Week" => timeChange("W")
+	"Month" => timeChange("M")
+	"Year" => timeChange("12M")
+	=> false
+
+if na(vwapSrc[1])
+	isNewPeriod := true
+
+float vwapValue = na
+float std = na
+float upperBandValue = na
+float lowerBandValue = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, bottom, top] = computeVWAP(vwapSrc, isNewPeriod, vwapStDev)
+    vwapValue := _vwap
+    upperBandValue := vwapPlot and vwapShowBands ? top : na
+    lowerBandValue := vwapPlot and vwapShowBands ? bottom : na
+
+vwapLevelLongValue = vwapLevelLong == 'Top' ? upperBandValue : vwapLevelLong == 'Bottom' ? lowerBandValue : vwapValue
+vwapLevelShortValue = vwapLevelShort == 'Top' ? upperBandValue : vwapLevelShort == 'Bottom' ? lowerBandValue : vwapValue
+
+// Calculations and variables to determine if a signal has been plotted recently
+var sigCheckArrayL = array.new_int (0)
+var sigCheckArrayS = array.new_int (0)
+
+sigCheckL = array.sum(sigCheckArrayL) > 0 ? true : false
+sigCheckS = array.sum(sigCheckArrayS) > 0 ? true : false
+
+// For testing signal checks
+// plotchar(sigCheckL, title='sigCheckL', char='.', color=noColor)
+// plotchar(sigCheckS, title='sigCheckS', char='.', color=noColor)
+
+// Time Off
+timeOffSession = time == time(timeframe=timeframe.period, session=timeOffRange, timezone='UTC')
+
+// Signals
+dayOff = useOffDays and ((offSun and dayofweek == dayofweek.sunday) or (offMon and dayofweek == dayofweek.monday) or (offTue and dayofweek == dayofweek.tuesday) or (offWed and dayofweek == dayofweek.wednesday) or (offThur and dayofweek == dayofweek.thursday) or (offFri and dayofweek == dayofweek.friday) or (offSat and dayofweek == dayofweek.saturday))
+timeOff = useTimeOff and timeOffSession
+
+priceSignalLong     = (not usePriceAbMaLong or close > priceAbMaLong) and (not usePriceBlMaLong or close < priceBlMaLong)
+priceSignalShort    = (not usePriceAbMaShort or close > priceAbMaShort) and (not usePriceBlMaShort or close < priceBlMaShort)
+
+volSignalLong       = not useVolumeLong or vAboveLong
+volSignalShort      = not useVolumeShort or vAboveShort
+
+maSignalLong 		= (not i_ma1Above2 or ma1Above2) and (not i_ma2Above3 or ma2Above3) and (not i_ma3Above4 or ma3Above4) and (not i_ma4Above5 or ma4Above5) and (not i_ma5Above6 or ma5Above6) and (not i_ma6Above7 or ma6Above7) and (not i_ma7Above8 or ma7Above8) and (not useMATestLong or maTestLong) and pCrossLong
+maSignalShort		= (not i_ma1Below2 or ma2Above1) and (not i_ma2Below3 or ma3Above2) and (not i_ma3Below4 or ma4Above3) and (not i_ma4Below5 or ma5Above4) and (not i_ma5Below6 or ma6Above5) and (not i_ma6Below7 or ma7Above6) and (not i_ma7Below8 or ma8Above7) and (not useMATestShort or maTestShort) and pCrossShort
+
+rsiSignalLong		= not includeRSILong or (rsiHighLong > rsi and rsi > rsiLowLong)
+rsiSignalShort		= not includeRSIShort or (rsiHighShort > rsi and rsi > rsiLowShort)
+
+rsiCrossSignalLong  = not useRsiCrossLong or rsiCrossLong
+rsiCrossSignalShort = not useRsiCrossShort or rsiCrossShort 
+
+stochSignalLong		= not includeStochLong or ((not useStochRangeLong or stochInRangeLong) and (not stochKAboveD or k > d))
+stochSignalShort	= not includeStochShort or ((not useStochRangeShort or stochInRangeShort) and (not stochKBelowD or k < d))
+
+srsiSignalLong      = not includeSRSILong or srsiInRangeLong
+srsiSignalShort     = not includeSRSIShort or srsiInRangeShort
+
+bbSignalLong        = not includeBBLong or ((not includBBBiasLong or longBias) and (not includeBBTestLong or bbLowTest))
+bbSignalShort       = not includeBBShort or ((not includBBBiasShort or shortBias) and (not includeBBTestShort or bbUpTest))
+
+bbwpSignalLong		= (not includeBBWPLong or (bbwp < bbwpMaxLong and bbwp > bbwpMinLong)) and (not includeBBRLong or bbrSignalLong)
+bbwpSignalShort		= (not includeBBWPShort or (bbwp < bbwpMaxShort and bbwp > bbwpMinShort)) and (not includeBBRShort or bbrSignalShort)
+
+bbwpMaSignalLong    = not includeBBWPMaDLong or (includeBBWPMaDLong and bbwpMaDirection == bbwpMaDLong)
+bbwpMaSignalShort   = not includeBBWPMaDShort or (includeBBWPMaDShort and bbwpMaDirection == bbwpMaDShort)
+
+pmarpSignalLong		= not includePMARPLong or (pmarpLongAB == 'Above' and pmarp >= pmarpThresholdLong) or (pmarpLongAB == 'Below' and pmarp <= pmarpThresholdLong)
+pmarpSignalShort	= not includePMARPShort or (pmarpShortAB == 'Above' and pmarp >= pmarpThresholdShort) or (pmarpShortAB == 'Below' and pmarp <= pmarpThresholdShort)
+
+pmarpMaCrossLong    = not usePmarpCrossMaLong or (pmarpCrossDirLong == 'Up' and pmarpCrossUp) or (pmarpCrossDirLong == 'Down' and pmarpCrossDown)
+pmarpMaCrossShort   = not usePmarpCrossMaShort or (pmarpCrossDirShort == 'Up' and pmarpCrossUp) or (pmarpCrossDirShort == 'Down' and pmarpCrossDown)
+
+dmiSignalLong       = not useDMILong or ((not dmiFlipLong or (diff > 0 and diff [1] <= 0) or (diff < 0 and diff[1] >= 0)) and ((dmiPNLong == 'Positive' and diff > 0) or (dmiPNLong == 'Negative' and diff < 0) or dmiPNLong == 'Custom' and (dmiABLong == 'Above' and diff >= dmiThresholdLong) or (dmiABLong == 'Below' and diff <= dmiThresholdLong)))
+dmiSignalShort       = not useDMIShort or ((not dmiFlipShort or (diff > 0 and diff [1] <= 0) or (diff < 0 and diff[1] >= 0)) and ((dmiPNShort == 'Positive' and diff > 0) or (dmiPNShort == 'Negative' and diff < 0) or dmiPNShort == 'Custom' and (dmiABShort == 'Above' and diff >= dmiThresholdShort) or (dmiABShort == 'Below' and diff <= dmiThresholdShort)))
+
+adxSignalLong       = not useADXLong or (adxABLong == 'Above' and adx >= adxThresholdLong) or (adxABLong == 'Below' and adx <= adxThresholdLong)
+adxSignalShort      = not useADXShort or (adxABShort == 'Above' and adx >= adxThresholdShort) or (adxABShort == 'Below' and adx <= adxThresholdShort)
+
+adxDirSignalLong	= not useADXDirLong or (adxDirLong == 'Rising' and adx >= adx[1]) or (adxDirLong == 'Falling' and adx <= adx[1])
+adxDirSignalShort	= not useADXDirShort or (adxDirShort == 'Rising' and adx >= adx[1]) or (adxDirShort == 'Falling' and adx <= adx[1])
+
+vwapSignalLong      = not useVwapLong or (vwapABLong == 'Above' and close > vwapLevelLongValue) or (vwapABLong == 'Below' and close < vwapLevelLongValue)
+vwapSignalShort     = not useVwapShort or (vwapABShort == 'Above' and close > vwapLevelShortValue) or (vwapABShort == 'Below' and close < vwapLevelShortValue)
+
+longSignal 			= includeLong and not dayOff and not timeOff and (not useSigCheck or not sigCheckL) and (not onlyConfirmed or barstate.isconfirmed) and priceSignalLong and volSignalLong and maSignalLong and rsiSignalLong and rsiCrossSignalLong and stochSignalLong and srsiSignalLong and bbSignalLong and bbwpSignalLong and bbwpMaSignalLong and pmarpSignalLong and pmarpMaCrossLong and dmiSignalLong and adxSignalLong and adxDirSignalLong and vwapSignalLong
+shortSignal 		= includeShort and not dayOff and not timeOff and (not useSigCheck or not sigCheckS) and (not onlyConfirmed or barstate.isconfirmed) and priceSignalShort and volSignalShort and maSignalShort and rsiSignalShort and rsiCrossSignalShort and stochSignalShort and srsiSignalShort and bbSignalShort and bbwpSignalShort and bbwpMaSignalShort and pmarpSignalShort and pmarpMaCrossShort and dmiSignalShort and adxSignalShort and adxDirSignalShort and vwapSignalShort
+
+// Check if a new signal should not be plotted
+
+array.push(sigCheckArrayL, longSignal ? 1 : 0)
+array.push(sigCheckArrayS, shortSignal ? 1 : 0)
+
+if array.size(sigCheckArrayL) > sigCheckBars
+    array.remove(sigCheckArrayL, 0)
+    
+if array.size(sigCheckArrayS) > sigCheckBars
+    array.remove(sigCheckArrayS, 0)
+
+//////////////////////////////////////////////////////////////
+// Plots
+
+// Background
+bgcolor(dayOff or timeOff ? color.new(color.purple, transp=80) : crossColor)
+
+// Moving Averages
+plot(includeMA1 ? ma1 : na, title='MA 1', color=ma1Color, linewidth=2, offset=0)
+plot(includeMA2 ? ma2 : na, title='MA 2', color=ma2Color, linewidth=2, offset=0)
+plot(includeMA3 ? ma3 : na, title='MA 3', color=ma3Color, linewidth=2, offset=0)
+plot(includeMA4 ? ma4 : na, title='MA 4', color=ma4Color, linewidth=2, offset=0)
+plot(includeMA5 ? ma5 : na, title='MA 5', color=ma5Color, linewidth=2, offset=0)
+plot(includeMA6 ? ma6 : na, title='MA 6', color=ma6Color, linewidth=2, offset=0)
+plot(includeMA7 ? ma7 : na, title='MA 7', color=ma7Color, linewidth=2, offset=0)
+plot(includeMA8 ? ma8 : na, title='MA 8', color=ma8Color, linewidth=2, offset=0)
+
+// Bollinger Bands
+plot(plotBB ? basis : na, title='Basis', color=color.orange, linewidth=1)
+p1 = plot(plotBB ? upper : na, title='Upper', color=color.blue, linewidth=2)
+p2 = plot(plotBB ? lower : na, title='Lower', color=color.blue, linewidth=2)
+fill(p1, p2, title='BB Background', color=fillColor)
+
+// VWAP
+plot(vwapPlot ? vwapValue : na, title="VWAP", color=vwapColor, linewidth=vwapWidth, offset=vwapOffset)
+
+upperBand = plot(upperBandValue, title="Upper Band", color=color.green, offset=vwapOffset)
+lowerBand = plot(lowerBandValue, title="Lower Band", color=color.green, offset=vwapOffset)
+fill(upperBand, lowerBand, title="Bands Fill", color= vwapShowBands ? color.new(color.green, 95) : na)
+
+// Signals
+plotshape(plotType == 'Shape' ? longSignal : na,  title='Long',  location=location.belowbar, style=shape.triangleup, size=size.small, color=color.blue)
+plotchar(plotType == 'Dot'  ? longSignal : na, title='Long', location=location.belowbar, char='•', color=color.blue)
+plotshape(plotType == 'Shape' ? shortSignal : na, title='Short', location=location.abovebar, style=shape.triangledown, size=size.small, color=color.red)
+plotchar(plotType == 'Dot' ? shortSignal : na, title='Short', location=location.abovebar, char='•', color=color.red)
+barcolor(plotType == 'Bar' and longSignal ? barColorLong : plotType == 'Bar' and shortSignal ? barColorShort : na)
+
+
+//////////////////////////////////////////////////////////////
+// Alerts
+
+alertcondition(longSignal, title='Long Signal', message='DIY Long Signal')
+alertcondition(shortSignal, title='Short Signal', message='DIY Short Signal')
+alertcondition(longSignal or shortSignal, title='Any Signal', message='DIY Signal')
+
+alertcondition(cross1Up or cross1Down, title='MA Pair 1 Cross', message='DIY MA Cross Signal')
+alertcondition(cross2Up or cross2Down, title='MA Pair 2 Cross', message='DIY MA Cross Signal')
+alertcondition(cross3Up or cross3Down, title='MA Pair 3 Cross', message='DIY MA Cross Signal')
+
+//////////////////////////////////////////////////////////////
+
+// Testing
+// plotchar(srsiK, 'k', char='.', color=noColor)
+// plotchar(srsiD, 'd', char='.', color=noColor)

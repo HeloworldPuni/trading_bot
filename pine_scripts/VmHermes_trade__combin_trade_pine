@@ -1,0 +1,333 @@
+//@version=5
+indicator(shorttitle="COMBIN", title="Combin Strategy Master", overlay=true)
+
+// 🧙🏾‍♂️ Harika istersen, kabaca bir hesap yapalım:
+
+// 1. Fonksiyon Sayısı
+// 	•	Trend Göstergeleri: ~3-4 fonksiyon tanımladık (ör. SuperTrend, SAR, EMA Cross, Ichimoku)
+
+// 📊 Trend Göstergeleri Fonksiyonları
+
+// SuperTrend
+f_supertrend(_factor, _period) =>
+    [_, direction] = ta.supertrend(_factor, _period)
+    direction
+
+// Parabolic SAR
+f_sar(_start, _increment, _max) =>
+    ta.sar(_start, _increment, _max)
+
+// EMA Cross (Short vs Long)
+f_ema_cross(src, shortLength, longLength) =>
+    shortEMA = ta.ema(src, shortLength)
+    longEMA = ta.ema(src, longLength)
+    shortEMA > longEMA ? 1 : shortEMA < longEMA ? -1 : 0
+
+// Ichimoku Kijun-Sen (trend yönü için)
+f_ichimoku_kijun(len) =>
+    conversion = (ta.highest(high, len) + ta.lowest(low, len)) / 2
+    conversion
+    
+
+// 🧭 Trend Grubu Skor Hesaplama ve Görselleştirme
+
+// Parametreler
+supertrend_dir = f_supertrend(3.0, 10)
+sar_val = f_sar(0.02, 0.02, 0.2)
+ema_cross = f_ema_cross(close, 9, 21)
+ichimoku_kijun = f_ichimoku_kijun(26)
+
+// Trend Yönü Skorları
+supertrend_score = supertrend_dir < close ? 1 : supertrend_dir > close ? -1 : 0
+sar_score = sar_val < close ? 1 : sar_val > close ? -1 : 0
+ema_score = ema_cross  // Zaten 1, 0, -1 döndürüyor
+ichimoku_score = close > ichimoku_kijun ? 1 : close < ichimoku_kijun ? -1 : 0
+
+// Ortalama Trend Skoru
+trend_scores = array.new_float()
+array.push(trend_scores, supertrend_score)
+array.push(trend_scores, sar_score)
+array.push(trend_scores, ema_score)
+array.push(trend_scores, ichimoku_score)
+trend_score = array.avg(trend_scores)
+
+// Tablo Oluşturma
+var table trend_table = table.new(position.middle_right, 20, 60, frame_color=color.gray, border_width=1)
+
+// Başlık ve Skor
+table.cell(trend_table, 0, 0, "TRE", text_color=color.white, bgcolor=color.gray)
+trend_icon = trend_score >= 1.5 ? "↑↑" : trend_score >= 0.5 ? "↑" : trend_score <= -1.5 ? "↓↓" : trend_score <= -0.5 ? "↓" : "–"
+table.cell(trend_table, 0, 1, trend_icon, text_color=color.white, bgcolor=trend_score > 0 ? color.green : trend_score < 0 ? color.red : color.orange)
+
+// Açıklayıcı Alt Satırlar
+// SuperTrend
+sup_icon = supertrend_score == 1 ? "↑" : supertrend_score == -1 ? "↓" : "–"
+table.cell(trend_table, 1, 0, "SUP", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 1, sup_icon, text_color=color.white, bgcolor=supertrend_score == 1 ? color.new(color.green, 70) : supertrend_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// SAR
+sar_icon = sar_score == 1 ? "↑" : sar_score == -1 ? "↓" : "–"
+table.cell(trend_table, 2, 0, "SAR", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 2, 1, sar_icon, text_color=color.white, bgcolor=sar_score == 1 ? color.new(color.green, 70) : sar_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// EMA
+ema_icon = ema_score == 1 ? "↑" : ema_score == -1 ? "↓" : "–"
+table.cell(trend_table, 3, 0, "EMA", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 3, 1, ema_icon, text_color=color.white, bgcolor=ema_score == 1 ? color.new(color.green, 70) : ema_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// Ichimoku
+ich_icon = ichimoku_score == 1 ? "↑" : ichimoku_score == -1 ? "↓" : "–"
+table.cell(trend_table, 4, 0, "ICH", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 4, 1, ich_icon, text_color=color.white, bgcolor=ichimoku_score == 1 ? color.new(color.green, 70) : ichimoku_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// ALTINA SONRA BAKCAZ ONCE ILK GRUBU ADAM EDECEGIZ
+
+// // 	•	Momentum Göstergeleri: ~4-5 fonksiyon (ör. RSI, CCI, Stochastic, ROC, RMI)
+
+// // 📊 Momentum Göstergeleri Fonksiyonları
+
+// RSI
+f_rsi(src, length) =>
+    ta.rsi(src, length)
+
+// CCI
+f_cci(src, length) =>
+    ta.cci(src, length)
+
+// Stochastic %K
+f_stoch_k(high, low, close, k_length) =>
+    ta.stoch(close, high, low, k_length)
+
+// ROC (Rate of Change)
+f_roc(src, length) =>
+    (src - src[length]) / src[length] * 100
+
+// RMI (Relative Momentum Index) - RSI of Momentum
+f_rmi(src, length, momentum) =>
+    mom = src - src[momentum]
+    ta.rsi(mom, length)
+
+
+// =========================
+// MOMENTUM GRUBU BLOĞU
+// =========================
+// Momentum Grubu Başlık ve Skor (satır 8)
+// Momentum skorunu hesapla
+// (örnek: RSI ve CCI skorlarının ortalaması, burada daha fazla momentum göstergesi eklenebilir)
+rsi_val = f_rsi(close, 14)
+cci_val = f_cci(close, 20)
+rsi_score = rsi_val > 60 ? 1 : rsi_val < 40 ? -1 : 0
+cci_score = cci_val > 100 ? 1 : cci_val < -100 ? -1 : 0
+momentum_score = (rsi_score + cci_score) / 2
+
+table.cell(trend_table, 0, 2, "MOM", text_color=color.white, bgcolor=color.gray)
+momentum_icon = momentum_score >= 1.5 ? "↑↑" : momentum_score >= 0.5 ? "↑" : momentum_score <= -1.5 ? "↓↓" : momentum_score <= -0.5 ? "↓" : "–"
+table.cell(trend_table, 0, 3, momentum_icon, text_color=color.white, bgcolor=momentum_score > 0 ? color.green : momentum_score < 0 ? color.red : color.orange)
+
+// RSI (satır 9)
+rsi_icon = rsi_score == 1 ? "↑" : rsi_score == -1 ? "↓" : "–"
+table.cell(trend_table, 1, 2, "RSI", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 3, rsi_icon, text_color=color.white, bgcolor=rsi_score == 1 ? color.new(color.green, 70) : rsi_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// CCI (satır 10)
+cci_icon = cci_score == 1 ? "↑" : cci_score == -1 ? "↓" : "–"
+table.cell(trend_table, 2, 2, "CCI", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 2, 3, cci_icon, text_color=color.white, bgcolor=cci_score == 1 ? color.new(color.green, 70) : cci_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+
+
+// // 	•	Hacim Göstergeleri: ~3 fonksiyon (ör. OBV, MFI, VWAP)
+
+// // 📊 Hacim Göstergeleri Fonksiyonları
+
+// =========================
+// HACİM GRUBU BLOĞU
+// =========================
+
+// OBV (On-Balance Volume)
+f_obv(closeSeries, volumeSeries) =>
+    ta.cum(closeSeries > closeSeries[1] ? volumeSeries : closeSeries < closeSeries[1] ? -volumeSeries : 0)
+
+// MFI (Money Flow Index)
+f_mfi(src, length) =>
+    ta.mfi(src, length)
+
+// VWAP (Volume Weighted Average Price)
+f_vwap(highSeries, lowSeries, closeSeries, volumeSeries) =>
+    typicalPrice = (highSeries + lowSeries + closeSeries) / 3
+    ta.cum(typicalPrice * volumeSeries) / ta.cum(volumeSeries)
+
+obv_val = f_obv(close, volume)
+mfi_val = f_mfi(hlc3, 14)
+vwap_val = f_vwap(high, low, close, volume)
+
+obv_score = ta.change(obv_val) > 0 ? 1 : ta.change(obv_val) < 0 ? -1 : 0
+mfi_score = mfi_val > 80 ? 1 : mfi_val < 20 ? -1 : 0
+vwap_score = close > vwap_val ? 1 : close < vwap_val ? -1 : 0
+
+volume_score = (obv_score + mfi_score + vwap_score) / 3
+
+table.cell(trend_table, 0, 4, "VOL", text_color=color.white, bgcolor=color.gray)
+volume_icon = volume_score >= 1.5 ? "↑↑" : volume_score >= 0.5 ? "↑" : volume_score <= -1.5 ? "↓↓" : volume_score <= -0.5 ? "↓" : "–"
+table.cell(trend_table, 0, 5, volume_icon, text_color=color.white, bgcolor=volume_score > 0 ? color.green : volume_score < 0 ? color.red : color.orange)
+
+// OBV (satır 1)
+obv_icon = obv_score == 1 ? "↑" : obv_score == -1 ? "↓" : "–"
+table.cell(trend_table, 1, 4, "OBV", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 5, obv_icon, text_color=color.white, bgcolor=obv_score == 1 ? color.new(color.green, 70) : obv_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// MFI (satır 2)
+mfi_icon = mfi_score == 1 ? "↑" : mfi_score == -1 ? "↓" : "–"
+table.cell(trend_table, 2, 4, "MFI", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 2, 5, mfi_icon, text_color=color.white, bgcolor=mfi_score == 1 ? color.new(color.green, 70) : mfi_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// VWAP (satır 3)
+vwap_icon = vwap_score == 1 ? "↑" : vwap_score == -1 ? "↓" : "–"
+table.cell(trend_table, 3, 4, "VWP", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 3, 5, vwap_icon, text_color=color.white, bgcolor=vwap_score == 1 ? color.new(color.green, 70) : vwap_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+    
+
+// // 	•	Volatilite Göstergeleri: ~2 fonksiyon (ör. ATR, Bollinger Bands)
+
+// 📊 Volatilite Göstergeleri Fonksiyonları
+
+// ATR (Average True Range)
+f_atr(length) =>
+    ta.atr(length)
+
+// Bollinger Bands Width (farkı)
+f_bollinger_width(src, length, mult) =>
+    basis = ta.sma(src, length)
+    dev = mult * ta.stdev(src, length)
+    upper = basis + dev
+    lower = basis - dev
+    width = upper - lower
+    width
+
+
+// =========================
+// VOLATILITE GRUBU BLOĞU
+// =========================
+
+atr_val = f_atr(14)
+bb_width_val = f_bollinger_width(close, 20, 2)
+
+atr_score = ta.change(atr_val) > 0 ? 1 : ta.change(atr_val) < 0 ? -1 : 0
+bb_score = ta.change(bb_width_val) > 0 ? 1 : ta.change(bb_width_val) < 0 ? -1 : 0
+
+volatility_score = (atr_score + bb_score) / 2
+
+table.cell(trend_table, 0, 6, "VOL", text_color=color.white, bgcolor=color.gray)
+vol_icon = volatility_score >= 1.5 ? "↑↑" : volatility_score >= 0.5 ? "↑" : volatility_score <= -1.5 ? "↓↓" : volatility_score <= -0.5 ? "↓" : "–"
+table.cell(trend_table, 0, 7, vol_icon, text_color=color.white, bgcolor=volatility_score > 0 ? color.green : volatility_score < 0 ? color.red : color.orange)
+
+// ATR (satır 1)
+atr_icon = atr_score == 1 ? "↑" : atr_score == -1 ? "↓" : "–"
+table.cell(trend_table, 1, 6, "ATR", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 7, atr_icon, text_color=color.white, bgcolor=atr_score == 1 ? color.new(color.green, 70) : atr_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// BB Width (satır 2)
+bb_icon = bb_score == 1 ? "↑" : bb_score == -1 ? "↓" : "–"
+table.cell(trend_table, 2, 6, "BBW", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 2, 7, bb_icon, text_color=color.white, bgcolor=bb_score == 1 ? color.new(color.green, 70) : bb_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+
+
+// 	•	Yön Gücü Göstergeleri: ~2 fonksiyon (ör. ADX, +DI/-DI)
+
+// 📊 Yön Gücü Göstergeleri Fonksiyonları
+
+// ADX (Average Directional Index)
+f_adx(length) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    trur = ta.rma(ta.tr, length)
+    plus = 100 * ta.rma(up > down and up > 0 ? up : 0, length) / trur
+    minus = 100 * ta.rma(down > up and down > 0 ? down : 0, length) / trur
+    adx = 100 * ta.rma(math.abs(plus - minus) / (plus + minus), length)
+    adx
+
+// Directional Index Difference (+DI vs -DI)
+// Directional Index Difference (+DI vs -DI)
+// +DI ve -DI farkını manuel hesapla
+f_di_difference(length) =>
+    upMove = high - high[1]
+    downMove = low[1] - low
+    plusDM = (upMove > downMove and upMove > 0) ? upMove : 0
+    minusDM = (downMove > upMove and downMove > 0) ? downMove : 0
+    tr = math.max(math.max(high - low, math.abs(high - close[1])), math.abs(low - close[1]))
+    plusDI = 100 * ta.rma(plusDM, length) / ta.rma(tr, length)
+    minusDI = 100 * ta.rma(minusDM, length) / ta.rma(tr, length)
+    plusDI - minusDI
+
+// =========================
+// // YÖN GÜCÜ GRUBU BLOĞU
+// =========================
+
+adx_val = f_adx(14)
+di_diff = f_di_difference(14)
+
+
+adx_score = adx_val > 25 ? 1 : adx_val < 15 ? -1 : 0
+di_score = di_diff > 10 ? 1 : di_diff < -10 ? -1 : 0
+
+direction_score = (adx_score + di_score) / 2
+
+// Header cell for Directional Strength (column 8)
+table.cell(trend_table, 0, 8, "DIR", text_color=color.white, bgcolor=color.gray)
+dir_icon = direction_score >= 1.5 ? "↑↑" : direction_score >= 0.5 ? "↑" : direction_score <= -1.5 ? "↓↓" : direction_score <= -0.5 ? "↓" : "–"
+table.cell(trend_table, 0, 9, dir_icon, text_color=color.white, bgcolor=direction_score > 0 ? color.green : direction_score < 0 ? color.red : color.orange)
+
+// ADX (row 1)
+adx_icon = adx_score == 1 ? "↑" : adx_score == -1 ? "↓" : "–"
+table.cell(trend_table, 1, 8, "ADX", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 9, adx_icon, text_color=color.white, bgcolor=adx_score == 1 ? color.new(color.green, 70) : adx_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// DI Diff (row 2)
+di_icon = di_score == 1 ? "↑" : di_score == -1 ? "↓" : "–"
+table.cell(trend_table, 2, 8, "DIF", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 2, 9, di_icon, text_color=color.white, bgcolor=di_score == 1 ? color.new(color.green, 70) : di_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+
+
+// =========================
+// AŞIRILIK GÖSTERGESİ BLOĞU
+// =========================
+
+// Williams %R
+f_williams_r(highSeries, lowSeries, closeSeries, length) =>
+    highestHigh = ta.highest(highSeries, length)
+    lowestLow = ta.lowest(lowSeries, length)
+    (highestHigh - closeSeries) / (highestHigh - lowestLow) * -100
+
+wr_val = f_williams_r(high, low, close, 14)
+wr_score = wr_val < -80 ? 1 : wr_val > -20 ? -1 : 0
+
+table.cell(trend_table, 0, 10, "EXT", text_color=color.white, bgcolor=color.gray)
+wr_icon = wr_score == 1 ? "↑" : wr_score == -1 ? "↓" : "–"
+table.cell(trend_table, 0, 11, wr_icon, text_color=color.white, bgcolor=wr_score == 1 ? color.new(color.green, 70) : wr_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// WR (satır 1)
+table.cell(trend_table, 1, 10, "WR%", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 1, 11, wr_icon, text_color=color.white, bgcolor=wr_score == 1 ? color.new(color.green, 70) : wr_score == -1 ? color.new(color.red, 70) : color.new(color.gray, 80))
+// =========================
+// KOMBİNE SKOR HESAPLAMA
+// =========================
+
+total_score = trend_score + momentum_score + volume_score + volatility_score + direction_score + wr_score
+master_score = total_score / 6
+
+// Skor Değerlendirme İkonu
+master_icon = master_score >= 1 ? "🚀 AL" : master_score <= -1 ? "⛔ SAT" : "⚖️ NÖTR"
+
+// Tabloya Ekleme (satır 5, sütun 0 ve 1)
+table.cell(trend_table, 5, 0, "ALL", text_color=color.white, bgcolor=color.gray)
+table.cell(trend_table, 5, 1, master_icon, text_color=color.white, bgcolor=master_score > 0 ? color.new(color.green, 70) : master_score < 0 ? color.new(color.red, 70) : color.new(color.gray, 80))
+
+// Grafik Üzerinde Etiket (isteğe bağlı)
+label.new(bar_index, na, master_icon, yloc=yloc.price, style=label.style_label_down, textcolor=color.white, size=size.small, color=color.new(color.black, 90))
+
+// Alert Koşulları
+alertcondition(master_score >= 1, title="AL Sinyali", message="Combin stratejisi AL sinyali verdi 🚀")
+alertcondition(master_score <= -1, title="SAT Sinyali", message="Combin stratejisi SAT sinyali verdi ⛔")

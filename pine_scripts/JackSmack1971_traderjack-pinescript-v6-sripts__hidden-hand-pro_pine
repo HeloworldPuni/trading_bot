@@ -1,0 +1,281 @@
+//@version=6
+indicator("Hidden Hand Pro [Pine v6]", overlay=true, max_bars_back=500)
+
+// =============================================================================
+// 1. TYPES & INFRASTRUCTURE
+// =============================================================================
+
+type SignalResult
+    float score        // Current decayed score
+    float raw_score    // Instantaneous score (for debugging)
+    string statusText  // Display text
+    color statusColor  // Display color
+
+method default(SignalResult this) =>
+    this.score := 0.0
+    this.raw_score := 0.0
+    this.statusText := "Neutral"
+    this.statusColor := color.gray
+    this
+
+// =============================================================================
+// 2. INPUTS
+// =============================================================================
+
+grp_conf = "Behavioral Dynamics"
+i_decay      = input.float(0.90, "Signal Decay Rate (0-1)", minval=0.1, maxval=0.99, group=grp_conf, tooltip="How fast signals fade. 0.9 = slow fade, 0.5 = fast fade.")
+i_pct_vol    = input.float(90, "Volume Percentile Threshold", minval=50, group=grp_conf, tooltip="Volume must be in top X% of recent history to qualify.")
+i_lookback   = input.int(100, "Percentile Lookback", group=grp_conf)
+
+grp_cvd = "Order Flow / CVD"
+i_use_intra  = input.bool(true, "Use Intrabar Inspection (Lower TF)", group=grp_cvd, tooltip="Fetches 1m data to calculate true Volume Delta. Heavy calculation.")
+
+// =============================================================================
+// 3. UTILITY FUNCTIONS
+// =============================================================================
+
+// Calculate percentile rank of current value against history
+f_is_percentile_high(float src, int len, float pct) =>
+    ta.percentrank(src, len) >= pct
+
+f_is_percentile_low(float src, int len, float pct) =>
+    ta.percentrank(src, len) <= (100 - pct)
+
+// Exponential Decay Memory
+// We use a tuple return to handle the state manually in the calling scope usually, 
+// but inside a function with 'var' works if the function is called every bar.
+f_apply_decay(float current_score, float decay_rate) =>
+    var float stored_score = 0.0
+    // If we have a fresh signal (current_score > 0), boost the stored score.
+    // Otherwise, decay the old score.
+    if current_score > 0
+        stored_score := math.max(stored_score, current_score)
+    else
+        stored_score := stored_score * decay_rate
+        
+    // Clamp small values to 0 to stop infinite decimals
+    if stored_score < 0.1
+        stored_score := 0.0
+    stored_score
+
+// =============================================================================
+// 4. MODULE: ADAPTIVE LIQUIDITY RAID (With Decay)
+// =============================================================================
+
+f_calc_raid_adaptive() =>
+    result = SignalResult.new()
+    result.default()
+
+    // 1. Pivot Detection
+    int lb = 10
+    float ph = ta.pivothigh(high, lb, lb)
+    float pl = ta.pivotlow(low, lb, lb)
+    var float last_ph = high
+    var float last_pl = low
+    if not na(ph)
+        last_ph := ph
+    if not na(pl)
+        last_pl := pl
+
+    // 2. Adaptive Volume Confirmation
+    bool vol_spike = f_is_percentile_high(volume, i_lookback, i_pct_vol)
+
+    // 3. Sweep Logic
+    bool raid_up = high > last_ph and close < last_ph
+    bool raid_dn = low < last_pl and close > last_pl
+
+    // 4. Instantaneous Score Calculation
+    float instant_score = 0.0
+    string txt = "Wait"
+    color col = color.gray
+
+    if raid_up
+        instant_score := vol_spike ? 25.0 : 15.0 // Stronger if high vol
+        txt := "Sweep Up"
+        col := color.red
+    else if raid_dn
+        instant_score := vol_spike ? 25.0 : 15.0
+        txt := "Sweep Dn"
+        col := color.green
+
+    // 5. Apply Decay
+    result.score := f_apply_decay(instant_score, i_decay)
+    
+    // 6. Formatting based on Decayed Score
+    if result.score > 5.0
+        // Retain the text/color of the raid even if the instant event passed
+        // We need a persistent state for the text direction
+        var string last_dir_txt = ""
+        var color last_dir_col = color.gray
+        if instant_score > 0
+            last_dir_txt := txt
+            last_dir_col := col
+        
+        result.statusText := last_dir_txt + " (" + str.tostring(result.score, "#.0") + ")"
+        // Fade the color alpha based on score strength
+        result.statusColor := color.new(last_dir_col, 50 - int(result.score * 2))
+    
+    result
+
+// =============================================================================
+// 5. MODULE: INTRABAR VOLUME DELTA (CVD)
+// =============================================================================
+
+f_calc_cvd_accumulation() =>
+    result = SignalResult.new()
+    result.default()
+    
+    float bar_delta = 0.0
+    
+    // Only run Intrabar logic if enabled and timeframe is sufficient (>= 5m)
+    // 1m data on 1m chart is redundant.
+    if i_use_intra and timeframe.in_seconds() >= 300
+        // Request 1-minute O/C/V to build delta
+        [o_arr, c_arr, v_arr] = request.security_lower_tf(syminfo.tickerid, "1", [open, close, volume], ignore_invalid_symbol=true)
+        
+        if array.size(o_arr) > 0
+            for i = 0 to array.size(o_arr) - 1
+                float _o = array.get(o_arr, i)
+                float _c = array.get(c_arr, i)
+                float _v = array.get(v_arr, i)
+                // If close > open, assume buy volume. Else sell.
+                bar_delta += (_c >= _o ? _v : -_v)
+    else
+        // Fallback: Simple Bar Delta
+        bar_delta := (close >= open ? volume : -volume)
+
+    // Accumulate CVD
+    var float cvd = 0.0
+    cvd += bar_delta
+    
+    // Analyze CVD Divergence
+    // Price Flat/Down + CVD Up = Accumulation
+    // Price Flat/Up + CVD Down = Distribution
+    
+    float price_change = ta.change(close, 20)
+    float cvd_change   = ta.change(cvd, 20)
+    
+    bool div_bull = price_change <= 0 and cvd_change > 0
+    bool div_bear = price_change >= 0 and cvd_change < 0
+    
+    float instant_score = 0.0
+    
+    if div_bull
+        instant_score := 20.0
+    else if div_bear
+        instant_score := 20.0
+        
+    result.score := f_apply_decay(instant_score, i_decay)
+    
+    if result.score > 5.0
+        if cvd_change > 0
+            result.statusText := "Accum (" + str.tostring(result.score, "#.0") + ")"
+            result.statusColor := color.teal
+        else
+            result.statusText := "Distrib (" + str.tostring(result.score, "#.0") + ")"
+            result.statusColor := color.maroon
+            
+    result
+
+// =============================================================================
+// 6. MODULE: ADAPTIVE ABSORPTION
+// =============================================================================
+
+f_calc_absorption_adaptive() =>
+    result = SignalResult.new()
+    result.default()
+    
+    // Adaptive Vol Threshold
+    bool high_vol = f_is_percentile_high(volume, i_lookback, i_pct_vol)
+    
+    // Efficiency (Body relative to High-Low range)
+    float range_ = high - low
+    float body   = math.abs(close - open)
+    float efficiency = range_ == 0 ? 1.0 : body / range_
+    
+    // Absorption = High Vol + Low Efficiency (< 25% body)
+    bool absorb = high_vol and efficiency < 0.25
+    
+    float instant_score = absorb ? 20.0 : 0.0
+    result.score := f_apply_decay(instant_score, i_decay)
+    
+    if result.score > 5.0
+        result.statusText := "Absorb (" + str.tostring(result.score, "#.0") + ")"
+        // Color depends on candle direction (who is blocking whom?)
+        // If Green candle but small body -> Sellers absorbing buyers
+        result.statusColor := close > open ? color.red : color.green
+        
+    result
+
+// =============================================================================
+// 7. MAIN LOGIC & ALERTS
+// =============================================================================
+
+SignalResult res_raid   = f_calc_raid_adaptive()
+SignalResult res_cvd    = f_calc_cvd_accumulation()
+SignalResult res_abs    = f_calc_absorption_adaptive()
+
+// Calculate Total Index
+// We sum the decayed scores. 
+// Note: Raid(25) + CVD(20) + Absorb(20) = 65. Need Context to hit 80+ usually.
+// We multiply by a factor to normalize to 100 if we aren't using all modules from previous step.
+// Let's assume max potential score is around 70-80 with these 3 modules.
+float total_score = math.min(100, res_raid.score + res_cvd.score + res_abs.score)
+
+// -----------------------------------------------------------------------------
+// Alert System
+// -----------------------------------------------------------------------------
+
+// Detect crossovers for alerts
+bool trigger_setup = ta.crossover(total_score, 30)
+bool trigger_active = ta.crossover(total_score, 60)
+bool trigger_trap = ta.crossover(total_score, 80)
+
+if trigger_active
+    alert("Hidden Hand Active: Score " + str.tostring(total_score), alert.freq_once_per_bar_close)
+if trigger_trap
+    alert("TRAP DETECTED: Score " + str.tostring(total_score), alert.freq_once_per_bar_close)
+
+// -----------------------------------------------------------------------------
+// Dashboard
+// -----------------------------------------------------------------------------
+
+var table dashboard = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 40), frame_color=color.black, frame_width=1, border_width=1)
+
+// Determine Heatmap Color for Index
+color index_col = color.gray
+string index_msg = "CHOP"
+
+if total_score > 75
+    index_col := color.red
+    index_msg := "TRAP / CAMPAIGN"
+else if total_score > 50
+    index_col := color.orange
+    index_msg := "ACTIVE"
+else if total_score > 25
+    index_col := color.yellow
+    index_msg := "SETUP"
+
+if barstate.islast
+    // Header
+    table.cell(dashboard, 0, 0, "👁️ INDEX", text_color=color.white, bgcolor=color.black)
+    table.cell(dashboard, 1, 0, str.tostring(total_score, "#.0"), text_color=index_col, bgcolor=color.new(index_col, 80), text_size=size.large)
+    
+    // Raid Row
+    table.cell(dashboard, 0, 1, "Raid Memory", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 1, res_raid.statusText, bgcolor=res_raid.statusColor, text_color=color.white)
+    
+    // CVD Row
+    table.cell(dashboard, 0, 2, "Order Flow", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 2, res_cvd.statusText, bgcolor=res_cvd.statusColor, text_color=color.white)
+    
+    // Absorption Row
+    table.cell(dashboard, 0, 3, "Absorption", text_color=color.white, text_halign=text.align_left)
+    table.cell(dashboard, 1, 3, res_abs.statusText, bgcolor=res_abs.statusColor, text_color=color.white)
+
+// -----------------------------------------------------------------------------
+// Visual Debug (CVD Line)
+// -----------------------------------------------------------------------------
+// Plot the total score as a subtle background histogram to see the "heat" of the market history
+plot(total_score, "Hidden Hand Score", color=color.new(index_col, 50), style=plot.style_columns, force_overlay=false)
+hline(60, "Activation Threshold", color.white, linestyle=hline.style_dotted)

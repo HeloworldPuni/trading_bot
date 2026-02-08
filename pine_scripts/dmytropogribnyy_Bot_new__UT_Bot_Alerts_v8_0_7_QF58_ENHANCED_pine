@@ -1,0 +1,311 @@
+//@version=6
+indicator(title="UT Bot Alerts v8.0.7 ENHANCED (ADX Asymmetric, Squeeze for SHORT)", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// VERSION: v8.0.7 ENHANCED - Production (November 5, 2025)
+// ============================================================================
+// STRATEGY: v8.0.6 ASYMMETRIC + ADX Filter (minimal PRO additions)
+//
+// CRITICAL ADDITIONS vs v8.0.6:
+//   1. ✅ ADX Filter ASYMMETRIC - ADX>18 LONG, ADX>20 SHORT (blocks chop, allows early uptrend)
+//   2. ✅ Squeeze Momentum for SHORT ONLY - blocks false breakdowns in compression (LONG skips it!)
+//   3. ❌ MACD Histogram - REMOVED (lags at uptrend start, blocks legitimate LONG entries)
+//   4. ❌ Volume Filter - REMOVED (low volume in night hours blocks valid signals)
+//
+// FILTERS APPLIED:
+//   LONG: ATR (0.36%), EMA alignment (9>21 OR within 0.5% tolerance), ADX (>18), NO Squeeze
+//   SHORT: ATR (0.40%), EMA alignment (9<21 strict), ADX (>20), Squeeze (compression block)
+//
+// EXPECTED WR: 68-72% (vs 64-67% v8.0.6) with frequency 18-22/day, LONG/SHORT balance 1:2
+// IMPROVEMENT: +4-8% WR from removing choppy markets, NO over-filtering for LONG
+// DATE: November 5, 2025
+// ============================================================================
+
+// Asymmetric ATR parameters (SURGICAL FIX - no per-symbol branching!)
+minAtrPctLong  = 0.36     // LONG: Softer threshold (catch TIER1 impulses +0.5-2%)
+minAtrPctShort = 0.40     // SHORT: Strict threshold (preserve quality 8.5/10)
+minEmaGapPct   = 0.036    // Min EMA gap% - balanced LONG/SHORT quality (universal)
+emaAlignTolerance = 0.005 // LONG: 0.5% tolerance for EMA9 approaching EMA21 (early uptrend catch)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+a  = input.int(1,  title="Key Value (sensitivity)")
+c  = input.int(10, title="ATR Period")
+h  = input.bool(false, title="Signals from Heikin Ashi Candles")
+
+// Quality Filter
+useSoftFilter          = input.bool(true,  title="Enable Quality Filter")
+emaFastLen             = input.int(9,  title="EMA Fast")
+emaSlowLen             = input.int(21, title="EMA Slow")
+confirmClose           = input.bool(true, title="Confirm on bar close")
+
+// Filter mode & Cooldown
+filterMode             = input.string("OR", title="Filter mode (LONG)", options=["OR","AND"])
+filterModeShort        = input.string("AND", title="Filter mode (SHORT)", options=["OR","AND"])
+minBarsBetweenSignals  = input.int(3, title="Min bars between signals (bars)", minval=0)  // 3 bars = 15 min cooldown
+
+// RangeGuard (optional - OFF for most symbols)
+useRangeGuard          = input.bool(false, "Enable RangeGuard (flat guard, OFF for most)")
+rangeLen               = input.int(14, "Range lookback")
+minRangePct            = input.float(0.40, "Min range% over lookback", step=0.05)
+
+// Crossover smoothing
+crossSmoothLen         = input.int(1, "Crossover EMA length (1=no smoothing)", minval=1, maxval=5)
+
+// ShortGuard LITE + anti-1bar (proven filters from v8.0.3)
+useShortGuardLite      = input.bool(true,  "Enable ShortGuard LITE (SHORT)")
+minStopGapShortPct     = input.float(0.075, "LITE: Min stop gap% (short)", step=0.01)  // 0.075% reduces noise
+minBearBodyShortPct    = input.float(37.0, "LITE: Min bear body% (short)", step=1.0)   // 37% quality threshold
+requireShortStayBars   = input.int(1, "SHORT: min consecutive bars below stop", minval=0, maxval=3)
+minShortMomentumBars   = input.int(1, "SHORT: min consecutive red bars (anti-weak)", minval=0, maxval=5)
+strongShortGapPct      = input.float(0.10,"SHORT bypass: stop gap% for strong candle", step=0.01)
+strongBearBodyBypass   = input.float(55.0,"SHORT bypass: strong bear body% for 1-bar", step=1.0)
+
+// Enhanced LONG filters (KEY to 65% Win Rate!)
+minLongMomentumBars    = input.int(1,  "LONG: min consecutive green bars (anti-1bar)", minval=0, maxval=3)
+strongLongGapPct       = input.float(0.12,"LONG bypass: stop gap% to allow 1-bar", step=0.01)
+strongBullBodyBypass   = input.float(55.0,"LONG bypass: strong bull body% to allow 1-bar", step=1.0)
+
+// EMA Alignment filters (CRITICAL for quality!)
+requireEmaAlignmentLong  = input.bool(true, "LONG: require EMA9 > EMA21 (trend alignment)")
+requireEmaAlignmentShort = input.bool(true, "SHORT: require EMA9 < EMA21 (trend alignment)")
+
+// ============================================================================
+// PRO FILTERS (v8.0.7 ENHANCED - from popular indicators!)
+// ============================================================================
+
+// ADX Filter (CRITICAL - blocks choppy/ranging markets!)
+// ASYMMETRIC: Lower threshold for LONG (catch early uptrends), higher for SHORT (quality)
+useAdxFilter       = input.bool(true,  "Enable ADX Trend Strength Filter")
+adxLength          = input.int(14,     "ADX Length", minval=7, maxval=21)
+adxThresholdLong   = input.float(18.0, "ADX Threshold LONG (softer)", step=1.0, minval=15.0, maxval=25.0)
+adxThresholdShort  = input.float(20.0, "ADX Threshold SHORT (strict)", step=1.0, minval=18.0, maxval=30.0)
+
+// Squeeze Momentum Filter (blocks low volatility compression)
+useSqueezeFilter = input.bool(true,  "Enable Squeeze Momentum Filter (block compression)")
+squeezeBbLength  = input.int(20,     "Squeeze BB/KC Length", minval=10, maxval=30)
+squeezeBbMult    = input.float(2.0,  "Squeeze BB Multiplier", step=0.1, minval=1.5, maxval=2.5)
+squeezeKcMult    = input.float(1.5,  "Squeeze KC Multiplier", step=0.1, minval=1.0, maxval=2.0)
+
+// MACD Histogram Filter (confirms momentum direction)
+useMacdFilter    = input.bool(false,  "Enable MACD Histogram Direction Filter")
+macdFastLength   = input.int(12,     "MACD Fast Length", minval=8, maxval=15)
+macdSlowLength   = input.int(26,     "MACD Slow Length", minval=20, maxval=30)
+macdSignalLength = input.int(9,      "MACD Signal Length", minval=5, maxval=15)
+
+// Volume Filter (blocks low-volume fake breakouts)
+useVolumeFilter  = input.bool(false,  "Enable Volume Confirmation Filter")
+volumeEmaShort   = input.int(5,      "Volume EMA Short", minval=3, maxval=10)
+volumeEmaLong    = input.int(10,     "Volume EMA Long", minval=8, maxval=20)
+volumeThreshold  = input.float(15.0, "Volume Threshold %", step=5.0, minval=0.0, maxval=100.0)
+
+// Body filter (optional - against dojis)
+minCandleBodyPct       = input.float(0.0, "Min candle body% (0=OFF, 25=recommended)", step=1.0, minval=0.0, maxval=50.0)
+
+// Debug
+enableDebug            = input.bool(false, "Enable Debug labels (reasons)")
+
+// ============================================================================
+// PRO FILTER CALCULATIONS (v8.0.7 ENHANCED)
+// ============================================================================
+
+// ADX Calculation (Directional Movement Index)
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+// ASYMMETRIC: LONG uses softer threshold (18), SHORT uses strict threshold (20)
+adxLongOk  = not useAdxFilter or (adx > adxThresholdLong)
+adxShortOk = not useAdxFilter or (adx > adxThresholdShort)
+
+// Squeeze Momentum (BB vs KC compression)
+basisSqz = ta.sma(close, squeezeBbLength)
+dev = squeezeBbMult * ta.stdev(close, squeezeBbLength)
+upperBB = basisSqz + dev
+lowerBB = basisSqz - dev
+maSqz = ta.sma(close, squeezeBbLength)
+rangeMa = ta.sma(ta.tr, squeezeBbLength)
+upperKC = maSqz + rangeMa * squeezeKcMult
+lowerKC = maSqz - rangeMa * squeezeKcMult
+sqzOn = (lowerBB > lowerKC) and (upperBB < upperKC)  // BB inside KC = compression
+sqzOff = (lowerBB < lowerKC) and (upperBB > upperKC) // BB outside KC = expansion
+squeezeOk = not useSqueezeFilter or not sqzOn  // Block signals during compression
+
+// MACD Histogram (momentum direction)
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+macdLongOk = not useMacdFilter or histLine > 0
+macdShortOk = not useMacdFilter or histLine < 0
+
+// Volume Confirmation (blocks low-volume fake breakouts)
+volShort = ta.ema(volume, volumeEmaShort)
+volLong  = ta.ema(volume, volumeEmaLong)
+volOsc   = 100 * (volShort - volLong) / math.max(volLong, 1)
+volumeOk = not useVolumeFilter or (volOsc > volumeThreshold)
+
+// ============================================================================
+// CORE UT BOT LOGIC
+// ============================================================================
+xATR  = ta.atr(c)
+nLoss = a * xATR
+haTkr = ticker.heikinashi(syminfo.tickerid)
+src   = h ? request.security(haTkr, timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+var float xATRTrailingStop = na
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src - nLoss) : src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src + nLoss) : src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+
+basis = crossSmoothLen == 1 ? src : nz(ta.ema(src, crossSmoothLen), src)  // NaN protection
+above = ta.crossover(basis, xATRTrailingStop)
+below = ta.crossunder(basis, xATRTrailingStop)
+
+buy    = src > xATRTrailingStop and above
+sell   = src < xATRTrailingStop and below
+barbuy  = src > xATRTrailingStop
+barsell = src < xATRTrailingStop
+
+// HA-compatible open/high/low (declare EARLY for cascade_bypass)
+haOpen = request.security(haTkr, timeframe.period, open,  lookahead=barmerge.lookahead_off)
+haHigh = request.security(haTkr, timeframe.period, high,  lookahead=barmerge.lookahead_off)
+haLow  = request.security(haTkr, timeframe.period, low,   lookahead=barmerge.lookahead_off)
+src_open = h ? haOpen : open
+src_high = h ? haHigh : high
+src_low  = h ? haLow  : low
+
+// ============================================================================
+// QUALITY FILTERS (NaN-safe)
+// ============================================================================
+den_src = math.max(math.abs(src), 1e-9)
+atrp    = na(src) or src == 0 ? na : (xATR / den_src) * 100.0
+emaF    = ta.ema(src, emaFastLen)
+emaS    = ta.ema(src, emaSlowLen)
+gapPct  = na(src) or src == 0 ? na : math.abs((emaF - emaS) / den_src) * 100.0
+
+trendUp   = emaF > emaS and gapPct >= minEmaGapPct
+trendDown = emaF < emaS and gapPct >= minEmaGapPct
+
+// ASYMMETRIC ATR gates (v8.0.6 KEY CHANGE)
+atr_gate_long    = atrp >= minAtrPctLong   // 0.36% - softer for LONG
+atr_gate_short   = atrp >= minAtrPctShort  // 0.40% - strict for SHORT
+trend_gate_long  = trendUp
+trend_gate_short = trendDown
+
+long_core  = buy
+short_core = sell
+
+// RangeGuard
+rangeHigh = ta.highest(src, rangeLen)
+rangeLow  = ta.lowest(src, rangeLen)
+den_rng   = math.max(math.abs(src), 1e-9)
+rangePct  = (rangeHigh - rangeLow) / den_rng * 100.0
+range_ok  = not useRangeGuard or (rangePct >= minRangePct)
+
+// Pre-calculate cascade bypass EARLY (before ATR/TREND filters)
+var int bearStreak_early = 0
+bearStreak_early := (src < src_open) ? nz(bearStreak_early[1]) + 1 : 0
+denAbs_early = math.max(math.abs(src), 1e-9)
+rng_early = math.max(src_high - src_low, 1e-9)
+body_early = math.abs(src_open - src)
+bearBodyPct_early = (src < src_open) ? (body_early / rng_early * 100.0) : 0.0
+stopGapShortPct_early = (xATRTrailingStop - src) / denAbs_early * 100.0
+
+// Cascade bypass synced with minShortMomentumBars (smart thresholds)
+cascade_bypass = (bearStreak_early >= minShortMomentumBars + 1 and bearBodyPct_early >= 40.0) or (bearStreak_early >= minShortMomentumBars + 2 and bearBodyPct_early >= 30.0) or (stopGapShortPct_early >= 0.18 and bearBodyPct_early >= 60.0 and atrp >= minAtrPctShort * 1.4)
+
+// EMA Alignment checks (ASYMMETRIC!)
+// LONG: Allow if EMA9 > EMA21 OR EMA9 approaching EMA21 within 0.5% tolerance (catch early uptrend)
+emaGapAbs = math.abs(emaF - emaS) / den_src
+ema_aligned_long  = not requireEmaAlignmentLong or (emaF > emaS) or (emaGapAbs < emaAlignTolerance)
+// SHORT: Strict requirement EMA9 < EMA21 (quality)
+ema_aligned_short = not requireEmaAlignmentShort or (emaF < emaS)
+
+// ============================================================================
+// FINAL FILTER COMBINATION (v8.0.7 ENHANCED with PRO filters)
+// ============================================================================
+
+// Apply filter logic - asymmetric: LONG uses filterMode, SHORT uses filterModeShort
+long_filt = filterMode == "AND" ? (long_core and atr_gate_long and trend_gate_long) : (long_core and (atr_gate_long or trend_gate_long))
+
+// Apply EMA alignment + PRO filters to LONG (NO SQUEEZE - too strict for catching early uptrends!)
+long_filt := long_filt and ema_aligned_long and adxLongOk and macdLongOk and volumeOk
+
+// SHORT filters: build base logic first
+short_base = (filterModeShort == "AND") ? (short_core and atr_gate_short and trend_gate_short) : (short_core and (atr_gate_short or trend_gate_short))
+
+// CascadeFix: EMA alignment + PRO filters only when NOT bypass (bypass = ultra-strong shorts, ignore all filters)
+// SHORT uses Squeeze - helps avoid false breakdown signals in compression zones
+short_filt = cascade_bypass ? short_core : (short_base and ema_aligned_short and adxShortOk and squeezeOk and macdShortOk and volumeOk)
+
+// ShortGuard LITE + stay bars + anti-1bar
+denAbs           = math.max(math.abs(src), 1e-9)
+stopGapShortPct  = (xATRTrailingStop - src) / denAbs * 100.0
+rng              = math.max(src_high - src_low, 1e-9)
+body             = math.abs(src_open - src)
+bearBodyPct      = (src < src_open) ? (body / rng * 100.0) : 0.0
+
+short_lite_ok     = not useShortGuardLite or ((stopGapShortPct >= minStopGapShortPct) or (bearBodyPct >= minBearBodyShortPct))
+// Readable stay-bars logic
+isBelowStop = src < xATRTrailingStop
+barsBelowStop_raw = ta.barssince(not isBelowStop)
+barsBelowStop     = na(barsBelowStop_raw) ? 0 : barsBelowStop_raw
+stay_ok_short     = (requireShortStayBars == 0) or (barsBelowStop >= requireShortStayBars)
+
+var int bearStreak = 0
+bearStreak := (src < src_open) ? nz(bearStreak[1]) + 1 : 0
+short_momo_ok = (minShortMomentumBars == 0) or (bearStreak >= minShortMomentumBars) or (stopGapShortPct >= strongShortGapPct) or (bearBodyPct >= strongBearBodyBypass)
+
+// Enhanced Long anti-1bar (default ON with bypass)
+var int bullStreak = 0
+bullStreak := (src > src_open) ? nz(bullStreak[1]) + 1 : 0
+bullBodyPct    = (src > src_open) ? (body / rng * 100.0) : 0.0
+stopGapLongPct = (src - xATRTrailingStop) / denAbs * 100.0
+long_momo_ok   = (minLongMomentumBars == 0) or (bullStreak >= minLongMomentumBars) or (stopGapLongPct >= strongLongGapPct) or (bullBodyPct >= strongBullBodyBypass)
+
+// Body filter (optional - against dojis/weak candles)
+body_filter_ok = (minCandleBodyPct == 0.0) or ((body / rng * 100.0) >= minCandleBodyPct)
+
+// Cooldown
+var int lastSigBar = na
+cooldown_ok = na(lastSigBar) or (bar_index - lastSigBar >= minBarsBetweenSignals)
+
+// Combine filters - cascade bypass already applied in short_filt
+long_filt  := long_filt  and range_ok and long_momo_ok and body_filter_ok
+short_quality_ok = short_lite_ok and stay_ok_short and short_momo_ok
+short_filt := short_filt and range_ok and (cascade_bypass or short_quality_ok) and body_filter_ok
+
+long_ok  = useSoftFilter ? (long_filt  and cooldown_ok) : long_core
+short_ok = useSoftFilter ? (short_filt and cooldown_ok) : short_core
+
+if (long_ok or short_ok) and (not confirmClose or barstate.isconfirmed)
+    lastSigBar := bar_index
+
+// ============================================================================
+// DEBUG LABELS (enhanced for QF-58 + asymmetric ATR tracking)
+// ============================================================================
+if enableDebug
+    short_reason = not short_core ? "NO_CORE" : cascade_bypass ? "BYPASS_CASCADE" : not ema_aligned_short ? "EMA_MISALIGN" : (not atr_gate_short and not trend_gate_short) ? "ATR_LOW+NO_TREND" : not atr_gate_short ? "ATR_LOW_0.40" : not trend_gate_short ? "NO_TREND" : not range_ok ? "RANGE_NARROW" : not short_lite_ok ? "SHORT_GUARD" : not stay_ok_short ? "STAY_BARS" : not short_momo_ok ? "1BAR_SHORT" : not body_filter_ok ? "WEAK_BODY" : not cooldown_ok ? "COOLDOWN" : "PASS"
+    if short_core and not short_ok
+        label.new(bar_index, high, "SHORT X " + short_reason, style=label.style_label_up, color=color.new(color.red,30), textcolor=color.white, size=size.small)
+
+    long_reason = not long_core ? "NO_CORE" : not ema_aligned_long ? "EMA_MISALIGN" : (not atr_gate_long and not trend_gate_long) ? "ATR_LOW+NO_TREND" : not atr_gate_long ? "ATR_LOW_0.36" : not trend_gate_long ? "NO_TREND" : not range_ok ? "RANGE_NARROW" : (minLongMomentumBars > 0 and not long_momo_ok) ? "1BAR_LONG" : not body_filter_ok ? "WEAK_BODY" : not cooldown_ok ? "COOLDOWN" : "PASS"
+    if long_core and not long_ok
+        label.new(bar_index, low, "LONG X " + long_reason, style=label.style_label_down, color=color.new(color.green,30), textcolor=color.white, size=size.small)
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+shouldPlot = (confirmClose ? barstate.isconfirmed : true)
+plotshape(shouldPlot and long_ok,  title="Buy",  text="Buy",  style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
+plotshape(shouldPlot and short_ok, title="Sell", text="Sell", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.tiny)
+// Single barcolor call (more efficient)
+barcolor(shouldPlot ? (barbuy ? color.new(color.green, 0) : (barsell ? color.new(color.red, 0) : na)) : na)
+
+// EMA overlay for 5m analysis (helps visualize trend alignment)
+plot(emaF, title="EMA 9 (fast)", color=color.new(#2196F3, 0), linewidth=1)
+plot(emaS, title="EMA 21 (slow)", color=color.new(#FF9800, 0), linewidth=2)
+
+// Diagnostics for webhook JSON
+plot(atrp,   title="atr_pct",     display=display.none)
+plot(gapPct, title="ema_gap_pct", display=display.none)
+
+// ============================================================================
+// ALERTS (keep OLD NAMES for compatibility) + agreed JSON payload
+// ============================================================================
+alertcondition((confirmClose ? barstate.isconfirmed : true) and long_ok,  "UT Long", message='{"action":"entry","side":"long","source":"utbot","symbol":"{{ticker}}","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')
+alertcondition((confirmClose ? barstate.isconfirmed : true) and short_ok, "UT Short", message='{"action":"entry","side":"short","source":"utbot","symbol":"{{ticker}}","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')

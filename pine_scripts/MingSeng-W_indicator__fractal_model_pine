@@ -1,0 +1,273 @@
+//@version=5
+indicator("TTrades Fractal Model", overlay=true)
+
+// 通用设置
+showWarningMessages = input.bool(true, "显示警告消息", group="通用设置")
+showAlerts = input.bool(true, "设置提醒", group="通用设置")
+showHistory = input.int(5, "历史记录数量", minval=0, maxval=40, group="通用设置")
+
+// 高时间框架设置
+htfSelection = input.string("自动", "高时间框架选择", options=["自动", "手动"], group="时间框架设置")
+htf = input.timeframe("D", "高时间框架", group="时间框架设置", tooltip="仅当高时间框架选择为'手动'时有效")
+ltf = input.timeframe("60", "低时间框架", group="时间框架设置", tooltip="仅当高时间框架选择为'手动'时有效")
+
+// 实际使用的时间框架
+usedHTF = htfSelection == "自动" ? timeframe.period == "1" ? "5" : 
+          timeframe.period == "3" ? "15" : 
+          timeframe.period == "5" ? "30" : 
+          timeframe.period == "15" ? "60" : 
+          timeframe.period == "30" ? "120" : 
+          timeframe.period == "60" ? "240" : 
+          timeframe.period == "120" ? "D" : 
+          timeframe.period == "240" ? "W" : "M" : htf
+
+usedLTF = htfSelection == "自动" ? timeframe.period : ltf
+
+// 检查是否正确的时间框架
+validTimeframe = htfSelection == "自动" or timeframe.period == ltf
+
+// 偏好设置
+bias = input.string("中性", "交易偏好", options=["看涨", "看跌", "中性"], group="偏好设置")
+
+// 蜡烛收盘设置
+showC2 = input.bool(true, "显示C2收盘", group="蜡烛收盘设置")
+showC3 = input.bool(true, "显示C3收盘", group="蜡烛收盘设置")
+showC4 = input.bool(true, "显示C4收盘", group="蜡烛收盘设置")
+
+// 时间过滤器
+useTimeFilter = input.bool(false, "使用时间过滤", group="时间过滤器")
+filterStart1 = input.time(timestamp("2022-01-01T08:00:00"), "过滤器1开始", group="时间过滤器")
+filterEnd1 = input.time(timestamp("2022-01-01T11:30:00"), "过滤器1结束", group="时间过滤器")
+useFilter2 = input.bool(false, "使用过滤器2", group="时间过滤器")
+filterStart2 = input.time(timestamp("2022-01-01T14:00:00"), "过滤器2开始", group="时间过滤器")
+filterEnd2 = input.time(timestamp("2022-01-01T16:30:00"), "过滤器2结束", group="时间过滤器")
+useFilter3 = input.bool(false, "使用过滤器3", group="时间过滤器")
+filterStart3 = input.time(timestamp("2022-01-01T01:00:00"), "过滤器3开始", group="时间过滤器")
+filterEnd3 = input.time(timestamp("2022-01-01T03:30:00"), "过滤器3结束", group="时间过滤器")
+
+// 视觉设置
+showHTFCandles = input.bool(true, "显示高时间框架蜡烛", group="视觉设置")
+htfCandleSize = input.string("中", "高时间框架蜡烛大小", options=["小", "中", "大"], group="视觉设置")
+htfOffset = input.int(5, "高时间框架偏移", minval=0, maxval=50, group="视觉设置")
+showHTFOpen = input.bool(true, "显示高时间框架开盘", group="视觉设置")
+openLineStyle = input.string("实线", "开盘线样式", options=["实线", "虚线", "点线"], group="视觉设置")
+showOpenCloseTime = input.bool(true, "显示开盘收盘时间", group="视觉设置")
+showHighLowLines = input.bool(false, "显示高低线", group="视觉设置")
+
+// 模型风格设置
+showLabels = input.bool(true, "显示标签", group="模型风格")
+labelSize = input.string("中", "标签大小", options=["小", "中", "大"], group="模型风格")
+showCandleSweep = input.bool(true, "显示蜡烛一扫描", group="模型风格")
+bullishCOSDColor = input.color(color.green, "看涨交付状态变化颜色", group="模型风格")
+bearishCOSDColor = input.color(color.green, "看跌交付状态变化颜色", group="模型风格")
+showEquilibrium = input.bool(true, "显示蜡烛平衡点", group="模型风格")
+eqColor = input.color(color.purple, "平衡点颜色", group="模型风格")
+showTSpot = input.bool(true, "显示T-spot区域", group="模型风格")
+bullishTSpotColor = input.color(color.new(color.green, 80), "看涨T-spot颜色", group="模型风格")
+bearishTSpotColor = input.color(color.new(color.gray, 80), "看跌T-spot颜色", group="模型风格")
+
+// 投影设置
+projectionInputs = input.string("1,1.618,2,2.618,3.618", "投影值", group="投影设置")
+projectionValues = str.split(projectionInputs, ",")
+showProjLabels = input.bool(true, "显示投影标签", group="投影设置")
+projColor = input.color(color.blue, "投影颜色", group="投影设置")
+
+// 其他设置
+showFliquidityLines = input.bool(true, "显示形成流动性线", group="其他设置")
+fliquidityColor = input.color(color.new(color.purple, 50), "形成流动性颜色", group="其他设置")
+showTable = input.bool(true, "显示信息表格", group="其他设置")
+
+// 获取高时间框架数据
+htfHigh = request.security(syminfo.tickerid, usedHTF, high)
+htfLow = request.security(syminfo.tickerid, usedHTF, low)
+htfOpen = request.security(syminfo.tickerid, usedHTF, open)
+htfClose = request.security(syminfo.tickerid, usedHTF, close)
+
+// 获取前一高时间框架数据
+htfHighPrev = request.security(syminfo.tickerid, usedHTF, high[1])
+htfLowPrev = request.security(syminfo.tickerid, usedHTF, low[1])
+htfOpenPrev = request.security(syminfo.tickerid, usedHTF, open[1])
+htfClosePrev = request.security(syminfo.tickerid, usedHTF, close[1])
+
+// 获取低时间框架数据
+ltfHigh = request.security(syminfo.tickerid, usedLTF, high)
+ltfLow = request.security(syminfo.tickerid, usedLTF, low)
+ltfOpen = request.security(syminfo.tickerid, usedLTF, open)
+ltfClose = request.security(syminfo.tickerid, usedLTF, close)
+
+// 判断时间过滤器
+inTimeFilter = not useTimeFilter or
+   (time >= filterStart1 and time <= filterEnd1) or
+   (useFilter2 and time >= filterStart2 and time <= filterEnd2) or
+   (useFilter3 and time >= filterStart3 and time <= filterEnd3)
+
+// 计算蜡烛平衡点
+htfEQ = (htfHigh + htfLow) / 2
+
+// 检测分形模型 - 看涨C2收盘
+bullishC2 = ltfLow < ltfLow[1] and ltfClose > ltfLow[1] and ltfClose < ltfHigh[1]
+
+// 检测分形模型 - 看跌C2收盘 
+bearishC2 = ltfHigh > ltfHigh[1] and ltfClose < ltfHigh[1] and ltfClose > ltfLow[1]
+
+// 检测交付状态变化 - 看涨
+bullishCOSD = (ltfClose > ltfHigh[1] or ltfClose > ltfHigh[2] or ltfClose > ltfHigh[3]) and ltfClose > ltfClose[1]
+
+// 检测交付状态变化 - 看跌
+bearishCOSD = (ltfClose < ltfLow[1] or ltfClose < ltfLow[2] or ltfClose < ltfLow[3]) and ltfClose < ltfClose[1]
+
+// 确认有效的看涨设置
+validBullish = bullishC2 and bullishCOSD and (bias == "看涨" or bias == "中性") and inTimeFilter
+
+// 确认有效的看跌设置
+validBearish = bearishC2 and bearishCOSD and (bias == "看跌" or bias == "中性") and inTimeFilter
+
+// 定义结构体用于存储设置
+type Setup
+    bool valid
+    bool isBullish
+    float entryPrice
+    float stopPrice
+    float[] targets
+
+// 创建设置
+var setup = array.new<Setup>(0)
+
+// 添加新的看涨设置
+if validBullish and validTimeframe
+    targets = array.new<float>(0)
+    for i = 0 to array.size(projectionValues) - 1
+        projVal = str.tonumber(array.get(projectionValues, i))
+        if not na(projVal)
+            projTarget = ltfLow + (ltfHigh - ltfLow) * projVal
+            array.push(targets, projTarget)
+    
+    newSetup = Setup.new(true, true, ltfClose, ltfLow, targets)
+    array.push(setup, newSetup)
+    
+    if showAlerts
+        alert("发现看涨设置", alert.freq_once_per_bar)
+
+// 添加新的看跌设置
+if validBearish and validTimeframe
+    targets = array.new<float>(0)
+    for i = 0 to array.size(projectionValues) - 1
+        projVal = str.tonumber(array.get(projectionValues, i))
+        if not na(projVal)
+            projTarget = ltfHigh - (ltfHigh - ltfLow) * projVal
+            array.push(targets, projTarget)
+    
+    newSetup = Setup.new(true, false, ltfClose, ltfHigh, targets)
+    array.push(setup, newSetup)
+    
+    if showAlerts
+        alert("发现看跌设置", alert.freq_once_per_bar)
+
+// 限制历史记录数量
+while array.size(setup) > showHistory
+    array.shift(setup)
+
+// 绘制高时间框架蜡烛
+if showHTFCandles and validTimeframe
+    candleWidth = htfCandleSize == "小" ? 3 : htfCandleSize == "中" ? 5 : 7
+    
+    x1 = bar_index + htfOffset
+    x2 = x1 + candleWidth
+    
+    // 绘制蜡烛实体
+    bodyTop = htfOpen > htfClose ? htfOpen : htfClose
+    bodyBottom = htfOpen > htfClose ? htfClose : htfOpen
+    bodyColor = htfOpen > htfClose ? color.red : color.green
+    
+    box.new(x1, bodyTop, x2, bodyBottom, bgcolor=bodyColor, border_color=bodyColor)
+    
+    // 绘制蜡烛上下影线
+    line.new(x1 + candleWidth / 2, bodyTop, x1 + candleWidth / 2, htfHigh, color=bodyColor)
+    line.new(x1 + candleWidth / 2, bodyBottom, x1 + candleWidth / 2, htfLow, color=bodyColor)
+
+// 绘制高时间框架开盘
+if showHTFOpen and validTimeframe
+    var line htfOpenLine = na
+    line.delete(htfOpenLine)
+    lineStyle = openLineStyle == "实线" ? line.style_solid : openLineStyle == "虚线" ? line.style_dashed : line.style_dotted
+    htfOpenLine := line.new(bar_index, htfOpen, bar_index + 50, htfOpen, color=color.blue, style=lineStyle)
+
+// 绘制开盘收盘时间线
+if showOpenCloseTime and validTimeframe
+    var line timeLineOpen = na
+    line.delete(timeLineOpen)
+    timeLineOpen := line.new(bar_index, low - (high - low), bar_index, high + (high - low), color=color.gray, style=line.style_dashed)
+
+// 绘制T-spot区域
+if showTSpot and validTimeframe and array.size(setup) > 0
+    for i = 0 to array.size(setup) - 1
+        s = array.get(setup, i)
+        if s.valid
+            tSpotTop = s.isBullish ? s.stopPrice : s.entryPrice
+            tSpotBottom = s.isBullish ? s.entryPrice : s.stopPrice
+            tSpotColor = s.isBullish ? bullishTSpotColor : bearishTSpotColor
+            
+            // T-spot框宽度为10个bar
+            box.new(bar_index, tSpotTop, bar_index + 10, tSpotBottom, bgcolor=tSpotColor, border_color=na)
+
+// 绘制投影目标
+if validTimeframe and array.size(setup) > 0
+    for i = 0 to array.size(setup) - 1
+        s = array.get(setup, i)
+        if s.valid
+            for j = 0 to array.size(s.targets) - 1
+                target = array.get(s.targets, j)
+                var line targetLine = na
+                line.delete(targetLine)
+                
+                targetLine := line.new(bar_index, target, bar_index + 20, target, color=projColor, style=line.style_dashed)
+                
+                if showProjLabels
+                    projLabel = str.tostring(array.get(projectionValues, j))
+                    label.new(bar_index + 20, target, projLabel, color=color.new(color.white, 100), style=label.style_label_left, textcolor=projColor)
+
+// 绘制标签
+if showLabels and validTimeframe and array.size(setup) > 0
+    labelStyle = labelSize == "小" ? size.tiny : labelSize == "中" ? size.normal : size.large
+    
+    for i = 0 to array.size(setup) - 1
+        s = array.get(setup, i)
+        if s.valid
+            labelText = s.isBullish ? "C2 看涨" : "C2 看跌"
+            labelColor = s.isBullish ? color.green : color.red
+            label.new(bar_index, s.isBullish ? low - (high - low) * 0.1 : high + (high - low) * 0.1, labelText, color=color.new(color.white, 100), style=label.style_label_up, textcolor=labelColor, size=labelStyle)
+
+// 显示信息表格
+if showTable and validTimeframe
+    var table infoTable = na
+    table.delete(infoTable)
+    
+    infoTable := table.new(position.bottom_right, 2, 6, color.new(color.black, 20))
+    
+    table.cell(infoTable, 0, 0, "时间框架", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 0, usedHTF + "/" + usedLTF, bgcolor=color.new(color.gray, 90), text_color=color.white)
+    
+    table.cell(infoTable, 0, 1, "资产", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 1, syminfo.ticker, bgcolor=color.new(color.gray, 90), text_color=color.white)
+    
+    table.cell(infoTable, 0, 2, "分形模型", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 2, htfSelection, bgcolor=color.new(color.gray, 90), text_color=color.white)
+    
+    timeUntilClose = (timeframe.in_seconds(usedHTF) - (timenow - time)) / 1000 / 60
+    table.cell(infoTable, 0, 3, "距收盘", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 3, str.tostring(math.round(timeUntilClose)) + " 分钟", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    
+    table.cell(infoTable, 0, 4, "偏好", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 4, bias, bgcolor=color.new(color.gray, 90), text_color=color.white)
+    
+    table.cell(infoTable, 0, 5, "时间过滤", bgcolor=color.new(color.gray, 90), text_color=color.white)
+    table.cell(infoTable, 1, 5, useTimeFilter ? "已启用" : "已禁用", bgcolor=color.new(color.gray, 90), text_color=color.white)
+
+// 警告消息
+if showWarningMessages and not validTimeframe
+    var label warningLabel = na
+    label.delete(warningLabel)
+    warningLabel := label.new(bar_index, high, "错误: 当前不是正确的时间框架，请切换到 " + usedLTF, color=color.red, style=label.style_label_down, textcolor=color.white, size=size.normal)
+
+// 创建简单提示
+plotchar(na, "TTrades分形模型", "", location.top, size=size.tiny)

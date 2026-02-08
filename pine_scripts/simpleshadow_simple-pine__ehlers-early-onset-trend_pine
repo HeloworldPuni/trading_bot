@@ -1,0 +1,91 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simplewashere
+
+//@version=4
+    
+colorBlue = color(#05ffff)
+colorMagenta = color(#fe0a6f)
+colorPink = color(#ff0ae2)
+colorTeal = color(#05ffa6)
+colorPurple = color(#5405ff)
+colorYellow = color(#fbc02d)
+colorGreen = color(#3ddb56)
+
+study(title="eot — early onset trend", overlay=false)
+
+inp = input(title="source", type=input.source, defval=close)
+res = input(title="resolution", type=input.resolution, defval="")
+lpPeriod = input(30, title = "low pass period")
+k1 = input(0.85, title = "K1")
+k2 = input(0.4, title = "K2")
+
+src = security(syminfo.tickerid, res, inp)
+
+alpha1 = 0.00 
+hp = 0.00 
+a1 = 0.00 
+b1 = 0.00 
+c1 = 0.00 
+c2 = 0.00 
+c3 = 0.00 
+filter = 0.00 
+peak = 0.00
+x = 0.00 
+quotient1 = 0.00 
+quotient2 = 0.00
+PI = 2 * asin(1)
+
+
+//// Highpass filter cyclic components
+// whose periods are shorter than 100 bars
+
+alpha1 := (cos(0.707 * 2 * PI / 100) + sin(0.707 * 2 * PI / 100) - 1) / cos(0.707 * 2 * PI / 100) 
+hp := (1 - alpha1 / 2) * (1 - alpha1 / 2) * (src - 2 * nz(src[1]) + nz(src [2])) + 2 * (1 - alpha1) * nz(hp[1]) - (1 - alpha1) * (1 - alpha1) * nz(hp[2]) 
+
+// SuperSmoother Filter
+
+a1 := exp(-1.414 * PI / lpPeriod) 
+b1 := 2 * a1 * cos(1.414 * PI / lpPeriod) 
+c2 := b1 
+c3 := -a1 * a1 
+c1 := 1 - c2 - c3 
+filter := c1 * (hp + nz(hp[1])) / 2 + c2 * nz(filter[1]) + c3 * nz(filter[2]) 
+
+// Fast Attack - Slow Decay Algorithm
+
+peak := 0.991 * nz(peak[1]) 
+if abs( filter ) > peak  
+	peak := abs(filter) 
+
+// Normalized Roofing Filter
+
+if peak != 0  
+	x := filter / peak 
+
+quotient1 := ( x + k1 ) / ( k1 * x + 1 ) 
+quotient2 := ( x + k2 ) / ( k2 * x + 1 ) 
+
+long = false
+short = false
+
+long := crossover(quotient1, -0.25)
+short := crossunder(quotient2, 0.25)
+
+plot1 =  plot(quotient1, color=quotient1 > -0.25 ? colorTeal : na, linewidth=2)
+plot10 =  plot(quotient1, color=quotient1 < 0.25 ? colorBlue : na, style=plot.style_cross, linewidth=1)
+plot2 =  plot(quotient2, color=quotient2 < 0.25 ? colorMagenta : na, linewidth=2)
+plot20 =  plot(quotient2, color=quotient2 > -0.25 ? colorPurple : na, style=plot.style_circles, linewidth=1)
+
+hline(0, linestyle=hline.style_dotted)
+hline(0.25, linestyle=hline.style_dotted)
+hline(-0.25, linestyle=hline.style_dotted)
+
+// Plots cross labels
+
+// l = short ? 
+//       label.new (bar_index, Quotient2, "SELL", color=color.red, textcolor=color.white, style=label.style_labeldown, yloc=yloc.price, size=size.small) :
+//       long ?
+//           label.new (bar_index, Quotient1, "BUY", color=color.green, textcolor=color.white, style=label.style_labelup, yloc=yloc.price, size=size.small) :
+//           na
+           
+           

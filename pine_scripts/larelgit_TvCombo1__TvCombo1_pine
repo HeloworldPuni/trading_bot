@@ -1,0 +1,376 @@
+//@version=5
+indicator("TvCombo1 Advanced", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+// ══════════════════════════════════════════════════════════════════════════════
+// COLOR THEME
+// ══════════════════════════════════════════════════════════════════════════════
+color BULL_COLOR = color.new(#26a69a, 0)
+color BEAR_COLOR = color.new(#ef5350, 0)
+color BULL_LIGHT = color.new(#26a69a, 80)
+color BEAR_LIGHT = color.new(#ef5350, 80)
+color NEUTRAL_COLOR = color.new(#b2b5be, 60)
+color WARNING_COLOR = color.new(#ff9800, 0)
+color INFO_COLOR = color.new(#2196f3, 0)
+color BG_COLOR = color.new(#1e222d, 90)
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+// Module Selection
+show_saucer = input.bool(true, "Saucer Pattern", group="Signal Modules", tooltip="MACD-based bowl pattern detection")
+show_pumpdump = input.bool(true, "Pump/Dump Detection", group="Signal Modules", tooltip="Anomaly volume & price detection")
+show_titan = input.bool(true, "Titan Trend", group="Signal Modules", tooltip="MA crossover with trend filter")
+show_hund = input.bool(true, "Hund Counter-trend", group="Signal Modules", tooltip="Multi-oscillator reversal detection")
+show_fibo = input.bool(true, "Fibonacci Bounces", group="Signal Modules", tooltip="Key Fibonacci level rebounds")
+show_find_long = input.bool(true, "Find a Long", group="Signal Modules", tooltip="Pullback long opportunities")
+show_impuls_corr = input.bool(true, "Impulse Correction", group="Signal Modules", tooltip="Trend exhaustion detection")
+// Channel Selection
+show_rsi_channel = input.bool(true, "RSI Channel", group="Channels", tooltip="Visual RSI channel with zones")
+show_blockchain = input.bool(false, "Blockchain Metrics", group="Channels", tooltip="On-chain data simulation")
+// Signal Display
+signal_size = input.string("Small", "Signal Size", options=["Tiny", "Small", "Normal"], group="Display Settings")
+show_info_panel = input.bool(true, "Show Info Panel", group="Display Settings")
+panel_position = input.string("Top Right", "Panel Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group="Display Settings")
+// ══════════════════════════════════════════════════════════════════════════════
+// PARAMETERS
+// ══════════════════════════════════════════════════════════════════════════════
+// Saucer Parameters
+saucer_macd_fast = input.int(12, "MACD Fast", minval=1, group="Saucer Settings")
+saucer_macd_slow = input.int(26, "MACD Slow", minval=1, group="Saucer Settings")
+saucer_macd_signal = input.int(9, "MACD Signal", minval=1, group="Saucer Settings")
+// Pump/Dump Parameters
+pump_threshold = input.float(5.0, "Price Change %", minval=1.0, maxval=20.0, step=0.5, group="Pump/Dump Settings")
+volume_multiplier = input.float(2.0, "Volume Multiplier", minval=1.0, maxval=5.0, step=0.1, group="Pump/Dump Settings")
+volatility_lookback = input.int(20, "Volatility Period", minval=5, maxval=50, group="Pump/Dump Settings")
+// Titan Parameters
+titan_fast_ma = input.int(9, "Fast MA", minval=1, group="Titan Settings")
+titan_slow_ma = input.int(21, "Slow MA", minval=1, group="Titan Settings")
+titan_ma_type = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA", "HMA"], group="Titan Settings")
+titan_adx_period = input.int(14, "ADX Period", minval=1, group="Titan Settings")
+titan_adx_threshold = input.float(25.0, "ADX Threshold", minval=10.0, maxval=50.0, group="Titan Settings")
+titan_use_htf = input.bool(true, "Use HTF Filter", group="Titan Settings")
+titan_htf = input.timeframe("240", "Higher Timeframe", group="Titan Settings")
+// Hund Parameters
+hund_rsi_period = input.int(14, "RSI Period", minval=1, group="Hund Settings")
+hund_rsi_ob = input.int(70, "RSI Overbought", minval=50, maxval=90, group="Hund Settings")
+hund_rsi_os = input.int(30, "RSI Oversold", minval=10, maxval=50, group="Hund Settings")
+hund_confirmation = input.int(2, "Confirmations", minval=1, maxval=3, group="Hund Settings")
+// Fibonacci Parameters
+fibo_lookback = input.int(100, "Lookback", minval=20, maxval=500, group="Fibonacci Settings")
+fibo_sensitivity = input.float(0.5, "Sensitivity %", minval=0.1, maxval=2.0, step=0.1, group="Fibonacci Settings")
+fibo_show_levels = input.bool(true, "Show Levels", group="Fibonacci Settings")
+// Find Long Parameters
+find_trend_period = input.int(50, "Trend Period", minval=10, group="Find Long Settings")
+find_pullback_rsi = input.int(40, "Max RSI", minval=20, maxval=60, group="Find Long Settings")
+find_min_trend_strength = input.float(0.5, "Min Trend", minval=0.0, maxval=2.0, step=0.1, group="Find Long Settings")
+// Impulse Parameters
+impulse_momentum_period = input.int(10, "Momentum", minval=5, group="Impulse Settings")
+impulse_divergence_lookback = input.int(5, "Divergence", minval=2, maxval=20, group="Impulse Settings")
+// RSI Channel Parameters
+rsi_period = input.int(14, "RSI Period", minval=1, group="RSI Settings")
+rsi_ma_period = input.int(14, "MA Period", minval=1, group="RSI Settings")
+rsi_show_divergence = input.bool(true, "Show Divergence", group="RSI Settings")
+// ══════════════════════════════════════════════════════════════════════════════
+// FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+// Helper Functions
+ma(source, length, type) =>
+    if type == "SMA"
+        ta.sma(source, length)
+    else if type == "EMA"
+        ta.ema(source, length)
+    else if type == "WMA"
+        ta.wma(source, length)
+    else if type == "HMA"
+        ta.hma(source, length)
+    else
+        ta.ema(source, length)
+// Get signal size
+get_size() =>
+    signal_size == "Tiny" ? size.tiny : signal_size == "Small" ? size.small : size.normal
+// Get panel position
+get_position() =>
+    panel_position == "Top Right" ? position.top_right : panel_position == "Top Left" ? position.top_left : panel_position == "Bottom Right" ? position.bottom_right : position.bottom_left
+// ADX Calculation
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    plusDM = na(up) ? na : (up > down and up > 0 ? up : 0)
+    minusDM = na(down) ? na : (down > up and down > 0 ? down : 0)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+adx(dilen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), dilen)
+    adx
+// ══════════════════════════════════════════════════════════════════════════════
+// SIGNAL CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+// 1. SAUCER SIGNAL
+[macdLine, signalLine, histLine] = ta.macd(close, saucer_macd_fast, saucer_macd_slow, saucer_macd_signal)
+saucer_bull = false
+saucer_bear = false
+if show_saucer
+    hist_improving = histLine > histLine[1] and histLine[1] > histLine[2]
+    macd_below_zero = macdLine < 0
+    signal_cross = ta.crossover(macdLine, signalLine)
+    bowl_shape = histLine[3] < histLine[2] and histLine[2] < histLine[1] and histLine[1] < histLine
+    saucer_bull := macd_below_zero and signal_cross and (hist_improving or bowl_shape)
+    hist_weakening = histLine < histLine[1] and histLine[1] < histLine[2]
+    macd_above_zero = macdLine > 0
+    signal_cross_down = ta.crossunder(macdLine, signalLine)
+    inv_bowl_shape = histLine[3] > histLine[2] and histLine[2] > histLine[1] and histLine[1] > histLine
+    saucer_bear := macd_above_zero and signal_cross_down and (hist_weakening or inv_bowl_shape)
+// 2. PUMP/DUMP SIGNAL
+pump_signal = false
+dump_signal = false
+avg_volume = ta.sma(volume, volatility_lookback)
+if show_pumpdump
+    price_change_pct = (close - close[1]) / close[1] * 100
+    avg_volatility = ta.stdev(price_change_pct, volatility_lookback)
+    volume_spike = volume > avg_volume * volume_multiplier
+    dynamic_threshold = math.max(pump_threshold, avg_volatility * 2)
+    pump_signal := price_change_pct > dynamic_threshold and volume_spike and close > open
+    dump_signal := price_change_pct < -dynamic_threshold and volume_spike and close < open
+// 3. TITAN SIGNAL
+titan_long = false
+titan_short = false
+fast_ma = ma(close, titan_fast_ma, titan_ma_type)
+slow_ma = ma(close, titan_slow_ma, titan_ma_type)
+adx_value = adx(titan_adx_period)
+strong_trend = adx_value > titan_adx_threshold
+htf_close = request.security(syminfo.tickerid, titan_htf, close)
+htf_ma = request.security(syminfo.tickerid, titan_htf, ma(close, titan_slow_ma, titan_ma_type))
+htf_trend = htf_close > htf_ma ? 1 : -1
+if show_titan
+    final_htf_trend = titan_use_htf ? htf_trend : 1
+    titan_long := ta.crossover(fast_ma, slow_ma) and strong_trend and final_htf_trend == 1
+    titan_short := ta.crossunder(fast_ma, slow_ma) and strong_trend and final_htf_trend == -1
+// 4. HUND SIGNAL
+hund_long = false
+hund_short = false
+if show_hund
+    rsi_val = ta.rsi(close, hund_rsi_period)
+    stoch_k = ta.stoch(close, high, low, 14)
+    cci_val = ta.cci(close, 20)
+    oversold_count = 0
+    oversold_count += rsi_val < hund_rsi_os ? 1 : 0
+    oversold_count += stoch_k < 20 ? 1 : 0
+    oversold_count += cci_val < -100 ? 1 : 0
+    overbought_count = 0
+    overbought_count += rsi_val > hund_rsi_ob ? 1 : 0
+    overbought_count += stoch_k > 80 ? 1 : 0
+    overbought_count += cci_val > 100 ? 1 : 0
+    bullish_reversal = close > open and low < low[1]
+    bearish_reversal = close < open and high > high[1]
+    hund_long := oversold_count >= hund_confirmation and bullish_reversal
+    hund_short := overbought_count >= hund_confirmation and bearish_reversal
+// 5. FIBONACCI SIGNAL
+fibo_long = false
+fibo_short = false
+lookback_high = ta.highest(high, fibo_lookback)
+lookback_low = ta.lowest(low, fibo_lookback)
+fib_range = lookback_high - lookback_low
+fib_0 = lookback_high
+fib_236 = lookback_high - fib_range * 0.236
+fib_382 = lookback_high - fib_range * 0.382
+fib_500 = lookback_high - fib_range * 0.500
+fib_618 = lookback_high - fib_range * 0.618
+fib_786 = lookback_high - fib_range * 0.786
+fib_1 = lookback_low
+if show_fibo
+    tolerance = fib_range * fibo_sensitivity / 100
+    touching_fib = (math.abs(low - fib_236) < tolerance) or (math.abs(low - fib_382) < tolerance) or (math.abs(low - fib_618) < tolerance) or (math.abs(low - fib_786) < tolerance)
+    touching_fib_resistance = (math.abs(high - fib_236) < tolerance) or (math.abs(high - fib_382) < tolerance) or (math.abs(high - fib_618) < tolerance) or (math.abs(high - fib_786) < tolerance)
+    bounce_up = touching_fib and close > open and close > low + (high - low) * 0.6
+    bounce_down = touching_fib_resistance and close < open and close < high - (high - low) * 0.6
+    fibo_long := bounce_up
+    fibo_short := bounce_down
+// 6. FIND LONG SIGNAL
+find_long_signal = false
+if show_find_long
+    trend_ma = ma(close, find_trend_period, "EMA")
+    trend_direction = close > trend_ma
+    trend_angle = (trend_ma - trend_ma[5]) / trend_ma[5] * 100
+    strong_uptrend = trend_angle > find_min_trend_strength
+    current_rsi = ta.rsi(close, 14)
+    rsi_pullback = current_rsi < find_pullback_rsi and current_rsi > current_rsi[1]
+    pullback_ma = ma(close, titan_fast_ma, "EMA")
+    near_support = low <= pullback_ma * 1.01 and close > pullback_ma
+    find_long_signal := trend_direction and strong_uptrend and rsi_pullback and near_support
+// 7. IMPULSE CORRECTION
+impulse_end_long = false
+impulse_end_short = false
+momentum = ta.mom(close, impulse_momentum_period)
+momentum_ma = ta.sma(momentum, impulse_momentum_period)
+high_highest = ta.highest(high[1], impulse_divergence_lookback)
+momentum_highest = ta.highest(momentum[1], impulse_divergence_lookback)
+low_lowest = ta.lowest(low[1], impulse_divergence_lookback)
+momentum_lowest = ta.lowest(momentum[1], impulse_divergence_lookback)
+if show_impuls_corr
+    price_higher = high > high_highest
+    momentum_lower = momentum < momentum_highest
+    bearish_div = price_higher and momentum_lower
+    price_lower = low < low_lowest
+    momentum_higher = momentum > momentum_lowest
+    bullish_div = price_lower and momentum_higher
+    rsi_exhausted_up = ta.rsi(close, 14) > 70 and ta.rsi(close, 14) < ta.rsi(close, 14)[1]
+    rsi_exhausted_down = ta.rsi(close, 14) < 30 and ta.rsi(close, 14) > ta.rsi(close, 14)[1]
+    impulse_end_long := bearish_div and rsi_exhausted_up
+    impulse_end_short := bullish_div and rsi_exhausted_down
+// 8. RSI CHANNEL
+rsi_value = ta.rsi(close, rsi_period)
+rsi_ma = ma(rsi_value, rsi_ma_period, "SMA")
+rsi_bull_div = false
+rsi_bear_div = false
+lookback = 5
+rsi_highest = ta.highest(rsi_value[2], lookback-1)
+rsi_lowest = ta.lowest(rsi_value[2], lookback-1)
+high_highest_div = ta.highest(high[1], lookback)
+low_lowest_div = ta.lowest(low[1], lookback)
+if show_rsi_channel and rsi_show_divergence
+    if rsi_value < rsi_value[1] and rsi_value[1] > rsi_highest
+        price_making_highs = high > high_highest_div
+        if price_making_highs
+            rsi_bear_div := true
+    if rsi_value > rsi_value[1] and rsi_value[1] < rsi_lowest
+        price_making_lows = low < low_lowest_div
+        if price_making_lows
+            rsi_bull_div := true
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+// Get values for display
+rsi_val = ta.rsi(close, hund_rsi_period)
+current_rsi = ta.rsi(close, 14)
+sig_size = get_size()
+// Minimalist Signal Markers
+if saucer_bull
+    label.new(bar_index, low, "●", color=BULL_COLOR, style=label.style_label_up, size=sig_size, tooltip="Saucer Bull\nMACD: " + str.tostring(macdLine, "#.##"))
+if saucer_bear
+    label.new(bar_index, high, "●", color=BEAR_COLOR, style=label.style_label_down, size=sig_size, tooltip="Saucer Bear\nMACD: " + str.tostring(macdLine, "#.##"))
+if pump_signal
+    label.new(bar_index, high * 1.01, "▲", color=WARNING_COLOR, style=label.style_none, textcolor=WARNING_COLOR, size=size.normal, tooltip="PUMP\nVolume: " + str.tostring(volume/avg_volume, "#.#") + "x")
+if dump_signal
+    label.new(bar_index, low * 0.99, "▼", color=WARNING_COLOR, style=label.style_none, textcolor=WARNING_COLOR, size=size.normal, tooltip="DUMP\nVolume: " + str.tostring(volume/avg_volume, "#.#") + "x")
+if titan_long
+    label.new(bar_index, low, "◆", color=BULL_COLOR, style=label.style_label_up, size=size.normal, tooltip="Titan Long\nADX: " + str.tostring(adx_value, "#"))
+if titan_short
+    label.new(bar_index, high, "◆", color=BEAR_COLOR, style=label.style_label_down, size=size.normal, tooltip="Titan Short\nADX: " + str.tostring(adx_value, "#"))
+if hund_long
+    label.new(bar_index, low, "○", color=BULL_LIGHT, style=label.style_circle, size=sig_size, tooltip="Hund Long\nRSI: " + str.tostring(rsi_val, "#"))
+if hund_short
+    label.new(bar_index, high, "○", color=BEAR_LIGHT, style=label.style_circle, size=sig_size, tooltip="Hund Short\nRSI: " + str.tostring(rsi_val, "#"))
+if fibo_long
+    label.new(bar_index, low, "◈", color=color.new(color.teal, 20), style=label.style_label_up, size=sig_size, tooltip="Fibo Bounce Long")
+if fibo_short
+    label.new(bar_index, high, "◈", color=color.new(color.purple, 20), style=label.style_label_down, size=sig_size, tooltip="Fibo Bounce Short")
+if find_long_signal
+    label.new(bar_index, low * 0.995, "↗", color=INFO_COLOR, style=label.style_none, textcolor=INFO_COLOR, size=size.normal, tooltip="Find Long\nRSI: " + str.tostring(current_rsi, "#"))
+if impulse_end_long
+    label.new(bar_index, high * 1.005, "×", color=BEAR_COLOR, style=label.style_none, textcolor=BEAR_COLOR, size=size.large, tooltip="Impulse End")
+if impulse_end_short
+    label.new(bar_index, low * 0.995, "×", color=BULL_COLOR, style=label.style_none, textcolor=BULL_COLOR, size=size.large, tooltip="Impulse End")
+// Fibonacci Levels - Clean Style
+if show_fibo and fibo_show_levels
+    var line fib_line_236 = na
+    var line fib_line_382 = na
+    var line fib_line_618 = na
+    var label fib_label_236 = na
+    var label fib_label_382 = na
+    var label fib_label_618 = na
+    if barstate.islast
+        line.delete(fib_line_236)
+        line.delete(fib_line_382)
+        line.delete(fib_line_618)
+        label.delete(fib_label_236)
+        label.delete(fib_label_382)
+        label.delete(fib_label_618)
+        fib_line_236 := line.new(bar_index[fibo_lookback], fib_236, bar_index, fib_236, color=NEUTRAL_COLOR, width=1, style=line.style_dotted, extend=extend.right)
+        fib_line_382 := line.new(bar_index[fibo_lookback], fib_382, bar_index, fib_382, color=NEUTRAL_COLOR, width=1, style=line.style_dotted, extend=extend.right)
+        fib_line_618 := line.new(bar_index[fibo_lookback], fib_618, bar_index, fib_618, color=NEUTRAL_COLOR, width=1, style=line.style_dotted, extend=extend.right)
+        fib_label_236 := label.new(bar_index + 5, fib_236, "0.236", color=color.new(color.white, 100), style=label.style_label_left, textcolor=NEUTRAL_COLOR, size=size.tiny)
+        fib_label_382 := label.new(bar_index + 5, fib_382, "0.382", color=color.new(color.white, 100), style=label.style_label_left, textcolor=NEUTRAL_COLOR, size=size.tiny)
+        fib_label_618 := label.new(bar_index + 5, fib_618, "0.618", color=color.new(color.white, 100), style=label.style_label_left, textcolor=NEUTRAL_COLOR, size=size.tiny)
+// RSI Divergence Markers
+if rsi_bull_div
+    line.new(bar_index[1], low[1], bar_index, low, color=BULL_COLOR, width=1, style=line.style_dotted)
+if rsi_bear_div
+    line.new(bar_index[1], high[1], bar_index, high, color=BEAR_COLOR, width=1, style=line.style_dotted)
+// RSI Color
+rsi_color = rsi_value > 70 ? BEAR_COLOR : rsi_value < 30 ? BULL_COLOR : rsi_value > 50 ? BULL_LIGHT : BEAR_LIGHT
+// ══════════════════════════════════════════════════════════════════════════════
+// INFO PANEL - Clean Minimalist Design
+// ══════════════════════════════════════════════════════════════════════════════
+if show_info_panel
+    var table infoTable = table.new(get_position(), 2, 9, bgcolor=BG_COLOR, border_color=color.new(color.white, 90), border_width=1)
+    if barstate.islast
+        // Header
+        table.merge_cells(infoTable, 0, 0, 1, 0)
+        table.cell(infoTable, 0, 0, "SIGNALS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.white, 95))
+        
+        row = 1
+        
+        // Saucer
+        if show_saucer
+            table.cell(infoTable, 0, row, "Saucer", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+            status_text = saucer_bull ? "▲" : saucer_bear ? "▼" : "−"
+            status_color = saucer_bull ? BULL_COLOR : saucer_bear ? BEAR_COLOR : NEUTRAL_COLOR
+            table.cell(infoTable, 1, row, status_text, text_color=status_color, text_size=size.tiny)
+            row += 1
+        
+        // Titan
+        if show_titan
+            table.cell(infoTable, 0, row, "Titan", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+            status_text = titan_long ? "▲" : titan_short ? "▼" : "−"
+            status_color = titan_long ? BULL_COLOR : titan_short ? BEAR_COLOR : NEUTRAL_COLOR
+            table.cell(infoTable, 1, row, status_text + " " + str.tostring(adx_value, "#"), text_color=status_color, text_size=size.tiny)
+            row += 1
+        
+        // Pump/Dump
+        if show_pumpdump
+            table.cell(infoTable, 0, row, "P/D", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+            status_text = pump_signal ? "PUMP" : dump_signal ? "DUMP" : "−"
+            status_color = pump_signal or dump_signal ? WARNING_COLOR : NEUTRAL_COLOR
+            table.cell(infoTable, 1, row, status_text, text_color=status_color, text_size=size.tiny)
+            row += 1
+        
+        // RSI
+        if show_rsi_channel
+            table.cell(infoTable, 0, row, "RSI", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+            rsi_status = rsi_value > 70 ? "OB" : rsi_value < 30 ? "OS" : str.tostring(rsi_value, "#")
+            table.cell(infoTable, 1, row, rsi_status, text_color=rsi_color, text_size=size.tiny)
+            row += 1
+        
+        // Momentum
+        table.merge_cells(infoTable, 0, row, 1, row)
+        table.cell(infoTable, 0, row, "───────", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+        row += 1
+        
+        // Market State
+        trend_state = fast_ma > slow_ma ? "Bullish" : "Bearish"
+        trend_color = fast_ma > slow_ma ? BULL_COLOR : BEAR_COLOR
+        table.cell(infoTable, 0, row, "Trend", text_color=NEUTRAL_COLOR, text_size=size.tiny)
+        table.cell(infoTable, 1, row, trend_state, text_color=trend_color, text_size=size.tiny)
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+alertcondition(saucer_bull, "Saucer Bull", "Saucer Bull Pattern")
+alertcondition(saucer_bear, "Saucer Bear", "Saucer Bear Pattern")
+alertcondition(pump_signal, "Pump", "Pump Detected")
+alertcondition(dump_signal, "Dump", "Dump Detected")
+alertcondition(titan_long, "Titan Long", "Titan Long Signal")
+alertcondition(titan_short, "Titan Short", "Titan Short Signal")
+alertcondition(hund_long, "Hund Long", "Hund Reversal Long")
+alertcondition(hund_short, "Hund Short", "Hund Reversal Short")
+alertcondition(fibo_long, "Fibo Long", "Fibonacci Bounce Long")
+alertcondition(fibo_short, "Fibo Short", "Fibonacci Bounce Short")
+alertcondition(find_long_signal, "Find Long", "Find Long Opportunity")
+alertcondition(impulse_end_long, "Impulse End Long", "Long Impulse Ending")
+alertcondition(impulse_end_short, "Impulse End Short", "Short Impulse Ending")
+// Combined alerts
+any_long_signal = saucer_bull or titan_long or hund_long or fibo_long or find_long_signal or impulse_end_short
+any_short_signal = saucer_bear or titan_short or hund_short or fibo_short or impulse_end_long
+alertcondition(any_long_signal, "Any Long", "Long Signal Detected")
+alertcondition(any_short_signal, "Any Short", "Short Signal Detected")

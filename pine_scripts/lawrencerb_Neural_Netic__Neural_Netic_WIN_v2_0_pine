@@ -1,0 +1,1898 @@
+//@version=4
+strategy("𝐍𝐄𝐔𝐑𝐀𝐋 𝐍𝐄𝐓𝐈𝐂 𝐖𝐈𝐍", overlay=true, initial_capital=1000)
+
+// Version 2.0: 2-12-2024
+// Initial Concept by: Zac Vaughn
+// Reconstructed, Optimized, Refactored, Replanned by Lawrence "the Seer" Boechat (Vidente)
+src = close
+////////////////////////////////////////////////////////////////////////////////
+
+// ████████╗██████╗ ███████╗███╗   ██╗██████╗     ██╗███╗   ██╗██████╗ ██╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗ ███████╗
+// ╚══██╔══╝██╔══██╗██╔════╝████╗  ██║██╔══██╗    ██║████╗  ██║██╔══██╗██║██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝
+//    ██║   ██████╔╝█████╗  ██╔██╗ ██║██║  ██║    ██║██╔██╗ ██║██║  ██║██║██║     ███████║   ██║   ██║   ██║██████╔╝███████╗
+//    ██║   ██╔══██╗██╔══╝  ██║╚██╗██║██║  ██║    ██║██║╚██╗██║██║  ██║██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗╚════██║
+//    ██║   ██║  ██║███████╗██║ ╚████║██████╔╝    ██║██║ ╚████║██████╔╝██║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║███████║
+//    ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═════╝     ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝
+
+//   ______ __  __            _______                 _ 
+//  |  ____|  \/  |   /\     |__   __|               | |
+//  | |__  | \  / |  /  \       | |_ __ ___ _ __   __| |
+//  |  __| | |\/| | / /\ \      | | '__/ _ \ '_ \ / _` |
+//  | |____| |  | |/ ____ \     | | | |  __/ | | | (_| |
+//  |______|_|  |_/_/    \_\    |_|_|  \___|_| |_|\__,_|
+
+// Calculate EMA Trend lines
+ema_input3 = 1
+ema_input4 = 81
+
+// Calculate EMA lines
+ema5 = ema(close, ema_input3)
+ema6 = ema(close, ema_input4)
+mabuy  = ema6 > ema6[1]
+masell = ema6 < ema6[1]
+
+var ematrendupwards_bin = 0
+var ematrenddownwards_bin = 0
+
+//Check if there is a continued Trend of HMA slow and EMA Slow
+if ((ema5 > ema5[1] and ema5[1] > ema5[2]) and (ema6 > ema6[1] and ema6[1] > ema6[2]))
+    ematrendupwards_bin := 1
+    ematrenddownwards_bin := 0
+else if ((ema5 < ema5[1] and ema5[1] < ema5[2]) and (ema6 < ema6[1] and ema6[1] < ema6[2]))
+    ematrendupwards_bin := 0
+    ematrenddownwards_bin := 1
+else
+    ematrendupwards_bin := 0
+    ematrenddownwards_bin := 0
+
+//   ______ __  __             _____                   
+//  |  ____|  \/  |   /\      / ____|                  
+//  | |__  | \  / |  /  \    | |     _ __ ___  ___ ___ 
+//  |  __| | |\/| | / /\ \   | |    | '__/ _ \/ __/ __|
+//  | |____| |  | |/ ____ \  | |____| | | (_) \__ \__ \
+//  |______|_|  |_/_/    \_\  \_____|_|  \___/|___/___/
+
+// Calculate EMA Crossing Lines
+ema_input1 = 28
+ema_input2 = 7
+// Calculate EMA lines
+ema4_cross = ema(close, ema_input1)
+ema5_cross = ema(close, ema_input2)
+
+// Calculate distances between EMA lines for the previous candle and current. There should be an inverse in value if they crossed
+dist45_prev = ema4_cross[1] - ema5_cross[1]
+dist45_now = ema4_cross - ema5_cross
+
+var emacrosstoupwards_bin = 0
+var emacrosstodownwards_bin = 0
+
+//If there is an ongoing trend, just have a look if the lines are spreading. If not, unsignal the trend.
+if (emacrosstoupwards_bin or emacrosstodownwards_bin)
+    if (abs(dist45_prev) > abs(dist45_now))
+        emacrosstoupwards_bin := 0
+        emacrosstodownwards_bin := 0
+else if (dist45_prev <= 0 and dist45_now >= 0)
+    emacrosstoupwards_bin := 1
+    emacrosstodownwards_bin := 0
+else if (dist45_prev >= 0 and dist45_now <= 0)
+    emacrosstodownwards_bin := 1
+    emacrosstoupwards_bin := 0
+else
+    emacrosstoupwards_bin := 0
+    emacrosstodownwards_bin := 0
+
+//   ______ __  __             _____           _       
+//  |  ____|  \/  |   /\      / ____|         | |      
+//  | |__  | \  / |  /  \    | (___   ___ __ _| |_ __  
+//  |  __| | |\/| | / /\ \    \___ \ / __/ _` | | '_ \ 
+//  | |____| |  | |/ ____ \   ____) | (_| (_| | | |_) |
+//  |______|_|  |_/_/    \_\ |_____/ \___\__,_|_| .__/ 
+//                                              | |    
+//                                              |_|     
+
+// Calculate EMA Scalping lines
+input1 = 6
+input2 = 11
+input3 = 29
+input4 = 37
+input5 = 86
+
+// Calculate EMA lines
+ema_scalp1 = ema(close, input1)
+ema_scalp2 = ema(close, input2)
+ema_scalp3 = ema(close, input3)
+ema_scalp4 = ema(close, input4)
+ema_scalp5 = ema(close, input5)
+
+// Calculate distances between EMA lines for the previous candle
+dist12_prev = abs(ema_scalp1[1] - ema_scalp2[1])
+dist23_prev = abs(ema_scalp2[1] - ema_scalp3[1])
+
+// Calculate distances between EMA lines
+profit_op = abs(close - ema_scalp4)
+dist45 = abs(ema_scalp4 - ema_scalp5)
+// Calculate possible profit
+possibleProfit = abs(profit_op - dist45)
+
+var emapricepointupwards_bin = 0
+var emapricepointdownwards_bin = 0
+
+// Overbought or oversold Scalping logic:
+// Check if there's an opportunity based on the previous candle
+if (emapricepointupwards_bin)
+    emapricepointupwards_bin := (close < close[1]) ? 1 : 0
+else if (emapricepointdownwards_bin)
+    emapricepointdownwards_bin := (close > close[1]) ? 1 : 0
+else if ((ema_scalp1 > ema_scalp2 and ema_scalp2 > ema_scalp3 and ema_scalp3 > ema_scalp4 and ema_scalp4 > ema_scalp5) or (ema_scalp1 < ema_scalp2 and ema_scalp2 < ema_scalp3 and ema_scalp3 < ema_scalp4 and ema_scalp4 < ema_scalp5))
+    if (dist12_prev < (dist23_prev / 2))
+        if (possibleProfit >= close * 0.001)
+            if (close < ema_scalp5)
+                emapricepointupwards_bin := 1
+            else if (close > ema_scalp5)
+                emapricepointdownwards_bin := 1
+else
+    // Initialize or reset the variables
+    emapricepointupwards_bin := 0
+    emapricepointdownwards_bin := 0
+
+// If Plotting is needed:
+// Plot EMA lines
+// plot(ema1, title="Line 1", color=color.purple)
+// plot(ema2, title="Line 2", color=color.red)
+// plot(ema3, title="Line 3", color=color.orange)
+// plot(ema4, title="Line 4", color=color.blue)
+// plot(ema5, title="Line 4", color=color.yellow)
+// plot(ema6, title="Line 5", color=color.lime)
+// plot(ema_input1, title="Line 1 EMA Trend", color=color.blue)
+// plot(ema_input2, title="Line 2 EMA Trend", color=color.lime)
+
+//    _____                       _                      _ 
+//   / ____|                     | |                    | |
+//  | (___  _   _ _ __   ___ _ __| |_ _ __ ___ _ __   __| |
+//   \___ \| | | | '_ \ / _ \ '__| __| '__/ _ \ '_ \ / _` |
+//   ____) | |_| | |_) |  __/ |  | |_| | |  __/ | | | (_| |
+//  |_____/ \__,_| .__/ \___|_|   \__|_|  \___|_| |_|\__,_|
+//               | |                                       
+//               |_|                                       
+
+// Calculating
+atrPeriod = 101
+factor = 14
+
+// Calculate the Supertrend
+[supertrend, direction] = supertrend(factor, atrPeriod)
+
+atrer = atr(atrPeriod)
+
+var supertrendrevupstatus_bin = 0
+var supertrendrevdownstatus_bin = 0
+
+// Identify upwards or downwards trend
+if (direction > 0 and supertrendrevupstatus_bin)
+    supertrendrevupstatus_bin := 0
+    supertrendrevdownstatus_bin := 0
+else if (direction < 0 and supertrendrevdownstatus_bin)
+    supertrendrevupstatus_bin := 0
+    supertrendrevdownstatus_bin := 0
+if (direction < 0 and direction[1] > 0)
+    supertrendrevupstatus_bin := 1
+    supertrendrevdownstatus_bin := 0
+else if (direction > 0 and direction[1] < 0)
+    supertrendrevupstatus_bin := 0
+    supertrendrevdownstatus_bin := 1
+
+//   _____                _           _ _         _____         _____  
+//  |  __ \              | |         | (_)       / ____|  /\   |  __ \ 
+//  | |__) |_ _ _ __ __ _| |__   ___ | |_  ___  | (___   /  \  | |__) |
+//  |  ___/ _` | '__/ _` | '_ \ / _ \| | |/ __|  \___ \ / /\ \ |  _  / 
+//  | |  | (_| | | | (_| | |_) | (_) | | | (__   ____) / ____ \| | \ \ 
+//  |_|   \__,_|_|  \__,_|_.__/ \___/|_|_|\___| |_____/_/    \_\_|  \_\
+
+// PSAR Calculation
+// Calculate EMA lines
+ema_psar5 = ema(close, 64)
+ema_psar6 = ema(close, 130)
+
+// PSAR Calculation
+start = 0.73
+increment = 0.9
+maximum = 0.06
+psar = sar(start, increment, maximum)
+
+// Create variables for the PSAR Reversal condition:
+var psarrevupstatus_bin = 0
+var psarrevdownstatus_bin = 0
+
+psarrevup = psar < close and psar[1] > close[1] ? 1 : 0
+psarrevupstatus_bin := psarrevup and (close < ema_psar6) and (psar[1] < ema_psar5[1]) ? 1 : 0
+psarrevdown = psar > close and psar[1] < close ? 1 : 0
+psarrevdownstatus_bin := psarrevdown and (close > ema_psar6) and (psar[1] > ema_psar5[1]) ? 1 : 0
+
+// Plotting if needed:
+// plot(psar, "ParabolicSAR", style=plot.style_cross, color=color.blue)
+
+//   _    _ __  __            _______                 _ 
+//  | |  | |  \/  |   /\     |__   __|               | |
+//  | |__| | \  / |  /  \       | |_ __ ___ _ __   __| |
+//  |  __  | |\/| | / /\ \      | | '__/ _ \ '_ \ / _` |
+//  | |  | | |  | |/ ____ \     | | | |  __/ | | | (_| |
+//  |_|  |_|_|  |_/_/    \_\    |_|_|  \___|_| |_|\__,_|
+
+// Calculate the ema
+ema_length_hma = 2
+len_hma3 = 170
+ema_hma6 = ema(close, ema_length_hma)
+
+// Calculate both HMA lines Fast and Slow
+hma2 = wma(2*wma(src, len_hma3/2)-wma(src, len_hma3), floor(sqrt(len_hma3)))
+
+var hmatrendupwards_bin = 0
+var hmatrenddownwards_bin = 0
+
+//Check if there is a continued Trend of HMA slow and EMA Slow
+if ((hma2 > hma2[1] and hma2[1] > hma2[2]) and (ema_hma6 > ema_hma6[1] and ema_hma6[1] > ema_hma6[2]))
+    hmatrendupwards_bin := 1
+    hmatrenddownwards_bin := 0
+else if ((hma2 < hma2[1] and hma2[1] < hma2[2]) and (ema_hma6 < ema_hma6[1] and ema_hma6[1] < ema_hma6[2]))
+    hmatrendupwards_bin := 0
+    hmatrenddownwards_bin := 1
+else
+    hmatrendupwards_bin := 0
+    hmatrenddownwards_bin := 0
+
+//   _    _ __  __             _____                   
+//  | |  | |  \/  |   /\      / ____|                  
+//  | |__| | \  / |  /  \    | |     _ __ ___  ___ ___ 
+//  |  __  | |\/| | / /\ \   | |    | '__/ _ \/ __/ __|
+//  | |  | | |  | |/ ____ \  | |____| | | (_) \__ \__ \
+//  |_|  |_|_|  |_/_/    \_\  \_____|_|  \___/|___/___/
+
+// Calculate both HMA lines Fast and Slow
+len_hma1 = 81
+len_hma2 = 56
+
+hma_cross1 = wma(2*wma(src, len_hma1/2)-wma(src, len_hma1), floor(sqrt(len_hma1)))
+hma_cross2 = wma(2*wma(src, len_hma2/2)-wma(src, len_hma2), floor(sqrt(len_hma2)))
+
+// Calculate distances between EMA lines for the previous candle and current. There should be an inverse in value if they crossed
+disthma12_prev = hma_cross1[1] - hma_cross2[1]
+disthma12_now = hma_cross1 - hma_cross2
+
+var hmacrosstoupwards_bin = 0
+var hmacrosstodownwards_bin = 0
+
+//If there is an ongoing trend, just have a look if trend continues. If not, signal must be called off
+if (hmacrosstoupwards_bin or hmacrosstodownwards_bin)
+    if (hmacrosstoupwards_bin)
+        if (hma_cross1 <= hma_cross1[1])
+            hmacrosstoupwards_bin := 0
+    else
+        if (hma_cross1 >= hma_cross1[1])
+            hmacrosstodownwards_bin := 0
+else if (disthma12_prev <= 0 and disthma12_now >= 0)
+    hmacrosstoupwards_bin := 1
+    hmacrosstodownwards_bin := 0
+else if (disthma12_prev >= 0 and disthma12_now <= 0)
+    hmacrosstoupwards_bin := 0
+    hmacrosstodownwards_bin := 1
+else
+    hmacrosstoupwards_bin := 0
+    hmacrosstodownwards_bin := 0
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ███╗   ███╗ ██████╗ ███╗   ███╗███████╗███╗   ██╗████████╗██╗   ██╗███╗   ███╗    ██╗███╗   ██╗██████╗ ██╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗ ███████╗
+// ████╗ ████║██╔═══██╗████╗ ████║██╔════╝████╗  ██║╚══██╔══╝██║   ██║████╗ ████║    ██║████╗  ██║██╔══██╗██║██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝
+// ██╔████╔██║██║   ██║██╔████╔██║█████╗  ██╔██╗ ██║   ██║   ██║   ██║██╔████╔██║    ██║██╔██╗ ██║██║  ██║██║██║     ███████║   ██║   ██║   ██║██████╔╝███████╗
+// ██║╚██╔╝██║██║   ██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║   ██║   ██║   ██║██║╚██╔╝██║    ██║██║╚██╗██║██║  ██║██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗╚════██║
+// ██║ ╚═╝ ██║╚██████╔╝██║ ╚═╝ ██║███████╗██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║    ██║██║ ╚████║██████╔╝██║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║███████║
+// ╚═╝     ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝    ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝
+
+////////////////////////////////////////////////////////////////////////////////
+
+//   _____   _____ _____   _____  _                                         
+//  |  __ \ / ____|_   _| |  __ \(_)                                        
+//  | |__) | (___   | |   | |  | |___   _____ _ __ __ _  ___ _ __   ___ ___ 
+//  |  _  / \___ \  | |   | |  | | \ \ / / _ \ '__/ _` |/ _ \ '_ \ / __/ _ \
+//  | | \ \ ____) |_| |_  | |__| | |\ V /  __/ | | (_| |  __/ | | | (_|  __/
+//  |_|  \_\_____/|_____| |_____/|_| \_/ \___|_|  \__, |\___|_| |_|\___\___|
+//                                                 __/ |                    
+//                                                |___/                     
+// Calculate the RSI
+rsiPeriod_div = 3
+OportunityLine_high = 92
+OportunityLine_low = 5
+rsiValue_div = rsi(ohlc4, rsiPeriod_div)
+
+var float peakRsiOverbought = 0
+var float peakPriceOverbought = 0
+var float peakRsiOversold = 100
+var float peakPriceOversold = 100
+var rsidivtrenddown_bin = 0
+var rsidivtrendup_bin = 0
+var bool RSIcriticalcross = false
+
+// Check for RSI crossing 50
+cross50Up = crossover(rsiValue_div, 50)
+cross50Down = crossunder(rsiValue_div, 50)
+
+// Check for RSI crossing 75 or 25
+crossOverbought = crossover(rsiValue_div, OportunityLine_high)
+crossOversold = crossunder(rsiValue_div, OportunityLine_low)
+
+// Update peak RSI and peak price
+if (crossOverbought)
+    peakRsiOverbought := rsiValue_div
+    peakPriceOverbought := close
+    RSIcriticalcross := 1
+else if (crossOversold)
+    peakRsiOversold := rsiValue_div
+    peakPriceOversold := close
+    RSIcriticalcross := 1
+
+// Update peak RSI and peak price for overbought condition
+if (crossOverbought)
+    if (rsiValue_div > peakRsiOverbought)
+        peakRsiOverbought := rsiValue_div
+        peakPriceOverbought := close
+
+// Update peak RSI and peak price for oversold condition
+if (crossOversold)
+    if (rsiValue_div < peakRsiOversold)
+        peakRsiOversold := rsiValue_div
+        peakPriceOversold := close
+
+// Check for short or long trade conditions
+if (close > peakPriceOverbought and rsiValue_div < peakRsiOverbought and RSIcriticalcross)
+    rsidivtrenddown_bin := 1
+else if (close < peakPriceOversold and rsiValue_div > peakRsiOversold and RSIcriticalcross)
+    rsidivtrendup_bin := 1
+
+// Reset short_bin or long_bin when RSI crosses 50
+if (cross50Up or cross50Down)
+    rsidivtrenddown_bin := 0
+    rsidivtrendup_bin := 0
+    RSIcriticalcross := 0
+    peakRsiOverbought := 0
+    peakPriceOverbought := 0
+    peakRsiOversold := 100
+    peakPriceOversold := 100
+
+//   _____   _____ _____    _____ _                   _     
+//  |  __ \ / ____|_   _|  / ____(_)                 | |    
+//  | |__) | (___   | |   | (___  _  __ _ _ __   __ _| |___ 
+//  |  _  / \___ \  | |    \___ \| |/ _` | '_ \ / _` | / __|
+//  | | \ \ ____) |_| |_   ____) | | (_| | | | | (_| | \__ \
+//  |_|  \_\_____/|_____| |_____/|_|\__, |_| |_|\__,_|_|___/
+//                                   __/ |                  
+//                                  |___/                   
+
+// Calculate the RSI
+rsiPeriod = 9
+rsiLineOverbought = 67
+rsiLineOversold = 36
+rsiValue = rsi(ohlc4, rsiPeriod)
+
+var rsioversoldstatus_bin = 0
+var rsioverboughtstatus_bin = 0
+
+// Identify upwards or downwards trend
+if (rsioverboughtstatus_bin or rsioversoldstatus_bin)
+    if (rsioversoldstatus_bin)
+        rsioversoldstatus_bin := rsiValue <= 50 ? 1 : 0
+    else
+        rsioverboughtstatus_bin := rsiValue >= 50 ? 1 : 0 
+else if (rsiValue <= rsiLineOversold)
+    rsioversoldstatus_bin := 1
+else if (rsiValue >= rsiLineOverbought)
+    rsioverboughtstatus_bin := 1
+else
+    rsioversoldstatus_bin := 0
+    rsioverboughtstatus_bin := 0
+
+
+//   __  __          _____ _____  _       
+//  |  \/  |   /\   / ____|  __ \(_)      
+//  | \  / |  /  \ | |    | |  | |___   __
+//  | |\/| | / /\ \| |    | |  | | \ \ / /
+//  | |  | |/ ____ \ |____| |__| | |\ V / 
+//  |_|  |_/_/    \_\_____|_____/|_| \_/  
+
+fast_length12 = 17
+slow_length12 = 77
+src12 = close
+signal_length12 = 70
+// SMA and EMA
+MACDopvalue = 35
+
+// Calculating
+fast_ma12 = ema(src12, fast_length12)
+slow_ma12 = ema(src12, slow_length12)
+macd = fast_ma12 - slow_ma12
+signal = sma(macd, signal_length12)
+hist = macd - signal
+
+var MACDcrosslong_bin = 0
+var MACDcrossshort_bin = 0
+var MACDcrossover = 0
+var MACDcrossunder = 0
+
+// Detecting MACD crossovers
+bullish_macd_cross = crossover(macd, signal)
+bearish_macd_cross = crossunder(macd, signal)
+
+MACDcrossover := (bullish_macd_cross and macd < (-1*MACDopvalue)) ? 1 : 0
+MACDcrossunder := (bearish_macd_cross and macd > MACDopvalue) ? 1 : 0
+
+// Buy and Sell signals
+if (MACDcrosslong_bin == 1)
+    if (bearish_macd_cross)
+        MACDcrosslong_bin := 0
+        MACDcrossshort_bin := 0
+    else if (macd >= 0)
+        MACDcrosslong_bin := 0
+        MACDcrossshort_bin := 0
+else if (MACDcrossshort_bin == 1)
+    if (bullish_macd_cross)
+        MACDcrosslong_bin := 0
+        MACDcrossshort_bin := 0
+    else if (macd <= 0)
+        MACDcrosslong_bin := 0
+        MACDcrossshort_bin := 0
+if (MACDcrossover == 1)
+    MACDcrosslong_bin := 1
+    MACDcrossshort_bin := 0
+else if (MACDcrossunder == 1)
+    MACDcrosslong_bin := 0
+    MACDcrossshort_bin := 1
+
+//  __          __          _______                 _     _____  _                                         
+//  \ \        / /         |__   __|               | |   |  __ \(_)                                        
+//   \ \  /\  / /_ ___   _____| |_ __ ___ _ __   __| |   | |  | |___   _____ _ __ __ _  ___ _ __   ___ ___ 
+//    \ \/  \/ / _` \ \ / / _ \ | '__/ _ \ '_ \ / _` |   | |  | | \ \ / / _ \ '__/ _` |/ _ \ '_ \ / __/ _ \
+//     \  /\  / (_| |\ V /  __/ | | |  __/ | | | (_| |   | |__| | |\ V /  __/ | | (_| |  __/ | | | (_|  __/
+//      \/  \/ \__,_| \_/ \___|_|_|  \___|_| |_|\__,_|   |_____/|_| \_/ \___|_|  \__, |\___|_| |_|\___\___|
+//                                                                                __/ |                    
+//                                                                               |___/  
+
+overboughtLevel_wave = 71
+oversoldLevel_wave = -60
+// Calculating
+n1 = 3
+n2 = 4
+ap = hlc3 
+esa = ema(ap, n1)
+d1 = ema(abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d1)
+tci = ema(ci, n2)
+hline = 0
+wt1 = tci
+wt2 = sma(wt1, 4)
+
+// Dynamic Overbought/Oversold Levels
+WAVElimitover = overboughtLevel_wave
+WAVElimitunder = oversoldLevel_wave
+
+// State Variables
+var WAVEoversold_bin = 0
+var WAVEoverbought_bin = 0
+
+if (wt2 >= WAVElimitover)
+    WAVEoverbought_bin := 1
+    WAVEoversold_bin := 0
+else if (wt2 <= WAVElimitunder)
+    WAVEoversold_bin := 1
+    WAVEoverbought_bin := 0
+else if (wt2 < 0 and WAVEoverbought_bin)
+    WAVEoverbought_bin := 0
+else if (wt2 > 0 and WAVEoversold_bin)
+    WAVEoversold_bin := 0
+
+//  __          __          _______                 _      _____                   
+//  \ \        / /         |__   __|               | |    / ____|                  
+//   \ \  /\  / /_ ___   _____| |_ __ ___ _ __   __| |   | |     _ __ ___  ___ ___ 
+//    \ \/  \/ / _` \ \ / / _ \ | '__/ _ \ '_ \ / _` |   | |    | '__/ _ \/ __/ __|
+//     \  /\  / (_| |\ V /  __/ | | |  __/ | | | (_| |   | |____| | | (_) \__ \__ \
+//      \/  \/ \__,_| \_/ \___|_|_|  \___|_| |_|\__,_|    \_____|_|  \___/|___/___/
+
+obLevel = 38
+osLevel = -42
+
+// Calculating
+n1_cross = 3
+n2_cross = 9
+ap_cross = hlc3 
+esa_cross = ema(ap_cross, n1_cross)
+d1_cross = ema(abs(ap_cross - esa_cross), n1_cross)
+ci_cross = (ap_cross - esa_cross) / (0.015 * d1_cross)
+tci_cross = ema(ci_cross, n2_cross)
+hline_cross = 0
+wt1_cross = tci_cross
+wt2_cross = sma(wt1_cross, 4)
+
+var WAVEcrosslong_bin = 0
+var WAVEcrossshort_bin = 0
+var WAVEcrossover = 0
+var WAVEcrossunder = 0
+
+// Detecting MACD crossovers
+bullish_wave_cross = crossover(wt1_cross, wt2_cross)
+bearish_wave_cross = crossunder(wt1_cross, wt2_cross)
+
+WAVEcrossover := (bullish_wave_cross and wt1_cross < osLevel) ? 1 : 0
+WAVEcrossunder := (bearish_wave_cross and wt1_cross > obLevel) ? 1 : 0
+
+// Buy and Sell signals
+if (WAVEcrosslong_bin == 1)
+    if (wt1_cross > 0)
+        WAVEcrosslong_bin := 0
+        WAVEcrossshort_bin := 0
+else if (WAVEcrossshort_bin == 1)
+    if (wt1_cross < 0)
+        WAVEcrosslong_bin := 0
+        WAVEcrossshort_bin := 0 
+else if (WAVEcrossover == 1)
+    WAVEcrosslong_bin := 1
+    WAVEcrossshort_bin := 0
+else if (WAVEcrossunder == 1)
+    WAVEcrosslong_bin := 0
+    WAVEcrossshort_bin := 1
+
+//    _____ _             _               _   _            ____                            _          
+//   / ____| |           | |             | | (_)          / __ \                          (_)         
+//  | (___ | |_ ___   ___| |__   __ _ ___| |_ _  ___     | |  | |_   _____ _ __ _ __  _ __ _  ___ ___ 
+//   \___ \| __/ _ \ / __| '_ \ / _` / __| __| |/ __|    | |  | \ \ / / _ \ '__| '_ \| '__| |/ __/ _ \
+//   ____) | || (_) | (__| | | | (_| \__ \ |_| | (__     | |__| |\ V /  __/ |  | |_) | |  | | (_|  __/
+//  |_____/ \__\___/ \___|_| |_|\__,_|___/\__|_|\___|     \____/  \_/ \___|_|  | .__/|_|  |_|\___\___|
+//                                                                             | |                    
+//                                                                             |_|                    
+
+// Calculating
+// Input parameters
+lengthK = 30
+lengthD = 1
+//lengthEMA = input(3, title="EMA Length")
+overboughtLevel_stoch = 77
+oversoldLevel_stoch = -65
+
+// Calculate SMI
+highestHigh = highest(high, lengthK)
+lowestLow = lowest(low, lengthK)
+highestLowestRange = highestHigh - lowestLow
+relativeRange = close - (highestHigh + lowestLow) / 2
+smi = 200 * (ema(ema(relativeRange, lengthD), lengthD) / ema(ema(highestLowestRange, lengthD), lengthD))
+
+var STOCHdivlong_bin = 0
+var STOCHdivshort_bin = 0
+var overboughtPlateauCondition = false
+var oversoldPlateauCondition = false
+var overboughtCondition = false
+var oversoldCondition = false
+
+// Set plateau conditions based on the SMI
+overboughtPlateauCondition := (smi > overboughtLevel_stoch and smi[1] > smi)
+oversoldPlateauCondition := (smi < oversoldLevel_stoch and smi[1] < smi)
+
+// Check for overbought and oversold conditions based on plateau
+overboughtCondition := overboughtPlateauCondition and (high[1] > high)
+oversoldCondition := oversoldPlateauCondition and (low[1] < low)
+
+// Trading logic
+if (overboughtCondition)
+    STOCHdivlong_bin := 0
+    STOCHdivshort_bin := 1
+else if (oversoldCondition)
+    STOCHdivlong_bin := 1
+    STOCHdivshort_bin := 0
+
+if (STOCHdivlong_bin == 1)
+    if (smi > oversoldLevel_stoch)
+        STOCHdivlong_bin := 0
+        STOCHdivshort_bin := 0
+else if (STOCHdivshort_bin == 1)
+    if (smi < overboughtLevel_stoch)
+        STOCHdivlong_bin := 0
+        STOCHdivshort_bin := 0
+else
+    STOCHdivlong_bin := 0
+    STOCHdivshort_bin := 0
+
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ██╗   ██╗ ██████╗ ██╗      █████╗ ████████╗██╗██╗     ██╗████████╗██╗   ██╗    ██╗███╗   ██╗██████╗ ██╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗ ███████╗
+// ██║   ██║██╔═══██╗██║     ██╔══██╗╚══██╔══╝██║██║     ██║╚══██╔══╝╚██╗ ██╔╝    ██║████╗  ██║██╔══██╗██║██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝
+// ██║   ██║██║   ██║██║     ███████║   ██║   ██║██║     ██║   ██║    ╚████╔╝     ██║██╔██╗ ██║██║  ██║██║██║     ███████║   ██║   ██║   ██║██████╔╝███████╗
+// ╚██╗ ██╔╝██║   ██║██║     ██╔══██║   ██║   ██║██║     ██║   ██║     ╚██╔╝      ██║██║╚██╗██║██║  ██║██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗╚════██║
+//  ╚████╔╝ ╚██████╔╝███████╗██║  ██║   ██║   ██║███████╗██║   ██║      ██║       ██║██║ ╚████║██████╔╝██║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║███████║
+//   ╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝       ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝
+////////////////////////////////////////////////////////////////////////////////
+
+//   ____        _ _ _                           ____                  _     
+//  |  _ \      | | (_)                         |  _ \                | |    
+//  | |_) | ___ | | |_ _ __   __ _  ___ _ __    | |_) | __ _ _ __   __| |___ 
+//  |  _ < / _ \| | | | '_ \ / _` |/ _ \ '__|   |  _ < / _` | '_ \ / _` / __|
+//  | |_) | (_) | | | | | | | (_| |  __/ |      | |_) | (_| | | | | (_| \__ \
+//  |____/ \___/|_|_|_|_| |_|\__, |\___|_|      |____/ \__,_|_| |_|\__,_|___/
+//                            __/ |                                          
+//                           |___/                                           
+
+// Calibrated entry parameters
+length1 = 14
+mult1 = 2.63
+
+// Calculating
+src7 = close
+basis = sma(src7, length1)
+dev = mult1 * stdev(src7, length1)
+upper_boll = basis + dev
+lower_boll = basis - dev
+
+var Bollinglong_bin = 0
+var Bollingshort_bin = 0
+
+bollingbullishcross = crossover(src7, lower_boll)
+bollingbearishcross = crossunder(src7, upper_boll)
+
+// Trading logic
+if (Bollinglong_bin == 1)
+    if (basis < close)
+        Bollinglong_bin := 0
+else if (Bollingshort_bin == 1)
+    if (basis > close)
+        Bollingshort_bin := 0
+else if (bollingbullishcross)
+    Bollinglong_bin := 1
+    Bollingshort_bin := 0
+else if (bollingbearishcross)
+    Bollinglong_bin := 0
+    Bollingshort_bin := 1
+
+
+//       __      __                         _______                  _____                        
+//      /\ \    / /                        |__   __|                |  __ \                       
+//     /  \ \  / /__ _ __ __ _  __ _  ___     | |_ __ _   _  ___    | |__) |__ _ _ __   __ _  ___ 
+//    / /\ \ \/ / _ \ '__/ _` |/ _` |/ _ \    | | '__| | | |/ _ \   |  _  // _` | '_ \ / _` |/ _ \
+//   / ____ \  /  __/ | | (_| | (_| |  __/    | | |  | |_| |  __/   | | \ \ (_| | | | | (_| |  __/
+//  /_/    \_\/ \___|_|  \__,_|\__, |\___|    |_|_|   \__,_|\___|   |_|  \_\__,_|_| |_|\__, |\___|
+//                              __/ |                                                   __/ |     
+//                             |___/                                                   |___/  
+
+// Calibrated entry parameters
+length2 = 58
+mult2 = 4.98
+// Calculating
+xATR = atr(length2)
+nLoss = mult2 * xATR
+
+// Values for length(period) and mult2: 5 / 3.92
+var ATR_Traillong_bin = 0
+var ATR_Trailshort_bin = 0
+var ATRenterlong = 0
+var ATRentershort = 0
+var float ATR_Entryprice = 0
+var float xATRTrailingStop = 0
+
+// Trailing Stop calculation
+longStop = close - nLoss
+shortStop = close + nLoss
+
+// Long and Short conditions
+longCondition = close > xATRTrailingStop[1] and close[1] > xATRTrailingStop[1]
+shortCondition = close < xATRTrailingStop[1] and close[1] < xATRTrailingStop[1]
+
+// Update ATR Trailing Stop
+
+if (longCondition)
+    xATRTrailingStop := max(xATRTrailingStop[1], longStop)
+else if (shortCondition)
+    xATRTrailingStop := min(xATRTrailingStop[1], shortStop)
+else
+    if (close > xATRTrailingStop[1])
+        xATRTrailingStop := longStop
+    else
+        xATRTrailingStop := shortStop
+
+// Determine entry signals for long or short positions
+ATRenterlong := (close > xATRTrailingStop[1]) ? 1 : 0
+ATRentershort := (close < xATRTrailingStop[1]) ? 1 : 0
+
+// Trading logic
+// Enter Long Position
+if (ATRenterlong)
+    ATR_Entryprice := close[1]
+    ATR_Traillong_bin := 1
+    ATR_Trailshort_bin := 0
+// Enter Short Position
+else if (ATRentershort)
+    ATR_Entryprice := close[1]
+    ATR_Traillong_bin := 0
+    ATR_Trailshort_bin := 1
+else
+    ATR_Traillong_bin := 0
+    ATR_Trailshort_bin := 0
+
+//   _____      _       _   _            __      __   _       _   _ _      _ _            _____           _               ____                            _          
+//  |  __ \    | |     | | (_)           \ \    / /  | |     | | (_) |    (_) |          |_   _|         | |             / __ \                          (_)         
+//  | |__) |___| | __ _| |_ ___   _____   \ \  / /__ | | __ _| |_ _| |     _| |_ _   _     | |  _ __   __| | _____  __  | |  | |_   _____ _ __ _ __  _ __ _  ___ ___ 
+//  |  _  // _ \ |/ _` | __| \ \ / / _ \   \ \/ / _ \| |/ _` | __| | |    | | __| | | |    | | | '_ \ / _` |/ _ \ \/ /  | |  | \ \ / / _ \ '__| '_ \| '__| |/ __/ _ \
+//  | | \ \  __/ | (_| | |_| |\ V /  __/    \  / (_) | | (_| | |_| | |____| | |_| |_| |   _| |_| | | | (_| |  __/>  <   | |__| |\ V /  __/ |  | |_) | |  | | (_|  __/
+//  |_|  \_\___|_|\__,_|\__|_| \_/ \___|     \/ \___/|_|\__,_|\__|_|______|_|\__|\__, |  |_____|_| |_|\__,_|\___/_/\_\   \____/  \_/ \___|_|  | .__/|_|  |_|\___\___|
+//                                                                                __/ |                                                       | |                    
+//                                                                               |___/                                                        |_|                    
+
+// Calculate the RVI
+rviperiod = 8
+maLengthInput = 56
+rvilen = 78
+bbMultInput = 1.68
+
+rvistddev = stdev(src, rviperiod)
+upper_rvi = ema(change(src) <= 0 ? 0 : rvistddev, rvilen)
+lower_rvi = ema(change(src) > 0 ? 0 : rvistddev, rvilen)
+rvi = upper_rvi / (upper_rvi + lower_rvi) * 100
+
+[rviMA, highValue, lowValue] = bb(rvi, maLengthInput, bbMultInput)
+
+var rvilongsignal_bin = 0
+var rvishortsignal_bin = 0
+
+var bool rvisoldoutbreak = false
+var bool rvibuyoutbreak = false
+
+var bool rvibullishcross = false
+var bool rvibearishcross = false
+
+if (rvi[1] < lowValue[1] and rvi > lowValue)
+    rvisoldoutbreak := true
+if (rvi[1] > highValue[1] and rvi < highValue)
+    rvibuyoutbreak := true
+
+if (rvisoldoutbreak)
+    if (rvi[1] < rviMA[1] and rvi >= rviMA)
+        rvibullishcross := true
+    else if (rvi >= 50)
+        rvibullishcross := false
+        rvisoldoutbreak := false
+if (rvibuyoutbreak)
+    if (rvi[1] > rviMA[1] and rvi <= rviMA)
+        rvibearishcross := true
+    else if (rvi <= 50)
+        rvibearishcross := false
+        rvibuyoutbreak := false
+
+// Identify upwards or downwards trend
+if (rvibullishcross)
+    rvilongsignal_bin := 1
+    rvishortsignal_bin := 0 
+else if (rvibearishcross)
+    rvilongsignal_bin := 0
+    rvishortsignal_bin := 1
+if (rvi > 50 and rvilongsignal_bin)
+    rvilongsignal_bin := 0
+    rvishortsignal_bin := 0 
+else if (rvi < 50 and rvishortsignal_bin)
+    rvilongsignal_bin := 0
+    rvishortsignal_bin := 0
+
+//   _____      _       _   _            __      __   _       _   _ _      _ _            _____           _              _____  _       
+//  |  __ \    | |     | | (_)           \ \    / /  | |     | | (_) |    (_) |          |_   _|         | |            |  __ \(_)      
+//  | |__) |___| | __ _| |_ ___   _____   \ \  / /__ | | __ _| |_ _| |     _| |_ _   _     | |  _ __   __| | _____  __  | |  | |___   __
+//  |  _  // _ \ |/ _` | __| \ \ / / _ \   \ \/ / _ \| |/ _` | __| | |    | | __| | | |    | | | '_ \ / _` |/ _ \ \/ /  | |  | | \ \ / /
+//  | | \ \  __/ | (_| | |_| |\ V /  __/    \  / (_) | | (_| | |_| | |____| | |_| |_| |   _| |_| | | | (_| |  __/>  <   | |__| | |\ V / 
+//  |_|  \_\___|_|\__,_|\__|_| \_/ \___|     \/ \___/|_|\__,_|\__|_|______|_|\__|\__, |  |_____|_| |_|\__,_|\___/_/\_\  |_____/|_| \_/  
+//                                                                                __/ |                                                 
+//                                                                               |___/                                                  
+
+// Calculate the RVI
+rviperiod_div = 8
+rvilen_div = 14
+rvi_line_up = 77
+rvi_line_down = 25
+
+rvistddev_div = stdev(src, rviperiod_div)
+upper_div = ema(change(src) <= 0 ? 0 : rvistddev_div, rvilen_div)
+lower_div = ema(change(src) > 0 ? 0 : rvistddev_div, rvilen_div)
+rvi_div = upper_div / (upper_div + lower_div) * 100
+
+var rvidivlongsignal_bin = 0
+var rvidivshortsignal_bin = 0
+var float peakRviOverbought = 0
+var float peakRVIPriceOverbought = 0
+var float peakRviOversold = 100
+var float peakRVIPriceOversold = 100
+var bool RVIcriticalcrossabove = false
+var bool RVIcriticalcrossbelow = false
+
+// Check for RSI crossing 50
+crossRVI50Up = crossover(rvi_div, 50)
+crossRVI50Down = crossunder(rvi_div, 50)
+
+
+// Check for RSI crossing 75 or 25
+crossRVIOverbought = rvi_div > rvi_line_up ? 1 : 0
+crossRVIOversold = rvi_div < rvi_line_down ? 1 : 0
+
+// Update peak RSI and peak price
+if (crossRVIOverbought and RVIcriticalcrossabove == 0)
+    peakRviOverbought := rvi_div
+    peakRVIPriceOverbought := close
+    RVIcriticalcrossabove := 1
+else if (crossRVIOversold and RVIcriticalcrossbelow == 0)
+    peakRviOversold := rvi_div
+    peakRVIPriceOversold := close
+    RVIcriticalcrossbelow := 1
+
+// Update peak RSI and peak price for overbought condition
+if (RVIcriticalcrossabove)
+    if (rvi_div > peakRviOverbought)
+        peakRviOverbought := rvi_div
+        peakRVIPriceOverbought := close
+
+// Update peak RSI and peak price for oversold condition
+if (RVIcriticalcrossbelow)
+    if (rvi_div < peakRviOversold)
+        peakRviOversold := rvi_div
+        peakRVIPriceOversold := close
+
+// Check for short or long trade conditions
+if (close >= peakRVIPriceOversold and rvi_div > peakRviOversold and RVIcriticalcrossbelow)
+    rvidivlongsignal_bin := 1
+else if (close <= peakRVIPriceOverbought and rvi_div < peakRviOverbought and RVIcriticalcrossabove)
+    rvidivshortsignal_bin := 1
+
+// Reset short_bin or long_bin when RSI crosses 50
+if (crossRVI50Up or crossRVI50Down)
+    rvidivlongsignal_bin := 0
+    rvidivshortsignal_bin := 0
+    RVIcriticalcrossabove := 0
+    RVIcriticalcrossbelow := 0
+    peakRviOverbought := 0
+    peakRVIPriceOverbought := 0
+    peakRviOversold := 100
+    peakRVIPriceOversold := 100
+
+//    _____                              _      _   _ _    _____           _     _                       
+//   / ____|                            | |    | \ | ( )  |  __ \         (_)   | |                      
+//  | (___  _   _ _ __  _ __   ___  _ __| |_   |  \| |/   | |__) |___  ___ _ ___| |_ __ _ _ __   ___ ___ 
+//   \___ \| | | | '_ \| '_ \ / _ \| '__| __|  | . ` |    |  _  // _ \/ __| / __| __/ _` | '_ \ / __/ _ \
+//   ____) | |_| | |_) | |_) | (_) | |  | |_   | |\  |    | | \ \  __/\__ \ \__ \ || (_| | | | | (_|  __/
+//  |_____/ \__,_| .__/| .__/ \___/|_|   \__|  |_| \_|    |_|  \_\___||___/_|___/\__\__,_|_| |_|\___\___|
+//               | |   | |                                                                               
+//               |_|   |_|                                                                               
+
+// Calculate the Support and Resistance
+periodleft = 20
+periodright = 1
+
+hih = pivothigh(high, periodleft, periodright)
+lol = pivotlow(low , periodleft, periodright)
+
+top = valuewhen(hih, high[periodright], 0)
+bot = valuewhen(lol, low [periodright], 0)
+
+var supnresistancelong_bin = 0
+var supnresistanceshort_bin = 0
+
+// Identify upwards or downwards trend
+if (close >= (top*0.9990) and close < (top*1.0005))
+    supnresistancelong_bin := 0
+    supnresistanceshort_bin := 1
+else if (close <= (bot*1.0010) and close > (bot*0.9995))
+    supnresistancelong_bin := 1
+    supnresistanceshort_bin := 0
+else
+    supnresistancelong_bin := 0
+    supnresistanceshort_bin := 0
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ██╗   ██╗ ██████╗ ██╗     ██╗   ██╗███╗   ███╗███████╗    ██╗███╗   ██╗██████╗ ██╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗ ███████╗
+// ██║   ██║██╔═══██╗██║     ██║   ██║████╗ ████║██╔════╝    ██║████╗  ██║██╔══██╗██║██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝
+// ██║   ██║██║   ██║██║     ██║   ██║██╔████╔██║█████╗      ██║██╔██╗ ██║██║  ██║██║██║     ███████║   ██║   ██║   ██║██████╔╝███████╗
+// ╚██╗ ██╔╝██║   ██║██║     ██║   ██║██║╚██╔╝██║██╔══╝      ██║██║╚██╗██║██║  ██║██║██║     ██╔══██║   ██║   ██║   ██║██╔══██╗╚════██║
+//  ╚████╔╝ ╚██████╔╝███████╗╚██████╔╝██║ ╚═╝ ██║███████╗    ██║██║ ╚████║██████╔╝██║╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║███████║
+//   ╚═══╝   ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝    ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝
+                                                                                                                                    
+//    ____        ____        _                        __      __   _                      
+//   / __ \      |  _ \      | |                       \ \    / /  | |                     
+//  | |  | |_ __ | |_) | __ _| | __ _ _ __   ___ ___    \ \  / /__ | |_   _ _ __ ___   ___ 
+//  | |  | | '_ \|  _ < / _` | |/ _` | '_ \ / __/ _ \    \ \/ / _ \| | | | | '_ ` _ \ / _ \
+//  | |__| | | | | |_) | (_| | | (_| | | | | (_|  __/     \  / (_) | | |_| | | | | | |  __/
+//   \____/|_| |_|____/ \__,_|_|\__,_|_| |_|\___\___|      \/ \___/|_|\__,_|_| |_| |_|\___|
+
+// Calculate the On Balance Volume
+OnBVperiodleft = 104
+
+OnBV = cum(sign(change(close)) * volume)
+
+OnBVhih = pivothigh(OnBV, OnBVperiodleft, 0)
+OnBVlo = pivotlow(OnBV , OnBVperiodleft, 0)
+
+pricehih = pivothigh(close, OnBVperiodleft, 0)
+pricelo = pivotlow(close , OnBVperiodleft, 0)
+
+// Capturing the bar index of each pivot point
+OnBVhih_index =  barssince(OnBVhih)
+OnBVlo_index = barssince(OnBVlo)
+pricehih_index = barssince(pricehih)
+pricelo_index = barssince(pricelo)
+
+// Check for divergence
+high_divergence = OnBVhih_index != pricehih_index
+low_divergence = OnBVlo_index != pricelo_index
+
+var OnBVdivlong_bin = 0
+var OnBVdivshort_bin = 0
+
+var OnBVmarcprice = 0.0
+var OnBVmarcvol = 0.0
+
+// Identify upwards or downwards trend
+if (OnBVdivlong_bin or OnBVdivshort_bin)
+    if (OnBVdivlong_bin)
+        if close >= OnBVmarcprice or OnBV <= OnBVmarcvol
+            OnBVdivlong_bin := 0
+            OnBVdivshort_bin := 0
+            OnBVmarcprice := 0.0
+            OnBVmarcvol := 0
+    else if (OnBVdivshort_bin)
+        if close <= OnBVmarcprice or OnBV >= OnBVmarcvol
+            OnBVdivlong_bin := 0
+            OnBVdivshort_bin := 0
+            OnBVmarcprice := 0.0
+            OnBVmarcvol := 0
+if (high_divergence)
+    if (pricehih_index == 0)  // Found a divergence of the peak points with the OnBV peak in the past.
+        // Price surpassed the OnBV without increasing volume. Price is likely to go down
+        OnBVdivlong_bin := 0
+        OnBVdivshort_bin := 1
+        OnBVmarcprice := close[OnBVhih_index]
+        OnBVmarcvol := OnBV[OnBVhih_index]
+    else if (OnBVhih_index == 0)  // Found a divergence of the peak points with a recent OnBV peaking, just recently.
+        // Price is lagging to the volume increase. Price is likely to go up
+        OnBVdivlong_bin := 1
+        OnBVdivshort_bin := 0
+        OnBVmarcprice := close[pricehih_index]
+        OnBVmarcvol := OnBV[pricehih_index]
+if (low_divergence)
+    if (pricelo_index == 0)  // Found a divergence of the low points with the OnBV bottoming in the past.
+        // Price reached a new low with an increased volume. Price is likely to go up
+        OnBVdivlong_bin := 1
+        OnBVdivshort_bin := 0
+        OnBVmarcprice := close[OnBVlo_index]
+        OnBVmarcvol := OnBV[OnBVhih_index]
+    else if (OnBVlo_index == 0)  // Found a bottom level to the volume without the following of the price drop.
+        // Price bottom is lower than the current price at bottom volume. Price is likely to go down
+        OnBVdivlong_bin := 0
+        OnBVdivshort_bin := 1
+        OnBVmarcprice := close[pricelo_index]
+        OnBVmarcvol := OnBV[pricelo_index]
+
+//    _____ _           _ _    _         __  __                          ______ _               
+//   / ____| |         (_) |  (_)       |  \/  |                        |  ____| |              
+//  | |    | |__   __ _ _| | ___ _ __   | \  / | ___  _ __   ___ _   _  | |__  | | _____      __
+//  | |    | '_ \ / _` | | |/ / | '_ \  | |\/| |/ _ \| '_ \ / _ \ | | | |  __| | |/ _ \ \ /\ / /
+//  | |____| | | | (_| | |   <| | | | | | |  | | (_) | | | |  __/ |_| | | |    | | (_) \ V  V / 
+//   \_____|_| |_|\__,_|_|_|\_\_|_| |_| |_|  |_|\___/|_| |_|\___|\__, | |_|    |_|\___/ \_/\_/  
+//                                                                __/ |                         
+//                                                               |___/                         
+
+// Calculate the CMF
+length19 = 34
+chaikinSumLength = 12
+chaikinlongcutscore = 0.6
+chaikinshortcutscore = -2.47
+
+ad19 = close==high and close==low or high==low ? 0 : ((2*close-low-high)/(high-low))*volume
+chaikinValue = sum(ad19, length19) / sum(volume, length19)
+
+// Initialize cumulative CMF variable
+var float cumulativeCMF = 0.0
+var int trendIsLongOrShort = 0
+
+// Detect Crossover Events
+longChaikinCrossover = crossover(chaikinValue, 0)
+shortChaikinCrossover = crossunder(chaikinValue, 0)
+
+// Set trend direction based on crossover
+trendIsLongOrShort := longChaikinCrossover ? 1 : shortChaikinCrossover ? -1 : trendIsLongOrShort
+
+// Reset Cumulative CMF on Crossover
+if (longChaikinCrossover or shortChaikinCrossover)
+    cumulativeCMF := 0
+
+// Phase 1: Validate the trend consistency over the given length
+allValid = true
+for i = 0 to chaikinSumLength - 1
+    chaikinValid = trendIsLongOrShort > 0 ? chaikinValue[i] > 0 : trendIsLongOrShort < 0 ? chaikinValue[i] < 0 : false
+    if (not chaikinValid)  // If a value breaks the trend
+        cumulativeCMF := 0
+        allValid := false
+        break
+
+// Phase 2: Accumulate values if all are valid
+if (allValid)
+    cumulativeCMF := 0
+    for i = 0 to chaikinSumLength - 1
+        cumulativeCMF := cumulativeCMF + nz(chaikinValue[i])
+
+var chaikinlongstatus_bin = 0
+var chaikinshortstatus_bin = 0
+
+if (cumulativeCMF > chaikinlongcutscore)
+    chaikinlongstatus_bin := 1
+    chaikinshortstatus_bin := 0
+else if (cumulativeCMF < chaikinshortcutscore)
+    chaikinlongstatus_bin := 0
+    chaikinshortstatus_bin := 1
+else
+    chaikinlongstatus_bin := 0
+    chaikinshortstatus_bin := 0     
+
+
+//  __      ____          __     _____     _______                 _ 
+//  \ \    / /\ \        / /\   |  __ \   |__   __|               | |
+//   \ \  / /  \ \  /\  / /  \  | |__) |     | |_ __ ___ _ __   __| |
+//    \ \/ /    \ \/  \/ / /\ \ |  ___/      | | '__/ _ \ '_ \ / _` |
+//     \  /      \  /\  / ____ \| |          | | | |  __/ | | | (_| |
+//      \/        \/  \/_/    \_\_|          |_|_|  \___|_| |_|\__,_|
+
+// Calculate the VWAP
+StdDevline = 4.34
+vwapfixinputbars = 24
+
+devUp1 = StdDevline
+devDn1 = StdDevline
+var float start_vwap = na
+var int newSession = na
+var float vwapsum = na
+var float volumesum = na
+var float v2sum = na
+var float myvwap = na
+var float dev_vwap = na
+var float U1 = na
+var float D1 = na
+start_vwap := security(syminfo.tickerid, "D", time)
+newSession := iff(change(start_vwap), 1, 0)
+vwapsum := newSession ? hl2*volume : vwapsum[1]+hl2*volume
+volumesum := newSession ? volume : volumesum[1]+volume
+v2sum := newSession ? volume*hl2*hl2 : v2sum[1]+volume*hl2*hl2
+myvwap := vwapsum/volumesum
+dev_vwap := sqrt(max(v2sum/volumesum - myvwap*myvwap, 0))
+U1 := myvwap + devUp1 * dev_vwap
+D1 := myvwap - devDn1 * dev_vwap
+
+vwapfixinbars = vwapfixinputbars + 1
+
+// Detect Crossover Events
+longVWAPCrossover = crossover(close[vwapfixinbars], myvwap[vwapfixinbars])
+shortVWAPCrossover = crossunder(close[vwapfixinbars], myvwap[vwapfixinbars])
+
+var int vwaptrendlong = na
+var int vwaptrendshort = na
+
+if (longVWAPCrossover)
+    vwaptrendlong := 1  // Assume trend is confirmed initially
+    for i = 0 to (vwapfixinbars - 1)
+        if (close[i] > U1[i] or close[i] < myvwap[i])
+            vwaptrendlong := 0  // Trend not confirmed
+else
+	vwaptrendlong := 0
+
+if (shortVWAPCrossover)
+    vwaptrendshort := 1  // Assume trend is confirmed initially
+    for i = 0 to (vwapfixinbars - 1)
+        if (close[i] < D1[i] or close[i] > myvwap[i])
+            vwaptrendshort := 0  // Trend not confirmed
+else
+	vwaptrendshort := 0
+
+var vwapcrosslongstatus_bin = 0
+var vwapcrossshortstatus_bin = 0
+
+// Identify upwards or downwards trend
+if (vwaptrendlong)
+    vwapcrosslongstatus_bin := 1
+    vwapcrossshortstatus_bin := 0
+else if (vwaptrendshort)
+    vwapcrosslongstatus_bin := 0
+    vwapcrossshortstatus_bin := 1
+else if (vwapcrosslongstatus_bin)
+    if (close > U1)
+        vwapcrosslongstatus_bin := 0
+        vwapcrossshortstatus_bin := 0
+    else if (close < myvwap)
+        vwapcrosslongstatus_bin := 0
+        vwapcrossshortstatus_bin := 0
+else if (vwapcrossshortstatus_bin)
+    if (close < D1)
+        vwapcrosslongstatus_bin := 0
+        vwapcrossshortstatus_bin := 0
+    else if (close > myvwap)
+        vwapcrosslongstatus_bin := 0
+        vwapcrossshortstatus_bin := 0    
+else
+    vwapcrosslongstatus_bin := 0
+    vwapcrossshortstatus_bin := 0
+
+//  __      ____          __     _____      _____      _ _   _           _     ____                  _     
+//  \ \    / /\ \        / /\   |  __ \    / ____|    (_) | (_)         | |   |  _ \                | |    
+//   \ \  / /  \ \  /\  / /  \  | |__) |  | |     _ __ _| |_ _  ___ __ _| |   | |_) | __ _ _ __   __| |___ 
+//    \ \/ /    \ \/  \/ / /\ \ |  ___/   | |    | '__| | __| |/ __/ _` | |   |  _ < / _` | '_ \ / _` / __|
+//     \  /      \  /\  / ____ \| |       | |____| |  | | |_| | (_| (_| | |   | |_) | (_| | | | | (_| \__ \
+//      \/        \/  \/_/    \_\_|        \_____|_|  |_|\__|_|\___\__,_|_|   |____/ \__,_|_| |_|\__,_|___/
+
+// Calculate the VWAP
+StdDevline_crit_UP = 1.65
+StdDevline_crit_Down = 2.4
+minReqDevRage = 0.25 / 100
+
+devUp2 = StdDevline_crit_UP
+devDn2 = StdDevline_crit_Down
+var float start_vwap_crit = na
+var int newSession_crit = na
+var float vwapsum_crit = na
+var float volumesum_crit = na
+var float v2sum_crit = na
+var float myvwap_crit = na
+var float dev_vwap_crit = na
+var float U1_crit = na
+var float D1_crit = na
+var float U2_crit = na
+var float D2_crit = na
+var float Uref1_crit = na
+var float Dref1_crit = na
+var float Uref2_crit = na
+var float Dref2_crit = na
+var float dev_spread1_crit = na
+var float dev_spread2_crit = na
+
+start_vwap_crit := security(syminfo.tickerid, "D", time)
+newSession_crit := iff(change(start_vwap_crit), 1, 0)
+vwapsum_crit := newSession_crit ? hl2*volume : vwapsum_crit[1]+hl2*volume
+volumesum_crit := newSession_crit ? volume : volumesum_crit[1]+volume
+v2sum_crit := newSession_crit ? volume*hl2*hl2 : v2sum_crit[1]+volume*hl2*hl2
+myvwap_crit := vwapsum_crit/volumesum_crit
+dev_vwap_crit := sqrt(max(v2sum_crit/volumesum_crit - myvwap_crit*myvwap_crit, 0))
+
+U1_crit := myvwap_crit + devUp2 * dev_vwap_crit
+D1_crit := myvwap_crit - devUp2 * dev_vwap_crit
+
+U2_crit := myvwap_crit + devDn2 * dev_vwap_crit
+D2_crit := myvwap_crit - devDn2 * dev_vwap_crit
+
+Uref1_crit := myvwap_crit + (devUp2 * dev_vwap_crit / 2)
+Dref1_crit := myvwap_crit - (devUp2 * dev_vwap_crit / 2)
+
+Uref2_crit := myvwap_crit + (devDn2 * dev_vwap_crit / 2)
+Dref2_crit := myvwap_crit - (devDn2 * dev_vwap_crit / 2)
+
+// This is to calculate and prevent trades when the deviation lines are too narrow
+dev_spread1_crit := (U1_crit - D1_crit) / myvwap_crit
+dev_spread2_crit := (U2_crit - D2_crit) / myvwap_crit
+
+var vwapcriticaloversoldstatus_bin = 0
+var vwapcriticaloverboughtstatus_bin = 0
+
+// Identify upwards or downwards trend
+if (close > U1_crit)
+    if (dev_spread1_crit > minReqDevRage)
+        vwapcriticaloverboughtstatus_bin := 1
+        vwapcriticaloversoldstatus_bin := 0
+else if (close < D2_crit)
+    if (dev_spread2_crit > minReqDevRage)
+        vwapcriticaloverboughtstatus_bin := 0
+        vwapcriticaloversoldstatus_bin := 1
+else if (vwapcriticaloversoldstatus_bin)
+    if (close > Dref2_crit)
+        vwapcriticaloversoldstatus_bin := 0
+        vwapcriticaloverboughtstatus_bin := 0
+else if (vwapcriticaloverboughtstatus_bin)
+    if (close < Uref1_crit)
+        vwapcriticaloversoldstatus_bin := 0
+        vwapcriticaloverboughtstatus_bin := 0
+else
+    vwapcriticaloverboughtstatus_bin := 0
+    vwapcriticaloversoldstatus_bin := 0
+
+//   ______                   _  __ _                  _____                _ _           
+//  |  ____|                 | |/ _(_)                / ____|              | | |          
+//  | |__   _ __   __ _ _   _| | |_ _ _ __   __ _    | |     __ _ _ __   __| | | ___  ___ 
+//  |  __| | '_ \ / _` | | | | |  _| | '_ \ / _` |   | |    / _` | '_ \ / _` | |/ _ \/ __|
+//  | |____| | | | (_| | |_| | | | | | | | | (_| |   | |___| (_| | | | | (_| | |  __/\__ \
+//  |______|_| |_|\__, |\__,_|_|_| |_|_| |_|\__, |    \_____\__,_|_| |_|\__,_|_|\___||___/
+//                 __/ |                     __/ |                                        
+//                |___/                     |___/                                         
+
+// User Inputs
+// trendRuleInput = VMA
+lookbackPeriod = 8
+C_Len = 7
+
+priceAvg = vwma(close, lookbackPeriod)
+
+// Trend Determination
+C_DownTrend = close < priceAvg
+C_UpTrend = close > priceAvg
+
+// [Configuration Parameters]
+C_ShadowPercent = 5.0 // Threshold for defining a significant shadow size as a percentage of the candle body.
+C_ShadowEqualsPercent = 100.0 // Percentage threshold for determining if the upper and lower shadows are approximately equal.
+C_DojiBodyPercent = 5.0 // Threshold for the body size relative to the range to consider a candle as Doji.
+C_Factor = 2.0 // Factor indicating how much the shadow dominates the candlestick body.
+
+// [Candlestick Components Calculation]
+C_BodyHi = max(close, open) // Higher value of the candle's close and open, indicating the top of the candle body.
+C_BodyLo = min(close, open) // Lower value of the candle's close and open, indicating the bottom of the candle body.
+C_Body = C_BodyHi - C_BodyLo // Size of the candle body.
+C_BodyAvg = ema(C_Body, C_Len) // EMA of the candle body over the specified length.
+
+// [Conditions Calculations]
+C_SmallBody = C_Body < C_BodyAvg // Condition for a small candle body.
+C_LongBody = C_Body > C_BodyAvg // Condition for a long candle body.
+C_UpShadow = high - C_BodyHi // Size of the upper shadow.
+C_DnShadow = C_BodyLo - low // Size of the lower shadow.
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body // Condition for a significant upper shadow.
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body // Condition for a significant lower shadow.
+C_WhiteBody = open < close // Condition for a white (bullish) candle body.
+C_BlackBody = open > close // Condition for a black (bearish) candle body.
+C_Range = high - low // Total range of the candle.
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo // Condition for an inside bar.
+C_BodyMiddle = C_Body / 2 + C_BodyLo // Middle point of the candle body.
+C_ShadowEquals = C_UpShadow == C_DnShadow or (abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100) < C_ShadowEqualsPercent and (abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100) < C_ShadowEqualsPercent // Condition for approximately equal shadows.
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100 // Condition for a Doji body.
+C_Doji = C_IsDojiBody and C_ShadowEquals // Condition for a Doji candle.
+
+// [Pattern Label Positions]
+patternLabelPosLow = low - (atr(30) * 0.6) // Position for bullish pattern labels.
+patternLabelPosHigh = high + (atr(30) * 0.6) // Position for bearish pattern labels.
+
+// 🅑🅤🅛🅛🅘🅢🅗 🅔🅝🅖🅤🅛🅕🅘🅝🅖
+// [Engulfing Bullish Pattern Identification]
+label_color_bullish = color.blue // Color for bullish pattern labels.
+C_EngulfingBullishNumberOfCandles = 2
+C_EngulfingBullish = C_DownTrend and C_WhiteBody and C_LongBody and C_BlackBody[1] and C_SmallBody[1] and close >= open[1] and open <= close[1] and (close > open[1] or open < close[1])
+if C_EngulfingBullish
+    var ttBullishEngulfing = "Engulfing\nAt the end of a given downward trend, there will most likely be a reversal pattern..."
+    // label.new(bar_index, patternLabelPosLow, text="BE", style=label.style_label_up, color = label_color_bullish, textcolor=color.white, tooltip = ttBullishEngulfing)
+
+// 🅑🅔🅐🅡🅘🅢🅗 🅔🅝🅖🅤🅛🅕🅘🅝🅖
+// [Engulfing Bearish Pattern Identification]
+label_color_bearish = color.red
+C_EngulfingBearishNumberOfCandles = 2
+C_EngulfingBearish = C_UpTrend and C_BlackBody and C_LongBody and C_WhiteBody[1] and C_SmallBody[1] and close <= open[1] and open >= close[1] and (close < open[1] or open > close[1])
+if C_EngulfingBearish
+    var ttBearishEngulfing = "Engulfing\nAt the end of a given uptrend, a reversal pattern will most likely appear..."
+    // label.new(bar_index, patternLabelPosHigh, text="BE", style=label.style_label_down, color = label_color_bearish, textcolor=color.white, tooltip = ttBearishEngulfing)
+
+var engulfinglongstatus_bin = 0
+var engulfingshortstatus_bin = 0
+
+// Identify upwards or downwards trend
+if (C_EngulfingBullish)
+    engulfinglongstatus_bin := 1
+    engulfingshortstatus_bin := 0
+else if (C_EngulfingBearish)
+    engulfinglongstatus_bin := 0
+    engulfingshortstatus_bin := 1
+else if (engulfinglongstatus_bin)
+    if (close > priceAvg)
+        engulfinglongstatus_bin := 0
+        engulfingshortstatus_bin := 0
+else if (engulfingshortstatus_bin)
+    if (close < priceAvg)
+        engulfinglongstatus_bin := 0
+        engulfingshortstatus_bin := 0
+else
+    engulfinglongstatus_bin := 0
+    engulfingshortstatus_bin := 0
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗         ███████╗ ██████╗ ██████╗ ██████╗ ███████╗███████╗
+// ██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║         ██╔════╝██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝
+// ███████╗██║██║  ███╗██╔██╗ ██║███████║██║         ███████╗██║     ██║   ██║██████╔╝█████╗  ███████╗
+// ╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║         ╚════██║██║     ██║   ██║██╔══██╗██╔══╝  ╚════██║
+// ███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗    ███████║╚██████╗╚██████╔╝██║  ██║███████╗███████║
+// ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝    ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝
+
+// Trade Only during EMA trend
+tttradetrend = "Only place BUY or SELL orders with the direction of the Trend EMA (Period: 130)."
+tradetrendoption = input(false, title="Only Trade with Trend", tooltip=tttradetrend)   
+
+//Alternate Signals Option
+alternatesignals = input(title="Alternate Signals", defval=false)
+
+// Maximum pyramid levels
+max_pyramid_levels = input(1, title="Max Pyramid Levels", type=input.integer, minval=1)
+
+//Position Options
+longpositions = input(title="Long Positions", defval=true)
+shortpositions = input(title="Short Positions", defval=true)
+
+//Stop Loss Warning Option
+stoplosspercent = input(title="Stop Loss Warning (%)", type=input.float, defval=-0.24, minval=-50, maxval=0, step=.1) / 100
+
+//Stop Win Warning Option
+stopwinpercent = input(title="Stop Win Warning (%)", type=input.float, defval=0.24, minval=0, maxval=50, step=.1) / 100
+
+//Score Requirements
+stronglongscore = input(defval=7, minval=0, maxval=1000, title="Required Strong LONG Score")
+strongshortscore = input(defval=7, minval=0, maxval=1000, title="Required Strong SHORT Score")
+
+//Trend Indicator Signals///////////////////////////////////////////////////////
+
+//EMA Signals
+// ------------------------------------------------------------------------------------------------------- //
+// EMA Trend Indicator
+emadirectionimportance = input(defval=0, minval=0, maxval=100, title="EMA Trend Direction Importance")
+
+ematrendupwards = ematrendupwards_bin ? emadirectionimportance : 0
+ematrenddownwards = ematrenddownwards_bin ? emadirectionimportance : 0
+
+// ------------------------------------------------------------------------------------------------------- //
+// EMA Cross Indicator
+emacrossimportance = input(defval=0, minval=0, maxval=100, title="EMA Cross Importance")
+
+emacrosstoupwards = emacrosstoupwards_bin ? emacrossimportance : 0
+emacrosstodownwards = emacrosstodownwards_bin ? emacrossimportance : 0
+
+// EMA Scalping Indicator
+// ------------------------------------------------------------------------------------------------------- //
+emascalpingimportance = input(defval=0, minval=0, maxval=100, title="EMA Scalping Importance")    
+
+emapricepointupwards = emapricepointupwards_bin ? emascalpingimportance : 0
+emapricepointdownwards = emapricepointdownwards_bin ? emascalpingimportance : 0
+
+//Super Trend Signals
+// ------------------------------------------------------------------------------------------------------- //
+supertrenderevimportance = input(defval=0, minval=0, maxval=100, title="Super Trend Reversal Importance")
+
+supertrendrevupstatus = supertrendrevupstatus_bin ? supertrenderevimportance : 0
+supertrendrevdownstatus = supertrendrevdownstatus_bin ? supertrenderevimportance : 0
+
+//Parabolic SAR Signals
+// ------------------------------------------------------------------------------------------------------- //
+psarrevimportance = input(defval=0, minval=0, maxval=100, title="Parabolic SAR Reversal Importance")
+
+psarrevupstatus = psarrevupstatus_bin ? psarrevimportance : 0
+psarrevdownstatus = psarrevdownstatus_bin ? psarrevimportance : 0
+
+//HMA Signals
+// HMA Trend Indicator
+// ------------------------------------------------------------------------------------------------------- //
+hmatrendimportance = input(defval=0, minval=0, maxval=100, title="HMA Trend Importance")
+
+hmatrendupwards = hmatrendupwards_bin ? hmatrendimportance : 0
+hmatrenddownwards = hmatrenddownwards_bin ? hmatrendimportance : 0
+
+// HMA Cross Indicator
+// ------------------------------------------------------------------------------------------------------- //
+hmacrossimportance = input(defval=0, minval=0, maxval=100, title="HMA Cross Importance")
+
+hmacrosstoupwards = hmacrosstoupwards_bin ? hmacrossimportance : 0
+hmacrosstodownwards = hmacrosstodownwards_bin ? hmacrossimportance : 0
+
+//Momentum Indicator Signals////////////////////////////////////////////////////
+
+//RSI Signals
+
+// RSI Divergence
+// ------------------------------------------------------------------------------------------------------- //
+rsidivimportance = input(defval=0, minval=0, maxval=100, title="RSI Divergence Importance")
+
+rsidivtrendup = rsidivtrendup_bin ? rsidivimportance : 0
+rsidivtrenddown = rsidivtrenddown_bin ? rsidivimportance : 0
+
+// RSI Overbought-Oversold Strategy
+// ------------------------------------------------------------------------------------------------------- //
+rsioverboughtsoldimportance = input(defval = 0, minval=0, maxval=100, title="RSI Overbought-Oversold Importance")
+
+rsioversoldstatus = rsioversoldstatus_bin ? rsioverboughtsoldimportance : 0
+rsioverboughtstatus = rsioverboughtstatus_bin ? rsioverboughtsoldimportance : 0
+
+//MACD Signals
+// ------------------------------------------------------------------------------------------------------- //
+macdimportance = input(defval=0, minval=0, maxval=100, title="MACD Importance")
+
+MACDcrosslong = MACDcrosslong_bin ? macdimportance : 0
+MACDcrossshort = MACDcrossshort_bin ? macdimportance : 0
+
+//WaveTrend Signals
+// WaveTrend Indicator
+// ------------------------------------------------------------------------------------------------------- //
+wavetrendimportance = input(defval=0, minval=0, maxval=100, title="WaveTrend Importance")
+
+WAVElongentry = WAVEoversold_bin ? wavetrendimportance : 0
+WAVEshortentry = WAVEoverbought_bin ? wavetrendimportance : 0
+
+// WaveTrend Cross Strategy
+// ------------------------------------------------------------------------------------------------------- //
+wavetrendcrossimportance = input(defval=0, minval=0, maxval=100, title="WaveTrend Cross Importance")
+
+WAVEcrosslong = WAVEcrosslong_bin ? wavetrendcrossimportance : 0
+WAVEcrossshort = WAVEcrossshort_bin ? wavetrendcrossimportance : 0
+
+//Stochastic Signals
+// ------------------------------------------------------------------------------------------------------- //
+stochasticimportance = input(defval=0, minval=0, maxval=100, title="Stochastic Divergence Importance")
+
+STOCHdivlong = STOCHdivlong_bin ? stochasticimportance : 0
+STOCHdivshort = STOCHdivshort_bin ? stochasticimportance : 0
+
+
+//Volatility Indicators/////////////////////////////////////////////////////////
+
+//Bollinger Bands Signals
+// ------------------------------------------------------------------------------------------------------- //
+bollingerimportance = input(defval=0, minval=0, maxval=100, title="Bollinger Bands Importance")
+
+Bollinglong = Bollinglong_bin ? bollingerimportance : 0
+Bollingshort = Bollingshort_bin ? bollingerimportance : 0
+
+
+//Average True Range Signals
+// ------------------------------------------------------------------------------------------------------- //
+atrimportance = input(defval=0, minval=0, maxval=100, title="Average True Range Importance")
+
+ATR_Traillong = ATR_Traillong_bin ? atrimportance : 0
+ATR_Trailshort = ATR_Trailshort_bin ? atrimportance : 0
+
+//Relative Volatility Index Signals
+// RVI Long-Short Strategy Indicator
+// ------------------------------------------------------------------------------------------------------- //
+rvilongshortimportance = input(defval=0, minval=0, maxval=100, title="RVI Long-Short Importance")
+
+rvilongsignal = rvilongsignal_bin ? rvilongshortimportance : 0
+rvishortsignal = rvishortsignal_bin ? rvilongshortimportance : 0
+
+// RVI Divergence Indicator
+// ------------------------------------------------------------------------------------------------------- //
+rvidivimportance = input(defval=0, minval=0, maxval=100, title="RVI Divergence Importance")
+
+rvidivlongsignal = rvidivlongsignal_bin ? rvidivimportance : 0
+rvidivshortsignal = rvidivshortsignal_bin ? rvidivimportance : 0
+
+//Support and Resistance Signals
+// ------------------------------------------------------------------------------------------------------- //
+supnresistanceimportance = input(defval=0, minval=0, maxval=100, title="Support and Resistance Importance")
+
+supnresistancelong = supnresistancelong_bin ? supnresistanceimportance : 0
+supnresistanceshort = supnresistanceshort_bin ? supnresistanceimportance : 0
+
+//Volume Indicator Signals/////////////////////////////////////////////////////////////////////////////////
+// ------------------------------------------------------------------------------------------------------- //
+//On Balance Volume Divergence Signals
+obvdivimportance = input(defval=0, minval=0, maxval=100, title="OBV Divergence Importance")
+
+OnBVdivlong = OnBVdivlong_bin ? obvdivimportance : 0
+OnBVdivshort = OnBVdivshort_bin ? obvdivimportance : 0
+
+//Chaikin Money Flow Signals
+// ------------------------------------------------------------------------------------------------------- //
+cmfimportance = input(defval=0, minval=0, maxval=100, title="Chaikin Money Flow Importance")
+
+chaikinlongstatus = chaikinlongstatus_bin ? cmfimportance : 0
+chaikinshortstatus = chaikinshortstatus_bin ? cmfimportance : 0    
+
+//VWAP Signals
+// ------------------------------------------------------------------------------------------------------- //
+vwaptrendimportance = input(defval = 0, minval=0, maxval=100, title="VWAP Trend Importance")
+
+vwapcrosslongstatus = vwapcrosslongstatus_bin ? vwaptrendimportance : 0
+vwapcrossshortstatus = vwapcrossshortstatus_bin ? vwaptrendimportance : 0
+
+// VWAP Critical Bands Signals
+// ------------------------------------------------------------------------------------------------------- //
+vwapcritimportance = input(defval = 0, minval=0, maxval=100, title="VWAP Critical Bands Importance")
+
+vwapcriticaloverboughtstatus = vwapcriticaloverboughtstatus_bin ? vwapcritimportance : 0
+vwapcriticaloversoldstatus = vwapcriticaloversoldstatus_bin ? vwapcritimportance : 0
+
+//Candle Patterns Signals
+// ------------------------------------------------------------------------------------------------------- //
+engulfingcandleimportance = input(defval = 0, minval=0, maxval=100, title="Engulfing Candle Importance")
+
+engulfinglongstatus = engulfinglongstatus_bin ? engulfingcandleimportance : 0
+engulfingshortstatus = engulfingshortstatus_bin ? engulfingcandleimportance : 0
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+//  ██████╗ ██████╗ ██╗     ██╗     ███████╗ ██████╗████████╗    ███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     ███████╗
+// ██╔════╝██╔═══██╗██║     ██║     ██╔════╝██╔════╝╚══██╔══╝    ██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║     ██╔════╝
+// ██║     ██║   ██║██║     ██║     █████╗  ██║        ██║       ███████╗██║██║  ███╗██╔██╗ ██║███████║██║     ███████╗
+// ██║     ██║   ██║██║     ██║     ██╔══╝  ██║        ██║       ╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     ╚════██║
+// ╚██████╗╚██████╔╝███████╗███████╗███████╗╚██████╗   ██║       ███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗███████║
+//  ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝ ╚═════╝   ╚═╝       ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚══════╝
+                                                                                                                    
+//Classify Entries
+stronglongentrysignal_sum  = ematrendupwards   + emacrosstoupwards  +  emapricepointupwards +   supertrendrevupstatus +   psarrevupstatus +   hmatrendupwards +    hmacrosstoupwards +   rsioversoldstatus +   rsidivtrendup +   MACDcrosslong +  WAVElongentry +  WAVEcrosslong +  STOCHdivlong +  Bollinglong +  ATR_Traillong +  rvilongsignal +  rvidivlongsignal +  supnresistancelong +  OnBVdivlong +  chaikinlongstatus +  vwapcrosslongstatus +  vwapcriticaloversoldstatus +   engulfinglongstatus
+strongshortentrysignal_sum = ematrenddownwards + emacrosstodownwards + emapricepointdownwards + supertrendrevdownstatus + psarrevdownstatus + hmatrenddownwards + hmacrosstodownwards + rsioverboughtstatus + rsidivtrenddown + MACDcrossshort + WAVEshortentry + WAVEcrossshort + STOCHdivshort + Bollingshort + ATR_Trailshort + rvishortsignal + rvidivshortsignal + supnresistanceshort + OnBVdivshort + chaikinshortstatus + vwapcrossshortstatus + vwapcriticaloverboughtstatus + engulfingshortstatus
+
+stronglongentrysignal = stronglongentrysignal_sum - strongshortentrysignal_sum >= stronglongscore
+strongshortentrysignal = strongshortentrysignal_sum  - stronglongentrysignal_sum >= strongshortscore
+
+
+//Alternate Entry Signals
+var pos = 0
+if stronglongentrysignal and pos <= 0
+    pos := 1
+if strongshortentrysignal and pos >= 0
+    pos := -1
+longentry = pos == 1 and (pos != 1)[1]
+shortentry = pos == -1 and (pos != -1)[1]
+alternatelong  = alternatesignals ? longentry  : stronglongentrysignal
+alternateshort = alternatesignals ? shortentry : strongshortentrysignal
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ██████╗ ██╗      ██████╗ ████████╗    ███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     ███████╗
+// ██╔══██╗██║     ██╔═══██╗╚══██╔══╝    ██╔════╝██║██╔════╝ ████╗  ██║██╔══██╗██║     ██╔════╝
+// ██████╔╝██║     ██║   ██║   ██║       ███████╗██║██║  ███╗██╔██╗ ██║███████║██║     ███████╗
+// ██╔═══╝ ██║     ██║   ██║   ██║       ╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     ╚════██║
+// ██║     ███████╗╚██████╔╝   ██║       ███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗███████║
+// ╚═╝     ╚══════╝ ╚═════╝    ╚═╝       ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚══════╝
+                                                                                            
+
+// Condition to check if it's allowed to enter another long position
+can_enter_long = (strategy.position_size == 0 or (strategy.position_size > 0 and abs(strategy.position_size) < max_pyramid_levels) or (strategy.position_size < 0 and stronglongentrysignal))
+
+// Condition to check if it's allowed to enter another short position
+can_enter_short = (strategy.position_size == 0 or (strategy.position_size < 0 and abs(strategy.position_size) < max_pyramid_levels) or (strategy.position_size > 0 and strongshortentrysignal))
+
+// Plot the shapes
+plotshape((tradetrendoption ? alternatelong and mabuy and longpositions and can_enter_long : alternatelong and can_enter_long), title="Strong Long Label", style=shape.labelup, location=location.belowbar, color=#00bcd4, text="𝐋𝐎𝐍𝐆", textcolor=color.white, size=size.small)
+plotshape((tradetrendoption ? alternateshort and masell and shortpositions and can_enter_short : alternateshort and can_enter_short), title="Strong Short Label", style=shape.labeldown, location=location.abovebar, color=#e91e63, text="𝐒𝐇𝐎𝐑𝐓", textcolor=color.white, size=size.small)
+
+plotshape(ematrendupwards_bin, title="ema_dir_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(ematrenddownwards_bin, title="ema_dir_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(emacrosstoupwards_bin, title="ema_cross_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(emacrosstodownwards_bin, title="ema_cross_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(emapricepointupwards_bin, title="ema_scalp_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(emapricepointdownwards_bin, title="ema_scalp_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(supertrendrevupstatus_bin, title="suptr_rev_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(supertrendrevdownstatus_bin, title="suptr_rev_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(psarrevupstatus_bin, title="psar_dir_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(psarrevdownstatus_bin, title="psar_dir_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(hmatrendupwards_bin, title="hma_trend_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(hmatrenddownwards_bin, title="hma_trend_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(hmacrosstoupwards_bin, title="hma_cross_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(hmacrosstodownwards_bin, title="hma_cross_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(rsidivtrendup_bin, title="rsi_div_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(rsidivtrenddown_bin, title="rsi_div_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(rsioversoldstatus_bin, title="rsi_oversold_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(rsioverboughtstatus_bin, title="rsi_overbought_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(MACDcrosslong_bin, title="macd_cross_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(MACDcrossshort_bin, title="macd_cross_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(WAVEoversold_bin, title="wvtr_div_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(WAVEoverbought_bin, title="wvtr_div_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(WAVEcrosslong_bin, title="wvtr_x_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(WAVEcrossshort_bin, title="wvtr_x_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(STOCHdivlong_bin, title="stoca_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(STOCHdivshort_bin, title="stoca_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(Bollinglong_bin, title="bolling_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(Bollingshort_bin, title="bolling_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(ATR_Traillong_bin, title="atr_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(ATR_Trailshort_bin, title="atr_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(rvilongsignal_bin, title="rvi_pos_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(rvishortsignal_bin, title="rvi_pos_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(rvidivlongsignal_bin, title="rvi_div_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(rvidivshortsignal_bin, title="rvi_div_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(supnresistancelong_bin, title="sup_res_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(supnresistanceshort_bin, title="sup_res_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(OnBVdivlong_bin, title="obv_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(OnBVdivshort_bin, title="obv_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(chaikinlongstatus_bin, title="cmf_x_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(chaikinshortstatus_bin, title="cmf_x_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(vwapcrosslongstatus_bin, title="vwap_x_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(vwapcrossshortstatus_bin, title="vwap_x_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(vwapcriticaloversoldstatus_bin, title="vwap_critband_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(vwapcriticaloverboughtstatus_bin, title="vwap_critband_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+plotshape(engulfinglongstatus_bin, title="engulf_up", style=shape.triangleup, location=location.belowbar, color=color.new(#00bcd4, 50), size=size.tiny, display=display.none)
+plotshape(engulfingshortstatus_bin, title="engulf_down", style=shape.triangledown, location=location.abovebar, color=color.new(#e91e63, 50), size=size.tiny, display=display.none)
+
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+
+// ██████╗ ██╗      ██████╗ ████████╗    ███████╗████████╗ █████╗ ████████╗██╗   ██╗███████╗
+// ██╔══██╗██║     ██╔═══██╗╚══██╔══╝    ██╔════╝╚══██╔══╝██╔══██╗╚══██╔══╝██║   ██║██╔════╝
+// ██████╔╝██║     ██║   ██║   ██║       ███████╗   ██║   ███████║   ██║   ██║   ██║███████╗
+// ██╔═══╝ ██║     ██║   ██║   ██║       ╚════██║   ██║   ██╔══██║   ██║   ██║   ██║╚════██║
+// ██║     ███████╗╚██████╔╝   ██║       ███████║   ██║   ██║  ██║   ██║   ╚██████╔╝███████║
+// ╚═╝     ╚══════╝ ╚═════╝    ╚═╝       ╚══════╝   ╚═╝   ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚══════╝
+                                                                                         
+
+var table statuswindow = table.new(position.top_right, 100, 100, border_width=2)
+
+//Trend Status//////////////////////////////////////////////////////////////////
+txt1 = "🡇            TREND             🡇"
+table.cell(statuswindow, 3, 0, text=txt1, bgcolor=color.new(#000000, 50), text_color=color.white, text_size=size.small)
+
+// Row 1: EMA Status
+table.clear(statuswindow, 3, 1)
+table.clear(statuswindow, 3, 2)
+table.clear(statuswindow, 3, 3)
+if ematrendupwards
+    table.cell(statuswindow, 3, 1, text="EMA Trending Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+else if ematrenddownwards
+    table.cell(statuswindow, 3, 1, text="EMA Trending Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if emacrosstoupwards
+    table.cell(statuswindow, 3, 2, text="EMA Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+else if emacrosstodownwards
+    table.cell(statuswindow, 3, 2, text="EMA Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if emapricepointupwards
+    table.cell(statuswindow, 3, 3, text="EMA Scalping Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+else if emapricepointdownwards
+    table.cell(statuswindow, 3, 3, text="EMA Scalping Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+
+//SuperTrend Status
+table.clear(statuswindow, 3, 4)
+if supertrendrevupstatus ? 1 : na
+    table.cell(statuswindow, 3, 4, text="SuperTrend Long Signal", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if supertrendrevdownstatus ? 1 : na
+    table.cell(statuswindow, 3, 4, text="SuperTrend Short Signal", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Parabolic SAR Status
+table.clear(statuswindow, 3, 5)
+if psarrevupstatus
+    table.cell(statuswindow, 3, 5, text="PSAR Signaling Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if psarrevdownstatus
+    table.cell(statuswindow, 3, 5, text="PSAR Signaling Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//HMA Status
+table.clear(statuswindow, 3, 6)
+table.clear(statuswindow, 3, 7)
+if hmatrendupwards
+    table.cell(statuswindow, 3, 6, text="HMA Trend Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if hmatrenddownwards
+    table.cell(statuswindow, 3, 6, text="HMA Trend Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if hmacrosstoupwards
+    table.cell(statuswindow, 3, 7, text="HMA Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if hmacrosstodownwards
+    table.cell(statuswindow, 3, 7, text="HMA Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Momentum Status///////////////////////////////////////////////////////////////
+
+txt2 = "🡇         MOMENTUM         🡇"
+table.cell(statuswindow, 2, 0, text=txt2, bgcolor=color.new(#000000, 50), text_color=color.white, text_size=size.small)
+
+//RSI Status
+table.clear(statuswindow, 2, 1)
+table.clear(statuswindow, 2, 2)
+if rsidivtrendup 
+    table.cell(statuswindow, 2, 1, text="RSI Divergence to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if rsidivtrenddown
+    table.cell(statuswindow, 2, 1, text="RSI Divergence to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if rsioversoldstatus
+    table.cell(statuswindow, 2, 2, text="RSI Oversold", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if rsioverboughtstatus
+    table.cell(statuswindow, 2, 2, text="RSI Overbought", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//MACD Status
+table.clear(statuswindow, 2, 3)
+if MACDcrosslong
+    table.cell(statuswindow, 2, 3, text="MACD Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if MACDcrossshort
+    table.cell(statuswindow, 2, 3, text="MACD Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Wave Trend Status
+table.clear(statuswindow, 2, 4)
+table.clear(statuswindow, 2, 5)
+if WAVElongentry ? 1 : na
+    table.cell(statuswindow, 2, 4, text="WaveTrend Oversold", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if WAVEshortentry ? 1 : na
+    table.cell(statuswindow, 2, 4, text="WaveTrend Overbought", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if WAVEcrosslong ? 1 : na
+    table.cell(statuswindow, 2, 5, text="WaveTrend Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if WAVEcrossshort ? 1 : na
+    table.cell(statuswindow, 2, 5, text="WaveTrend Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+
+//Stochastic Status
+table.clear(statuswindow, 2, 6)
+if STOCHdivlong
+    table.cell(statuswindow, 2, 6, text="Stochastic Div to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if STOCHdivshort
+    table.cell(statuswindow, 2, 6, text="Stochastic Div to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+
+//Volatility Status/////////////////////////////////////////////////////////////////
+
+txt3 = "🡇         VOLATILITY         🡇"
+table.cell(statuswindow, 1, 0, text=txt3, bgcolor=color.new(#000000, 50), text_color=color.white, text_size=size.small)
+
+//Bollinger Bands Status
+table.clear(statuswindow, 1, 1)
+if Bollinglong
+    table.cell(statuswindow, 1, 1, text="BollingerB Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if Bollingshort
+    table.cell(statuswindow, 1, 1, text="BollingerB Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//ATR Status
+table.clear(statuswindow, 1, 2)
+if ATR_Traillong
+    table.cell(statuswindow, 1, 2, text="ATR Trail Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if ATR_Trailshort
+    table.cell(statuswindow, 1, 2, text="ATR Trail Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//RVI Status
+table.clear(statuswindow, 1, 3)
+table.clear(statuswindow, 1, 4)
+if rvilongsignal
+    table.cell(statuswindow, 1, 3, text="RVI Point to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if rvishortsignal
+    table.cell(statuswindow, 1, 3, text="RVI Point to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+if rvidivlongsignal
+    table.cell(statuswindow, 1, 4, text="RVI Diverge to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if rvidivshortsignal
+    table.cell(statuswindow, 1, 4, text="RVI Diverge to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Support and Resistance Status
+table.clear(statuswindow, 1, 5)
+if supnresistancelong
+    table.cell(statuswindow, 1, 5, text="Supp n' Res to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if supnresistanceshort
+    table.cell(statuswindow, 1, 5, text="Supp n' Res to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Volume Status/////////////////////////////////////////////////////////////////
+
+txt4 = "🡇           VOLUME           🡇"
+table.cell(statuswindow, 0, 0, text=txt4, bgcolor=color.new(#000000, 50), text_color=color.white, text_size=size.small)
+
+//On Balance Volume Status
+table.clear(statuswindow, 0, 1)
+if OnBVdivlong
+    table.cell(statuswindow, 0, 1, text="OBV Diverge to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if OnBVdivshort
+    table.cell(statuswindow, 0, 1, text="OBV Diverge to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Chaikin Money Flow Status
+table.clear(statuswindow, 0, 2)
+if chaikinlongstatus
+    table.cell(statuswindow, 0, 2, text="Chaikin MF Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if chaikinshortstatus
+    table.cell(statuswindow, 0, 2, text="Chaikin MF Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//VWAP Status
+table.clear(statuswindow, 0, 3)
+if vwapcrosslongstatus
+    table.cell(statuswindow, 0, 3, text="VWAP Cross to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if vwapcrossshortstatus
+    table.cell(statuswindow, 0, 3, text="VWAP Cross to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//VWAP Critical
+table.clear(statuswindow, 0, 4)
+if vwapcriticaloversoldstatus
+    table.cell(statuswindow, 0, 4, text="VWAP Crit Oversold", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if vwapcriticaloverboughtstatus
+    table.cell(statuswindow, 0, 4, text="VWAP Crit Overbought", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+//Candle Pattern Status
+table.clear(statuswindow, 0, 5)
+if engulfinglongstatus
+    table.cell(statuswindow, 0, 5, text="Engulfing Candles to Long", bgcolor=color.new(#00bcd4, 50), text_color=color.white, text_size=size.small)
+if engulfingshortstatus
+    table.cell(statuswindow, 0, 5, text="Engulfing Candles to Short", bgcolor=color.new(#e91e63, 50), text_color=color.white, text_size=size.small)
+
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+// ███████╗████████╗ ██████╗ ██████╗     ██╗      ██████╗ ███████╗███████╗    ██╗    ██╗ █████╗ ██████╗ ███╗   ██╗██╗███╗   ██╗ ██████╗ ███████╗
+// ██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗    ██║     ██╔═══██╗██╔════╝██╔════╝    ██║    ██║██╔══██╗██╔══██╗████╗  ██║██║████╗  ██║██╔════╝ ██╔════╝
+// ███████╗   ██║   ██║   ██║██████╔╝    ██║     ██║   ██║███████╗███████╗    ██║ █╗ ██║███████║██████╔╝██╔██╗ ██║██║██╔██╗ ██║██║  ███╗███████╗
+// ╚════██║   ██║   ██║   ██║██╔═══╝     ██║     ██║   ██║╚════██║╚════██║    ██║███╗██║██╔══██║██╔══██╗██║╚██╗██║██║██║╚██╗██║██║   ██║╚════██║
+// ███████║   ██║   ╚██████╔╝██║         ███████╗╚██████╔╝███████║███████║    ╚███╔███╔╝██║  ██║██║  ██║██║ ╚████║██║██║ ╚████║╚██████╔╝███████║
+// ╚══════╝   ╚═╝    ╚═════╝ ╚═╝         ╚══════╝ ╚═════╝ ╚══════╝╚══════╝     ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+                                                                                                                                             
+// Stop Loss and Stop Win Criteria
+longstoploss = strategy.position_avg_price * (1 + stoplosspercent)
+shortstoploss = strategy.position_avg_price * (1 - stoplosspercent)
+printstoplong = longstoploss > close and longstoploss[1] < close[1] and strategy.position_size > 0
+printstopshort = shortstoploss < close and shortstoploss[1] > close[1] and strategy.position_size < 0
+
+longstopwin = strategy.position_avg_price * (1 + stopwinpercent)
+shortstopwin = strategy.position_avg_price * (1 - stopwinpercent)
+printstoplongwin = longstopwin <= close and strategy.position_size > 0
+printstopshortwin = shortstopwin >= close and strategy.position_size < 0
+
+// Plot shapes
+plotshape((printstoplong) ? low : na, title="Stop Label", style=shape.labelup, location=location.belowbar, color=color.orange, text="𝐒𝐓𝐎𝐏", textcolor=color.black, size=size.tiny)
+plotshape((printstoplongwin) ? low : na, title="Stop Label", style=shape.labelup, location=location.belowbar, color=#0bdbb6, text="𝐒𝐓𝐎𝐏", textcolor=color.black, size=size.tiny)
+plotshape((printstopshort) ? high : na, title="Stop Label", style=shape.labeldown, location=location.abovebar, color=color.maroon, text="𝐒𝐓𝐎𝐏", textcolor=color.silver, size=size.tiny)
+plotshape((printstopshortwin) ? high : na, title="Stop Label", style=shape.labeldown, location=location.abovebar, color=color.lime, text="𝐒𝐓𝐎𝐏", textcolor=color.black, size=size.tiny)
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////
+// ███████╗████████╗██████╗  █████╗ ████████╗███████╗ ██████╗██╗   ██╗    ████████╗███████╗███████╗████████╗███████╗██████╗ 
+// ██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔════╝██╔════╝╚██╗ ██╔╝    ╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝██╔════╝██╔══██╗
+// ███████╗   ██║   ██████╔╝███████║   ██║   █████╗  ██║  ███╗╚████╔╝        ██║   █████╗  ███████╗   ██║   █████╗  ██████╔╝
+// ╚════██║   ██║   ██╔══██╗██╔══██║   ██║   ██╔══╝  ██║   ██║ ╚██╔╝         ██║   ██╔══╝  ╚════██║   ██║   ██╔══╝  ██╔══██╗
+// ███████║   ██║   ██║  ██║██║  ██║   ██║   ███████╗╚██████╔╝  ██║          ██║   ███████╗███████║   ██║   ███████╗██║  ██║
+// ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝          ╚═╝   ╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+                                                                                                                         
+
+// Make input options that configure backtest date range
+startDate = input(title="Starting Lookback Date", type=input.time, defval=timestamp("1 Oct 2024 00:00"))
+checkMovTime = input(title= "Use movable Timeframe?", type=input.bool, defval = false)
+endDate = input(title="Ending Lookback Date", type=input.time, defval=timestamp("1 Nov 2024 00:00"))
+
+// Look if the close time of the current bar
+// falls inside the date range
+var inDateRange = false
+if (checkMovTime == true)
+    inDateRange := (time >= startDate) and (time) and (time <= endDate)
+else 
+    inDateRange := (time >= startDate) and (time)
+
+//Long
+if tradetrendoption ? alternatelong and mabuy and longpositions and inDateRange : alternatelong and longpositions and inDateRange
+	strategy.entry("longposition", strategy.long, comment="Long Entry")
+if (shortentry or printstoplong or printstoplongwin) and longpositions and inDateRange
+	strategy.close("longposition", comment="Long Exit")
+
+//Short
+if tradetrendoption ? alternateshort and masell and shortpositions and inDateRange : alternateshort and shortpositions and inDateRange
+	strategy.entry("shortposition", strategy.short, comment=" Short Entry")
+if (longentry or printstopshort or printstopshortwin) and shortpositions and inDateRange
+	strategy.close("shortposition", comment="Short Exit")
+
+//Alerts
+//ttbuystring  = "Input your custom alert message here. In the Alert settings, choose \"Neural Network\" and \"Alert() functionc calls only\"\nIf you're using a 3Commas Bot, make sure to format your message correctly with forward slashes in front of each quotation, you can find videos about how to do this on YouTube. Or ask 3Commas support about how to format the message for PineScript."
+ttbuystring  = "LONG position alert. Found an opportunity to BUY"
+ttsellstring = "SHORT position alert. Found an opportunity to SELL"
+ttstoplossstring = "ATTENTION. STOP LOSS Triggered. End Position"
+ttstopwinstring = "Win indication. Take profit or increase risk."
+
+usebuyalert = input(defval=true, title="Use BUY Alert", group="Alert Messages")
+buystring  = input(title="Buy Alert Message",  defval="BUY",  type=input.string, confirm=false, group="Alert Messages", tooltip=ttbuystring)
+usesellalert = input(defval=true, title="Use SELL Alert", group="Alert Messages")
+sellstring = input(title="Sell Alert Message", defval="SELL", type=input.string, confirm=false, group="Alert Messages", tooltip=ttsellstring)
+
+usestoplossalert = input(defval=true, title="Use STOP Loss Alert", group="Alert Messages")
+stoplossstring = input(title="Stop Alert Message", defval="STOP LOSS", type=input.string, confirm=false, group="Alert Messages", tooltip=ttstoplossstring)
+
+usestopwinalert = input(defval=true, title="Use STOP Win Alert", group="Alert Messages")
+stopwinstring = input(title="Stop Alert Message", defval="STOP WIN", type=input.string, confirm=false, group="Alert Messages", tooltip=ttstopwinstring)
+
+if longentry and longpositions and usebuyalert
+    alert(buystring, alert.freq_once_per_bar)
+if shortentry and shortpositions and usesellalert
+    alert(sellstring, alert.freq_once_per_bar)
+if printstoplong or printstopshort and usestoplossalert
+    alert(stoplossstring, alert.freq_once_per_bar)
+if printstoplongwin or printstopshortwin and usestopwinalert
+    alert(stopwinstring, alert.freq_once_per_bar)
+
+//END▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+////////////////////////////////////////////////////////////////////////////////

@@ -1,0 +1,560 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © bjr117
+
+//@version=5
+indicator(title = "Braid Filter+", shorttitle = "BF+", overlay = false, timeframe = "", timeframe_gaps = false)
+
+//==============================================================================
+// Function: Calculate a given type of moving average
+//==============================================================================
+get_ma_out(type, src, len, alma_offset, alma_sigma, kama_fastLength, kama_slowLength, vama_vol_len, vama_do_smth, vama_smth, mf_beta, mf_feedback, mf_z, eit_alpha, ssma_pow, ssma_smooth, rsrma_pw, svama_method, svama_vol_or_volatility, wrma_smooth) =>
+    float baseline = 0.0
+    
+    if type == "SMA  | Simple MA"
+        baseline := ta.sma(src, len)
+
+    else if type == "EMA  | Exponential MA"
+        baseline := ta.ema(src, len)
+
+    else if type == "DEMA | Double Exponential MA"
+        e = ta.ema(src, len)
+        baseline := 2 * e - ta.ema(e, len)
+
+    else if type == "TEMA | Triple Exponential MA"
+        e = ta.ema(src, len)
+        baseline := 3 * (e - ta.ema(e, len)) + ta.ema(ta.ema(e, len), len)
+
+	else if type == "TMA  | Triangular MA" // by everget
+        baseline := ta.sma(ta.sma(src, math.ceil(len / 2)), math.floor(len / 2) + 1)
+
+    else if type == "WMA  | Weighted MA"
+        baseline := ta.wma(src, len)
+
+    else if type == "VWMA | Volume-Weighted MA"
+        baseline := ta.vwma(src, len)
+
+    else if type == "SMMA | Smoothed MA"
+        w = ta.wma(src, len)
+        baseline := na(w[1]) ? ta.sma(src, len) : (w[1] * (len - 1) + src) / len
+
+    else if type == "RMA  | Rolling MA"
+        baseline := ta.rma(src, len)
+
+    else if type == "HMA  | Hull MA"
+        baseline := ta.wma(2 * ta.wma(src, len / 2) - ta.wma(src, len), math.round(math.sqrt(len)))
+
+    else if type == "LSMA | Least Squares MA"
+        baseline := ta.linreg(src, len, 0)
+
+    else if type == "Kijun"  //Kijun-sen
+        kijun = math.avg(ta.lowest(len), ta.highest(len))
+        baseline := kijun
+
+    else if type == "MD   | McGinley Dynamic"
+        mg = 0.0
+        mg := na(mg[1]) ? ta.ema(src, len) : mg[1] + (src - mg[1]) / (len * math.pow(src / mg[1], 4))
+        baseline := mg
+
+	else if type == "JMA  | Jurik MA" // by everget
+		DEMAe1 = ta.ema(src, len)
+		DEMAe2 = ta.ema(DEMAe1, len)
+		baseline := 2 * DEMAe1 - DEMAe2
+		
+    else if type == "ALMA | Arnaud Legoux MA"
+        baseline := ta.alma(src, len, alma_offset, alma_sigma)
+
+    else if type == "VAR  | Vector Autoregression MA"
+        valpha = 2 / (len+1)
+        vud1   = (src > src[1]) ? (src - src[1]) : 0
+        vdd1   = (src < src[1]) ? (src[1] - src) : 0
+        vUD    = math.sum(vud1, 9)
+        vDD    = math.sum(vdd1, 9)
+        vCMO   = nz( (vUD - vDD) / (vUD + vDD) )
+        baseline := nz(valpha * math.abs(vCMO) * src) + (1 - valpha * math.abs(vCMO)) * nz(baseline[1])
+        
+    else if type == "ZLEMA | Zero-Lag Exponential MA" // by HPotter
+        xLag     = (len) / 2
+        xEMAData = (src + (src - src[xLag]))
+        baseline := ta.ema(xEMAData, len)
+        
+    else if type == "AHMA | Ahrens Moving Average" // by everget
+        baseline := nz(baseline[1]) + (src - (nz(baseline[1]) + nz(baseline[len])) / 2) / len 
+        
+    else if type == "EVWMA | Elastic Volume Weighted MA"
+        volumeSum = math.sum(volume, len)
+        baseline := ( (volumeSum - volume) * nz(baseline[1]) + volume * src ) / volumeSum
+    
+    else if type == "SWMA | Sine Weighted MA" // by everget
+        sum = 0.0
+        weightSum = 0.0
+        for i = 0 to len - 1
+            weight = math.sin(i * math.pi / (len + 1))
+            sum := sum + nz(src[i]) * weight
+            weightSum := weightSum + weight
+        baseline := sum / weightSum
+        
+    else if type == "LMA  | Leo MA"
+        baseline := 2 * ta.wma(src, len) - ta.sma(src, len)
+        
+    else if type == "VIDYA | Variable Index Dynamic Average" // by KivancOzbilgic
+        mom = ta.change(src)
+        upSum = math.sum(math.max(mom, 0), len)
+        downSum = math.sum(-math.min(mom, 0), len)
+        out = (upSum - downSum) / (upSum + downSum)
+
+        cmo = math.abs(out)
+        
+        alpha = 2 / (len + 1)
+        
+        baseline := src * alpha * cmo + nz(baseline[1]) * (1 - alpha * cmo)
+    
+    else if type == "FRAMA | Fractal Adaptive MA"
+        length2 = math.floor(len / 2)
+        hh2 = ta.highest(length2)
+        ll2 = ta.lowest(length2)
+        
+        N1 = (hh2 - ll2) / length2
+        
+        N2 = (hh2[length2] - ll2[length2]) / length2
+        
+        N3 = (ta.highest(len) - ta.lowest(len)) / len
+        
+        D = (math.log(N1 + N2) - math.log(N3)) / math.log(2)
+        
+        factor = math.exp(-4.6 * (D - 1))
+        
+        baseline := factor * src + (1 - factor) * nz(baseline[1])
+    
+    else if type == "VMA  | Variable MA" // by LazyBear
+        k = 1.0/len
+        pdm = math.max((src - src[1]), 0)
+        mdm = math.max((src[1] - src), 0)
+        
+        pdmS  = float(0.0)
+        mdmS  = float(0.0)
+        pdmS := ((1 - k)*nz(pdmS[1]) + k*pdm)
+        mdmS := ((1 - k)*nz(mdmS[1]) + k*mdm)
+        
+        s = pdmS + mdmS
+        pdi = pdmS/s
+        mdi = mdmS/s
+        
+        pdiS  = float(0.0)
+        mdiS  = float(0.0)
+        pdiS := ((1 - k)*nz(pdiS[1]) + k*pdi)
+        mdiS := ((1 - k)*nz(mdiS[1]) + k*mdi)
+        
+        d = math.abs(pdiS - mdiS)
+        s1 = pdiS + mdiS
+        
+        iS  = float(0.0)
+        iS := ((1 - k)*nz(iS[1]) + k*d/s1)
+        
+        hhv = ta.highest(iS, len) 
+        llv = ta.lowest(iS, len) 
+        d1 = hhv - llv
+        vI = (iS - llv)/d1
+        baseline := (1 - k*vI)*nz(baseline[1]) + k*vI*src
+    
+    else if type == "GMMA | Geometric Mean MA"
+        lmean = math.log(src)
+        smean = math.sum(lmean, len)
+        baseline := math.exp(smean / len)
+        
+    else if type == "CMA  | Corrective MA" // by everget
+        sma = ta.sma(src, len)
+        baseline := sma
+        v1 = ta.variance(src, len)
+        v2 = math.pow(nz(baseline[1], baseline) - baseline, 2)
+        v3 = v1 == 0 or v2 == 0 ? 1 : v2 / (v1 + v2)
+        
+        var tolerance = math.pow(10, -5)
+        float err = 1
+        
+        // Gain Factor
+        float kPrev = 1
+        float k = 1
+        
+        for i = 0 to 5000 by 1
+            if err > tolerance
+                k := v3 * kPrev * (2 - kPrev)
+                err := kPrev - k
+                kPrev := k
+                kPrev
+                
+        baseline := nz(baseline[1], src) + k * (sma - nz(baseline[1], src))
+        
+    else if type == "MM   | Moving Median" // by everget
+        baseline := ta.percentile_nearest_rank(src, len, 50)
+        
+    else if type == "QMA  | Quick MA" // by everget
+        peak = len / 3
+        num = 0.0
+        denom = 0.0
+         
+        for i = 1 to len + 1
+            mult = 0.0
+            if i <= peak
+                mult := i / peak
+            else
+                mult := (len + 1 - i) / (len + 1 - peak)
+            num := num + src[i - 1] * mult
+            denom := denom + mult
+         
+        baseline := (denom != 0.0) ? (num / denom) : src
+        
+    else if type == "KAMA | Kaufman Adaptive MA" // by everget
+        mom = math.abs(ta.change(src, len))
+        volatility = math.sum(math.abs(ta.change(src)), len)
+        
+        // Efficiency Ratio
+        er = volatility != 0 ? mom / volatility : 0
+        
+        fastAlpha = 2 / (kama_fastLength + 1)
+        slowAlpha = 2 / (kama_slowLength + 1)
+        
+        alpha = math.pow(er * (fastAlpha - slowAlpha) + slowAlpha, 2)
+        
+        baseline := alpha * src + (1 - alpha) * nz(baseline[1], src)
+    
+    else if type == "VAMA | Volatility Adjusted MA" // by Joris Duyck (JD)
+        mid = ta.ema(src, len)
+        dev = src - mid
+        
+        vol_up   = ta.highest(dev, vama_vol_len)
+        vol_down = ta.lowest(dev, vama_vol_len)
+        
+        vama = mid + math.avg(vol_up, vol_down)
+        baseline := vama_do_smth ? ta.wma(vama, vama_smth) : vama
+    
+    else if type == "Modular Filter" // by alexgrover
+        //----
+        b = 0.0, c = 0.0, os = 0.0, ts = 0.0
+        //----
+        alpha = 2/(len+1)
+        a = mf_feedback ? mf_z*src + (1-mf_z)*nz(baseline[1],src) : src
+        //----
+        b := a > alpha*a+(1-alpha)*nz(b[1],a) ? a : alpha*a+(1-alpha)*nz(b[1],a)
+        c := a < alpha*a+(1-alpha)*nz(c[1],a) ? a : alpha*a+(1-alpha)*nz(c[1],a)
+        os := a == b ? 1 : a == c ? 0 : os[1]
+        //----
+        upper = mf_beta*b+(1-mf_beta)*c
+        lower = mf_beta*c+(1-mf_beta)*b 
+        baseline := os*upper+(1-os)*lower
+    
+    else if type == "EIT  | Ehlers Instantaneous Trendline" // by Franklin Moormann (cheatcountry)
+        baseline := bar_index < 7 ? (src + (2 * nz(src[1])) + nz(src[2])) / 4 : ((eit_alpha - (math.pow(eit_alpha, 2) / 4)) * src) + (0.5 * math.pow(eit_alpha, 2) * nz(src[1])) - 
+         ((eit_alpha - (0.75 * math.pow(eit_alpha, 2))) * nz(src[2])) + (2 * (1 - eit_alpha) * nz(baseline[1])) - (math.pow(1 - eit_alpha, 2) * nz(baseline[2]))
+    
+    else if type == "ESD  | Ehlers Simple Decycler" // by everget
+        // High-pass Filter
+        alphaArg = 2 * math.pi / (len * math.sqrt(2))
+        
+        alpha = 0.0
+        alpha := math.cos(alphaArg) != 0
+             ? (math.cos(alphaArg) + math.sin(alphaArg) - 1) / math.cos(alphaArg)
+             : nz(alpha[1])
+        
+        hp = 0.0
+        hp := math.pow(1 - (alpha / 2), 2) * (src - 2 * nz(src[1]) + nz(src[2])) + 2 * (1 - alpha) * nz(hp[1]) - math.pow(1 - alpha, 2) * nz(hp[2])
+    
+        baseline := src - hp
+    
+    else if type == "SSMA  | Shapeshifting MA" // by alexgrover
+        //----
+        ssma_sum = 0.0
+        ssma_sumw = 0.0
+        alpha = ssma_smooth ? 2 : 1
+        power = ssma_smooth ? ssma_pow - ssma_pow % 2 : ssma_pow
+        //----
+        for i = 0 to len-1
+            x = i/(len-1)
+            n = ssma_smooth ? -1 + x*2 : x
+            w = 1 - 2*math.pow(n,alpha)/(math.pow(n,power) + 1) 
+            ssma_sumw := ssma_sumw + w
+            ssma_sum := ssma_sum + src[i] * w
+        baseline := ssma_sum/ssma_sumw
+        //----
+    
+    else if type == "RSRMA  | Right Sided Ricker MA" // by alexgrover
+        //----
+        rsrma_sum = 0.0
+        rsrma_sumw = 0.0
+        rsrma_width = rsrma_pw/100*len
+        for i = 0 to len-1
+            w = (1 - math.pow(i/rsrma_width,2))*math.exp(-(i*i/(2*math.pow(rsrma_width,2))))
+            rsrma_sumw := rsrma_sumw + w
+            rsrma_sum := rsrma_sum + src[i] * w
+        baseline := rsrma_sum/rsrma_sumw
+        //----
+
+    else if type == "DSWF  | Damped Sine Wave Weighted Filter" // by alexgrover
+        //----
+        dswf_sum = 0.0
+        dswf_sumw = 0.0
+        for i = 1 to len
+            w = math.sin(2.0*math.pi*i/len)/i
+            dswf_sumw := dswf_sumw + w
+            dswf_sum := dswf_sum + w*src[i-1]
+        //----
+        baseline := dswf_sum/dswf_sumw
+  
+    else if type == "BMF  | Blackman Filter" // by alexgrover
+        //----
+        bmf_sum = 0.0
+        bmf_sumw = 0.0
+        for i = 0 to len-1
+            k = i/len
+            w = 0.42 - 0.5 * math.cos(2 * math.pi * k) + 0.08 * math.cos(4 * math.pi * k)
+            bmf_sumw := bmf_sumw + w
+            bmf_sum := bmf_sum + w*src[i]
+        //----
+        baseline := bmf_sum/bmf_sumw
+
+    else if type == "HCF  | Hybrid Convolution Filter" // by alexgrover
+        //----
+        sum = 0.
+        for i = 1 to len
+            sgn = .5*(1 - math.cos((i/len)*math.pi))
+            sum := sum + (sgn*(nz(baseline[1],src)) + (1 - sgn)*src[i-1]) * ( (.5*(1 - math.cos((i/len)*math.pi))) - (.5*(1 - math.cos(((i-1)/len)*math.pi))) )
+        baseline := sum
+        //----
+    
+    else if type == "FIR  | Finite Response Filter" // by alexgrover
+        //----
+        var b = array.new_float(0)
+        if barstate.isfirst
+            for i = 0 to len-1
+                w = len-i
+                array.push(b,w)
+        den = array.sum(b)
+        //----
+        sum = 0.0
+        for i = 0 to len-1
+            sum := sum + src[i]*array.get(b,i)
+        baseline := sum/den
+        
+    else if type == "FLSMA  | Fisher Least Squares MA" // by alexgrover
+        //----
+        b = 0.0
+        //----
+        e = ta.sma(math.abs(src - nz(b[1])),len)
+        z = ta.sma(src - nz(b[1],src),len)/e 
+        r = (math.exp(2*z) - 1)/(math.exp(2*z) + 1) 
+        a = (bar_index - ta.sma(bar_index,len))/ta.stdev(bar_index,len) * r
+        b := ta.sma(src,len) + a*ta.stdev(src,len)
+        baseline := b
+    
+    else if type == "SVAMA  | Non-Parametric Volume Adjusted MA" // by alexgrover and bjr117
+        //----
+        h = 0.0
+        l = 0.0
+        c = 0.0
+        //----
+        a = svama_vol_or_volatility == "Volume" ? volume : ta.tr
+        h := a > nz(h[1], a) ? a : nz(h[1], a)
+        l := a < nz(l[1], a) ? a : nz(l[1], a)
+        //----
+        b = svama_method == "Max" ? a / h : l / a
+        c := b * close + (1 - b) * nz(c[1], close)
+        baseline := c
+
+    else if type == "RPMA  | Repulsion MA" // by alexgrover
+        baseline := ta.sma(close, len*3) + ta.sma(close, len*2) - ta.sma(close, len)
+
+    else if type == "WRMA  | Well Rounded MA" // by alexgrover
+        //----
+        alpha = 2/(len+1)
+        p1 = wrma_smooth ? len/4 : 1
+        p2 = wrma_smooth ? len/4 : len/2
+        //----
+        a = float(0.0)
+        b = float(0.0)
+        y = ta.ema(a + b,p1)
+        A = src - y
+        B = src - ta.ema(y,p2)
+        a := nz(a[1]) + alpha*nz(A[1]) 
+        b := nz(b[1]) + alpha*nz(B[1])
+        baseline := y
+    
+    else if type == "HLT  | HiLo Trend"
+        // Getting the highest highs / lowest lows in the user-inputted slowLength period and fastLength period
+        hlt_high = ta.highest(src, len)
+        hlt_low  = ta.lowest(src,  len)
+
+        // Calculate the HLT Line
+        //   If the source (close, hl2, ...) value is greater than the previous HLT line, let the next HLT line value be the source value.
+        baseline := (src > baseline[1]) ? hlt_low : hlt_high
+    
+    else if type == "T3 | Tillson T3" // by HPotter
+        ////////////////////////////////////////////////////////////
+        //  Copyright by HPotter v1.0 21/05/2014
+        // This indicator plots the moving average described in the January, 1998 issue
+        // of S&C, p.57, "Smoothing Techniques for More Accurate Signals", by Tim Tillson.
+        // This indicator plots T3 moving average presented in Figure 4 in the article.
+        // T3 indicator is a moving average which is calculated according to formula:
+        //     T3(n) = GD(GD(GD(n))),
+        // where GD - generalized DEMA (Double EMA) and calculating according to this:
+        //     GD(n,v) = EMA(n) * (1+v)-EMA(EMA(n)) * v,
+        // where "v" is volume factor, which determines how hot the moving average’s response
+        // to linear trends will be. The author advises to use v=0.7.
+        // When v = 0, GD = EMA, and when v = 1, GD = DEMA. In between, GD is a less aggressive
+        // version of DEMA. By using a value for v less than1, trader cure the multiple DEMA
+        // overshoot problem but at the cost of accepting some additional phase delay.
+        // In filter theory terminology, T3 is a six-pole nonlinear Kalman filter. Kalman
+        // filters are ones that use the error — in this case, (time series - EMA(n)) — 
+        // to correct themselves. In the realm of technical analysis, these are called adaptive
+        // moving averages; they track the time series more aggres-sively when it is making large
+        // moves. Tim Tillson is a software project manager at Hewlett-Packard, with degrees in
+        // mathematics and computer science. He has privately traded options and equities for 15 years.   
+        ////////////////////////////////////////////////////////////
+        xe1 = ta.ema(src, len)
+        xe2 = ta.ema(xe1, len)
+        xe3 = ta.ema(xe2, len)
+        xe4 = ta.ema(xe3, len)
+        xe5 = ta.ema(xe4, len)
+        xe6 = ta.ema(xe5, len)
+        b = 0.7
+        c1 = -b*b*b
+        c2 = 3*b*b+3*b*b*b
+        c3 = -6*b*b-3*b-3*b*b*b
+        c4 = 1+3*b+b*b*b+3*b*b
+        baseline := c1 * xe6 + c2 * xe5 + c3 * xe4 + c4 * xe3
+
+    baseline
+//==============================================================================
+
+
+//==============================================================================
+// Inputs
+//==============================================================================
+// Main settings
+bf_ma_type = input.string("EMA  | Exponential MA", "MA Type", options=[ "EMA  | Exponential MA",                  "SMA  | Simple MA", 
+                                                                     "WMA  | Weighted MA",                     "DEMA | Double Exponential MA", 
+                                                                     "TEMA | Triple Exponential MA",           "TMA  | Triangular MA", 
+                                                                     "VWMA | Volume-Weighted MA",              "SMMA | Smoothed MA", 
+                                                                     "HMA  | Hull MA",                         "LSMA | Least Squares MA", 
+                                                                     "Kijun",                                  "MD   | McGinley Dynamic", 
+                                                                     "RMA  | Rolling MA",                      "JMA  | Jurik MA", 
+                                                                     "ALMA | Arnaud Legoux MA",                "VAR  | Vector Autoregression MA", 
+                                                                     "ZLEMA | Zero-Lag Exponential MA",        "T3 | Tillson T3",
+                                                                     "AHMA | Ahrens Moving Average",           "EVWMA | Elastic Volume Weighted MA",
+                                                                     "SWMA | Sine Weighted MA",                "LMA  | Leo MA",
+                                                                     "VIDYA | Variable Index Dynamic Average", "FRAMA | Fractal Adaptive MA",
+                                                                     "VMA  | Variable MA",                     "GMMA | Geometric Mean MA",
+                                                                     "CMA  | Corrective MA",                   "MM   | Moving Median",
+                                                                     "QMA  | Quick MA",                        "KAMA | Kaufman Adaptive MA",
+                                                                     "VAMA | Volatility Adjusted MA",          "Modular Filter",
+                                                                     "EIT  | Ehlers Instantaneous Trendline",  "ESD  | Ehlers Simple Decycler",
+                                                                     "SSMA  | Shapeshifting MA",               "RSRMA  | Right Sided Ricker MA",
+                                                                     "DSWF  | Damped Sine Wave Weighted Filter", "BMF  | Blackman Filter",
+                                                                     "HCF  | Hybrid Convolution Filter",       "FIR  | Finite Response Filter",
+                                                                     "FLSMA  | Fisher Least Squares MA",       "SVAMA  | Non-Parametric Volume Adjusted MA",
+                                                                     "RPMA  | Repulsion MA",                   "WRMA  | Well Rounded MA",
+                                                                     "HLT  | HiLo Trend"
+                                                                     ], group = "Main Braid Filter Settings")
+bf_ma_src = input.source(title = "MA Source", defval = close, group = "Main Braid Filter Settings")
+bf_len_1 = input.int(title = "Fast Source Price MA Length", defval = 3, minval = 1, group = "Main Braid Filter Settings")
+bf_len_2 = input.int(title = "Open Price MA Length", defval = 7, minval = 1, group = "Main Braid Filter Settings")
+bf_len_3 = input.int(title = "Slow Source Price MA Length", defval = 14, minval = 1, group = "Main Braid Filter Settings")
+bf_filter_strength = input.float(title = "Filter Strength", defval = 40.0, minval = 1.0, step = 1.0, group = "Main Braid Filter Settings")
+bf_atr_len = input.int(title = "ATR Length", defval = 14, minval = 1, group = "Main Braid Filter Settings")
+
+
+// Display settings
+bf_color_bars = input.bool(title = "Color Bars?", defval = false, group = "Braid Filter Display Settings")
+bf_show_sigs = input.bool(title = "Show Signals?", defval = false, group = "Braid Filter Display Settings")
+
+
+// Specific MA Settings
+bf_ma1_alma_offset = input.float(title = "Offset",    defval = 0.85, step = 0.05, group = "Braid Filter ALMA Settings")
+bf_ma1_alma_sigma  = input.int(title   = "Sigma", defval = 6,                     group = "Braid Filter ALMA Settings")
+
+bf_ma1_kama_fastLength = input(title = "Fast EMA Length", defval=2,  group = "Braid Filter KAMA Settings")
+bf_ma1_kama_slowLength = input(title = "Slow EMA Length", defval=30, group = "Braid Filter KAMA Settings")
+
+bf_ma1_vama_vol_len = input.int(title  = "Volatality Length", defval = 51,            group = "Braid Filter VAMA Settings")
+bf_ma1_vama_do_smth = input.bool(title = "Do Smoothing?",     defval = false,         group = "Braid Filter VAMA Settings")
+bf_ma1_vama_smth    = input.int(title  = "Smoothing length",  defval = 5, minval = 1, group = "Braid Filter VAMA Settings")
+
+bf_ma1_mf_beta     = input.float(title = "Beta",               defval = 0.8, step = 0.1, minval = 0, maxval=1,   group = "Braid Filter Modular Filter Settings")
+bf_ma1_mf_feedback = input.bool(title  = "Feedback?",          defval = false,                                   group = "Braid Filter Modular Filter Settings")
+bf_ma1_mf_z        = input.float(title = "Feedback Weighting", defval = 0.5, step = 0.1, minval = 0, maxval = 1, group = "Braid Filter Modular Filter Settings")
+
+bf_ma1_eit_alpha = input.float(title = "Alpha", defval = 0.07, step = 0.01, minval = 0.0, group = "Braid Filter Ehlers Instantaneous Trendline Settings")
+
+bf_ssma1_pow = input.float(title = "Power", defval = 4.0, step = 0.5, minval = 0.0, group = "Braid Filter SSMA Settings")
+bf_ssma1_smooth = input.bool(title = "Smooth", defval = false, group = "Braid Filter SSMA Settings")
+
+bf_rsrma1_pw = input.float(title = "Percent Width", defval = 60.0, step = 10.0, minval = 0.0, maxval = 100.0, group = "Braid Filter RSRMA Settings")
+
+bf_svama1_method            = input.string(title = "Max", options=["Max", "Min"], defval = "Max", group = "Braid Filter SVAMA Settings")
+bf_svama1_vol_or_volatility = input.string(title = "Use Volume or Volatility?", options = ["Volume", "Volatility"], defval = "Volatility", group = "Braid Filter SVAMA Settings")
+
+bf_wrma1_smooth = input.bool(title = "Extra Smoothing?", defval = false, group = "Braid Filter WRMA Settings")
+//==============================================================================
+
+
+//==============================================================================
+// Calculating the Braid Filter
+//==============================================================================
+// Calculating an average of the source price with a low lookback period
+bf_fast_src_ma = get_ma_out(bf_ma_type, bf_ma_src, bf_len_1, bf_ma1_alma_offset, bf_ma1_alma_sigma, bf_ma1_kama_fastLength, bf_ma1_kama_slowLength, bf_ma1_vama_vol_len, bf_ma1_vama_do_smth, bf_ma1_vama_smth, bf_ma1_mf_beta, bf_ma1_mf_feedback, bf_ma1_mf_z, bf_ma1_eit_alpha, bf_ssma1_pow, bf_ssma1_smooth, bf_rsrma1_pw, bf_svama1_method, bf_svama1_vol_or_volatility, bf_wrma1_smooth)
+// Calculating an average of the open price with a low lookback period
+bf_open_ma     = get_ma_out(bf_ma_type, open,      bf_len_2, bf_ma1_alma_offset, bf_ma1_alma_sigma, bf_ma1_kama_fastLength, bf_ma1_kama_slowLength, bf_ma1_vama_vol_len, bf_ma1_vama_do_smth, bf_ma1_vama_smth, bf_ma1_mf_beta, bf_ma1_mf_feedback, bf_ma1_mf_z, bf_ma1_eit_alpha, bf_ssma1_pow, bf_ssma1_smooth, bf_rsrma1_pw, bf_svama1_method, bf_svama1_vol_or_volatility, bf_wrma1_smooth)
+// Calculating an average of the source price with a high lookback period
+bf_slow_src_ma = get_ma_out(bf_ma_type, bf_ma_src, bf_len_3, bf_ma1_alma_offset, bf_ma1_alma_sigma, bf_ma1_kama_fastLength, bf_ma1_kama_slowLength, bf_ma1_vama_vol_len, bf_ma1_vama_do_smth, bf_ma1_vama_smth, bf_ma1_mf_beta, bf_ma1_mf_feedback, bf_ma1_mf_z, bf_ma1_eit_alpha, bf_ssma1_pow, bf_ssma1_smooth, bf_rsrma1_pw, bf_svama1_method, bf_svama1_vol_or_volatility, bf_wrma1_smooth)
+
+
+// Determining whether the average source price MA is greater than the average open price, and then determining whether the highest one out of those two is greater than the slow average source price.
+bf_ma_max = math.max(math.max(bf_fast_src_ma, bf_open_ma), bf_slow_src_ma)
+// Determining whether the average source price MA is greater than the average open price, and then determining whether the highest one out of those two is greater than the slow average source price.
+bf_ma_min = math.min(math.min(bf_fast_src_ma, bf_open_ma), bf_slow_src_ma)
+
+// Calculating the braid filter's histogram by taking the difference between the highest average price out of the three calculated above, and subtracting it by the lowest average price out of the three calculated above.
+bf_histo  = bf_ma_max - bf_ma_min
+// Calculating the braid filter's "deadzone" line by multiplying the average true range by the filter strength (a constant inputted by the user; higher values increase the strictness of the filter), and then dividing that resulting value by 100 to make the filter fit the histogram.
+bf_filter = ta.atr(bf_atr_len) * bf_filter_strength / 100.0
+//==============================================================================
+
+
+//==============================================================================
+// Calculating the Braid Filter's signals
+//==============================================================================
+is_histo_above_filter = bf_histo > bf_filter
+is_histo_bar_bullish = bf_fast_src_ma > bf_open_ma
+is_histo_bar_bearish = bf_fast_src_ma < bf_open_ma
+
+// True if the histogram bar switches to green and is above the filter, false otherwise
+bf_L_trig = is_histo_above_filter and (ta.crossover(bf_fast_src_ma, bf_open_ma) or (ta.crossover(bf_histo, bf_filter) and is_histo_bar_bullish))
+// True if the histogram bar switches to red and is above the filter, false otherwise
+bf_S_trig = is_histo_above_filter and (ta.crossunder(bf_fast_src_ma, bf_open_ma) or (ta.crossover(bf_histo, bf_filter) and is_histo_bar_bearish))
+
+// True if the histogram bar switches to and remains green and is above the filter, false otherwise
+bf_L_conf = is_histo_above_filter and is_histo_bar_bullish
+// True if the histogram bar switches to and remains green and is above the filter, false otherwise
+bf_S_conf = is_histo_above_filter and is_histo_bar_bearish
+//==============================================================================
+
+
+//==============================================================================
+// Plotting the Braid Filter
+//==============================================================================
+bf_color = bf_L_conf ? color.green : bf_S_conf ? color.red : color.gray
+
+plot(bf_histo,  title = "Braid Filter Histogram", color = bf_color, style = plot.style_columns)
+plot(bf_filter, title = "Braid Filter Line",      color = color.black)
+barcolor(bf_color_bars ? bf_color : na, title = "Braid Filter Bar Color")
+
+// Plotting buy and sell signals
+plotshape(bf_L_trig and bf_show_sigs ? bf_histo : na, title="Braid Filter Long Signal",  location=location.top, style=shape.triangleup,   size=size.tiny, color=color.new(color.green, 30), textcolor=color.new(color.black, 0))
+plotshape(bf_S_trig and bf_show_sigs ? bf_histo : na, title="Braid Filter Short Signal", location=location.top, style=shape.triangledown, size=size.tiny, color=color.new(color.red, 30),   textcolor=color.new(color.black, 0))
+//==============================================================================
+
+
+//==============================================================================
+// Braid Filter Alerts
+//==============================================================================
+alertcondition(bf_L_trig, title = "Braid Filter Long Signal",  message = "{{ticker}}: Braid Filter signaled to go long at {{time}}.")
+alertcondition(bf_S_trig, title = "Braid Filter Short Signal", message = "{{ticker}}: Braid Filter signaled to go short at {{time}}.")
+//==============================================================================

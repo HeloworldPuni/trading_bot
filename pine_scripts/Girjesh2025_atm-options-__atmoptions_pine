@@ -1,0 +1,90 @@
+// ATM Option Strike Selector Indicator
+// For TradingView Pine Script v5
+// Inspired by the_bulls.academy trading system
+// Created for educational purposes only
+
+//@version=5
+indicator("ATM Option Strike Selector", overlay=true)
+
+// ===== INPUTS =====
+ma_length = input.int(20, "Moving Average Length", minval=1)
+atr_length = input.int(14, "ATR Period", minval=1)
+atr_multiplier_sl = input.float(1.0, "ATR Multiplier for SL", minval=0.1, step=0.1)https://github.com/Girjesh2025/atm-options-/tree/main
+target1_multiplier = input.float(1.5, "Target 1 Multiplier", minval=0.1, step=0.1)
+target2_multiplier = input.float(2.5, "Target 2 Multiplier", minval=0.1, step=0.1)
+target3_multiplier = input.float(3.5, "Target 3 Multiplier", minval=0.1, step=0.1)
+use_ema = input.bool(false, "Use EMA instead of SMA")
+strike_interval = input.int(50, "Strike Price Interval", tooltip="Standard interval between option strikes")
+round_base = input.int(50, "Round Base for Strikes", tooltip="Round ATM strike to nearest value divisible by this number")
+
+// ===== CALCULATIONS =====
+// Calculate the moving average
+ma = use_ema ? ta.ema(close, ma_length) : ta.sma(close, ma_length)
+
+// Calculate ATR for stop loss and targets
+atr_value = ta.atr(atr_length)
+
+// Calculate trend direction
+uptrend = close > ma and close[1] > ma[1] and ma > ma[1]
+downtrend = close < ma and close[1] < ma[1] and ma < ma[1]
+
+// Function to round to nearest strike
+roundToNearestStrike(price, base) =>
+    math.round(price / base) * base
+
+// Get the nearest strikes
+atm_strike = roundToNearestStrike(close, round_base)
+atm_strike_text = str.tostring(atm_strike)
+
+// Determine Option Type
+option_type = uptrend ? "CE" : downtrend ? "PE" : "NA"
+
+// Calculate Stop Loss and Targets
+sl_distance = atr_value * atr_multiplier_sl
+target1_distance = sl_distance * target1_multiplier
+target2_distance = sl_distance * target2_multiplier
+target3_distance = sl_distance * target3_multiplier
+
+sl_level = uptrend ? atm_strike - sl_distance : downtrend ? atm_strike + sl_distance : na
+target1_level = uptrend ? atm_strike + target1_distance : downtrend ? atm_strike - target1_distance : na
+target2_level = uptrend ? atm_strike + target2_distance : downtrend ? atm_strike - target2_distance : na
+target3_level = uptrend ? atm_strike + target3_distance : downtrend ? atm_strike - target3_distance : na
+
+// ===== PLOTTING =====
+// Plot the moving average
+ma_line = plot(ma, "Moving Average", color=color.gray, linewidth=2)
+
+// Background coloring for trend
+bgcolor(uptrend ? color.new(color.green, 90) : downtrend ? color.new(color.red, 90) : na)
+
+// Plot entry signals
+plotshape(uptrend and not uptrend[1], "Buy Signal", style=shape.labelup, location=location.belowbar, 
+          color=color.green, size=size.small, text="Buy")
+plotshape(downtrend and not downtrend[1], "Sell Signal", style=shape.labeldown, location=location.abovebar, 
+          color=color.red, size=size.small, text="Sell")
+
+// Create info panel
+var label info_panel = na
+
+// Text building for the info panel
+var panel_text = ""
+if (uptrend or downtrend)
+    panel_text := "Strike: " + atm_strike_text + " " + option_type + "\n" +
+                 "SL:     " + str.tostring(math.round_to_mintick(sl_level)) + "\n" +
+                 "----------------------\n" +
+                 "Target 1: " + str.tostring(math.round_to_mintick(target1_level)) + "\n" +
+                 "Target 2: " + str.tostring(math.round_to_mintick(target2_level)) + "\n" +
+                 "Target 3: " + str.tostring(math.round_to_mintick(target3_level))
+    
+    // Delete previous label if it exists
+    if not na(info_panel)
+        label.delete(info_panel)
+    
+    // Create new label
+    panel_y = downtrend ? high + (10 * syminfo.mintick) : low - (10 * syminfo.mintick)
+    panel_color = uptrend ? color.green : color.red
+    info_panel := label.new(x=bar_index, y=panel_y, text=panel_text, color=panel_color, style=label.style_label_left, textcolor=color.white)
+
+// Add alerts (using fixed strings to avoid 'const string' errors)
+alertcondition(uptrend and not uptrend[1], "Buy Signal", "Buy signal detected")
+alertcondition(downtrend and not downtrend[1], "Sell Signal", "Sell signal detected")

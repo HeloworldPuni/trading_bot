@@ -1,0 +1,420 @@
+//@version=5
+indicator("Nova-Cypher Swing Master", shorttitle="NCSM", overlay=true, max_boxes_count=100, max_lines_count=100, max_labels_count=100)
+
+// Created on: 2025-05-24 (Simulated Date)
+// Based on the Nova-Cypher Swing Master strategy.
+// This indicator provides signals and analysis for swing trading in crypto.
+// It is recommended to use this alongside manual market structure analysis and TradingView's Volume Profile tools.
+
+// ———————— User Inputs ————————
+// EMA Settings
+ma_fast_len = input.int(21, title="Fast EMA Length (H4)", group="Moving Averages")
+ma_slow_len = input.int(50, title="Slow EMA Length (H4)", group="Moving Averages")
+daily_ma_len = input.int(50, title="Daily EMA Length (Context)", group="Moving Averages")
+use_daily_ma_filter = input.bool(true, title="Use Daily EMA Filter", group="Moving Averages")
+
+// Fibonacci Settings
+fib_lookback = input.int(50, title="Fibonacci Swing Lookback", group="Fibonacci", minval=10) 
+fib_oez_start = input.float(0.50, title="Fib OEZ Start (e.g., 0.50)", group="Fibonacci", step=0.001)
+fib_oez_end = input.float(0.786, title="Fib OEZ End (e.g., 0.786)", group="Fibonacci", step=0.001)
+show_fib_levels = input.bool(true, title="Show Fibonacci OEZ Levels", group="Fibonacci")
+
+// Order Block Settings
+ob_lookback = input.int(10, title="Order Block Lookback Window", group="Order Blocks & FVGs")
+ob_body_factor = input.float(0.7, title="OB Wick vs Body Factor (Min Body %)", group="Order Blocks & FVGs", minval=0.1, maxval=1.0, step=0.1)
+ob_breakout_strength = input.float(1.5, title="OB Breakout Strength (ATR Multiplier)", group="Order Blocks & FVGs", minval=1.0, step=0.1)
+show_obs = input.bool(true, title="Show Order Blocks", group="Order Blocks & FVGs")
+
+// Fair Value Gap Settings
+fvg_lookback = input.int(5, title="FVG Detection Lookback", group="Order Blocks & FVGs")
+show_fvgs = input.bool(true, title="Show Fair Value Gaps", group="Order Blocks & FVGs")
+fvg_mitigation_check = input.bool(true, title="Hide FVG if Mitigated (Immediate Check)", group="Order Blocks & FVGs")
+
+// RSI Settings
+rsi_len = input.int(14, title="RSI Length", group="RSI & Volume")
+rsi_ob_level = input.int(70, title="RSI Overbought", group="RSI & Volume")
+rsi_os_level = input.int(30, title="RSI Oversold", group="RSI & Volume")
+rsi_divergence_lookback = input.int(15, title="RSI Divergence Lookback", group="RSI & Volume")
+show_rsi_divergence = input.bool(false, title="Show Basic RSI Divergence (Experimental)", group="RSI & Volume")
+
+// ATR & Risk Management Settings
+atr_len = input.int(14, title="ATR Length", group="Risk Management")
+atr_sl_multiplier = input.float(2.0, title="ATR Stop Loss Multiplier", group="Risk Management")
+tp_rrr_target1 = input.float(2.0, title="Take Profit 1 R:R", group="Risk Management")
+tp_rrr_target2 = input.float(3.0, title="Take Profit 2 R:R (Primary)", group="Risk Management")
+show_sl_tp_levels = input.bool(true, title="Show SL/TP Levels on Signal", group="Risk Management")
+
+// Volume Settings
+volume_spike_multiplier = input.float(1.5, title="Volume Spike Multiplier (vs Avg Vol)", group="RSI & Volume")
+use_volume_filter = input.bool(true, title="Use Volume Spike Filter for Entry", group="RSI & Volume")
+
+// Visual Settings
+bullish_color = input.color(color.new(color.green, 0), title="Bullish Color", group="Visuals")
+bearish_color = input.color(color.new(color.red, 0), title="Bearish Color", group="Visuals")
+fib_oez_color = input.color(color.new(color.blue, 70), title="Fib OEZ Color", group="Visuals")
+ob_bull_color = input.color(color.new(color.green, 75), title="Bullish OB Color", group="Visuals")
+ob_bear_color = input.color(color.new(color.red, 75), title="Bearish OB Color", group="Visuals")
+fvg_bull_color = input.color(color.new(color.teal, 75), title="Bullish FVG Color", group="Visuals")
+fvg_bear_color = input.color(color.new(color.maroon, 75), title="Bearish FVG Color", group="Visuals")
+
+// ———————— Calculations ————————
+// Moving Averages H4
+ema_fast = ta.ema(close, ma_fast_len)
+ema_slow = ta.ema(close, ma_slow_len)
+plot(ema_fast, title="Fast EMA", color=color.new(color.orange,0), linewidth=1)
+plot(ema_slow, title="Slow EMA", color=color.new(color.blue,0), linewidth=1)
+
+// Daily EMA Context
+daily_ema_context = request.security(syminfo.tickerid, "D", ta.ema(close, daily_ma_len))
+plot(use_daily_ma_filter ? daily_ema_context : na, title="Daily EMA", color=color.new(color.purple,0), linewidth=2, style=plot.style_cross)
+
+// ATR
+atr_val = ta.atr(atr_len)
+
+// RSI
+rsi_val = ta.rsi(close, rsi_len)
+
+// Volume
+avg_volume = ta.sma(volume, 20) // 20-period average volume
+
+// ———————— Market Structure & Swings (Simplified) ————————
+_pivot_lookback_left_raw = fib_lookback / 2
+_pivot_lookback_right_raw = fib_lookback / 5
+
+_piv_left = math.max(1, math.round(_pivot_lookback_left_raw))
+_piv_right = math.max(1, math.round(_pivot_lookback_right_raw))
+
+last_swing_high_price = ta.pivothigh(high, _piv_left, _piv_right)
+last_swing_low_price = ta.pivotlow(low, _piv_left, _piv_right)
+
+var float swing_high_val = na
+var float swing_low_val = na
+var int swing_high_bar = na
+var int swing_low_bar = na
+
+if not na(last_swing_high_price)
+    swing_high_val := last_swing_high_price
+    swing_high_bar := bar_index - _piv_right
+if not na(last_swing_low_price)
+    swing_low_val := last_swing_low_price
+    swing_low_bar := bar_index - _piv_right
+
+// ———————— Fibonacci Optimal Entry Zone (OEZ) ————————
+var float fib_oez_upper = na
+var float fib_oez_lower = na
+
+if not na(swing_high_val) and not na(swing_low_val) and swing_high_bar != swing_low_bar
+    if swing_high_bar > swing_low_bar // Current trend is likely down (swing high is more recent), Fib from SH to SL
+        float priceRange = swing_high_val - swing_low_val 
+        if priceRange > 0 // Ensure valid range
+            fib_oez_upper := swing_low_val + priceRange * fib_oez_end // For shorts, OEZ is higher
+            fib_oez_lower := swing_low_val + priceRange * fib_oez_start
+        else
+            fib_oez_upper := na 
+            fib_oez_lower := na 
+
+    else if swing_low_bar > swing_high_bar // Current trend is likely up (swing low is more recent), Fib from SL to SH
+        float priceRange = swing_high_val - swing_low_val 
+        if priceRange > 0 // Ensure valid range
+            fib_oez_upper := swing_high_val - priceRange * fib_oez_start // For longs, OEZ is lower
+            fib_oez_lower := swing_high_val - priceRange * fib_oez_end
+        else
+            fib_oez_upper := na 
+            fib_oez_lower := na 
+    else
+        fib_oez_upper := na
+        fib_oez_lower := na
+else
+    fib_oez_upper := na
+    fib_oez_lower := na
+
+// Plot Fibonacci OEZ Box
+var box fib_box = na 
+
+if show_fib_levels and not na(fib_oez_lower) and not na(fib_oez_upper)
+    box_left_bar_idx = na(swing_high_bar) or na(swing_low_bar) ? bar_index - _piv_left : math.min(swing_high_bar, swing_low_bar) 
+
+    if na(fib_box) 
+        fib_box := box.new(left=box_left_bar_idx, bottom=fib_oez_lower, right=bar_index, top=fib_oez_upper,
+                         border_color=color.new(color.blue, 50), border_style=line.style_dashed, 
+                         bgcolor=fib_oez_color, text="Fib OEZ", text_halign=text.align_center,
+                         extend=extend.right)
+    else 
+        box.set_left(fib_box, box_left_bar_idx)
+        box.set_bottom(fib_box, fib_oez_lower)
+        box.set_top(fib_box, fib_oez_upper)
+        box.set_right(fib_box, bar_index) 
+        box.set_bgcolor(fib_box, fib_oez_color)
+        box.set_border_color(fib_box, color.new(color.blue, 50))
+        box.set_text(fib_box, "Fib OEZ")
+else if not na(fib_box) 
+    box.delete(fib_box)
+    fib_box := na 
+
+
+// ———————— Order Blocks (OBs) ————————
+var box[] bullish_ob_boxes = array.new_box()
+var box[] bearish_ob_boxes = array.new_box()
+
+process_ob(is_bullish, ob_bar_index, ob_high_val, ob_low_val, ob_open_val, ob_close_val) => // Renamed parameters to avoid conflict
+    mitigated = false
+    // Check if current bar's price action (low[0], high[0]) has mitigated the OB formed at ob_bar_index
+    if is_bullish
+        if low[0] < ob_low_val + (ob_high_val - ob_low_val) * 0.5 
+            mitigated := true
+    else
+        if high[0] > ob_high_val - (ob_high_val - ob_low_val) * 0.5 
+            mitigated := true
+
+    is_significant_body = (ob_high_val - ob_low_val) > 0 ? (math.abs(ob_close_val - ob_open_val) / (ob_high_val - ob_low_val) >= ob_body_factor) : false
+
+    if not mitigated and is_significant_body and show_obs
+        ob_box_color = is_bullish ? ob_bull_color : ob_bear_color
+        ob_text_val = is_bullish ? "Bull OB" : "Bear OB" 
+        new_box = box.new(ob_bar_index, ob_low_val, ob_bar_index + 1, ob_high_val, border_color=na, bgcolor=ob_box_color, text=ob_text_val, text_size=size.tiny, text_color=color.white, text_halign=text.align_right, text_valign=text.align_middle) // Corrected line
+        box.set_extend(new_box, extend.right)
+        if is_bullish
+            array.push(bullish_ob_boxes, new_box)
+        else
+            array.push(bearish_ob_boxes, new_box)
+
+        if array.size(bullish_ob_boxes) > 5
+            old_box = array.shift(bullish_ob_boxes)
+            box.delete(old_box)
+        if array.size(bearish_ob_boxes) > 5
+            old_box = array.shift(bearish_ob_boxes)
+            box.delete(old_box)
+
+// Detect OBs
+if bar_index > ob_lookback 
+    if close[2] < open[2] and close[1] > open[1] and (close[1] - open[1]) > atr_val * ob_breakout_strength and high[1] > high[2]
+        process_ob(true, bar_index - 2, high[2], low[2], open[2], close[2])
+
+    if close[2] > open[2] and close[1] < open[1] and (open[1] - close[1]) > atr_val * ob_breakout_strength and low[1] < low[2]
+        process_ob(false, bar_index - 2, high[2], low[2], open[2], close[2])
+
+
+// ———————— Fair Value Gaps (FVGs) ————————
+var box[] bullish_fvg_boxes = array.new_box()
+var box[] bearish_fvg_boxes = array.new_box()
+
+detect_and_draw_fvg() =>
+    // Bullish FVG: high of candle[2] < low of candle[0]. FVG is from high[2] to low[0]. Formed by impulse of candle[1].
+    // candle[0] is the current bar where this function is called.
+    fvg_bull_top_edge = low[0]      // Top of Bullish FVG is low of current bar
+    fvg_bull_bottom_edge = high[2]  // Bottom of Bullish FVG is high of bar two periods ago
+
+    if fvg_bull_bottom_edge < fvg_bull_top_edge and close[1] > open[1] // Valid FVG structure and impulse
+        is_mitigated = false
+        if fvg_mitigation_check and (fvg_bull_top_edge - fvg_bull_bottom_edge > 0) // Ensure FVG has height
+            // Check if the current bar's low (low[0]) has dipped below the FVG's midpoint
+            if low[0] < (fvg_bull_top_edge + fvg_bull_bottom_edge) / 2
+                is_mitigated := true 
+
+        if not is_mitigated and show_fvgs
+            fvg_box = box.new(bar_index - 2, fvg_bull_bottom_edge, bar_index, fvg_bull_top_edge, 
+                              border_color=na, bgcolor=fvg_bull_color, 
+                              text="Bull FVG", text_size=size.tiny, text_color=color.white, text_halign=text.align_right, text_valign=text.align_middle)
+            box.set_extend(fvg_box, extend.right)
+            array.push(bullish_fvg_boxes, fvg_box)
+            if array.size(bullish_fvg_boxes) > 5
+                old_box = array.shift(bullish_fvg_boxes)
+                box.delete(old_box)
+
+    // Bearish FVG: low of candle[2] > high of candle[0]. FVG is from high[0] to low[2]. Formed by impulse of candle[1].
+    fvg_bear_top_edge = low[2]      // Top of Bearish FVG is low of bar two periods ago
+    fvg_bear_bottom_edge = high[0]  // Bottom of Bearish FVG is high of current bar
+
+    if fvg_bear_bottom_edge < fvg_bear_top_edge and close[1] < open[1] // Valid FVG structure and impulse
+        is_mitigated = false
+        if fvg_mitigation_check and (fvg_bear_top_edge - fvg_bear_bottom_edge > 0) // Ensure FVG has height
+            // Check if the current bar's high (high[0]) has pushed above the FVG's midpoint
+            if high[0] > (fvg_bear_top_edge + fvg_bear_bottom_edge) / 2
+                is_mitigated := true
+
+        if not is_mitigated and show_fvgs
+            fvg_box = box.new(bar_index - 2, fvg_bear_bottom_edge, bar_index, fvg_bear_top_edge, 
+                              border_color=na, bgcolor=fvg_bear_color, 
+                              text="Bear FVG", text_size=size.tiny, text_color=color.white, text_halign=text.align_right, text_valign=text.align_middle)
+            box.set_extend(fvg_box, extend.right)
+            array.push(bearish_fvg_boxes, fvg_box)
+            if array.size(bearish_fvg_boxes) > 5
+                old_box = array.shift(bearish_fvg_boxes)
+                box.delete(old_box)
+
+if bar_index > fvg_lookback
+    detect_and_draw_fvg()
+
+// ———————— RSI Divergence (Basic) ————————
+bullish_rsi_div = false
+bearish_rsi_div = false
+
+if show_rsi_divergence
+    price_ll = low < ta.lowest(low, rsi_divergence_lookback)[1]
+    rsi_hl = rsi_val > ta.lowest(rsi_val, rsi_divergence_lookback)[1] and rsi_val < rsi_os_level + 10 
+    if price_ll and rsi_hl
+        bullish_rsi_div := true
+
+    price_hh = high > ta.highest(high, rsi_divergence_lookback)[1]
+    rsi_lh = rsi_val < ta.highest(rsi_val, rsi_divergence_lookback)[1] and rsi_val > rsi_ob_level - 10 
+    if price_hh and rsi_lh
+        bearish_rsi_div := true
+
+// ———————— Entry Logic & Signals ————————
+is_in_zone(price_level, zone_array) =>
+    bool in_zone = false
+    if array.size(zone_array) > 0
+        for i = 0 to array.size(zone_array) - 1
+            box_item = array.get(zone_array, i)
+            if not na(box_item) 
+                box_bottom = box.get_bottom(box_item)
+                box_top = box.get_top(box_item)
+                if not na(box_bottom) and not na(box_top)
+                    if price_level >= box_bottom and price_level <= box_top
+                        in_zone := true
+                        break
+    in_zone
+
+long_daily_trend_ok = not use_daily_ma_filter or (use_daily_ma_filter and close > daily_ema_context)
+long_h4_trend_ok = ema_fast > ema_slow
+long_pullback_to_oez = not na(fib_oez_lower) and not na(fib_oez_upper) and low <= fib_oez_upper and high >= fib_oez_lower 
+long_in_bullish_ob = is_in_zone(low, bullish_ob_boxes) or is_in_zone(high, bullish_ob_boxes) 
+long_in_bullish_fvg = is_in_zone(low, bullish_fvg_boxes) or is_in_zone(high, bullish_fvg_boxes)
+long_confluence_zone = long_pullback_to_oez and (long_in_bullish_ob or long_in_bullish_fvg)
+
+bullish_confirmation_candle = close > open and (close - open) / math.max(nz(high - low), syminfo.mintick) > 0.6 and high > high[1]
+long_volume_ok = not use_volume_filter or (use_volume_filter and volume > avg_volume * volume_spike_multiplier)
+long_rsi_ok = rsi_val < rsi_ob_level - 5 
+long_rsi_div_confirm = not show_rsi_divergence or (show_rsi_divergence and bullish_rsi_div)
+
+long_signal = long_daily_trend_ok and long_h4_trend_ok and long_confluence_zone and bullish_confirmation_candle and long_volume_ok and long_rsi_ok and long_rsi_div_confirm
+
+short_daily_trend_ok = not use_daily_ma_filter or (use_daily_ma_filter and close < daily_ema_context)
+short_h4_trend_ok = ema_fast < ema_slow
+short_pullback_to_oez = not na(fib_oez_lower) and not na(fib_oez_upper) and high >= fib_oez_lower and low <= fib_oez_upper 
+short_in_bearish_ob = is_in_zone(high, bearish_ob_boxes) or is_in_zone(low, bearish_ob_boxes)
+short_in_bearish_fvg = is_in_zone(high, bearish_fvg_boxes) or is_in_zone(low, bearish_fvg_boxes)
+short_confluence_zone = short_pullback_to_oez and (short_in_bearish_ob or short_in_bearish_fvg)
+
+bearish_confirmation_candle = close < open and (open - close) / math.max(nz(high - low), syminfo.mintick) > 0.6 and low < low[1]
+short_volume_ok = not use_volume_filter or (use_volume_filter and volume > avg_volume * volume_spike_multiplier)
+short_rsi_ok = rsi_val > rsi_os_level + 5 
+short_rsi_div_confirm = not show_rsi_divergence or (show_rsi_divergence and bearish_rsi_div)
+
+short_signal = short_daily_trend_ok and short_h4_trend_ok and short_confluence_zone and bearish_confirmation_candle and short_volume_ok and short_rsi_ok and short_rsi_div_confirm
+
+// ———————— Plot Signals & SL/TP Levels ————————
+var float entry_price_long = na
+var float sl_long = na
+var float tp1_long = na
+var float tp2_long = na
+
+var float entry_price_short = na
+var float sl_short = na
+var float tp1_short = na
+var float tp2_short = na
+
+var line sl_line_long = na
+var line tp1_line_long = na
+var line tp2_line_long = na
+var line sl_line_short = na
+var line tp1_line_short = na
+var line tp2_line_short = na
+
+clear_lines(longOrShort) => 
+    if longOrShort == "long"
+        line.delete(sl_line_long)
+        line.delete(tp1_line_long)
+        line.delete(tp2_line_long)
+    else if longOrShort == "short"
+        line.delete(sl_line_short)
+        line.delete(tp1_line_short)
+        line.delete(tp2_line_short)
+
+// Conditions for plotting shapes
+plot_long_signal_condition = long_signal and na(entry_price_long) and na(entry_price_short)
+plot_short_signal_condition = short_signal and na(entry_price_short) and na(entry_price_long)
+
+if long_signal and na(entry_price_long) and na(entry_price_short) 
+    entry_price_long := close
+    sl_long := entry_price_long - (atr_val * atr_sl_multiplier)
+    risk_val_long = entry_price_long - sl_long
+    if risk_val_long > 0 
+        tp1_long := entry_price_long + (risk_val_long * tp_rrr_target1)
+        tp2_long := entry_price_long + (risk_val_long * tp_rrr_target2)
+
+        // Plotshape call moved to global scope
+        if show_sl_tp_levels
+            clear_lines("short") 
+            sl_line_short := na
+            tp1_line_short := na
+            tp2_line_short := na
+            sl_line_long := line.new(bar_index, sl_long, bar_index, sl_long, color=bearish_color, style=line.style_dashed, width=1, extend=extend.right)
+            tp1_line_long := line.new(bar_index, tp1_long, bar_index, tp1_long, color=bullish_color, style=line.style_dashed, width=1, extend=extend.right)
+            tp2_line_long := line.new(bar_index, tp2_long, bar_index, tp2_long, color=bullish_color, style=line.style_solid, width=1, extend=extend.right)
+            entry_price_short := na 
+
+if not na(entry_price_long)
+    if low <= sl_long or high >= tp2_long 
+        entry_price_long := na 
+        clear_lines("long")
+        sl_line_long := na
+        tp1_line_long := na
+        tp2_line_long := na
+
+if short_signal and na(entry_price_short) and na(entry_price_long) 
+    entry_price_short := close
+    sl_short := entry_price_short + (atr_val * atr_sl_multiplier)
+    risk_val_short = sl_short - entry_price_short
+    if risk_val_short > 0 
+        tp1_short := entry_price_short - (risk_val_short * tp_rrr_target1)
+        tp2_short := entry_price_short - (risk_val_short * tp_rrr_target2)
+
+        // Plotshape call moved to global scope
+        if show_sl_tp_levels
+            clear_lines("long") 
+            sl_line_long := na
+            tp1_line_long := na
+            tp2_line_long := na
+            sl_line_short := line.new(bar_index, sl_short, bar_index, sl_short, color=bullish_color, style=line.style_dashed, width=1, extend=extend.right)
+            tp1_line_short := line.new(bar_index, tp1_short, bar_index, tp1_short, color=bearish_color, style=line.style_dashed, width=1, extend=extend.right)
+            tp2_line_short := line.new(bar_index, tp2_short, bar_index, tp2_short, color=bearish_color, style=line.style_solid, width=1, extend=extend.right)
+            entry_price_long := na
+
+if not na(entry_price_short)
+    if high >= sl_short or low <= tp2_short
+        entry_price_short := na 
+        clear_lines("short")
+        sl_line_short := na
+        tp1_line_short := na
+        tp2_line_short := na
+
+// Plotshape calls are now in the global scope
+plotshape(plot_long_signal_condition, title="Buy Signal", location=location.belowbar, color=bullish_color, style=shape.triangleup, size=size.normal, text="BUY")
+plotshape(plot_short_signal_condition, title="Sell Signal", location=location.abovebar, color=bearish_color, style=shape.triangledown, size=size.normal, text="SELL")
+
+// ———————— Alerts ————————
+alertcondition(long_signal and na(entry_price_long[1]) and na(entry_price_short[1]), title="NCSM Long Signal", message="Nova-Cypher Potential LONG: {{ticker}} at {{close}}")
+alertcondition(short_signal and na(entry_price_short[1]) and na(entry_price_long[1]), title="NCSM Short Signal", message="Nova-Cypher Potential SHORT: {{ticker}} at {{close}}")
+
+// --- Display Info Panel (Optional) ---
+var table info_panel = table.new(position.top_right, 2, 5, border_width=1)
+if barstate.islast
+    table.cell(info_panel, 0, 0, "NCSM Status", bgcolor=color.new(color.gray, 80), text_color=color.white)
+    table.cell(info_panel, 1, 0, "", bgcolor=color.new(color.gray, 80))
+
+    table.cell(info_panel, 0, 1, "Daily Trend:", text_color=color.white)
+    daily_trend_status = use_daily_ma_filter ? (close > daily_ema_context ? "Bullish" : (close < daily_ema_context ? "Bearish" : "Neutral")) : "N/A"
+    daily_trend_color = use_daily_ma_filter ? (close > daily_ema_context ? color.green : (close < daily_ema_context ? color.red : color.gray)) : color.gray
+    table.cell(info_panel, 1, 1, daily_trend_status, bgcolor=color.new(daily_trend_color,80), text_color=color.white)
+
+    table.cell(info_panel, 0, 2, "H4 Trend:", text_color=color.white)
+    h4_trend_status = ema_fast > ema_slow ? "Bullish" : (ema_fast < ema_slow ? "Bearish" : "Neutral")
+    h4_trend_color = ema_fast > ema_slow ? color.green : (ema_fast < ema_slow ? color.red : color.gray)
+    table.cell(info_panel, 1, 2, h4_trend_status, bgcolor=color.new(h4_trend_color,80), text_color=color.white)
+
+    table.cell(info_panel, 0, 3, "ATR (" + str.tostring(atr_len) + "):", text_color=color.white)
+    table.cell(info_panel, 1, 3, str.tostring(atr_val, format.mintick), text_color=color.white)
+
+    table.cell(info_panel, 0, 4, "RSI (" + str.tostring(rsi_len) + "):", text_color=color.white)
+    table.cell(info_panel, 1, 4, str.tostring(rsi_val, "#.00"), text_color=color.white)

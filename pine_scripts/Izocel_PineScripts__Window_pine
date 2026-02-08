@@ -1,0 +1,426 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © RVD-Projects
+
+import RVD-Projects/Types/3
+import RVD-Projects/Functions/2
+
+import TradingView/ta/9
+import PineCoders/Time/5
+import RVD-Projects/TradeManager/5
+
+//@version=6
+//@description RVD-01
+strategy(
+ title                           = "RVÐ",
+ shorttitle                      = "RVÐ",
+ overlay                         =  true,
+ behind_chart                    =  true,
+ commission_value                =  2.00,
+ initial_capital                 =  50000.00,
+ currency                        =  currency.USD,
+ commission_type                 =  strategy.commission.cash_per_contract
+//  slippage                        =  ,
+//  default_qty_type                =  ,
+//  default_qty_value               =  ,
+//  format                          =  ,
+//  precision                       =  ,
+//  scale                           =  ,
+//  pyramiding                      =  ,
+//  calc_on_order_fills             =  ,
+//  calc_on_every_tick              =  ,
+//  max_bars_back                   =  ,
+//  backtest_fill_limits_assumption =  ,
+//  process_orders_on_close         =  ,
+//  close_entries_rule              =  ,
+//  margin_long                     =  ,
+//  margin_short                    =  ,
+//  explicit_plot_zorder            =  ,
+//  max_lines_count                 =  ,
+//  max_labels_count                =  ,
+//  max_boxes_count                 =  ,
+//  calc_bars_count                 =  ,
+//  risk_free_rate                  =  ,
+//  use_bar_magnifier               =  ,
+//  fill_orders_on_standard_ohlc    =  ,
+//  max_polylines_count             =  ,
+//  dynamic_requests                =  ,
+ )
+
+//////////////////////////////////////////////// BlackFlag Indicator
+norm_o = open
+norm_h = high
+norm_l = low
+norm_c = close
+
+ATRFactor = input(5, "ATR Factor", group="BalckFlag")
+ATRPeriod = input(28, "ATR Period", group="BalckFlag")
+show_fib_entries = input(true, "Show Fib Entries?", group="BalckFlag")
+trailType = input.enum(Types.TrailingType.MODIFIED, group="BalckFlag", title="Smooth type:", options=[Types.TrailingType.MODIFIED, Types.TrailingType.LIMITED])
+
+//////// FUNCTIONS //////////////
+Wild_ma(_src, _malength) =>
+    _wild  = 0.0
+    _wild := nz(_wild[1]) + (_src - nz(_wild[1])) / _malength
+
+/////////// TRUE RANGE CALCULATIONS /////////////////
+HiLo = math.min(norm_h - norm_l, 1.5 * nz(ta.sma((norm_h - norm_l), ATRPeriod)))
+
+HRef = norm_l<= norm_h[1] ?
+ norm_h - norm_c[1] :
+ (norm_h - norm_c[1]) - 0.5 * (norm_l- norm_h[1])
+
+LRef = norm_h >= norm_l[1] ?
+ norm_c[1] - norm_l:
+ (norm_c[1] - norm_l) - 0.5 * (norm_l[1] - norm_h)
+
+trueRange = trailType == Types.TrailingType.MODIFIED ? math.max(HiLo, HRef, LRef) : math.max(norm_h - norm_l, math.abs(norm_h - norm_c[1]), math.abs(norm_l - norm_c[1]))
+
+
+/////////// TRADE LOGIC ////////////////////////
+loss = ATRFactor * Wild_ma(trueRange, ATRPeriod)
+
+Up = norm_c - loss
+Dn = norm_c + loss
+
+TrendUp   = Up
+TrendDown = Dn
+Trend     = 1
+
+TrendUp   := norm_c[1] > TrendUp[1]   ? math.max(Up, TrendUp[1])   : Up
+TrendDown := norm_c[1] < TrendDown[1] ? math.min(Dn, TrendDown[1]) : Dn
+
+Trend := norm_c > TrendDown[1] ? 1 : norm_c < TrendUp[1]? -1 : nz(Trend[1],1)
+trail = Trend == 1? TrendUp : TrendDown
+
+ex = 0.00
+ex := ta.crossover(Trend, 0) ? norm_h : ta.crossunder(Trend, 0) ? norm_l : Trend == 1  ? math.max(ex[1], norm_h) : Trend == -1 ? math.min(ex[1], norm_l) : ex[1]
+
+
+// //////// PLOT TP and SL /////////////
+plot(trail, "Trail", style = plot.style_line, linewidth = 1, color = color.white, trackprice = true, display = display.all)
+plot(ex, "Pivot", style = plot.style_circles, linewidth = 1, color = color.white, display = display.all)
+
+////// FIBONACCI LEVELS ///////////
+state = Trend == 1 ? "long" : "short"
+
+fib1Level = 61.8
+fib2Level = 78.6
+fib3Level = 88.6
+
+f1 = ex + (trail - ex) * fib1Level / 100
+f2 = ex + (trail - ex) * fib2Level / 100
+f3 = ex + (trail - ex) * fib3Level / 100
+l100 = trail + 0
+
+Fib1 = plot(f1,  "Fib 1", style = plot.style_line, color = color.black, display = display.pane)
+Fib2 = plot(f2,  "Fib 2", style = plot.style_line, color = color.black, display = display.pane)
+Fib3 = plot(f3,  "Fib 3", style = plot.style_line, color = color.black, display = display.pane)
+L100 = plot(l100, "l100", style = plot.style_line, color = color.black, display = display.none)
+
+fill(Fib1, Fib2, color = state == "long"? color.new(color.green, 85) : state == "short"? color.new(color.red, 85) : na)
+fill(Fib2, Fib3, color = state == "long"? color.new(color.green, 80) : state == "short"? color.new(color.red, 80) : na)
+fill(Fib3, L100, color = state == "long"? color.new(color.green, 70) : state == "short"? color.new(color.red, 70) : na)
+
+crossF1 = ta.crossunder(norm_c, f1[1])
+crossF2 = ta.crossunder(norm_c, f2[1])
+crossF3 = ta.crossunder(norm_c, f3[1])
+
+l1 = state[1] == "long" and crossF1
+l2 = state[1] == "long" and crossF2
+l3 = state[1] == "long" and crossF3
+s1 = state[1] == "short" and crossF1
+s2 = state[1] == "short" and crossF2
+s3 = state[1] == "short" and crossF3
+
+atr = ta.sma(trueRange, 14)
+
+/////////// FIB PLOTS /////////////////.
+// plotshape(show_fib_entries and l1 ? low - atr : na, "LS1", style = shape.triangleup, location = location.belowbar, color = color.black, size = size.small, display = display.pane)
+// plotshape(show_fib_entries and l2 ? low - 1.5 * atr : na, "LS2", style = shape.triangleup, location = location.belowbar, color = color.black, size = size.small, display = display.pane)
+plotshape(show_fib_entries and l3 ? low - 2 * atr : na, "LS3", style = shape.triangleup, location = location.belowbar, color = color.lime, size = size.small, display = display.pane)
+// plotshape(show_fib_entries and s1 ? high + atr : na, "SS1", style = shape.triangledown, location = location.abovebar, color = color.black, size = size.small, display = display.pane)
+// plotshape(show_fib_entries and s2 ? high + 1.5 * atr : na, "SS2", style = shape.triangledown, location = location.abovebar, color = color.black, size = size.small, display = display.pane)
+plotshape(show_fib_entries and s3 ? high + 2 * atr : na, "SS3", style = shape.triangledown, location = location.abovebar, color = color.yellow, size = size.small, display = display.pane)
+
+//////////// FIB ALERTS /////////////////////
+alertcondition(l1, title = "cross over Fib1",  message = "Price crossed below Fib1 level in long trend")
+alertcondition(l2, title = "cross over Fib2",  message = "Price crossed below Fib2 level in long trend")
+alertcondition(l3, title = "cross over Fib3",  message = "Price crossed below Fib3 level in long trend")
+alertcondition(s1, title = "cross under Fib1", message = "Price crossed above Fib1 level in short trend")
+alertcondition(s2, title = "cross under Fib2", message = "Price crossed above Fib2 level in short trend")
+alertcondition(s3, title = "cross under Fib3", message = "Price crossed above Fib3 level in short trend")
+alertcondition(fixnan(f1)!=fixnan(f1[1]), title = "Stop Line Change", message = "Stop Line Change")
+
+//////////////////////////////////////////////// SM4 Indicator
+plot(ta.sma(close, 25), "25-MA", color = color.blue, linewidth = 1, display = display.pane)
+plot(ta.sma(close, 50), "50-MA", color = color.green, linewidth = 1, display = display.pane)
+plot(ta.sma(close, 100), "100-MA", color = color.orange, linewidth = 1, display = display.pane)
+plot(ta.sma(close, 200), "200-MA", color = color.gray, linewidth = 1, display = display.pane)
+
+////////////////////////////////////////////////  Trading Sessions Indicator
+bool showSessionNames     = input.bool(true, "Show session names")
+bool showSessionOC        = input.bool(true, "Draw session open and close lines", group="Sessions")
+bool showSessionTickRange = input.bool(false, "Show tick range for each session", group="Sessions")
+bool showSessionAverage   = input.bool(false, "Show average price per session", group="Sessions")
+
+const string TZ_TOOLTIP_TEXT = "The session's time zone, specified in either GMT notation (e.g., 'GMT-5') or as an IANA time zone database name (e.g., 'America/New_York')."
+
+const string FIRST_SESSION_GROUP = "First Session"
+showFirst         = input.bool(true, "Show session", group = FIRST_SESSION_GROUP, display = display.none)
+firstSessionName  = input.string("Tokyo", "Displayed name", group = FIRST_SESSION_GROUP, display = display.none)
+firstSessionTime  = input.session("0900-1500", "Session time", group = FIRST_SESSION_GROUP, display = display.none)
+firstSessionTZ    = input.string("Asia/Tokyo", "Session timezone", group = FIRST_SESSION_GROUP, display = display.none, tooltip = TZ_TOOLTIP_TEXT)
+firstSessionColor = input.color(color.new(#2962FF, 85), "Session color", group = FIRST_SESSION_GROUP)
+
+const string SECOND_SESSION_GROUP = "Second session"
+showSecond         = input.bool(true, "Show session", group = SECOND_SESSION_GROUP, display = display.none)
+secondSessionName  = input.string("London", "Displayed name", group = SECOND_SESSION_GROUP, display = display.none)
+secondSessionTime  = input.session("0830-1630", "Session time", group = SECOND_SESSION_GROUP, display = display.none)
+secondSessionTZ    = input.string("Europe/London", "Session timezone", group = SECOND_SESSION_GROUP, display = display.none, tooltip = TZ_TOOLTIP_TEXT)
+secondSessionColor = input.color(color.new(#FF9800, 85), "Session color", group = SECOND_SESSION_GROUP)
+
+const string THIRD_SESSION_GROUP = "Third session"
+showThird         = input.bool(true, "Show session", group = THIRD_SESSION_GROUP, display = display.none)
+thirdSessionName  = input.string("New York", "Displayed name", group = THIRD_SESSION_GROUP, display = display.none)
+thirdSessionTime  = input.session("0930-1600", "Session time", group = THIRD_SESSION_GROUP, display = display.none)
+thirdSessionTZ    = input.string("America/New_York", "Session timezone", group = THIRD_SESSION_GROUP, display = display.none, tooltip = TZ_TOOLTIP_TEXT)
+thirdSessionColor = input.color(color.new(#000000, 85), "Session color", group = THIRD_SESSION_GROUP)
+
+type SessionDisplay
+    box   sessionBox
+    label sessionLabel
+    line  openLine
+    line  avgLine
+    line  closeLine
+    float sumClose
+    int   numOfBars
+
+type SessionInfo
+    color  color
+    string name
+    string session
+    string timezone
+    SessionDisplay active = na
+
+method setName(SessionDisplay this, string name) =>
+    sessionLabel = this.sessionLabel
+    sessionBox = this.sessionBox
+    boxText = array.new<string>()
+    if showSessionTickRange
+        boxText.push("Range: " + str.tostring((sessionBox.get_top() - sessionBox.get_bottom()) / syminfo.mintick, format.mintick))
+    if showSessionAverage
+        boxText.push("Avg: " + str.tostring(this.sumClose / this.numOfBars, format.mintick))
+    if showSessionNames
+        boxText.push(name)
+    
+    sessionLabel.set_y(sessionBox.get_bottom())
+    sessionLabel.set_text(array.join(boxText, "\n"))
+
+method createSessionDisplay(SessionInfo this) =>
+    boxColor = this.color
+    opaqueColor = color.new(boxColor, 0)
+    dis = SessionDisplay.new(
+      sessionBox = box.new(bar_index, high, bar_index, low, bgcolor = na, border_color = color.gray, border_style = line.style_dashed, border_width = 2),
+      sessionLabel = label.new(bar_index, low, "", style = label.style_label_upper_left, textalign = text.align_left, textcolor = color.white, color = color.black),
+      openLine   = showSessionOC ? line.new(bar_index, open, bar_index, open, color = opaqueColor, style = line.style_dashed, width = 2) : na,
+      closeLine  = showSessionOC ? line.new(bar_index, close, bar_index, close, color = opaqueColor, style = line.style_dashed, width = 2) : na,
+      avgLine    = showSessionAverage ? line.new(bar_index, close, bar_index, close, style = line.style_dotted, width = 2, color = opaqueColor) : na,
+      sumClose   = close,
+      numOfBars  = 1
+      )
+    linefill.new(dis.openLine, dis.closeLine, boxColor)
+    dis.setName(this.name)
+    this.active := dis
+    
+method updateSessionDisplay(SessionInfo this) =>
+    sessionDisp = this.active
+    sessionBox = sessionDisp.sessionBox
+    openLine = sessionDisp.openLine
+    closeLine = sessionDisp.closeLine
+    avgLine = sessionDisp.avgLine
+    sessionDisp.sumClose += close
+    sessionDisp.numOfBars += 1
+
+    sessionBox.set_top(math.max(sessionBox.get_top(), high))
+    sessionBox.set_bottom(math.min(sessionBox.get_bottom(), low))
+    sessionBox.set_right(bar_index)
+    sessionDisp.setName(this.name)
+
+    if showSessionOC
+        openLine.set_x2(bar_index)
+        closeLine.set_x2(bar_index)
+        closeLine.set_y1(close)
+        closeLine.set_y2(close)
+
+    if showSessionAverage
+        avgLine.set_x2(bar_index)
+        avg = sessionDisp.sumClose / sessionDisp.numOfBars
+        avgLine.set_y1(avg)
+        avgLine.set_y2(avg)
+    sessionDisp
+
+method update(SessionInfo this) =>
+	bool isChange = timeframe.change("1D")
+    if (not na(time("", this.session, this.timezone))) // inSession
+        if na(this.active) or isChange
+            this.createSessionDisplay()
+        else 
+            this.updateSessionDisplay()
+    else if not na(this.active)
+        this.active := na
+
+getSessionInfos()=>
+    array<SessionInfo> sessionInfos = array.new<SessionInfo>()
+    if showFirst
+        sessionInfos.push(SessionInfo.new(firstSessionColor, firstSessionName, firstSessionTime, firstSessionTZ))
+    if showSecond
+        sessionInfos.push(SessionInfo.new(secondSessionColor, secondSessionName, secondSessionTime, secondSessionTZ))
+    if showThird
+        sessionInfos.push(SessionInfo.new(thirdSessionColor, thirdSessionName, thirdSessionTime, thirdSessionTZ))
+    sessionInfos
+
+var array<SessionInfo> sessionInfos = getSessionInfos()
+if not timeframe.isdwm and timeframe.period != "240"
+    for info in sessionInfos
+        info.update()
+
+//////////////////////////////////////////////// Options Calendar Indicator
+const string CALENDAR_GROUP = "Options - Calendar"
+show_cal_lines = input.bool(true, "Show Options Expiry Lines", group=CALENDAR_GROUP)
+show_sub_lines = input.bool(true, "Show Sub-Entry (Expiry-Delta)", group=CALENDAR_GROUP)
+months_ahead = input.int(3, "Months ahead", minval=1, maxval=6, group=CALENDAR_GROUP)
+months_behind = input.int(12, "Months behind", minval=1, maxval=12, group=CALENDAR_GROUP)
+TZ = input.string("America/Toronto", "Timezone", group=CALENDAR_GROUP)
+
+if(show_cal_lines and (timeframe.isdwm or timeframe.in_seconds(timeframe.period) >= 14400))
+    var int lastCalculationDay = 0
+    
+    // Only calculate once per day
+    if dayofmonth != lastCalculationDay
+        lastCalculationDay := dayofmonth
+        const int standardP1 = -3
+        const int standardP2 = -10
+        const int quarterP1 = -14
+        const int quarterP2 = -27
+        
+        // Calculate start and end months based on current time
+        series int currentTime = last_bar_time
+        series int currentYear = year(currentTime, TZ)
+        series int currentMonth = month(currentTime, TZ)
+        
+        // Calculate month range: current month +/- separate ahead/behind values
+        series int startYear = currentYear
+        series int startMonth = currentMonth - months_behind
+        series int endYear = currentYear
+        series int endMonth = currentMonth + months_ahead
+        
+        // Adjust for month overflow/underflow
+        while startMonth <= 0
+            startMonth += 12
+            startYear -= 1
+        while endMonth > 12
+            endMonth -= 12
+            endYear += 1
+            
+        // Calculate total months to iterate
+        series int totalMonths = (endYear - startYear) * 12 + (endMonth - startMonth) + 1
+        
+        // Iterate through months only (highly optimized)
+        for i = 0 to totalMonths
+            series int iterYear = startYear + math.floor((startMonth + i - 1) / 12)
+            series int iterMonth = ((startMonth + i - 1) % 12) + 1
+            
+            // Get exact third Friday for this month
+            series int thirdFridayDay = Functions.ThirdFriday(iterYear, iterMonth, TZ)
+            series int bar_time = timestamp(TZ, iterYear, iterMonth, thirdFridayDay, 16)
+            
+            series bool bar_quarter = iterMonth % 3 == 0
+            series bool bar_next_quarter = (iterMonth + 1) % 3 == 0
+                
+            series float y1 = open * 0.999
+            series float y2 = open * 1.001
+            series int p1Increment = bar_quarter ? quarterP1 : standardP1
+            series int p2Increment = bar_quarter ? quarterP2 : standardP2
+            series int p1 = timestamp(TZ, iterYear, iterMonth, thirdFridayDay + p1Increment, 16)
+            series int p2 = timestamp(TZ, iterYear, iterMonth, thirdFridayDay + p2Increment, 16)
+
+            // Draw sub-lines (P1/P2) only if enabled
+            if show_sub_lines
+                line.new(xloc=xloc.bar_time, x1=p2, x2=p2, y1=y1, y2=y2, color=color.gray, width=1, extend=extend.both, style=line.style_dashed)
+                line.new(xloc=xloc.bar_time, x1=p1, x2=p1, y1=y1, y2=y2, color=color.gray, width=1, extend=extend.both, style=line.style_dashed)
+                //label.new(x=p2, y=open, text="Exp. -" + str.tostring(p2Increment), color=color.black, textcolor=color.white, style=label.style_label_down, size=size.tiny, xloc=xloc.bar_time)
+                //label.new(x=p1, y=open, text="Exp. -" + str.tostring(p1Increment), color=color.black, textcolor=color.white, style=label.style_label_down, size=size.tiny, xloc=xloc.bar_time)
+
+            // Always draw the main expiry line
+            line.new(xloc=xloc.bar_time, x1=bar_time, x2=bar_time, y1=y1, y2=y2, color=bar_next_quarter ? color.fuchsia : color.purple, width=2, extend=extend.both, style=line.style_dashed)
+            //label.new(x=bar_time, y=open, text=bar_next_quarter ? "Q Exp." : "M-Exp", color=bar_next_quarter ? color.red : color.blue, textcolor=color.white, style=label.style_label_down, size=size.tiny, xloc=xloc.bar_time)
+
+//////////////////////////////////////////////// Intra-VWAP Strategy
+hasPosition = strategy.position_size != 0
+currentHour = hour(time, "America/Toronto")
+isNewPeriod = timeframe.change("D") or na(low[1])
+isNoTradeWindow = currentHour >= 15 and currentHour < 18
+mustFlatten = isNoTradeWindow and hasPosition
+
+var float lastTradeTime = na
+// Check if position should be closed due to max holding time
+shouldCloseHolding = hasPosition and not na(lastTradeTime) and (time - lastTradeTime) >= 6 * 60 * 60 * 1000
+
+// VWAP calculations
+lowVWAP = ta.vwap(low, isNewPeriod)
+highVWAP = ta.vwap(high, isNewPeriod)
+middleVWAP = highVWAP - (highVWAP - lowVWAP) / 2
+
+// Long entry and exit conditions
+longEntry = ta.crossover(close, highVWAP)
+longExit = ta.crossunder(close, lowVWAP)
+
+// Short entry and exit conditions
+shortEntry = ta.crossunder(close, lowVWAP)
+shortExit = ta.crossover(close, highVWAP)
+
+// Force close positions that have been held for too long
+if (shouldCloseHolding)
+    TradeManager.CloseAllOrders()
+    alert("IVWAP: Force close - Max holding time reached (6h)", alert.freq_once_per_bar)
+    lastTradeTime := time
+
+// Close all positions if we're in the 4PM-6PM window and have open trades
+if (isNoTradeWindow)
+    if (mustFlatten)
+        TradeManager.CloseAllOrders()
+        alert("IVWAP: Force close - Market close window (3PM-6PM Toronto)", alert.freq_once_per_bar)
+        lastTradeTime := time
+else
+    // Long trade management
+    if (longEntry)
+        strategy.entry("Long", strategy.long)
+        alert("IVWAP: LONG ENTRY - Close crossed above High VWAP @ " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+        lastTradeTime := time
+
+    if (longExit)
+        TradeManager.CloseOrder("Long", na, na)
+        alert("IVWAP: LONG EXIT - Close crossed below Low VWAP @ " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+        lastTradeTime := time
+
+    // Short trade management
+    if (shortEntry)
+        strategy.entry("Short", strategy.short)
+        alert("IVWAP: SHORT ENTRY - Close crossed below Low VWAP @ " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+        lastTradeTime := time
+
+    if (shortExit)
+        TradeManager.CloseOrder("Short", na, na)
+        alert("IVWAP: SHORT EXIT - Close crossed above High VWAP @ " + str.tostring(close, "#.##"), alert.freq_once_per_bar)
+        lastTradeTime := time
+
+// Plot VWAP lines
+plot(lowVWAP, color=color.fuchsia, title="Low")
+plot(middleVWAP, color=color.aqua, title="Middle")
+plot(highVWAP, color=color.fuchsia, title="High")
+
+// Plot closing window background
+bgcolor(isNoTradeWindow ? color.new(color.red, 90) : na, title="Non-Trading Window BG")
+
+// Plot must go flat label
+plotshape(mustFlatten ? close : na, title="Forced Flat", location=location.top, style=shape.labeldown, text="Forced Flat", textcolor=color.white, size=size.small, color=color.red)

@@ -1,0 +1,917 @@
+//@version=5
+
+// NOTES
+// crossover logic - candle 3 only, doesnt matter what happens on candle 1 or 2
+// candle 1 red, candle doesnt matter what color, candle 3 cross of ema 9 (e nao cross ema 40/80)
+// use trend filter: ema 9 > ema 40 > ema 80
+
+// trap de urso: ema 4 > ema 40 > ema 80 e cruzando todas, terminando em cima
+// bearish
+
+// PFR - candle 3
+// pfr candle 2 nao importa color
+// PFR 
+
+// engolfo - candle 3
+// 123 just look at the body
+// 123 - candle 1: === candle 2 (vermelho o): 30/40% === candle: 3 60%/70%
+
+// === NakInvest Cross EMA Strategy ===
+// 
+// STRATEGY OVERVIEW:
+// This strategy combines EMA crossovers with multiple pattern recognition systems to identify
+// high-probability trading opportunities. It uses a triple-confirmation approach:
+//
+// 1. Pattern Recognition:
+//    - 123 Pattern: A classic reversal pattern requiring specific candle size relationships
+//    - PFR (Price Failure and Reversal): Identifies failed moves that lead to reversals
+//    - Engulfing: Strong reversal candlestick pattern
+//
+// 2. Trend Confirmation:
+//    - Triple EMA System (9, 40, 80)
+//    - Bullish: EMA9 > EMA40 > EMA80
+//    - Bearish: EMA80 > EMA40 > EMA9
+//
+// 3. Additional Filters:
+//    - Stochastic oscillator for overbought/oversold conditions
+//    - Trading session time restrictions
+//    - Date range limitations
+//    - Minimum candle size requirements
+//
+// RISK MANAGEMENT:
+// - Position sizing based on account equity percentage
+// - Multiple take-profit options:
+//   * Risk/Reward ratio based
+//   * Fixed percentage from entry
+// - Flexible stop-loss placement:
+//   * Below candle body
+//   * Below candle wick
+//   * Fixed percentage
+//
+// PERFORMANCE TRACKING:
+// - Win rate per pattern type (123, PFR, Engulfing)
+// - Average time in trade
+// - Pattern identification labels
+// - Detailed entry/exit information in tooltips
+
+strategy("NakInvest - Cross EMA", 
+         overlay=true, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=100, 
+         commission_type=strategy.commission.percent, 
+         commission_value=0.045)
+
+// === Input Groups ===
+var string GP_CANDLES = "Candle Size Configuration", GP_FILTERS = "Trading Filters", GP_STATS = "Statistics Settings", GP_RISK = "Risk Management", GP_DEBUG = "Debug Settings", GP_PRICE = "Price Comparison Settings", GP_PATTERNS = "Pattern Settings", GP_MACD = "MACD Settings", GP_PFR = "PFR Settings", GP_STOCH = "Stochastic Settings"
+
+// === Debug Configuration ===
+showPatternLabels = true
+showPFRDebug = input.bool(false, "Show PFR Debug", group=GP_DEBUG)
+show123Debug = input.bool(false, "Show 123 Debug", group=GP_DEBUG)
+showEngulfingDebug = input.bool(false, "Show Engulfing Debug", group=GP_DEBUG)
+useEmaCrossRules = input.bool(true, "Use EMA Cross Rules", group=GP_FILTERS, tooltip="When enabled, allows entries when price crosses ema 9 but not ema 40")
+enableAllEmaCross = input.bool(true, "Enable Bear Cross (all emas)", group=GP_FILTERS, tooltip="When enabled, allows entries when price crosses all EMAs, while still respecting other filters")
+
+// === Original Input Parameters (Grouped) ===
+minCandle1Size = input.float(0.1, "Min Candle 1 Size (absolute units)", minval=0.0001, group=GP_CANDLES)
+minCandle2Pct = input.float(0.1, "Min Candle 2 Body Size as % of Candle 1", minval=0.01, group=GP_CANDLES)
+maxCandle2Pct = input.float(0.5, "Max Candle 2 Body Size as % of Candle 1", minval=0.01, group=GP_CANDLES)
+minCandle3Pct = input.float(0.6, "Min Candle 3 Body Size as % of Candle 1", minval=0.01, group=GP_CANDLES)
+maxCandle3Pct = input.float(1.5, "Max Candle 3 Body Size as % of Candle 1", minval=0.01, group=GP_CANDLES)
+
+// === Filters and Setup ===
+enableLong = input.bool(true, "Enable Long Positions", group=GP_FILTERS)
+enableShort = input.bool(true, "Enable Short Positions", group=GP_FILTERS)
+useTrendFilter = input.bool(true, "Use Trend Filter", group=GP_FILTERS)
+useNoTradeZone = true
+useVolumeFilter = input.bool(false, "Use Volume Filter", group=GP_FILTERS)
+minVolume = input.float(1.5, "Minimum Volume Multiplier", minval=0.1, step=0.1, group=GP_FILTERS)
+
+// === Stochastic Configuration ===
+useStochFilter = input.bool(false, "Use Stochastic Filter", group=GP_STOCH)
+stochLength = input.int(21, "Stochastic Length", group=GP_STOCH)
+stochOverbought = input.float(50, "Stoch Overbought", group=GP_STOCH)
+stochOversold = input.float(50, "Stoch Oversold", group=GP_STOCH)
+
+// === Risk Management ===
+tpType = input.string("RR-Based", "Take Profit Type", options=["RR-Based", "Percentage From Entry"], group=GP_RISK)
+profitTargetRR = input.float(1.0, "Take Profit Ratio (vs SL)", group=GP_RISK)
+tpPercent = input.float(1.0, "Take Profit % From Entry", group=GP_RISK)
+slType = input.string("Below Candle Wick", "Stop Loss Type", options=["Below Candle Body", "Below Candle Wick", "Percentage", "Lowest Low"], group=GP_RISK)
+slPercent = input.float(1.0, "Stop Loss %", group=GP_RISK)
+slCandlesLookback = input.int(10, "Number of Candles for Lowest Low", minval=1, group=GP_RISK)
+
+// === Price Comparison Configuration ===
+priceBufferPct = input.float(0.001, "Price Comparison Buffer (%)", minval=0.0, maxval=100.0, group=GP_PRICE)
+
+// === Pattern Configuration ===
+enable123 = input.bool(true, "Enable 123 Pattern", group=GP_PATTERNS)
+enablePFR = input.bool(true, "Enable PFR Pattern", group=GP_PATTERNS)
+enableEngulfing = input.bool(true, "Enable Engulfing Pattern", group=GP_PATTERNS)
+
+// === MACD Configuration ===
+useMacdConfirmation = input.bool(false, "Use MACD Confirmation", group=GP_MACD)
+macdFastLength = input.int(12, "MACD Fast Length", group=GP_MACD)
+macdSlowLength = input.int(26, "MACD Slow Length", group=GP_MACD)
+macdSignalLength = input.int(9, "MACD Signal Length", group=GP_MACD)
+
+// === PFR Configuration ===
+// pfrUseWicks = input.bool(true, "Use Wicks for PFR Detection", group=GP_PFR, tooltip="When enabled, uses candle wicks (high/low) for PFR detection. When disabled, uses candle bodies (open/close)")
+pfrUseWicks = false
+
+// === Helper Functions ===
+calcWinRate(wins, total) => total == 0 ? 0.0 : (wins / total) * 100
+formatDuration(mins) => math.floor(mins / 60) > 0 ? str.tostring(math.floor(mins / 60)) + "h " + str.tostring(mins % 60) + "m" : str.tostring(mins % 60) + "m"
+crossesAbove(candleOpen, candleClose, emaValue) => candleOpen < emaValue and candleClose > emaValue
+crossesBelow(candleOpen, candleClose, emaValue) => candleOpen > emaValue and candleClose < emaValue
+crossesEma(candleOpen, candleClose, emaValue) => crossesAbove(candleOpen, candleClose, emaValue) or crossesBelow(candleOpen, candleClose, emaValue)
+roundValue(value) => math.round(value * 1000) / 1000  // Round to 3 decimal places
+
+prevOpen = open[1]
+prevClose = close[1]
+prevHigh = high[1]
+prevLow = low[1]
+currOpen = open
+currClose = close
+currHigh = high
+currLow = low
+
+// Price comparison with buffer
+comparePrice(value1, value2, operator) =>
+    buffer = value2 * (priceBufferPct / 100)
+    
+    if operator == ">"
+        value1 > (value2 - buffer)  // X > Y: X must be greater than Y minus buffer
+    else if operator == ">="
+        value1 >= (value2 - buffer)  // X >= Y: X must be greater than or equal to Y minus buffer
+    else if operator == "<"
+        value1 < (value2 + buffer)  // X < Y: X must be less than Y plus buffer
+    else if operator == "<="
+        value1 <= (value2 + buffer)  // X <= Y: X must be less than or equal to Y plus buffer
+    else if operator == "=="
+        math.abs(value1 - value2) <= buffer  // X == Y: difference must be within buffer
+    else
+        false
+
+// Function to identify a Bullish Engulfing pattern
+isBullishEngulfing() =>
+    prevBearish = prevClose < prevOpen
+    currBullish = currClose > currOpen
+    engulfsBody = currOpen <= prevClose and currClose >= prevOpen
+    prevBearish and currBullish and engulfsBody
+
+// Function to identify a Bearish Engulfing pattern
+isBearishEngulfing() =>
+    prevBullish = prevClose > prevOpen
+    currBearish = currClose < currOpen
+    engulfsBody = currOpen >= prevClose and currClose <= prevOpen
+    prevBullish and currBearish and engulfsBody
+
+// Function to identify a Bullish PFR pattern
+isBullishPFR() =>
+    makesNewLow = pfrUseWicks ? comparePrice(low, ta.lowest(low[1], 2), "<") : comparePrice(open, ta.lowest(open[1], 2), "<")
+    closesAbovePrev = comparePrice(close, close[1], ">")
+    bodyLargerThanPrev = comparePrice(math.abs(close - open), math.abs(close[1] - open[1]), ">")
+    currBullish = currClose > currOpen
+    prevTwoRed = close[2] < open[2]  // Candle 2 must be red
+    makesNewLow and closesAbovePrev and bodyLargerThanPrev and currBullish and prevTwoRed
+
+// Function to identify a Bearish PFR pattern
+isBearishPFR() =>
+    makesNewHigh = pfrUseWicks ? comparePrice(high, ta.highest(high[1], 2), ">") : comparePrice(open, ta.highest(high[1], 2), ">")
+    closesBelowPrev = comparePrice(close, close[1], "<")
+    bodyLargerThanPrev = comparePrice(math.abs(close - open), math.abs(close[1] - open[1]), ">")
+    currBearish = currClose < currOpen
+    prevTwoGreen = close[2] > open[2]  // Candle 2 must be green
+    makesNewHigh and closesBelowPrev and bodyLargerThanPrev and currBearish and prevTwoGreen
+
+// === EMA/SMA Configuration ===
+maGroup = "Moving Average Settings"
+maType = input.string("EMA", "MA Type", options=["EMA", "SMA"], group=maGroup)
+fastLength = input.int(9, "Fast MA Length", minval=1, group=maGroup)
+mediumLength = input.int(40, "Medium MA Length", minval=1, group=maGroup)
+slowLength = input.int(80, "Slow MA Length", minval=1, group=maGroup)
+
+// === Technical Indicators ===
+fastMA = maType == "EMA" ? ta.ema(close, fastLength) : ta.sma(close, fastLength)
+mediumMA = maType == "EMA" ? ta.ema(close, mediumLength) : ta.sma(close, mediumLength)
+slowMA = maType == "EMA" ? ta.ema(close, slowLength) : ta.sma(close, slowLength)
+
+plot(fastMA, color=color.blue, title="Fast MA")
+plot(mediumMA, color=color.green, title="Medium MA")
+plot(slowMA, color=color.red, title="Slow MA")
+
+// Stochastic
+k = ta.stoch(close, high, low, stochLength)
+
+// MACD
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+macdBullish = histLine > 0
+macdBearish = histLine < 0
+
+// Volume filter
+volumeThreshold = ta.sma(volume, 20) * minVolume
+volumeOk = not useVolumeFilter or volume > volumeThreshold
+
+// === Trend & Filters ===
+isInNoTradeZone = useNoTradeZone and close > math.min(mediumMA, slowMA) and close < math.max(mediumMA, slowMA)
+isInTradeZone = not isInNoTradeZone
+trendOkBull = not useTrendFilter or (fastMA > mediumMA and mediumMA > slowMA)
+trendOkBear = not useTrendFilter or (slowMA > mediumMA and mediumMA > fastMA)
+stochOkBull = not useStochFilter or k < stochOversold
+stochOkBear = not useStochFilter or k > stochOverbought
+
+// === 123 Pattern ===
+check123(c1, c2, c3) =>
+    // Prevent access to future bars (negative indexes like -1, -2)
+    // and ensure we have enough past bars available
+    minBack = math.min(c1, c2, c3)
+    maxBack = math.max(c1, c2, c3)
+    if minBack < 0 or bar_index < maxBack
+        [false, false]
+    else
+        body1 = math.abs(close[c1] - open[c1])
+        body2 = math.abs(close[c2] - open[c2])
+        body3 = math.abs(close[c3] - open[c3])
+        isValidC1 = body1 >= minCandle1Size
+        isValidC2 = body2 >= body1 * minCandle2Pct and body2 <= body1 * maxCandle2Pct
+        isValidC3 = body3 >= body1 * minCandle3Pct and body3 <= body1 * maxCandle3Pct
+        isBull = close[c1] < open[c1] and close[c3] > open[c3]  // No buffer needed for same candle comparison
+        isBear = close[c1] > open[c1] and close[c3] < open[c3]  // No buffer needed for same candle comparison
+        [isBull and isValidC1 and isValidC2 and isValidC3, isBear and isValidC1 and isValidC2 and isValidC3]
+        
+// === Pattern Detection ===
+// [b123a, br123a] = check123(2, 1, 0)
+// [b123b, br123b] = check123(1, 0, -1)
+// [b123c, br123c] = check123(0, -1, -2)
+// bull123 = b123a or b123b or b123c
+// bear123 = br123a or br123b or br123c
+[bull123, bear123] = check123(2, 1, 0)
+
+
+// === Pattern Detection Functions ===
+check123EmaCross(isBullish) =>
+    if not useEmaCrossRules
+        true
+    else
+        candle0CrossesFastMA = isBullish ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+        noMediumMACross0 = not crossesEma(open, close, mediumMA)
+        noSlowMACross0 = not crossesEma(open, close, slowMA)
+        
+        // Check if all MAs cross
+        candle0CrossesMediumMA = isBullish ? crossesAbove(open, close, mediumMA) : crossesBelow(open, close, mediumMA)
+        candle0CrossesSlowMA = isBullish ? crossesAbove(open, close, slowMA) : crossesBelow(open, close, slowMA)
+        allMAsCross = candle0CrossesFastMA and candle0CrossesMediumMA and candle0CrossesSlowMA
+        
+        // Entry is valid if either:
+        // 1. Only Fast MA crosses and no other MAs cross (original logic)
+        // 2. All MAs cross (new logic)
+        (candle0CrossesFastMA and noMediumMACross0 and noSlowMACross0) or (enableAllEmaCross and allMAsCross)
+
+checkPFREmaCross(isBullish) =>
+    if not useEmaCrossRules
+        true
+    else
+        candle0CrossesFastMA = isBullish ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+        noMediumMACross0 = not crossesEma(open, close, mediumMA)
+        noSlowMACross0 = not crossesEma(open, close, slowMA)
+        
+        candle0CrossesMediumMA = isBullish ? crossesAbove(open, close, mediumMA) : crossesBelow(open, close, mediumMA)
+        candle0CrossesSlowMA = isBullish ? crossesAbove(open, close, slowMA) : crossesBelow(open, close, slowMA)
+        allMAsCross = candle0CrossesFastMA and candle0CrossesMediumMA and candle0CrossesSlowMA
+        
+        (candle0CrossesFastMA and noMediumMACross0 and noSlowMACross0) or (enableAllEmaCross and allMAsCross)
+
+checkEngulfingEmaCross(isBullish) =>
+    if not useEmaCrossRules
+        true
+    else
+        candle0CrossesFastMA = isBullish ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+        noMediumMACross = not crossesEma(open, close, mediumMA)
+        noSlowMACross = not crossesEma(open, close, slowMA)
+        
+        candle0CrossesMediumMA = isBullish ? crossesAbove(open, close, mediumMA) : crossesBelow(open, close, mediumMA)
+        candle0CrossesSlowMA = isBullish ? crossesAbove(open, close, slowMA) : crossesBelow(open, close, slowMA)
+        allMAsCross = candle0CrossesFastMA and candle0CrossesMediumMA and candle0CrossesSlowMA
+        
+        (candle0CrossesFastMA and noMediumMACross and noSlowMACross) or (enableAllEmaCross and allMAsCross)
+
+// === Helper Functions for Price Comparisons ===
+isBullishCandle(candleOpen, candleClose) => candleClose > candleOpen
+isBearishCandle(candleOpen, candleClose) => candleClose < candleOpen
+getCandleBody(candleOpen, candleClose) => math.abs(candleClose - candleOpen)
+getCandleDirection(candleOpen, candleClose) => isBullishCandle(candleOpen, candleClose) ? "Bullish" : "Bearish"
+
+// === Pattern Variables ===
+reversalBody = getCandleBody(open, close)
+prevBody1 = getCandleBody(open[1], close[1])
+prevBody2 = getCandleBody(open[2], close[2])
+bullishCandle = isBullishCandle(open, close)
+bearishCandle = isBearishCandle(open, close)
+prevTwoRed = isBearishCandle(open[1], close[1]) and isBearishCandle(open[2], close[2])
+prevTwoGreen = isBullishCandle(open[1], close[1]) and isBullishCandle(open[2], close[2])
+
+// === Pattern Condition Variables ===
+// PFR Conditions
+pfrBullishBodyBreak = comparePrice(close, close[1], ">")  // Current close is above previous close
+pfrBearishBodyBreak = comparePrice(close, close[1], "<")  // Current close is below previous close
+pfrBullishNewLow = low <= math.min(low[1], low[2])        // Makes new low
+pfrBearishNewHigh = high >= math.max(high[1], high[2])    // Makes new high
+
+// Engulfing Conditions
+engulfBullishPrevBearish = close[1] < open[1]
+engulfBearishPrevBullish = close[1] > open[1]
+// For bullish engulfing, current open must be below previous low and close above previous high
+engulfBullishOpenOk = open > open[1]
+engulfBullishCloseOk = close > close[1]
+// For bearish engulfing, current open must be above previous high and close below previous low
+engulfBearishOpenOk = open > open[1]
+engulfBearishCloseOk = close < close[1]
+
+// === Pattern Detection (without EMA rules) ===
+isBullEngulf = bullishCandle and isBullishEngulfing()
+isBearEngulf = bearishCandle and isBearishEngulfing()
+
+// Basic pattern detection without EMA rules
+bullishPFR = enablePFR and isBullishPFR()
+bearishPFR = enablePFR and isBearishPFR()
+
+// === Entry Condition Variables ===
+// Pattern with EMA conditions
+bullish123WithEma = enable123 and bull123 and (not useEmaCrossRules or crossesAbove(open, close, fastMA))
+bearish123WithEma = enable123 and bear123 and (not useEmaCrossRules or crossesBelow(open, close, fastMA))
+bullishPFRWithEma = enablePFR and bullishPFR and (not useEmaCrossRules or crossesAbove(open, close, fastMA))
+bearishPFRWithEma = enablePFR and bearishPFR and (not useEmaCrossRules or crossesBelow(open, close, fastMA))
+bullishEngulfWithEma = enableEngulfing and isBullEngulf and (not useEmaCrossRules or crossesAbove(open, close, fastMA))
+bearishEngulfWithEma = enableEngulfing and isBearEngulf and (not useEmaCrossRules or crossesBelow(open, close, fastMA))
+
+// Check if all MAs cross (only used when both useEmaCrossRules and enableAllEmaCross are true)
+allMAsCrossBull = useEmaCrossRules and enableAllEmaCross and crossesAbove(open, close, fastMA) and crossesAbove(open, close, mediumMA) and crossesAbove(open, close, slowMA)
+allMAsCrossBear = useEmaCrossRules and enableAllEmaCross and crossesBelow(open, close, fastMA) and crossesBelow(open, close, mediumMA) and crossesBelow(open, close, slowMA)
+
+// Final entry conditions
+longCondition = enableLong and trendOkBull and stochOkBull and volumeOk and (not useMacdConfirmation or macdBullish) and useEmaCrossRules and ((enable123 and bull123 and (crossesAbove(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBull))) or (enablePFR and bullishPFR and (crossesAbove(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBull))) or (enableEngulfing and isBullEngulf and (crossesAbove(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBull))))
+
+shortCondition = enableShort and trendOkBear and stochOkBear and volumeOk and (not useMacdConfirmation or macdBearish) and useEmaCrossRules and ((enable123 and bear123 and (crossesBelow(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBear))) or (enablePFR and bearishPFR and (crossesBelow(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBear))) or (enableEngulfing and isBearEngulf and (crossesBelow(open, close, fastMA) or (enableAllEmaCross and allMAsCrossBear))))
+
+// === Pattern Label Construction ===
+getPatternText() =>
+    patterns = array.new_string(), isBullish = false, isBearish = false
+    
+    if enable123 and bull123
+        array.push(patterns, "123")
+        isBullish := true
+    
+    if enablePFR and bullishPFR
+        array.push(patterns, "PFR")
+        isBullish := true
+    
+    if enableEngulfing and isBullEngulf
+        array.push(patterns, "ENG")
+        isBullish := true
+        
+    if enable123 and bear123
+        array.push(patterns, "123")
+        isBearish := true
+    
+    if enablePFR and bearishPFR
+        array.push(patterns, "PFR")
+        isBearish := true
+    
+    if enableEngulfing and isBearEngulf
+        array.push(patterns, "ENG")
+        isBearish := true
+    
+    patternText = ""
+    if array.size(patterns) > 0
+        patternText := array.get(patterns, 0)
+        if array.size(patterns) > 1
+            for i = 1 to array.size(patterns) - 1
+                patternText := patternText + " + " + array.get(patterns, i)
+        
+        if (isBullish and longCondition) or (isBearish and shortCondition)
+            patternText := patternText + " *"
+    
+    [patternText, isBullish, isBearish]
+
+
+// === Build Reasons Function ===
+buildReasons(isLong) =>
+    r = ""
+    if useTrendFilter
+        r := r + (isLong ? not trendOkBull ? "❌ Trend Filter\n" : "✅ Trend Filter\n" : not trendOkBear ? "❌ Trend Filter\n" : "✅ Trend Filter\n")
+    if useStochFilter
+        r := r + (isLong ? not stochOkBull ? "❌ Stoch Filter\n" : "✅ Stoch Filter\n" : not stochOkBear ? "❌ Stoch Filter\n" : "✅ Stoch Filter\n")
+    r := r + (isLong ? not enableLong ? "❌ Long Disabled\n" : "✅ Long Enabled\n" : not enableShort ? "❌ Short Disabled\n" : "✅ Short Enabled\n")
+    if useNoTradeZone
+        r := r + (isInNoTradeZone ? "❌ In No Trade Zone (EMA40-80)\n" : "✅ Clear Trading Zone\n")
+    if useVolumeFilter
+        r := r + (not volumeOk ? "❌ Volume Filter\n" : "✅ Volume Filter\n")
+    
+    // Add MACD confirmation status
+    if useMacdConfirmation
+        r := r + (isLong ? not macdBullish ? "❌ MACD Confirmation\n" : "✅ MACD Confirmation\n" : not macdBearish ? "❌ MACD Confirmation\n" : "✅ MACD Confirmation\n")
+    
+    // Add EMA cross status for each pattern type
+    if useEmaCrossRules
+        if bull123 or bear123
+            r := r + "\n123 Pattern EMA Cross Details:\n"
+            candle0CrossesFastMA = isLong ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+            noMediumMACross0 = not crossesEma(open, close, mediumMA)
+            noSlowMACross0 = not crossesEma(open, close, slowMA)
+            r := r + "  Current Candle:\n"
+            r := r + "    Open: " + str.tostring(open) + " Close: " + str.tostring(close) + "\n"
+            r := r + "    Fast MA: " + str.tostring(fastMA) + " Cross: " + (candle0CrossesFastMA ? "✅" : "❌") + "\n"
+            r := r + "    Medium MA: " + str.tostring(mediumMA) + " No Cross: " + (noMediumMACross0 ? "✅" : "❌") + "\n"
+            r := r + "    Slow MA: " + str.tostring(slowMA) + " No Cross: " + (noSlowMACross0 ? "✅" : "❌") + "\n"
+            r := r + (check123EmaCross(isLong) ? "✅ 123 EMA Cross\n" : "❌ 123 EMA Cross\n")
+        
+        if bullishPFR or bearishPFR
+            r := r + "\nPFR Pattern EMA Cross Details:\n"
+            candle0CrossesFastMA = isLong ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+            noMediumMACross0 = not crossesEma(open, close, mediumMA)
+            noSlowMACross0 = not crossesEma(open, close, slowMA)
+            r := r + "  Current Candle:\n"
+            r := r + "    Open: " + str.tostring(open) + " Close: " + str.tostring(close) + "\n"
+            r := r + "    Fast MA: " + str.tostring(fastMA) + " Cross: " + (candle0CrossesFastMA ? "✅" : "❌") + "\n"
+            r := r + "    Medium MA: " + str.tostring(mediumMA) + " No Cross: " + (noMediumMACross0 ? "✅" : "❌") + "\n"
+            r := r + "    Slow MA: " + str.tostring(slowMA) + " No Cross: " + (noSlowMACross0 ? "✅" : "❌") + "\n"
+            r := r + (checkPFREmaCross(isLong) ? "✅ PFR EMA Cross\n" : "❌ PFR EMA Cross\n")
+        
+        if isBullEngulf or isBearEngulf
+            r := r + "\nEngulfing Pattern EMA Cross Details:\n"
+            candle0CrossesFastMA = isLong ? crossesAbove(open, close, fastMA) : crossesBelow(open, close, fastMA)
+            noMediumMACross = not crossesEma(open, close, mediumMA)
+            noSlowMACross = not crossesEma(open, close, slowMA)
+            r := r + "  Current Candle:\n"
+            r := r + "    Open: " + str.tostring(open) + " Close: " + str.tostring(close) + "\n"
+            r := r + "    Fast MA: " + str.tostring(fastMA) + " Cross: " + (candle0CrossesFastMA ? "✅" : "❌") + "\n"
+            r := r + "    Medium MA: " + str.tostring(mediumMA) + " No Cross: " + (noMediumMACross ? "✅" : "❌") + "\n"
+            r := r + "    Slow MA: " + str.tostring(slowMA) + " No Cross: " + (noSlowMACross ? "✅" : "❌") + "\n"
+            r := r + (checkEngulfingEmaCross(isLong) ? "✅ Engulfing EMA Cross\n" : "❌ Engulfing EMA Cross\n")
+    
+    // Add entry condition status
+    r := r + "\nEntry Conditions:\n"
+    if isLong
+        r := r + (bullish123WithEma ? "✅ 123 Pattern with EMA\n" : "❌ 123 Pattern with EMA\n")
+        r := r + (bullishPFRWithEma ? "✅ PFR Pattern with EMA\n" : "❌ PFR Pattern with EMA\n")
+        r := r + (bullishEngulfWithEma ? "✅ Engulfing Pattern with EMA\n" : "❌ Engulfing Pattern with EMA\n")
+        r := r + (longCondition ? "✅ All Long Conditions Met\n" : "❌ Long Conditions Not Met\n")
+    else
+        r := r + (bearish123WithEma ? "✅ 123 Pattern with EMA\n" : "❌ 123 Pattern with EMA\n")
+        r := r + (bearishPFRWithEma ? "✅ PFR Pattern with EMA\n" : "❌ PFR Pattern with EMA\n")
+        r := r + (bearishEngulfWithEma ? "✅ Engulfing Pattern with EMA\n" : "❌ Engulfing Pattern with EMA\n")
+        r := r + (shortCondition ? "✅ All Short Conditions Met\n" : "❌ Short Conditions Not Met\n")
+    r
+
+// === Risk Management Calculations ===
+bullSL = slType == "Percentage" ? high * (1 - slPercent / 100) : 
+         slType == "Below Candle Wick" ? math.min(low, low[1], low[2]) - syminfo.mintick : 
+         slType == "Lowest Low" ? ta.lowest(low, slCandlesLookback) - syminfo.mintick :
+         math.min(open, open[1], open[2]) - syminfo.mintick
+
+bearSL = slType == "Percentage" ? low * (1 + slPercent / 100) : 
+         slType == "Below Candle Wick" ? math.max(high, high[1], high[2]) + syminfo.mintick : 
+         slType == "Lowest Low" ? ta.highest(high, slCandlesLookback) + syminfo.mintick :
+         math.max(close, close[1], close[2]) + syminfo.mintick
+
+longEntry = high + syminfo.mintick
+shortEntry = low - syminfo.mintick
+longTP = tpType == "Percentage From Entry" ? longEntry * (1 + tpPercent / 100) : longEntry + (longEntry - bullSL) * profitTargetRR
+shortTP = tpType == "Percentage From Entry" ? shortEntry * (1 - tpPercent / 100) : shortEntry - (bearSL - shortEntry) * profitTargetRR
+
+// === Modified Label Display ===
+if showPatternLabels
+    [patternText, isBullish, isBearish] = getPatternText()
+    
+    if bull123 or bear123 or bullishPFR or bearishPFR or isBullEngulf or isBearEngulf
+        tooltipText = ""
+        if isBullish
+            tooltipText := str.contains(patternText, "*") ? 
+                          "LONG ENTRY\nEntry: " + str.tostring(longEntry) + 
+                          "\nTP: " + str.tostring(longTP) + 
+                          "\nSL: " + str.tostring(bullSL) + 
+                          "\n\nFilters:\n" + buildReasons(true) :
+                          "NO ENTRY\n" + buildReasons(true)
+        else
+            tooltipText := str.contains(patternText, "*") ? 
+                          "SHORT ENTRY\nEntry: " + str.tostring(shortEntry) + 
+                          "\nTP: " + str.tostring(shortTP) + 
+                          "\nSL: " + str.tostring(bearSL) + 
+                          "\n\nFilters:\n" + buildReasons(false) :
+                          "NO ENTRY\n" + buildReasons(false)
+        
+        label.new(bar_index, 
+                 isBullish ? low : high,
+                 patternText,
+                 color=isBullish ? color.green : color.red,
+                 style=isBullish ? label.style_label_up : label.style_label_down,
+                 textcolor=color.white,
+                 tooltip=tooltipText)
+
+// Optional: Add visual indication of no trade zone
+noTradeZoneBgColor = useNoTradeZone and isInNoTradeZone ? color.new(color.red, 90) : na
+bgcolor(noTradeZoneBgColor)
+
+// === Alert Conditions ===
+alertcondition(longCondition, title="Long Entry Signal", message="LONG {{ticker}} | Entry: {{close}} | TP: {{str.tostring(longTP)}} | SL: {{str.tostring(bullSL)}} | Last Candle: O={{open}} C={{close}}")
+alertcondition(shortCondition, title="Short Entry Signal", message="SHORT {{ticker}} | Entry: {{close}} | TP: {{str.tostring(shortTP)}} | SL: {{str.tostring(bearSL)}} | Last Candle: O={{open}} C={{close}}")
+
+// === Trade Execution ===
+if longCondition
+    strategy.entry("Long", strategy.long, limit=longEntry)
+    strategy.exit("TP/SL Long", from_entry="Long", stop=bullSL, limit=longTP)
+
+if shortCondition
+    strategy.entry("Short", strategy.short, limit=shortEntry)
+    strategy.exit("TP/SL Short", from_entry="Short", stop=bearSL, limit=shortTP)
+
+// Function to build pattern detection details for any candle
+buildPatternDebugDetails() =>
+    r = ""
+    
+    // 123 Pattern Analysis
+    r := r + "123 Pattern Analysis:\n"
+    body1 = math.abs(close[2] - open[2])
+    body2 = math.abs(close[1] - open[1])
+    body3 = math.abs(close - open)
+    
+    // Check if candle 1 meets minimum size
+    isValidC1 = body1 >= minCandle1Size
+    r := r + "Candle 1 (2 bars ago):\n"
+    r := r + "  Size: " + str.tostring(body1) + " (Min: " + str.tostring(minCandle1Size) + ")\n"
+    r := r + "  Status: " + (isValidC1 ? "✅" : "❌") + "\n"
+    
+    // Check if candle 2 meets size requirements
+    minC2 = body1 * minCandle2Pct
+    maxC2 = body1 * maxCandle2Pct
+    isValidC2 = body2 >= minC2 and body2 <= maxC2
+    r := r + "Candle 2 (1 bar ago):\n"
+    r := r + "  Size: " + str.tostring(body2) + " (Range: " + str.tostring(minC2) + " to " + str.tostring(maxC2) + ")\n"
+    r := r + "  Status: " + (isValidC2 ? "✅" : "❌") + "\n"
+    
+    // Check if candle 3 meets size requirements
+    minC3 = body1 * minCandle3Pct
+    maxC3 = body1 * maxCandle3Pct
+    isValidC3 = body3 >= minC3 and body3 <= maxC3
+    r := r + "Candle 3 (current):\n"
+    r := r + "  Size: " + str.tostring(body3) + " (Range: " + str.tostring(minC3) + " to " + str.tostring(maxC3) + ")\n"
+    r := r + "  Status: " + (isValidC3 ? "✅" : "❌") + "\n"
+    
+    // Check direction
+    isBull = close[2] < open[2] and close > open
+    isBear = close[2] > open[2] and close < open
+    r := r + "Direction: " + (isBull ? "Bullish" : isBear ? "Bearish" : "No Reversal") + "\n"
+    r := r + "123 Pattern: " + (isValidC1 and isValidC2 and isValidC3 and (isBull or isBear) ? "✅" : "❌") + "\n\n"
+    
+    // PFR Pattern Analysis
+    r := r + "PFR Pattern Analysis:\n"
+    reversalBody = math.abs(close - open)
+    prevBody1 = math.abs(close[1] - open[1])
+    prevBody2 = math.abs(close[2] - open[2])
+    
+    // Bullish PFR conditions
+    bullishCandle = close > open
+    prevTwoRed = close[1] < open[1] and close[2] < open[2]
+    makesNewLow = low < ta.lowest(low[1], 2)
+    makesNewHigh = high > ta.highest(high[1], 2)
+    closesAbovePrev = close > close[1]
+    bodyLargerThanPrev = reversalBody > prevBody1 and reversalBody > prevBody2
+    
+    // Bearish PFR conditions
+    bearishCandle = close < open
+    prevTwoGreen = close[1] > open[1] and close[2] > open[2]
+    // makesNewHigh is already defined above
+    // makesNewLow is already defined above
+    closesBelowPrev = close < close[1]
+    
+    r := r + "Current Candle:\n"
+    r := r + "  Size: " + str.tostring(reversalBody) + "\n"
+    r := r + "  Direction: " + (bullishCandle ? "Bullish" : bearishCandle ? "Bearish" : "Neutral") + "\n"
+    r := r + "Previous Two Candles:\n"
+    r := r + "  Direction: " + (prevTwoRed ? "Both Red" : prevTwoGreen ? "Both Green" : "Mixed") + "\n"
+    r := r + "  Sizes: " + str.tostring(prevBody1) + ", " + str.tostring(prevBody2) + "\n"
+    r := r + "PFR Pattern: " + ((bullishCandle and prevTwoRed and makesNewLow and makesNewHigh and closesAbovePrev and bodyLargerThanPrev) or 
+                               (bearishCandle and prevTwoGreen and makesNewHigh and makesNewLow and closesBelowPrev and bodyLargerThanPrev) ? "✅" : "❌") + "\n\n"
+    
+    // Engulfing Pattern Analysis
+    r := r + "Engulfing Pattern Analysis:\n"
+    prevOpen = open[1]
+    prevClose = close[1]
+    prevHigh = high[1]
+    prevLow = low[1]
+    currOpen = open
+    currClose = close
+    currHigh = high
+    currLow = low
+    
+    // Bullish engulfing conditions
+    prevBearish = prevClose < prevOpen
+    currBullish = currClose > currOpen
+    engulfsBody = currOpen <= prevClose and currClose >= prevOpen
+    
+    // Bearish engulfing conditions
+    prevBullish = prevClose > prevOpen
+    currBearish = currClose < currOpen
+    
+    r := r + "Current Candle:\n"
+    r := r + "  Size: " + str.tostring(math.abs(currClose - currOpen)) + "\n"
+    r := r + "  Direction: " + (currBullish ? "Bullish" : currBearish ? "Bearish" : "Neutral") + "\n"
+    r := r + "Previous Candle:\n"
+    r := r + "  Size: " + str.tostring(math.abs(prevClose - prevOpen)) + "\n"
+    r := r + "  Direction: " + (prevClose > prevOpen ? "Bullish" : "Bearish") + "\n"
+    r := r + "Engulfing Pattern: " + ((prevBearish and currBullish and engulfsBody) or (prevBullish and currBearish and engulfsBody) ? "✅" : "❌") + "\n"
+    
+    r
+
+
+// === Debug Options ===
+// === Debug Functions ===
+// Add new debug options
+
+// Function to build PFR debug details
+buildPFRDebugDetails() =>
+    reasons = ""
+    isPFR = false
+    direction = ""
+    
+    if bullishCandle
+        if isBullishPFR()
+            isPFR := true
+            direction := "Bullish"
+            
+            // Add EMA cross debug information
+            candle0CrossesFastMA = crossesAbove(open, close, fastMA)
+            noMediumMACross0 = not crossesEma(open, close, mediumMA)
+            noSlowMACross0 = not crossesEma(open, close, slowMA)
+            candle0CrossesMediumMA = crossesAbove(open, close, mediumMA)
+            candle0CrossesSlowMA = crossesAbove(open, close, slowMA)
+            allMAsCross = candle0CrossesFastMA and candle0CrossesMediumMA and candle0CrossesSlowMA
+            
+            reasons := "✅ PFR Pattern Detected (Bullish)\n"
+            reasons := reasons + "  Current candle: O=" + str.tostring(open) + " C=" + str.tostring(close) + " (Green) Body=" + str.tostring(reversalBody) + "\n"
+            reasons := reasons + "  Previous candle: O=" + str.tostring(open[1]) + " C=" + str.tostring(close[1]) + " Body=" + str.tostring(prevBody1) + "\n"
+            reasons := reasons + "  Two bars ago: O=" + str.tostring(open[2]) + " C=" + str.tostring(close[2]) + " (Red) Body=" + str.tostring(prevBody2) + "\n"
+            reasons := reasons + "  Conditions met:\n"
+            reasons := reasons + "  - Current candle is bullish (green)\n"
+            reasons := reasons + "  - Candle 2 is bearish (red)\n"
+            reasons := reasons + (pfrUseWicks ? "  - Current low (" + str.tostring(low) + ") is lower than previous two lows (" + str.tostring(low[1]) + ", " + str.tostring(low[2]) + ")\n" : 
+                                 "  - Current open (" + str.tostring(open) + ") is lower than previous two opens (" + str.tostring(open[1]) + ", " + str.tostring(open[2]) + ")\n")
+            reasons := reasons + "  - Current close (" + str.tostring(close) + ") is above previous close (" + str.tostring(close[1]) + ")\n"
+            reasons := reasons + "  - Current body (" + str.tostring(reversalBody) + ") is larger than previous body (" + str.tostring(prevBody1) + ")\n"
+            reasons := reasons + "\nEMA Cross Details:\n"
+            reasons := reasons + "  Fast MA: " + str.tostring(fastMA) + " Cross: " + (candle0CrossesFastMA ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Medium MA: " + str.tostring(mediumMA) + " No Cross: " + (noMediumMACross0 ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Slow MA: " + str.tostring(slowMA) + " No Cross: " + (noSlowMACross0 ? "✅" : "❌") + "\n"
+            reasons := reasons + "  All MAs Cross: " + (allMAsCross ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Enable All EMA Cross: " + (enableAllEmaCross ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Final Entry Condition: " + (checkPFREmaCross(true) ? "✅" : "❌")
+        else
+            reasons := "❌ PFR Pattern Failed (Bullish)\n"
+            reasons := reasons + "  Current candle: O=" + str.tostring(open) + " C=" + str.tostring(close) + " (Green) Body=" + str.tostring(reversalBody) + "\n"
+            reasons := reasons + "  Previous candle: O=" + str.tostring(open[1]) + " C=" + str.tostring(close[1]) + " Body=" + str.tostring(prevBody1) + "\n"
+            reasons := reasons + "  Two bars ago: O=" + str.tostring(open[2]) + " C=" + str.tostring(close[2]) + " Body=" + str.tostring(prevBody2) + "\n"
+            reasons := reasons + "  Failed conditions:\n"
+            if not (close[2] < open[2])
+                reasons := reasons + "  - Candle 2 is not bearish (red)\n"
+            if not (pfrUseWicks ? low < ta.lowest(low[1], 2) : open < ta.lowest(open[1], 2))
+                reasons := reasons + (pfrUseWicks ? "  - Current low (" + str.tostring(low) + ") is not lower than previous two lows (" + str.tostring(low[1]) + ", " + str.tostring(low[2]) + ")\n" : 
+                                     "  - Current open (" + str.tostring(open) + ") is not lower than previous two opens (" + str.tostring(open[1]) + ", " + str.tostring(open[2]) + ")\n")
+            if not (close > close[1])
+                reasons := reasons + "  - Current close (" + str.tostring(close) + ") is not above previous close (" + str.tostring(close[1]) + ")\n"
+            if not (reversalBody > prevBody1)
+                reasons := reasons + "  - Current body (" + str.tostring(reversalBody) + ") is not larger than previous body (" + str.tostring(prevBody1) + ")\n"
+    
+    if bearishCandle
+        if isBearishPFR()
+            isPFR := true
+            direction := "Bearish"
+            
+            // Add EMA cross debug information
+            candle0CrossesFastMA = crossesBelow(open, close, fastMA)
+            noMediumMACross0 = not crossesEma(open, close, mediumMA)
+            noSlowMACross0 = not crossesEma(open, close, slowMA)
+            candle0CrossesMediumMA = crossesBelow(open, close, mediumMA)
+            candle0CrossesSlowMA = crossesBelow(open, close, slowMA)
+            allMAsCross = candle0CrossesFastMA and candle0CrossesMediumMA and candle0CrossesSlowMA
+            
+            reasons := "✅ PFR Pattern Detected (Bearish)\n"
+            reasons := reasons + "  Current candle: O=" + str.tostring(open) + " C=" + str.tostring(close) + " (Red) Body=" + str.tostring(reversalBody) + "\n"
+            reasons := reasons + "  Previous candle: O=" + str.tostring(open[1]) + " C=" + str.tostring(close[1]) + " Body=" + str.tostring(prevBody1) + "\n"
+            reasons := reasons + "  Two bars ago: O=" + str.tostring(open[2]) + " C=" + str.tostring(close[2]) + " Body=" + str.tostring(prevBody2) + "\n"
+            reasons := reasons + "  Conditions met:\n"
+            reasons := reasons + "  - Current candle is bearish (red)\n"
+            reasons := reasons + "  - Candle 2 is bullish (green)\n"
+            reasons := reasons + (pfrUseWicks ? "  - Current high (" + str.tostring(high) + ") is higher than previous two highs (" + str.tostring(high[1]) + ", " + str.tostring(high[2]) + ")\n" : 
+                                 "  - Current open (" + str.tostring(open) + ") is higher than previous two opens (" + str.tostring(open[1]) + ", " + str.tostring(open[2]) + ")\n")
+            reasons := reasons + "  - Current close (" + str.tostring(close) + ") is below previous close (" + str.tostring(close[1]) + ")\n"
+            reasons := reasons + "  - Current body (" + str.tostring(reversalBody) + ") is larger than previous body (" + str.tostring(prevBody1) + ")\n"
+            reasons := reasons + "\nEMA Cross Details:\n"
+            reasons := reasons + "  Fast MA: " + str.tostring(fastMA) + " Cross: " + (candle0CrossesFastMA ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Medium MA: " + str.tostring(mediumMA) + " No Cross: " + (noMediumMACross0 ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Slow MA: " + str.tostring(slowMA) + " No Cross: " + (noSlowMACross0 ? "✅" : "❌") + "\n"
+            reasons := reasons + "  All MAs Cross: " + (allMAsCross ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Enable All EMA Cross: " + (enableAllEmaCross ? "✅" : "❌") + "\n"
+            reasons := reasons + "  Final Entry Condition: " + (checkPFREmaCross(false) ? "✅" : "❌")
+        else
+            reasons := "❌ PFR Pattern Failed (Bearish)\n"
+            reasons := reasons + "  Current candle: O=" + str.tostring(open) + " C=" + str.tostring(close) + " (Red) Body=" + str.tostring(reversalBody) + "\n"
+            reasons := reasons + "  Previous candle: O=" + str.tostring(open[1]) + " C=" + str.tostring(close[1]) + " Body=" + str.tostring(prevBody1) + "\n"
+            reasons := reasons + "  Two bars ago: O=" + str.tostring(open[2]) + " C=" + str.tostring(close[2]) + " Body=" + str.tostring(prevBody2) + "\n"
+            reasons := reasons + "  Failed conditions:\n"
+            if not (close[2] > open[2])
+                reasons := reasons + "  - Candle 2 is not bullish (green)\n"
+            if not (pfrUseWicks ? high > ta.highest(high[1], 2) : open > ta.highest(open[1], 2))
+                reasons := reasons + (pfrUseWicks ? "  - Current high (" + str.tostring(high) + ") is not higher than previous two highs (" + str.tostring(high[1]) + ", " + str.tostring(high[2]) + ")\n" : 
+                                     "  - Current open (" + str.tostring(open) + ") is not higher than previous two opens (" + str.tostring(open[1]) + ", " + str.tostring(open[2]) + ")\n")
+            if not (close < close[1])
+                reasons := reasons + "  - Current close (" + str.tostring(close) + ") is not below previous close (" + str.tostring(close[1]) + ")\n"
+            if not (reversalBody > prevBody1)
+                reasons := reasons + "  - Current body (" + str.tostring(reversalBody) + ") is not larger than previous body (" + str.tostring(prevBody1) + ")\n"
+    
+    reasons
+
+// Function to build 123 debug details
+build123DebugDetails() =>
+    r = ""
+    body1 = math.abs(close[2] - open[2])
+    body2 = math.abs(close[1] - open[1])
+    body3 = math.abs(close - open)
+    
+    // Calculate required ranges
+    minC2 = body1 * minCandle2Pct
+    maxC2 = body1 * maxCandle2Pct
+    minC3 = body1 * minCandle3Pct
+    maxC3 = body1 * maxCandle3Pct
+    
+    r := r + "123 Pattern Analysis:\n"
+    r := r + "Candle 1 (2 bars ago):\n"
+    r := r + "  Open: " + str.tostring(open[2]) + " Close: " + str.tostring(close[2]) + "\n"
+    r := r + "  Body Size: " + str.tostring(body1) + "\n"
+    r := r + "  Min Required: " + str.tostring(minCandle1Size) + "\n"
+    r := r + "  Status: " + (body1 >= minCandle1Size ? "✅" : "❌") + "\n\n"
+    
+    r := r + "Candle 2 (1 bar ago):\n"
+    r := r + "  Open: " + str.tostring(open[1]) + " Close: " + str.tostring(close[1]) + "\n"
+    r := r + "  Body Size: " + str.tostring(body2) + "\n"
+    r := r + "  Required Range: " + str.tostring(minC2) + " to " + str.tostring(maxC2) + "\n"
+    r := r + "  Status: " + (body2 >= minC2 and body2 <= maxC2 ? "✅" : "❌") + "\n\n"
+    
+    r := r + "Candle 3 (current):\n"
+    r := r + "  Open: " + str.tostring(open) + " Close: " + str.tostring(close) + "\n"
+    r := r + "  Body Size: " + str.tostring(body3) + "\n"
+    r := r + "  Required Range: " + str.tostring(minC3) + " to " + str.tostring(maxC3) + "\n"
+    r := r + "  Status: " + (body3 >= minC3 and body3 <= maxC3 ? "✅" : "❌") + "\n\n"
+    
+    r := r + "Direction Check:\n"
+    isBull = close[2] < open[2] and close > open
+    isBear = close[2] > open[2] and close < open
+    r := r + "  Candle 1 Direction: " + (close[2] < open[2] ? "Bearish" : "Bullish") + "\n"
+    r := r + "  Candle 3 Direction: " + (close > open ? "Bullish" : "Bearish") + "\n"
+    r := r + "  Reversal: " + (isBull ? "Bullish" : isBear ? "Bearish" : "No Reversal") + "\n\n"
+    
+    r := r + "123 Pattern: " + (body1 >= minCandle1Size and body2 >= minC2 and body2 <= maxC2 and body3 >= minC3 and body3 <= maxC3 and (isBull or isBear) ? "✅" : "❌")
+    r
+
+// Function to build engulfing debug details
+buildEngulfingDebugDetails() =>
+    r = ""
+    prevOpen = open[1]
+    prevClose = close[1]
+    currOpen = open
+    currClose = close
+    
+    r := r + "Engulfing Pattern Analysis:\n"
+    r := r + "Current Candle:\n"
+    r := r + "  Body Size: " + str.tostring(math.abs(currClose - currOpen)) + "\n"
+    
+    r := r + "Previous Candle:\n"
+    r := r + "  Body Size: " + str.tostring(math.abs(prevClose - prevOpen)) + "\n"
+    
+    r := r + "Engulfing Conditions:\n"
+    
+    if bullishCandle
+        r := r + "  Previous Bearish: " + (prevClose < prevOpen ? "✅" : "❌") + "\n"
+        r := r + "  Current Bullish: " + (currClose > currOpen ? "✅" : "❌") + "\n"
+        r := r + "  Engulfs Body: " + (currOpen <= prevClose and currClose >= prevOpen ? "✅" : "❌") + "\n"
+        r := r + "    Current Open <= Previous Close: " + (currOpen <= prevClose ? "✅" : "❌") + "\n"
+        r := r + "    Current Close >= Previous Open: " + (currClose >= prevOpen ? "✅" : "❌") + "\n"
+    else if bearishCandle
+        r := r + "  Previous Bullish: " + (prevClose > prevOpen ? "✅" : "❌") + "\n"
+        r := r + "  Current Bearish: " + (currClose < currOpen ? "✅" : "❌") + "\n"
+        r := r + "  Engulfs Body: " + (currOpen >= prevClose and currClose <= prevOpen ? "✅" : "❌") + "\n"
+        r := r + "    Current Open >= Previous Close: " + (currOpen >= prevClose ? "✅" : "❌") + "\n"
+        r := r + "    Current Close <= Previous Open: " + (currClose <= prevOpen ? "✅" : "❌") + "\n"
+    else
+        r := r + "  No Engulfing Pattern Detected\n"
+    
+    r := r + "\nEngulfing Pattern: " + (isBullishEngulfing() or isBearishEngulfing() ? "✅" : "❌")
+    r
+
+// Show debug tooltips for each pattern type
+if showPFRDebug
+    label.new(bar_index, high + (high - low), 
+             "💡 PFR",
+             color=color.gray, 
+             style=label.style_label_down, 
+             textcolor=color.white,
+             tooltip=buildPFRDebugDetails())
+
+if show123Debug
+    label.new(bar_index, high + 2 * (high - low), 
+             "💡 123",
+             color=color.gray, 
+             style=label.style_label_down, 
+             textcolor=color.white,
+             tooltip=build123DebugDetails())
+
+if showEngulfingDebug
+    label.new(bar_index, high + 3 * (high - low), 
+             "💡 Engulfing",
+             color=color.gray, 
+             style=label.style_label_down, 
+             textcolor=color.white,
+             tooltip=buildEngulfingDebugDetails())
+
+// === Pattern Background Coloring ===
+var line pfrTopLine = na
+var line pfrBottomLine = na
+var linefill pfrFill = na
+var line pfrTopLine2 = na
+var line pfrBottomLine2 = na
+
+var line pattern123TopLine = na
+var line pattern123BottomLine = na
+var linefill pattern123Fill = na
+var line pattern123TopLine2 = na
+var line pattern123BottomLine2 = na
+
+var line engulfingTopLine = na
+var line engulfingBottomLine = na
+var linefill engulfingFill = na
+var line engulfingTopLine2 = na
+var line engulfingBottomLine2 = na
+
+// PFR Pattern Background
+if bullishPFR
+    pfrTopLine := line.new(bar_index[2], high[2], bar_index, high[2], color=color.new(color.green, 100))
+    pfrBottomLine := line.new(bar_index[1], math.min(low[1], low), bar_index, math.min(low[1], low), color=color.new(color.green, 100))
+    pfrFill := linefill.new(pfrTopLine, pfrBottomLine, color.new(color.green, 73))
+    
+    pfrTopLine2 := line.new(bar_index[2], high[2], bar_index, high[2], color=color.new(color.green, 100))
+    pfrBottomLine2 := line.new(bar_index[1], math.min(low[1], low), bar_index, math.min(low[1], low), color=color.new(color.green, 100))
+
+if bearishPFR
+    pfrTopLine := line.new(bar_index[1], math.max(high[1], high), bar_index, math.max(high[1], high), color=color.new(color.red, 100))
+    pfrBottomLine := line.new(bar_index[2], low[2], bar_index, low[2], color=color.new(color.red, 100))
+    pfrFill := linefill.new(pfrTopLine, pfrBottomLine, color.new(color.red, 73))
+    
+    pfrTopLine2 := line.new(bar_index[1], math.max(high[1], high), bar_index, math.max(high[1], high), color=color.new(color.red, 100))
+    pfrBottomLine2 := line.new(bar_index[2], low[2], bar_index, low[2], color=color.new(color.red, 100))
+
+// 123 Pattern Background
+if bull123
+    pattern123TopLine := line.new(bar_index[2], high[2], bar_index, high[2], color=color.new(color.green, 100))
+    pattern123BottomLine := line.new(bar_index[1], math.min(low[1], low), bar_index, math.min(low[1], low), color=color.new(color.green, 100))
+    pattern123Fill := linefill.new(pattern123TopLine, pattern123BottomLine, color.new(color.green, 73))
+    
+    pattern123TopLine2 := line.new(bar_index[2], high[2], bar_index, high[2], color=color.new(color.green, 100))
+    pattern123BottomLine2 := line.new(bar_index[1], math.min(low[1], low), bar_index, math.min(low[1], low), color=color.new(color.green, 100))
+
+if bear123
+    pattern123TopLine := line.new(bar_index[1], math.max(high[1], high), bar_index, math.max(high[1], high), color=color.new(color.red, 100))
+    pattern123BottomLine := line.new(bar_index[2], low[2], bar_index, low[2], color=color.new(color.red, 100))
+    pattern123Fill := linefill.new(pattern123TopLine, pattern123BottomLine, color.new(color.red, 73))
+    
+    pattern123TopLine2 := line.new(bar_index[1], math.max(high[1], high), bar_index, math.max(high[1], high), color=color.new(color.red, 100))
+    pattern123BottomLine2 := line.new(bar_index[2], low[2], bar_index, low[2], color=color.new(color.red, 100))
+
+// Engulfing Pattern Background
+if isBullEngulf
+    engulfingTopLine := line.new(bar_index[1], high[1], bar_index, high, color=color.new(color.green, 100))
+    engulfingBottomLine := line.new(bar_index[1], low[1], bar_index, low, color=color.new(color.green, 100))
+    engulfingFill := linefill.new(engulfingTopLine, engulfingBottomLine, color.new(color.green, 73))
+    
+    engulfingTopLine2 := line.new(bar_index[1], high[1], bar_index, high, color=color.new(color.green, 100))
+    engulfingBottomLine2 := line.new(bar_index[1], low[1], bar_index, low, color=color.new(color.green, 100))
+
+if isBearEngulf
+    engulfingTopLine := line.new(bar_index[1], high[1], bar_index, high, color=color.new(color.red, 100))
+    engulfingBottomLine := line.new(bar_index[1], low[1], bar_index, low, color=color.new(color.red, 100))
+    engulfingFill := linefill.new(engulfingTopLine, engulfingBottomLine, color.new(color.red, 73))
+    
+    engulfingTopLine2 := line.new(bar_index[1], high[1], bar_index, high, color=color.new(color.red, 100))
+    engulfingBottomLine2 := line.new(bar_index[1], low[1], bar_index, low, color=color.new(color.red, 100))
+
+// Update line positions for all patterns
+if not na(pfrTopLine)
+    pfrTopLine2.set_x2(bar_index)
+    pfrBottomLine2.set_x2(bar_index)
+
+if not na(pattern123TopLine)
+    pattern123TopLine2.set_x2(bar_index)
+    pattern123BottomLine2.set_x2(bar_index)
+
+if not na(engulfingTopLine)
+    engulfingTopLine2.set_x2(bar_index)
+    engulfingBottomLine2.set_x2(bar_index)

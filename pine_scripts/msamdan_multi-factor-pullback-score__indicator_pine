@@ -1,0 +1,204 @@
+//@version=6  
+indicator("MS - Intraday VWAP Pullback", overlay=true)  
+
+// ───────── Parametreler  
+groupW = "Ağırlıklar"
+wVal = input.float(0.05, "Ucuzluk (RS & 52h konum)", 0, 1, 0.05, group=groupW)
+wHead = input.float(0.10, "Gün içi baş alanı", 0, 1, 0.05, group=groupW) 
+wPos52 = input.float(0.05, "52h konum (ek)", 0, 1, 0.05, group=groupW)
+wCore = input.float(0.80, "Teknik/Momentum", 0, 1, 0.05, group=groupW)
+
+// Eşikler  
+groupTh  = "Eşikler"  
+minBuyScoreBase = input.float(0.58, "AL eşiği (taban, 0-1)", 0, 1, 0.01, group=groupTh)  
+sellDrop        = input.float(0.42, "Çıkış eşiği (0-1)",     0, 1, 0.01, group=groupTh)  
+maxDailyUp      = input.float(10.0,"Günlük tavan (%)", 1, 20, 0.1, group=groupTh)  
+hardBlock       = input.float(9.6, "Tam blok (%): üstünde AL=0", 0, 20, 0.1, group=groupTh)  
+softGate        = input.float(6.0, "Yumuşak kapı (%): üstünde kısmen bastır", 0, 20, 0.1, group=groupTh)  
+minHoldBarsInp  = input.int(3, "Min elde tutma (bar)", minval=0, group=groupTh)  
+minGapBarsInp   = input.int(3, "İki SAT arası min bar (anti-spam)", minval=0, group=groupTh)  
+
+// Momentum / Breakout Kolaylaştırıcı  
+groupMO = "Momentum Kolaylaştırıcı"  
+breakLookback = input.int(50, "Breakout lookback (bar)", minval=10, group=groupMO)  
+breakRSIplus  = input.int(5,  "Breakout için RSI ref +", minval=0, group=groupMO)  
+momentumBoost = input.float(0.14, "Breakout skora ek (0-1)", 0, 1, 0.01, group=groupMO)  
+breakEase     = input.float(0.04, "Breakout'ta AL eşiği indirimi", 0, 0.2, 0.01, group=groupMO)  
+stackedBoost  = input.bool(true, "Breakout + VWAP pullback birlikte ekstra +0.04", group=groupMO)  
+
+// Ucuz/Pahalı Bileşenleri  
+groupVal = "Ucuz/Pahalı"  
+bmSymbol = input.symbol("BIST:XU100", "Benchmark (RS)", group=groupVal)  
+lookRS   = input.int(126, "RS penceresi (gün)", 30, 400, group=groupVal)  
+lookPos  = input.int(252, "52h konum penceresi (gün)", 60, 500, group=groupVal)  
+maxPercRS= input.float(0.70, "RS üst yüzdelik (yumuşak sınır)", 0, 1, 0.01, group=groupVal)  
+
+// Teknik/Momentum  
+groupCore = "Teknik/Momentum"  
+emaLen   = input.int(50, "EMA", 1, 300, group=groupCore)  
+rsiLen   = input.int(14, "RSI", 1, 100, group=groupCore)  
+rsiRef   = input.int(54, "RSI referans (nötr→pozitif)", 1, 99, group=groupCore)  
+useVWAP  = input.bool(true, "VWAP pullback bonusu (yumuşatılmış)", group=groupCore)  
+softEMA  = input.bool(true, "EMA üstünde kademeli skor (require yerine)", group=groupCore)  
+
+// Dinamik eşik/yumuşatma  
+groupDyn = "Yumuşatma/Dinamik"  
+dynThreshOn = input.bool(true, "Volatiliteye göre AL eşiğini dinamikle", group=groupDyn)  
+atrLen      = input.int(14, "ATR (dinamik eşik)", 1, 200, group=groupDyn)  
+atrRefMult  = input.float(1.0, "ATR referans çarpanı", 0.2, 5, 0.1, group=groupDyn)  
+rsiEaseBand = input.int(6, "RSI rölanti bandı (rsiRef±)", 0, 20, group=groupDyn)  
+minEase     = input.float(0.02, "Min eşik indirimi", 0, 0.15, 0.01, group=groupDyn)  
+maxEase     = input.float(0.08, "Max eşik indirimi", 0, 0.2, 0.01, group=groupDyn)  
+pbMaxBonus  = input.float(0.10, "VWAP pullback maksimum bonus (yumuşak)", 0, 0.2, 0.01, group=groupDyn)  
+headSigmoid = input.bool(true, "Baş alanı için sigmoid yumuşatma", group=groupDyn)  
+
+// Görsel  
+groupUI    = "Görsel"  
+showLabels = input.bool(true, "Grafikte A/S etiketleri", group=groupUI)  
+
+// ───────── Yardımcılar  
+clamp01(x) => math.max(0.0, math.min(1.0, x))  
+
+pctRank(src, len) =>  
+    float r = na  
+    if not na(src)  
+        float cnt = 0.0, le = 0.0  
+        for i = 0 to len - 1  
+            v = src[i]  
+            if not na(v)  
+                cnt += 1.0  
+                le  += (v <= src ? 1.0 : 0.0)  
+        r := cnt > 0 ? le / cnt : na  
+    r  
+
+posBetween(src, len) =>  
+    float mn = ta.lowest(src, len), mx = ta.highest(src, len)  
+    mx > mn ? (src - mn) / (mx - mn) : 0.5  
+
+norm01(x, a, b) => clamp01((x - a) / math.max(b - a, 1e-9))  
+
+// ───────── Ucuzluk skorları  
+bmClose = request.security(bmSymbol, timeframe.period, close)  
+rs      = close / bmClose  
+rsPR    = pctRank(rs, lookRS)  
+posPR   = posBetween(close, lookPos)  
+
+rsCheap    = clamp01(1 - rsPR)  
+rsCheapAdj = rsPR <= maxPercRS ? rsCheap : rsCheap * norm01(maxPercRS, 0.0, rsPR)  
+posCheap   = clamp01(1 - posPR)  
+
+cheapScore = 0.6*rsCheapAdj + 0.4*posCheap  
+pos52Score = posCheap  
+
+// ───────── Gün içi baş alanı (yumuşatılmış)  
+dayOpen   = request.security(syminfo.tickerid, "D", open, barmerge.gaps_off, barmerge.lookahead_off)  
+dayChgPct = na(dayOpen) or dayOpen==0 ? 0.0 : (close/dayOpen - 1.0)*100.0  
+headroom  = maxDailyUp - dayChgPct  
+alpha = 1.2  
+headroomScoreRaw = clamp01(math.pow(headroom / maxDailyUp, alpha))  
+softFactor = dayChgPct <= softGate ? 1.0 : clamp01((maxDailyUp - dayChgPct)/(maxDailyUp - softGate))  
+headroomScore0 = (dayChgPct >= hardBlock) ? 0.0 : headroomScoreRaw * softFactor  
+// Sigmoid yumuşatma (opsiyonel)  
+sigmoid(x) => 1.0/(1.0 + math.exp(-6.0*(x-0.5)))  
+headroomScore = headSigmoid ? sigmoid(headroomScore0) : headroomScore0  
+
+// ───────── Teknik/Momentum  
+ema  = ta.ema(close, emaLen)  
+rsiV = ta.rsi(close, rsiLen)  
+vwap = ta.vwap  
+
+// EMA skoru: kademeli baskı  
+emaScoreSoft =  norm01(close/ema, 0.985, 1.015)
+emaScore = softEMA ? emaScoreSoft : (close > ema ? 1.0 : 0.0)  
+
+// RSI skoru  
+rsiScore = norm01(rsiV, rsiRef, 80)  
+
+// VWAP pullback bonusu: mesafe tabanlı yumuşak puan  
+vwDist = na(vwap) ? 0.0 : (close - vwap) / vwap  
+pulledBack = useVWAP and (low < vwap and close > vwap)  
+pbSoft = pulledBack ? clamp01(norm01(-vwDist, -0.01, 0.00)) * pbMaxBonus : 0.0  
+
+// Breakout tespiti  
+breakout = close > ta.highest(high, breakLookback)[1] and rsiV >= (rsiRef + breakRSIplus)  
+
+// coreScore formülü  
+coreBase = 0.55*emaScore + 0.35*rsiScore  
+coreScore = clamp01(coreBase + pbSoft + (breakout ? 0.08 : 0.0) + (stackedBoost and breakout and pulledBack ? 0.04 : 0.0))  
+
+// ───────── Toplam AL skoru  
+buyScore = clamp01(wVal*cheapScore + wHead*headroomScore + wPos52*pos52Score + wCore*coreScore)  
+
+// Breakout varsa skora boost + AL eşiğinde küçük indirim  
+buyScoreAdj = breakout ? clamp01(buyScore + momentumBoost) : buyScore  
+
+// ───────── Dinamik AL eşiği (volatilite/RSI bazlı)  
+atr = ta.atr(atrLen)  
+atrPct = atr/close  
+atrRef = ta.sma(atr/close, atrLen)  
+atrHot = atrPct > atrRefMult*atrRef  
+rsiNearRef = math.abs(rsiV - rsiRef) <= rsiEaseBand  
+
+easeFromVol = atrHot ? maxEase : minEase  
+easeFromRsi = rsiNearRef ? maxEase : minEase/2  
+easeMix = dynThreshOn ? clamp01((easeFromVol + easeFromRsi)/2) : 0.0  
+
+minBuyDynBase = minBuyScoreBase - easeMix  
+minBuyDyn     = breakout ? math.max(0.0, minBuyDynBase - breakEase) : math.max(0.0, minBuyDynBase)  
+
+// ───────── Anti-SPAM & MinHold (rejime göre esnek)  
+lowVol = atrPct < atrRef  
+minHoldBars = lowVol ? math.max(0, minHoldBarsInp - 1) : minHoldBarsInp  
+minGapBars  = lowVol ? math.max(0, minGapBarsInp  - 1) : minGapBarsInp  
+
+var int entryBar    = na  
+var int lastExitBar = na  
+var bool inPos      = false  
+
+buyCondBase  = (buyScoreAdj >= minBuyDyn)  
+sellCondBase = (buyScoreAdj <= sellDrop)  
+
+enter      = buyCondBase and not inPos  
+holdBars   = inPos and not na(entryBar) ? (bar_index - entryBar) : 0  
+exitGapOk  = na(lastExitBar) or (bar_index - lastExitBar >= minGapBars)  
+exitOnce   = inPos and (holdBars >= minHoldBars) and sellCondBase and exitGapOk  
+
+if enter  
+    entryBar := bar_index  
+    inPos    := true  
+
+if exitOnce  
+    lastExitBar := bar_index  
+    inPos       := false  
+
+// ───────── Etiketler & Uyarılar  
+plotshape(showLabels and enter,    title="A", text="A", style=shape.labelup,   location=location.belowbar, color=color.teal,  textcolor=color.white, size=size.tiny)  
+plotshape(showLabels and exitOnce, title="S", text="S", style=shape.labeldown, location=location.abovebar,  color=color.red,   textcolor=color.white, size=size.tiny)  
+
+alertcondition(enter,    title="MS Al",    message="A|{{ticker}}|{{interval}}|{{close}}|score={{plot_1}}")  
+alertcondition(exitOnce, title="MS Cikis", message="S|{{ticker}}|{{interval}}|{{close}}|score={{plot_1}}")  
+
+// Görseller  
+plot(ema,  "EMA",  color=color.new(color.orange, 0))  
+plot(vwap, "VWAP", color=color.new(color.blue,   0))  
+plot(buyScoreAdj, "buyScore (0..1)", color=color.new(color.fuchsia, 0))  
+plot(minBuyDyn, "AL eşiği (dinamik)", color=color.new(color.fuchsia, 70), linewidth=1, style=plot.style_linebr)  
+hline(sellDrop,  "Çıkış eşiği", color=color.new(color.red, 70))  
+
+// Debug tablosu  
+var table t = table.new(position.top_right, 2, 7)  
+if barstate.islast  
+    table.cell(t, 0, 0, "cheap", text_color=color.white)  
+    table.cell(t, 1, 0, str.tostring(cheapScore, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 1, "headroom", text_color=color.white)  
+    table.cell(t, 1, 1, str.tostring(headroomScore, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 2, "pos52", text_color=color.white)  
+    table.cell(t, 1, 2, str.tostring(pos52Score, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 3, "core", text_color=color.white)  
+    table.cell(t, 1, 3, str.tostring(coreScore, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 4, "buyScore", text_color=color.white)  
+    table.cell(t, 1, 4, str.tostring(buyScore, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 5, "buyAdj", text_color=color.white)  
+    table.cell(t, 1, 5, str.tostring(buyScoreAdj, "#.00"), text_color=color.white)  
+    table.cell(t, 0, 6, "minBuyDyn", text_color=color.white)  
+    table.cell(t, 1, 6, str.tostring(minBuyDyn, "#.00"), text_color=color.white)  

@@ -1,0 +1,246 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Dev Lucem
+
+//@version=5
+//@author=devlucem
+
+//
+//       THIS CODE IS BASED FROM THE MT4 ZIGZAG INDICATOR
+//       THE ZIGZAG SETTINGS FOR THE MAIN ONE ON TRADINGVIEW DO NOT WORK THE SAME AS MT4
+//       I HOPE U LOVE IT
+//
+
+
+////////
+// Seek Menu
+import DevLucem/ZigLib/1 as ZigZag
+indicator('ZigZag++', 'ZigZag++ [LD]', true, format.price, max_labels_count=200, max_lines_count=50)
+
+////////
+// Fetch Ingredients 
+// [
+Depth = input.int(12, 'Depth', minval=1, step=1, group="ZigZag Config")
+Deviation = input.int(5, 'Deviation', minval=1, step=1, group="ZigZag Config")
+Backstep = input.int(2, 'Backstep', minval=2, step=1, group="ZigZag Config")
+// Changed line thickness to fixed 1px
+line_thick = 1
+labels = input(0, "Labels Transparency", group="Labels")
+upcolor = input(color.lime, 'Bull Color', group="Colors")
+dncolor = input(color.red, 'Bear Color', group="Colors")
+lines = input(0, "Lines Transparency", group="Lines")
+background = input(80, "Background Transparency", group="Colors")
+label_size = switch input.int(3, "Label SIze", minval=1, maxval=5, group="Labels")
+    1 => size.tiny
+    2 => size.small
+    3 => size.normal
+    4 => size.large
+    5 => size.huge
+repaint = input(true, 'Repaint Levels')
+zigzag_extend = input(false, "Extend ZigZag", group="Lines")
+// ]
+
+
+// ////////
+// // Bake it with a simple oven this time
+[direction, z1, z2] = ZigZag.zigzag(low, high, Depth, Deviation, Backstep)
+string nowPoint = ""
+var float lastPoint = z1.price[1]
+if bool(ta.change(direction))
+    lastPoint := z1.price[1]
+
+
+// ////////
+// // Let it Cool And Serve
+line zz = na
+label point = na
+
+if repaint
+    // Changed line color to always black
+    zz := line.new(z1, z2, xloc.bar_time, zigzag_extend? extend.right: extend.none, color.black, width=line_thick)
+    nowPoint := direction<0? (z2.price<lastPoint? "LL": "HL"): (z2.price>lastPoint? "HH": "LH")
+    point := label.new(z2, nowPoint, xloc.bar_time, yloc.price, 
+     color.new(direction<0? upcolor: dncolor, labels), direction>0? label.style_label_down: label.style_label_up, color.new(direction>0? upcolor: dncolor, labels), label_size)
+    if direction == direction[1]
+        line.delete(zz[1])
+        label.delete(point[1])
+    else
+        line.set_extend(zz[1], zigzag_extend? extend.right: extend.none)
+else
+    if direction != direction[1]
+        // Changed line color to always black
+        zz := line.new(z1[1], z2[1], xloc.bar_time, extend.none, color.black, width=line_thick)
+        nowPoint := direction[1]<0? (z2.price[1]<lastPoint[1]? "LL": "HL"): (z2.price[1]>lastPoint[1]? "HH": "LH")
+        point := label.new(z2[1], nowPoint, xloc.bar_time, yloc.price, 
+         color.new(direction[1]<0? upcolor: dncolor, labels), direction[1]>0? label.style_label_down: label.style_label_up, color.new(direction[1]>0? upcolor: dncolor, labels), label_size)
+bgcolor(direction<0? color.new(dncolor, background): color.new(upcolor, background), title='Direction Background')
+plotarrow(direction, "direction", display=display.status_line)
+
+
+// ////////
+// // Declare Meal Was Sweet By Force
+alertcondition(nowPoint == "HH" and z2.price != z2.price[1], "New Higher High", 'Zigzag on {{ticker}} higher higher high detected at {{time}}')
+alertcondition(nowPoint == "LH" and z2.price != z2.price[1], "New Lower High", 'Zigzag on {{ticker}} higher lower high detected at {{time}}')
+alertcondition(nowPoint == "HL" and z2.price != z2.price[1], "New Higher Low", 'Zigzag on {{ticker}} higher lower low detected at {{time}}')
+alertcondition(nowPoint == "LL" and z2.price != z2.price[1], "New Lower Low", 'Zigzag on {{ticker}} lower low detected at {{time}}')
+alertcondition(direction != direction[1], 'Direction Changed', 'Zigzag on {{ticker}} direction changed at {{time}}')
+alertcondition(direction != direction[1] and direction>0, 'Bullish Direction', 'Zigzag on {{ticker}} bullish direction at {{time}}')
+alertcondition(direction != direction[1] and direction<0, 'Bearish Direction', 'Zigzag on {{ticker}} bearish direction at {{time}}')
+
+if direction != direction[1]
+    alert((direction<0? "Bearish": "Bullish") + " Direction Final ", alert.freq_once_per_bar_close)
+    
+//Settings
+//-----------------------------------------------------------------------------{
+thresholdPer = input.float(0, "Threshold %", minval = 0, maxval = 100, step = .1, inline = 'threshold')
+auto = input(false, "Auto", inline = 'threshold')
+
+showLast = input.int(0, 'Unmitigated Levels', minval = 0)
+mitigationLevels = input.bool(false, 'Mitigation Levels')
+
+tf = input.timeframe('', "Timeframe")
+
+//Style
+extend = input.int(20, 'Extend', minval = 0, inline = 'extend', group = 'Style')
+dynamic = input(false, 'Dynamic', inline = 'extend', group = 'Style')
+
+bullCss = input.color(color.new(#c100fc, 95), "Bullish FVG", group = 'Style')
+bearCss = input.color(color.new(#c100fc, 95), "Bearish FVG", group = 'Style')
+
+
+//-----------------------------------------------------------------------------}
+//UDT's
+//-----------------------------------------------------------------------------{
+type fvg
+    float max
+    float min
+    bool  isbull
+    int   t = time
+
+//-----------------------------------------------------------------------------}
+//Methods/Functions
+//-----------------------------------------------------------------------------{
+n = bar_index
+
+method tosolid(color id)=> color.rgb(color.r(id),color.g(id),color.b(id))
+
+detect()=>
+    var new_fvg = fvg.new(na, na, na, na)
+    threshold = auto ? ta.cum((high - low) / low) / bar_index : thresholdPer / 100
+
+    bull_fvg = low > high[2] and close[1] > high[2] and (low - high[2]) / high[2] > threshold
+    bear_fvg = high < low[2] and close[1] < low[2] and (low[2] - high) / high > threshold
+    
+    if bull_fvg
+        new_fvg := fvg.new(low, high[2], true)
+    else if bear_fvg
+        new_fvg := fvg.new(low[2], high, false)
+
+    [bull_fvg, bear_fvg, new_fvg]
+
+//-----------------------------------------------------------------------------}
+//FVG's detection/display
+//-----------------------------------------------------------------------------{
+var float max_bull_fvg = na, var float min_bull_fvg = na, var bull_count = 0, var bull_mitigated = 0
+var float max_bear_fvg = na, var float min_bear_fvg = na, var bear_count = 0, var bear_mitigated = 0
+var t = 0
+
+var fvg_records = array.new<fvg>(0)
+var fvg_areas = array.new<box>(0)
+
+[bull_fvg, bear_fvg, new_fvg] = request.security(syminfo.tickerid, tf, detect())
+
+//Bull FVG's
+if bull_fvg and new_fvg.t != t
+    if dynamic
+        max_bull_fvg := new_fvg.max
+        min_bull_fvg := new_fvg.min
+    
+    //Populate FVG array
+    if not dynamic
+        // Create box with 1px black border with 15% opacity
+        Box_obj = box.new(n-2, new_fvg.max, n+extend, new_fvg.min, border_color=color.new(color.black, 100), border_width=0, bgcolor = bullCss)
+        //Add text "FVG (FAIR VALUE GAP)" to the right side of the box
+        fvg_areas.unshift(Box_obj)
+    fvg_records.unshift(new_fvg)
+
+    bull_count += 1
+    t := new_fvg.t
+else if dynamic
+    max_bull_fvg := math.max(math.min(close, max_bull_fvg), min_bull_fvg)
+
+//Bear FVG's
+if bear_fvg and new_fvg.t != t
+    if dynamic
+        max_bear_fvg := new_fvg.max
+        min_bear_fvg := new_fvg.min
+    
+    //Populate FVG array
+    if not dynamic
+        // Create box with 1px black border with 15% opacity
+        //WITH BORDER
+        box_obj = box.new(n-2, new_fvg.max, n+extend, new_fvg.min, border_color=color.new(color.black, 100), border_width=0, bgcolor = bearCss)
+        fvg_areas.unshift(box_obj)
+    fvg_records.unshift(new_fvg)
+
+    bear_count += 1
+    t := new_fvg.t
+else if dynamic
+    min_bear_fvg := math.min(math.max(close, min_bear_fvg), max_bear_fvg) 
+
+//-----------------------------------------------------------------------------}
+//Unmitigated/Mitigated lines
+//-----------------------------------------------------------------------------{
+//Test for mitigation
+// Optimized mitigation check
+if fvg_records.size() > 0
+    for i = array.size(fvg_records) - 1 to 0
+        get = array.get(fvg_records, i)
+
+        isMitigated = (get.isbull and close < get.min) or (not get.isbull and close > get.max)
+        if isMitigated
+            // Display line if mitigated
+            if mitigationLevels
+                line.new(get.t, get.isbull ? get.min : get.max, time, get.isbull ? get.min : get.max, xloc.bar_time, color = get.isbull ? bullCss : bearCss, style = line.style_dashed)
+
+            // Delete box
+            if not dynamic
+                area = array.remove(fvg_areas, i)
+                box.delete(area)
+
+            array.remove(fvg_records, i)
+            if get.isbull
+                bull_mitigated += 1
+            else
+                bear_mitigated += 1
+
+//Unmitigated lines
+var unmitigated = array.new<line>(0)
+
+//Remove umitigated lines 
+if barstate.islast and showLast > 0 and fvg_records.size() > 0
+    if unmitigated.size() > 0 
+        for element in unmitigated
+            element.delete()
+        unmitigated.clear()
+
+    for i = 0 to math.min(showLast-1, fvg_records.size()-1)
+        get = fvg_records.get(i)
+
+        unmitigated.push(line.new(get.t
+          , get.isbull ? get.min : get.max 
+          , time
+          , get.isbull ? get.min : get.max
+          , xloc.bar_time
+          , color = get.isbull ? bullCss : bearCss))
+
+
+//-----------------------------------------------------------------------------}
+//Alerts
+//-----------------------------------------------------------------------------{
+alertcondition(bull_count > bull_count[1], 'Bullish FVG', 'Bullish FVG detected')
+alertcondition(bear_count > bear_count[1], 'Bearish FVG', 'Bearish FVG detected')
+
+alertcondition(bull_mitigated > bull_mitigated[1], 'Bullish FVG Mitigation', 'Bullish FVG mitigated')
+alertcondition(bear_mitigated > bear_mitigated[1], 'Bearish FVG Mitigation', 'Bearish FVG mitigated')
+
+//-----------------------------------------------------------------------------}

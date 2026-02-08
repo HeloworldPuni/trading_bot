@@ -1,0 +1,30 @@
+//@version=5
+indicator('Weekly VWAP', overlay=true)
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+computeVWAP(src, isNewPeriod) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+
+	_vwap = sumSrcVol / sumVol
+
+	[_vwap]
+
+src = hlc3
+
+isNewPeriod = ta.change(time("W"))
+
+float vwapValue = na
+float std = na
+
+[_vwap] = computeVWAP(src, isNewPeriod)
+vwapValue := _vwap
+
+plot(vwapValue, title="VWAP", color=#2962FF)

@@ -1,0 +1,81 @@
+//@version=4
+study(title="Multiple Moving Averages", shorttitle="M.MAs", overlay=true)
+sma_1_period = input(defval=34, title="SMA 1", minval=1)
+sma_2_period = input(defval=68, title="SMA 2", minval=1)
+ema_1_period = input(defval=5, title="EMA 1", minval=1)
+ema_2_period = input(defval=13, title="EMA 2", minval=1)
+
+sma50  = sma(close, 50)
+sma100 = sma(close, 100)
+sma200 = sma(close, 200)
+sma_1  = sma(close, sma_1_period)
+sma_2  = sma(close, sma_2_period)
+ema50  = ema(close, 50)
+ema100 = ema(close, 100)
+ema200 = ema(close, 200)
+ema_1  = ema(close, ema_1_period)
+ema_2  = ema(close, ema_2_period)
+
+sma_golden_cross = (sma50[1] < sma200[1] and sma50[0] > sma200[0])
+sma_death_cross  = (sma50[1] > sma200[1] and sma50[0] < sma200[0])
+sma200_below_price = (sma200[1] > close[1] and sma200[0] < close[0]) // bullish
+sma200_above_price = (sma200[1] < close[1] and sma200[0] > close[0]) // bearish
+sma_bullish = ((sma50[0] > sma100[0]) and (sma100[0] > sma200[0]) and not ((sma50[1] > sma100[1]) and (sma100[1] > sma200[1])))
+sma_bearish = ((sma50[0] < sma100[0]) and (sma100[0] < sma200[0]) and not ((sma50[1] < sma100[1]) and (sma100[1] < sma200[1])))
+sma200_positive_slope = (sma200[2] > sma200[1]) and (sma200[1] < sma200[0])
+sma200_negative_slope = (sma200[2] < sma200[1]) and (sma200[1] > sma200[0])
+
+ema_golden_cross = (ema50[1] < ema200[1] and ema50[0] > ema200[0])
+ema_death_cross  = (ema50[1] > ema200[1] and ema50[0] < ema200[0])
+ema200_below_price = (ema200[1] > close[1] and ema200[0] < close[0]) // bullish
+ema200_above_price = (ema200[1] < close[1] and ema200[0] > close[0]) // bearish
+ema_bullish = ((ema50[0] > ema100[0]) and (ema100[0] > ema200[0]) and not ((ema50[1] > ema100[1]) and (ema100[1] > ema200[1])))
+ema_bearish = ((ema50[0] < ema100[0]) and (ema100[0] < ema200[0]) and not ((ema50[1] < ema100[1]) and (ema100[1] < ema200[1])))
+ema200_positive_slope = (ema200[2] > ema200[1]) and (ema200[1] < ema200[0])
+ema200_negative_slope = (ema200[2] < ema200[1]) and (ema200[1] > ema200[0])
+
+plot(series=sma50,  title="SMA 50",  color=#E91E63, linewidth=2, style=plot.style_line)
+plot(series=sma100, title="SMA 100", color=#512DA8, linewidth=3, style=plot.style_line)
+plot(series=sma200, title="SMA 200", color=#B71C1C, linewidth=4, style=plot.style_line)
+plot(series=sma_1,  title="SMA #1",  color=#F06292, linewidth=2, style=plot.style_line)
+plot(series=sma_2,  title="SMA #2",  color=#F8BBD0, linewidth=2, style=plot.style_line)
+
+plot(series=ema50,  title="EMA 50",  color=#66BB6A, linewidth=2, style=plot.style_line)
+plot(series=ema100, title="EMA 100", color=#ABFF4F, linewidth=3, style=plot.style_line)
+plot(series=ema200, title="EMA 200", color=#FFA726, linewidth=4, style=plot.style_line)
+plot(series=ema_1,  title="EMA #1",  color=#FFEE58, linewidth=2, style=plot.style_line)
+plot(series=ema_2,  title="EMA #2",  color=#81C784, linewidth=2, style=plot.style_line)
+
+// sma crosses
+opaque_yellow = color.new(#F2C14E, 0)
+plotchar(sma_golden_cross, title="SMA Golden Cross", char="✠", color=opaque_yellow, textcolor=#F5D17E, location=location.belowbar, size=size.small, text="SMA Golden Cross")
+plotchar(sma_death_cross, title="SMA Death Cross", char="☠", color=color.red, textcolor=color.red, location=location.abovebar, size=size.small, text="SMA Death Cross")
+
+// price vs sma200
+plotchar(sma200_below_price, title="Above SMA200", char="*", color=color.green, size=size.small, location=location.abovebar)
+plotchar(sma200_above_price, title="Below SMA200", char="*", color=color.red, size=size.small, location=location.belowbar)
+
+// sma alignment
+plotchar(sma_bullish, title="SMA Bullish Alignment", char="=", color=color.green, size=size.small, location=location.belowbar)
+plotchar(sma_bearish, title="SMA Bearish Alignment", char="=", color=color.red, size=size.small, location=location.abovebar)
+
+// sma slope
+plotchar(sma200_positive_slope, title="SMA200 Positive Slope", char="⊕", color=color.green, size=size.small, location=location.abovebar)
+plotchar(sma200_negative_slope, title="SMA200 Negative Slope", char="⊝", color=color.red, size=size.small, location=location.belowbar)
+
+// ema crosses
+//opaque_yellow = color.new(#F2C14E, 0)
+plotchar(ema_golden_cross, title="EMA Golden Cross", char="✠", color=opaque_yellow, textcolor=#F5D17E, location=location.belowbar, size=size.small, text="EMA Golden Cross")
+plotchar(ema_death_cross, title="EMA Death Cross", char="☠", color=color.red, textcolor=color.red, location=location.abovebar, size=size.small, text="EMA Death Cross")
+
+// price vs ema200
+plotchar(ema200_below_price, title="Above EMA200", char="★", color=color.green, size=size.small, location=location.abovebar)
+plotchar(ema200_above_price, title="Below EMA200", char="★", color=color.red, size=size.small, location=location.belowbar)
+
+// ema alignment
+plotchar(ema_bullish, title="EMA Bullish Alignment", char="≈", color=color.green, size=size.small, location=location.belowbar)
+plotchar(ema_bearish, title="EMA Bearish Alignment", char="≈", color=color.red, size=size.small, location=location.abovebar)
+
+// ema slope
+plotchar(ema200_positive_slope, title="EMA200 Positive Slope", char="+", color=color.green, size=size.small, location=location.abovebar)
+plotchar(ema200_negative_slope, title="EMA200 Negative Slope", char="-", color=color.red, size=size.small, location=location.belowbar)

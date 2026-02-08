@@ -1,0 +1,28 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © DuffmanRob
+
+//@version=5
+indicator("RSI Background", overlay = true)
+var rsiLength = input.int(14, "RSI Lenght", group = "RSI")
+var transparency = input.int(85, "Background transparency.", group = "RSI")
+var showRSIHints = input.bool(true, "Show RSI hints.", group = "RSI")
+var macdFastLength = input.int(12, "MACD fast moving average length.", group = "MACD")
+var macdSlowLength = input.int(26, "MACD slow moving average length.", group = "MACD")
+var macdSignalLength = input.int(9, "MACD signal length.", group = "MACD")
+var showMACDHints = input.bool(true, "Show MACD hints?", group = "MACD")
+
+rsiValue = ta.rsi(close, rsiLength)
+backgroundColor = if (showRSIHints and rsiValue >= 70) 
+    color.new(color.red, transp = transparency)
+else if (showRSIHints and rsiValue <= 30)
+    color.new(color.green, transp = transparency)
+else
+    na
+
+bgcolor(backgroundColor)
+
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+crossOver = ta.crossover(macdLine, signalLine) and showMACDHints
+crossUnder = ta.crossunder(macdLine, signalLine) and showMACDHints
+plotshape(crossUnder, style=shape.triangledown, color = color.red, location = location.top)
+plotshape(crossOver, style = shape.triangleup, color = color.green, location = location.bottom)

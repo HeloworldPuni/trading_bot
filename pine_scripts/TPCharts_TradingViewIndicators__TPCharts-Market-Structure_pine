@@ -1,0 +1,223 @@
+//@version=4
+study("TPCharts Market Structure", overlay=true)
+
+var miOff = 2
+var nmiOff = -1*miOff
+
+var maOff = 3
+var nmaOff = -1*maOff
+
+var eqOff = 1
+var neqOff = -1*eqOff
+
+var lastBullCandleIndex = 0
+var lastBullCandlePrice = float(na)
+var lastBearCandleIndex = 0
+var lastBearCandlePrice = float(na)
+
+// Equal Highs (2 par patterns)
+var isAllEqualHighPriceLabelShown = input(false, "Show All Equal High Price Labels?")
+var isOnlyLastEqualHighPriceLabelShown = input(false, "Show Only Last Equal High Price Label?")
+var lastEqualHighIndex = int(na)
+var lastEqualHighPrice = float(na)
+
+// Equal Lows (2 par patterns)
+var isAllEqualLowPriceLabelShown = input(false, "Show All Equal Low Price Labels?")
+var isOnlyLastEqualLowPriceLabelShown = input(false, "Show Only Last Equal Low Price Label?")
+var lastEqualLowIndex = int(na)
+var lastEqualLowPrice = float(na)
+
+// Minor highs (3 bar pattern)
+var isAllMinorHighPriceLabelShown = input(false, "Show All Minor High Price Labels?")
+var isOnlyLastMinorHighPriceLabelShown = input(false, "Show Only Last Minor High Price Label?")
+var lastMinorHighIndex = int(na)
+var lastMinorHighPrice = float(na)
+
+// Minor lows (3 bar pattern)
+var isAllMinorLowPriceLabelShown = input(false, "Show All Minor Low Price Labels?")
+var isOnlyLastMinorLowPriceLabelShown = input(false, "Show Only Last Minor Low Price Label?")
+var lastMinorLowIndex = int(na)
+var lastMinorLowPrice = float(na)
+
+// Major Highs (5 par patterns)
+var isAllMajorHighPriceLabelShown = input(false, "Show All Major High Price Labels?")
+var isOnlyLastMajorHighPriceLabelShown = input(false, "Show Only Last Major High Price Label?")
+var lastMajorHighIndex = int(na)
+var lastMajorHighPrice = float(na)
+var lastMajorHighIndex2 = int(na)
+var lastMajorHighPrice2 = float(na)
+
+// Major Lows (5 par patterns)
+var isAllMajorLowPriceLabelShown = input(false, "Show All Major Low Price Labels?")
+var isOnlyLastMajorLowPriceLabelShown = input(false, "Show Only Last Major Low Price Label?")
+var lastMajorLowIndex = int(na)
+var lastMajorLowPrice = float(na)
+var lastMajorLowIndex2 = int(na)
+var lastMajorLowPrice2 = float(na)
+
+var isAllLinesShown = input(false, "Show All Lines?")
+var isLastMinorSPLineShown = input(true, "Show Last Minor Swing Point Line?")
+var isLastMajorSPLineShown = input(true, "Show Last Minor Swing Point Line?")
+var isMSLinesShown = input(false, "Show MS Lines?")
+
+//
+// Plot them & create the alerts
+//
+// createCurrentBarLabel(barindex, value, under) =>
+//     label.new(barindex, value*(under ? 0.999 : 1.001), text=tostring(value), color=color.gray, style=under ? label.style_label_up : label.style_label_down)
+
+// createHighLabelAt(barindex, val) => createCurrentBarLabel(barindex, val, false)
+// createLowLabelAt(barindex, val) => createCurrentBarLabel(barindex, val, true)
+
+// Equal highs (3 bar pattern)
+isEqualHigh = (high[1] == high[2])
+if isEqualHigh
+    lastEqualHighIndex := bar_index-eqOff
+    lastEqualHighPrice := high[eqOff]
+
+plotshape(isEqualHigh, title="Equal Highs", style=shape.xcross, location=location.abovebar, offset=neqOff, color=color.black, transp=80, size = size.tiny)
+alertcondition(high > lastMinorHighPrice, title="Chad's Equal High Breaks", message="Last equal high broke")
+
+// Equal Lows (3 bar pattern)
+isEqualLow = (low[1] == low[2])
+if isEqualLow
+    lastEqualLowIndex := bar_index-eqOff
+    lastEqualLowPrice := low[eqOff]
+
+plotshape(isEqualLow, title="Equal Lows", style=shape.xcross, location=location.belowbar, offset=neqOff, color=color.black, transp=80, size = size.tiny)
+alertcondition(low < lastMinorLowPrice, title="Chad's Equal Low Breaks", message="Last equal low broke")
+
+//  
+// MINORS
+//
+
+// Minor highs (3 bar pattern)
+testIfMinorHigh(i) => (high[i+1] < high[i]) and (high[i-1] < high[i])
+
+isMinorHigh = testIfMinorHigh(miOff) 
+if isMinorHigh
+    lastMinorHighIndex := bar_index-miOff
+    lastMinorHighPrice := high[miOff]
+
+plotshape(isMinorHigh, title="Minor Highs", style=shape.triangleup, location=location.abovebar, offset=nmiOff, color=color.black, transp=80, size = size.tiny) 
+alertcondition(high > lastMinorHighPrice, title="Chad's Minor High Breaks", message="Last minor high broke")
+
+// Minor lows (3 bar pattern)
+testIfMinorLow(i) => (low[i+1] > low[i]) and (low[i-1] > low[i])
+
+isMinorLow = testIfMinorLow(miOff) 
+if isMinorLow
+    lastMinorLowIndex := bar_index-miOff
+    lastMinorLowPrice := low[miOff]
+
+plotshape(isMinorLow, title="Minor Lows", style=shape.triangledown, location=location.belowbar, offset=nmiOff, color=color.black, transp=80, size = size.tiny) 
+alertcondition(low < lastMinorLowPrice, title="Chad's Minor Low Breaks", message="Last minor low broke")
+
+//
+// MAJORS
+//
+// Major Highs (5 par patterns)
+isMajorHigh = testIfMinorHigh(maOff) and (high[maOff+2] < high[maOff]) and (high[maOff-2] < high[maOff])
+if isMajorHigh
+    lastMajorHighIndex2 := lastMajorHighIndex
+    lastMajorHighIndex := bar_index-maOff
+    lastMajorHighPrice2 := lastMajorHighPrice
+    lastMajorHighPrice := high[maOff]
+
+plotshape(isMajorHigh, title="Major Highs", style=shape.circle, location=location.abovebar, offset=nmaOff, color=color.black, transp=60, size=size.tiny) 
+alertcondition(high > lastMajorHighPrice, title="Chad's Major High Breaks", message="Last major high broke")
+
+// Major Lows (5 par patterns)
+isMajorLow = testIfMinorLow(maOff) and (low[maOff+2] > low[maOff]) and (low[maOff-2] > low[maOff])
+if isMajorLow
+    lastMajorLowIndex2 := lastMajorLowIndex
+    lastMajorLowIndex := bar_index-maOff
+    lastMajorLowPrice2 := lastMajorLowPrice
+    lastMajorLowPrice := low[maOff]
+
+plotshape(isMajorLow, title="Major Lows", style=shape.circle, location=location.belowbar, offset=nmaOff, color=color.black, transp=60, size = size.tiny) 
+alertcondition(low < lastMajorLowPrice, title="Chad's Major Low Breaks", message="Last major low broke")
+
+// Market Structure
+isCandleBull(i) => close[i] > open[i]
+isCandleBear(i) => not isCandleBull(i)
+testIfBullStructure() => lastMajorHighPrice > lastMajorHighPrice2 and lastMajorLowPrice > lastMajorLowPrice2
+testIfBearStructure() => lastMajorLowPrice < lastMajorLowPrice2 and lastMajorHighPrice < lastMajorHighPrice2
+
+float lastBearCandleHigh = float(na)
+float lastBearCandleLow = float(na)
+float lastBearCandleMid = float(na)
+float lastBullCandleHigh = float(na)
+float lastBullCandleLow = float(na)
+float lastBullCandleMid = float(na)
+line bullMSB = na
+line bearMSB = na
+line lastBearCandleMidLine = na
+line lastBearCandleLine = na
+// bearMSCcount = cum(close >= open ? 1 : 0)
+// bullMSCcount = cum(close >= open ? 1 : 0)
+
+bearMSCcount = 0
+bullMSCcount = 0
+
+if isMSLinesShown
+    isBullStructure = testIfBullStructure()
+    if isBullStructure
+        bearMSB = line.new(x1=lastMajorLowIndex2, y1=lastMajorLowPrice2, x2=lastMajorLowIndex2+1, y2=lastMajorLowPrice2, extend=extend.right, color=color.red)
+        if not isAllLinesShown
+            line.delete(bearMSB[1])
+        
+        line.delete(lastBearCandleLine)
+        line.delete(lastBearCandleMidLine)
+
+
+        if isCandleBear(1)
+            lastBearCandleHigh = high[1]
+            lastBearCandleLow = low[1]
+            lastBearCandleMid = low[1] + ((lastBearCandleHigh - lastBearCandleLow) / 2)
+
+            lastBearCandleMidLine = line.new(x1=bar_index-1, y1=lastBearCandleMid, x2=bar_index, y2=lastBearCandleMid, extend=extend.right, color=color.gray)
+            line.delete(lastBearCandleMidLine[1])
+            
+            lastBearCandleLine = line.new(x1=bar_index-1, y1=open[1], x2=bar_index, y2=open[1], extend=extend.right, color=color.blue)
+            line.delete(lastBearCandleLine[1])
+
+
+    // alertcondition(isBullStructure and (close < lastMajorLowPrice2), title="Chad's Bearish MSB", message="Bearish MSB")
+
+    isBearStructure = testIfBearStructure()
+    if isBearStructure
+        bullMSB = line.new(x1=lastMajorHighIndex2, y1=lastMajorHighPrice2, x2=lastMajorHighIndex2+1, y2=lastMajorHighPrice2, extend=extend.right, color=color.green)
+        if not isAllLinesShown
+            line.delete(bullMSB[1])
+
+        if isCandleBull(1)
+            lastBullCandleHigh = high[1]
+            lastBullCandleLow = low[1]
+            lastBullCandleMid = low[1] + ((lastBullCandleHigh - lastBullCandleLow) / 2)
+
+            lastBullCandleMidLine = line.new(x1=bar_index-1, y1=lastBullCandleMid, x2=bar_index, y2=lastBullCandleMid, extend=extend.right, color=color.gray)
+            line.delete(lastBullCandleMidLine[1])
+            
+            lastBullCandleLine = line.new(x1=bar_index-1, y1=close[1], x2=bar_index, y2=close[1], extend=extend.right, color=color.blue)
+            line.delete(lastBullCandleLine[1])
+
+
+    // alertcondition(isBearStructure and (close > lastMajorHighPrice2), title="Chad's Bullish MSB", message="Bullish MSB")
+
+if barstate.islast
+    if(isLastMajorSPLineShown) 
+        line.new(x1 = lastMajorHighIndex, y1 = lastMajorHighPrice, x2 = lastMajorHighIndex+1, y2 = lastMajorHighPrice, extend=extend.right, color=color.gray)
+        label.new(lastMajorHighIndex, lastMajorHighPrice, "LMaH", yloc=yloc.abovebar, style=label.style_none)
+
+        line.new(x1 = lastMajorLowIndex, y1 = lastMajorLowPrice, x2 = lastMajorLowIndex+1, y2 = lastMajorLowPrice, extend=extend.right, color=color.gray)
+        label.new(lastMajorLowIndex, lastMajorLowPrice, "LMaL", yloc=yloc.belowbar, style=label.style_none)
+
+    if(isLastMinorSPLineShown)
+        if lastMinorHighIndex != lastMajorHighIndex
+            line.new(x1 = lastMinorHighIndex, y1 = lastMinorHighPrice, x2 = lastMinorHighIndex+1, y2 = lastMinorHighPrice, extend=extend.right, color=color.gray)
+            label.new(lastMinorHighIndex, lastMinorHighPrice, "LMiH", yloc=yloc.abovebar, style=label.style_none)
+
+        if lastMinorLowIndex != lastMajorLowIndex
+            line.new(x1 = lastMinorLowIndex, y1 = lastMinorLowPrice, x2 = lastMinorLowIndex+1, y2 = lastMinorLowPrice, extend=extend.right, color=color.gray)
+            label.new(lastMinorLowIndex, lastMinorLowPrice, "LMiL", yloc=yloc.belowbar, style=label.style_none)

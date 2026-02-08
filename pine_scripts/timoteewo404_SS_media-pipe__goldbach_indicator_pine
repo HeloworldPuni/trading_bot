@@ -1,0 +1,57 @@
+//@version=5
+indicator("Goldbach Fundamentals Indicator", overlay=true)
+
+// Inputs
+po3 = input.int(27, "Power of Three Range", minval=1, tooltip="Choose a Power of Three value like 27, 81, 243 based on asset volatility")
+showOB = input.bool(true, "Show Order Blocks")
+showFVG = input.bool(true, "Show Fair Value Gaps")
+showExt = input.bool(true, "Show External Ranges")
+equilibriumMode = input.string("All", "Equilibrium Mode", options=["All", "High/Low", "Midpoint"])
+
+// Session definitions (example: Asia 9h, London 6h, NY 9h)
+accumulationStart = input.time(9, "Accumulation Start Hour (UTC)")
+accumulationHours = input.int(9, "Accumulation Duration (hours)")
+manipulationStart = input.time(15, "Manipulation Start Hour (UTC)")
+manipulationHours = input.int(6, "Manipulation Duration (hours)")
+distributionStart = input.time(21, "Distribution Start Hour (UTC)")
+distributionHours = input.int(9, "Distribution Duration (hours)")
+
+// Current session detection
+currentHour = hour(time)
+isAccumulation = currentHour >= accumulationStart and currentHour < accumulationStart + accumulationHours
+isManipulation = currentHour >= manipulationStart and currentHour < manipulationStart + manipulationHours
+isDistribution = currentHour >= distributionStart and currentHour < distributionStart + distributionHours
+
+// Calculate Goldbach levels based on PO3
+basePrice = close
+highLevel1 = basePrice + po3
+highLevel2 = basePrice + 2 * po3
+highLevel3 = basePrice + 3 * po3
+lowLevel1 = basePrice - po3
+lowLevel2 = basePrice - 2 * po3
+lowLevel3 = basePrice - 3 * po3
+
+// Plot levels based on equilibrium mode
+if equilibriumMode == "All" or equilibriumMode == "High/Low"
+    plot(highLevel1, "High Level 1", color=color.green, linewidth=2)
+    plot(highLevel2, "High Level 2", color=color.blue, linewidth=1)
+    plot(highLevel3, "High Level 3", color=color.purple, linewidth=1)
+    plot(lowLevel1, "Low Level 1", color=color.red, linewidth=2)
+    plot(lowLevel2, "Low Level 2", color=color.orange, linewidth=1)
+    plot(lowLevel3, "Low Level 3", color=color.yellow, linewidth=1)
+
+if equilibriumMode == "Midpoint"
+    midpoint = (highLevel1 + lowLevel1) / 2
+    plot(midpoint, "Midpoint", color=color.gray, linewidth=2)
+
+// AMD blocks visualization (simplified example for OB, FVG, Ext)
+if showOB and isAccumulation
+    box.new(left=bar_index - 10, top=highLevel1, right=bar_index, bottom=lowLevel1, bgcolor=color.new(color.green, 90), border_color=color.green, title="Accumulation OB")
+if showFVG and isManipulation
+    box.new(left=bar_index - 10, top=highLevel2, right=bar_index, bottom=lowLevel2, bgcolor=color.new(color.blue, 90), border_color=color.blue, title="Manipulation FVG")
+if showExt and isDistribution
+    box.new(left=bar_index - 10, top=highLevel3, right=bar_index, bottom=lowLevel3, bgcolor=color.new(color.red, 90), border_color=color.red, title="Distribution Ext")
+
+// Labels for session
+sessionLabel = isAccumulation ? "Accumulation" : isManipulation ? "Manipulation" : isDistribution ? "Distribution" : "Other"
+label.new(bar_index, high, sessionLabel, style=label.style_label_down, color=color.white, textcolor=color.black)

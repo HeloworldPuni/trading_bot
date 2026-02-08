@@ -1,0 +1,1057 @@
+//@version=6
+indicator("Crypto Futures Master", shorttitle="CryptoEXP", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// CRYPTO FUTURES MASTER - KOMPLETNÍ INDIKÁTOR PRO KRYPTOMĚNOVÉ FUTURES
+// ============================================================================
+
+// ============================================================================
+// INPUT PARAMETRY
+// ============================================================================
+
+// Základní nastavení
+show_dashboard = input.bool(true, "Zobrazit dashboard", group="Vizualizace")
+show_signals = input.bool(true, "Zobrazit signály", group="Vizualizace")
+show_risk_panel = input.bool(true, "Zobrazit risk panel", group="Vizualizace")
+show_funding_info = input.bool(true, "Zobrazit funding info", group="Vizualizace")
+show_patterns = input.bool(true, "Zobrazit svíčkové formace", group="Vizualizace")
+
+// Funding Rate parametry
+funding_threshold = input.float(0.008, "Funding rate threshold (0.08%)", minval=0.001, maxval=0.05, step=0.001, group="Funding Rate")
+funding_lookback = input.int(3, "Funding trend lookback", minval=1, maxval=10, group="Funding Rate")
+
+// Volatility parametry
+volatility_lookback = input.int(20, "Volatility lookback", minval=10, maxval=50, group="Volatility")
+volatility_multiplier = input.float(2.0, "Volatility multiplier pro stops", minval=1.0, maxval=5.0, step=0.1, group="Volatility")
+
+// Liquidation parametry
+liquidation_distance = input.float(0.05, "Liquidation distance (5%)", minval=0.02, maxval=0.15, step=0.01, group="Liquidation")
+liquidation_risk_threshold = input.float(0.02, "Liquidation risk threshold (2%)", minval=0.01, maxval=0.05, step=0.005, group="Liquidation")
+
+// Risk Management
+max_risk_per_trade = input.float(2.0, "Max risk per trade (%)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+target_risk_reward = input.float(3.0, "Target Risk/Reward ratio", minval=1.5, maxval=5.0, step=0.1, group="Risk Management")
+
+// Multi-timeframe parametry
+m1_enabled = input.bool(true, "M1 momentum", group="Multi-Timeframe")
+m5_enabled = input.bool(true, "M5 momentum", group="Multi-Timeframe")
+m15_enabled = input.bool(true, "M15 trend", group="Multi-Timeframe")
+h1_enabled = input.bool(true, "H1 bias", group="Multi-Timeframe")
+
+// Pullback EMA Nastavení
+show_pullback_ema = input.bool(true, "Zobrazit Pullback EMA", group="Trend Confirmation")
+pullback_ema_length = input.int(9, "Pullback EMA Délka (doporučeno 9-13)", minval=5, maxval=30, group="Trend Confirmation")
+pullback_ema_color = input.color(color.new(color.yellow, 40), "Pullback EMA Barva", group="Trend Confirmation")
+
+// Barvy
+bull_color = input.color(color.green, "Býčí", group="Barvy")
+bear_color = input.color(color.red, "Medvědí", group="Barvy")
+neutral_color = input.color(color.gray, "Neutrální", group="Barvy")
+warning_color = input.color(color.orange, "Varování", group="Barvy")
+funding_color = input.color(color.purple, "Funding", group="Barvy")
+
+// Pullback Hunter Nastavení
+ph_enabled = input.bool(true, "Zapnout Pullback Hunter", group="Pullback Hunter")
+ph_min_trend_bars = input.int(10, "Minimální délka trendu", minval=5, group="Pullback Hunter")
+ph_min_pullback_bars = input.int(3, "Minimální délka korekce", minval=2, group="Pullback Hunter")
+ph_depth_threshold = input.int(70, "Hloubka korekce pro 'READY' (0-100)", minval=50, maxval=90, group="Pullback Hunter")
+
+// ============================================================================
+// ALTCOIN SPECIFIC FEATURES
+// ============================================================================
+
+// Altcoin volatility patterns
+altcoin_volatility_multiplier = input.float(1.5, "Altcoin volatility multiplier", minval=1.0, maxval=3.0, step=0.1, group="Altcoin Settings")
+altcoin_pump_dump_detection = input.bool(true, "Detect pump & dump patterns", group="Altcoin Settings")
+
+// Pump & Dump Detection
+volume_spike_threshold = input.float(3.0, "Volume spike threshold", minval=2.0, maxval=10.0, step=0.5, group="Altcoin Settings")
+price_spike_threshold = input.float(0.05, "Price spike threshold (5%)", minval=0.02, maxval=0.15, step=0.01, group="Altcoin Settings")
+
+// Altcoin-specific volatility
+altcoin_atr = ta.atr(7)  // Kratší ATR pro altcoiny
+altcoin_volatility = altcoin_atr / close * 100
+
+// Volume SMA pro pump & dump detection (globální proměnná)
+volume_sma_20 = ta.sma(volume, 20)
+is_pump_dump = volume > volume_sma_20 * volume_spike_threshold and math.abs(close - open) / open > price_spike_threshold
+
+// Altcoin momentum (rychlejší než BTC)
+altcoin_momentum_rsi = ta.rsi(close, 7)  // Kratší RSI pro altcoiny
+altcoin_momentum_strength = math.abs(altcoin_momentum_rsi - 50) / 50
+
+// Altcoin season detection (BTC dominance monitoring)
+btc_price = request.security("CRYPTOCAP:BTC", timeframe.period, close)
+btc_trend = ta.ema(btc_price, 20)
+btc_momentum = ta.rsi(btc_price, 14)
+
+// EMA pro altcoin season (globální proměnná)
+close_ema_50 = ta.ema(close, 50)
+altcoin_season = btc_momentum < 40 and close > close_ema_50  // BTC slabý, altcoiny silné
+
+// ============================================================================
+// FUNDING RATE FUNKCE
+// ============================================================================
+
+// Funding Rate získání (simulace - v reálu by se používal request.security)
+get_funding_rate() =>
+    // Simulace funding rate - v reálu by se získával z externího zdroje
+    // Pro demonstraci používáme RSI jako proxy pro funding rate
+    rsi_val = ta.rsi(close, 14)
+    funding_rate = (rsi_val - 50) / 1000  // Normalizace na rozsah -0.05 až 0.05
+    funding_rate
+
+// Funding Rate analýza
+funding_rate = get_funding_rate()
+funding_trend = ta.change(funding_rate, funding_lookback)
+funding_opportunity = math.abs(funding_rate) > funding_threshold
+funding_direction = funding_rate > 0 ? "LONG" : "SHORT"
+
+// Čas do dalšího funding (simulace)
+current_hour = hour(time)
+funding_hours = array.from(0, 8, 16)  // Funding každých 8 hodin
+next_funding_hour = 0
+for i = 0 to array.size(funding_hours) - 1
+    if array.get(funding_hours, i) > current_hour
+        next_funding_hour := array.get(funding_hours, i)
+        break
+    if i == array.size(funding_hours) - 1
+        next_funding_hour := array.get(funding_hours, 0) + 24
+
+hours_to_funding = next_funding_hour - current_hour
+if hours_to_funding < 0
+    hours_to_funding := hours_to_funding + 24
+
+// ============================================================================
+// VOLATILITY ANALÝZA
+// ============================================================================
+
+// ATR a volatility state
+atr_val = ta.atr(14)
+atr_avg = ta.sma(atr_val, volatility_lookback)
+volatility_ratio = atr_val / atr_avg
+
+volatility_state = 
+  volatility_ratio < 0.7 ? "LOW" :
+  volatility_ratio < 1.3 ? "NORMAL" :
+  volatility_ratio < 2.0 ? "HIGH" : "EXTREME"
+
+// Volatility-based position sizing
+volatility_multiplier_pos = 
+  volatility_state == "LOW" ? 1.5 :
+  volatility_state == "NORMAL" ? 1.0 :
+  volatility_state == "HIGH" ? 0.7 : 0.5
+
+// ============================================================================
+// LIQUIDATION ZONE ANALÝZA
+// ============================================================================
+
+// Liquidation levels (simulace - v reálu by se získávaly z exchange API)
+long_liquidation_level = close * (1 - liquidation_distance)
+short_liquidation_level = close * (1 + liquidation_distance)
+
+// Liquidation risk assessment
+long_liquidation_risk = math.abs(close - long_liquidation_level) / close
+short_liquidation_risk = math.abs(close - short_liquidation_level) / close
+
+liquidation_risk = 
+  long_liquidation_risk < liquidation_risk_threshold or short_liquidation_risk < liquidation_risk_threshold ? "HIGH" :
+  long_liquidation_risk < liquidation_risk_threshold * 2 or short_liquidation_risk < liquidation_risk_threshold * 2 ? "MEDIUM" : "LOW"
+
+// Liquidation squeeze detection
+liquidation_squeeze = 
+  (close > long_liquidation_level * 1.02 and close < long_liquidation_level * 1.05) or
+  (close < short_liquidation_level * 0.98 and close > short_liquidation_level * 0.95)
+
+// ============================================================================
+// MULTI-TIMEFRAME MOMENTUM
+// ============================================================================
+
+// M1 Momentum
+m1_momentum = m1_enabled ? request.security(syminfo.tickerid, "1", ta.rsi(close, 14)) : 50
+m1_trend = m1_momentum > 50 ? "BULL" : "BEAR"
+m1_strength = math.abs(m1_momentum - 50) / 50
+
+// M5 Momentum
+m5_momentum = m5_enabled ? request.security(syminfo.tickerid, "5", ta.rsi(close, 14)) : 50
+m5_trend = m5_momentum > 50 ? "BULL" : "BEAR"
+m5_strength = math.abs(m5_momentum - 50) / 50
+
+// M15 Trend
+m15_rsi = m15_enabled ? request.security(syminfo.tickerid, "15", ta.rsi(close, 14)) : 50
+m15_ema = m15_enabled ? request.security(syminfo.tickerid, "15", ta.ema(close, 20)) : close
+m15_trend = m15_enabled ? (close > m15_ema and m15_rsi > 50) ? "BULL" : "BEAR" : "NEUTRAL"
+
+// H1 Bias
+h1_rsi = h1_enabled ? request.security(syminfo.tickerid, "60", ta.rsi(close, 14)) : 50
+h1_ema = h1_enabled ? request.security(syminfo.tickerid, "60", ta.ema(close, 50)) : close
+h1_bias = h1_enabled ? (close > h1_ema and h1_rsi > 50) ? "BULL" : "BEAR" : "NEUTRAL"
+
+// ============================================================================
+// SIGNAL GENERATION
+// ============================================================================
+
+// Entry Quality Score (0-100)
+entry_quality = 0.0
+
+// Funding rate contribution (0-30 points)
+if funding_opportunity
+    entry_quality := entry_quality + 30
+
+// Multi-timeframe alignment (0-40 points)
+tf_alignment = 0
+if m1_trend == m5_trend
+    tf_alignment := tf_alignment + 10
+if m5_trend == m15_trend
+    tf_alignment := tf_alignment + 15
+if m15_trend == h1_bias
+    tf_alignment := tf_alignment + 15
+entry_quality := entry_quality + tf_alignment
+
+// Volatility contribution (0-20 points)
+if volatility_state == "NORMAL" or volatility_state == "HIGH"
+    entry_quality := entry_quality + 20
+else if volatility_state == "LOW"
+    entry_quality := entry_quality + 10
+
+// Liquidation risk contribution (0-10 points)
+if liquidation_risk == "LOW"
+    entry_quality := entry_quality + 10
+else if liquidation_risk == "MEDIUM"
+    entry_quality := entry_quality + 5
+
+// Determine Signal Direction
+signal_direction = 0 // 1 for Long, -1 for Short
+bull_score = (m1_trend == "BULL" ? 1 : 0) + (m5_trend == "BULL" ? 1 : 0) + (m15_trend == "BULL" ? 1 : 0) + (h1_bias == "BULL" ? 1 : 0)
+bear_score = (m1_trend == "BEAR" ? 1 : 0) + (m5_trend == "BEAR" ? 1 : 0) + (m15_trend == "BEAR" ? 1 : 0) + (h1_bias == "BEAR" ? 1 : 0)
+
+if bull_score >= 3 and bull_score > bear_score
+    signal_direction := 1
+else if bear_score >= 3 and bear_score > bull_score
+    signal_direction := -1
+
+// Signal type determination
+signal_type = ""
+if funding_opportunity and tf_alignment >= 25
+    signal_type := "FUNDING ARBITRAGE + MOMENTUM"
+else if liquidation_squeeze and tf_alignment >= 20
+    signal_type := "LIQUIDATION SQUEEZE"
+else if funding_opportunity
+    signal_type := "FUNDING ARBITRAGE"
+else if tf_alignment >= 30
+    signal_type := "MOMENTUM BREAKOUT"
+else
+    signal_type := "NO SIGNAL"
+
+// Risk/Reward calculation
+stop_loss_pct = atr_val * volatility_multiplier / close * 100
+take_profit_pct = stop_loss_pct * target_risk_reward
+risk_reward_ratio = take_profit_pct / stop_loss_pct
+
+// Success rate estimation (simulace)
+success_rate = 
+  entry_quality >= 80 ? 75 :
+  entry_quality >= 60 ? 65 :
+  entry_quality >= 40 ? 55 : 45
+
+// ============================================================================
+// RISK MANAGEMENT
+// ============================================================================
+
+// Position sizing based on volatility
+position_size_pct = max_risk_per_trade * volatility_multiplier_pos
+
+// ============================================================================
+// SCALP & REVERSAL SIGNALS (OPRAVENO PRO KONZISTENCI)
+// ============================================================================
+
+// Vstupy pro scalpování
+show_scalp_signals = input.bool(true, "Zobrazit Scalp signály (divergence)", group="Scalping")
+scalp_rsi_length = input.int(7, "RSI délka pro scalp", minval=3, group="Scalping")
+scalp_pivot_left = input.int(5, "Pivot Left Bars (pro divergenci)", group="Scalping")
+scalp_pivot_right = input.int(3, "Pivot Right Bars (pro divergenci)", group="Scalping")
+scalp_rsi_oversold = input.int(25, "Scalp RSI přeprodáno", group="Scalping")
+scalp_rsi_overbought = input.int(75, "Scalp RSI překoupeno", group="Scalping")
+
+// Proměnné pro signály a čáry
+long_scalp_signal = false
+short_scalp_signal = false
+var line bull_div_line = na
+var line bear_div_line = na
+
+if show_scalp_signals
+    // Rychlejší RSI pro scalping
+    scalp_rsi = ta.rsi(close, scalp_rsi_length)
+
+    // --- BÝČÍ DIVERGENCE (PRO LONG) ---
+    // 1. Najdi aktuální pivot a jeho RSI
+    pivot_low_price = ta.pivotlow(low, scalp_pivot_left, scalp_pivot_right)
+    pivot_low_rsi = ta.valuewhen(not na(pivot_low_price), scalp_rsi[scalp_pivot_right], 0)
+
+    // 2. Najdi PŘEDCHOZÍ pivot a jeho hodnoty (na každém baru)
+    prev_pivot_low_price = ta.valuewhen(not na(pivot_low_price), pivot_low_price, 1)
+    prev_pivot_low_rsi = ta.valuewhen(not na(pivot_low_price), pivot_low_rsi, 1)
+    prev_pivot_low_bar = ta.valuewhen(not na(pivot_low_price), bar_index - scalp_pivot_right, 1)
+    
+    // 3. Zkontroluj divergenci POUZE když je na aktuální svíčce nový pivot
+    if not na(pivot_low_price)
+        is_bull_div = pivot_low_price < prev_pivot_low_price and pivot_low_rsi > prev_pivot_low_rsi
+        rsi_is_oversold = pivot_low_rsi < scalp_rsi_oversold
+
+        if is_bull_div and rsi_is_oversold
+            long_scalp_signal := true
+            line.delete(bull_div_line) // Smaž starou čáru
+            bull_div_line := line.new(prev_pivot_low_bar, prev_pivot_low_price, bar_index - scalp_pivot_right, pivot_low_price, color=color.new(color.aqua, 0), width=2, style=line.style_solid)
+
+    // --- MEDVĚDÍ DIVERGENCE (PRO SHORT) ---
+    // 1. Najdi aktuální pivot a jeho RSI
+    pivot_high_price = ta.pivothigh(high, scalp_pivot_left, scalp_pivot_right)
+    pivot_high_rsi = ta.valuewhen(not na(pivot_high_price), scalp_rsi[scalp_pivot_right], 0)
+
+    // 2. Najdi PŘEDCHOZÍ pivot a jeho hodnoty (na každém baru)
+    prev_pivot_high_price = ta.valuewhen(not na(pivot_high_price), pivot_high_price, 1)
+    prev_pivot_high_rsi = ta.valuewhen(not na(pivot_high_price), pivot_high_rsi, 1)
+    prev_pivot_high_bar = ta.valuewhen(not na(pivot_high_price), bar_index - scalp_pivot_right, 1)
+
+    // 3. Zkontroluj divergenci POUZE když je na aktuální svíčce nový pivot
+    if not na(pivot_high_price)
+        is_bear_div = pivot_high_price > prev_pivot_high_price and pivot_high_rsi < prev_pivot_high_rsi
+        rsi_is_overbought = pivot_high_rsi > scalp_rsi_overbought
+        
+        if is_bear_div and rsi_is_overbought
+            short_scalp_signal := true
+            line.delete(bear_div_line) // Smaž starou čáru
+            bear_div_line := line.new(prev_pivot_high_bar, prev_pivot_high_price, bar_index - scalp_pivot_right, pivot_high_price, color=color.new(color.fuchsia, 0), width=2, style=line.style_solid)
+
+// ============================================================================
+// SIGNAL ALERTS & STATE MACHINE
+// ============================================================================
+
+// State machine: 0=No Trade, 1=Long, -1=Short, 10=Hunting Long, -10=Hunting Short
+var int trade_state = 0
+var int setup_bar_index = na // Kdy vznikl setup
+
+// Podmínka pro zrušení setupu po N svíčkách
+setup_timeout_period = input.int(5, "Počet svíček pro zrušení setupu", group="Risk Management")
+setup_timeout = (trade_state[1] == 10 or trade_state[1] == -10) and (bar_index - setup_bar_index) > setup_timeout_period
+
+// --- VSTUPNÍ LOGIKA ---
+// 1. Detekce setupu (přepne do "hunting" módu)
+setup_base_condition = entry_quality >= 70 and signal_type != "NO SIGNAL" and liquidation_risk != "HIGH"
+long_setup_condition = setup_base_condition and signal_direction == 1
+short_setup_condition = setup_base_condition and signal_direction == -1
+
+// 2. Spouštěcí podmínka (vstup po potvrzení)
+long_trigger_condition = close > high[1] // Potvrzení nad maximem předchozí svíčky
+short_trigger_condition = close < low[1] // Potvrzení pod minimem předchozí svíčky
+
+// --- VÝSTUPNÍ LOGIKA ---
+danger_exit_condition = (volatility_state == "EXTREME" and entry_quality < 50) or (liquidation_risk == "HIGH")
+long_exit_condition = danger_exit_condition or short_setup_condition
+short_exit_condition = danger_exit_condition or long_setup_condition
+
+// --- Generování jednorázových signálů ---
+start_hunting_long = trade_state == 0 and long_setup_condition and not long_setup_condition[1]
+start_hunting_short = trade_state == 0 and short_setup_condition and not short_setup_condition[1]
+
+long_entry = trade_state == 10 and long_trigger_condition
+short_entry = trade_state == -10 and short_trigger_condition
+
+long_exit = trade_state == 1 and long_exit_condition and not long_exit_condition[1]
+short_exit = trade_state == -1 and short_exit_condition and not short_exit_condition[1]
+
+invalidate_setup = (trade_state == 10 or trade_state == -10) and (danger_exit_condition or setup_timeout)
+
+// --- Aktualizace stavu automatu ---
+if start_hunting_long
+    trade_state := 10
+    setup_bar_index := bar_index
+if start_hunting_short
+    trade_state := -10
+    setup_bar_index := bar_index
+
+if long_entry
+    trade_state := 1
+if short_entry
+    trade_state := -1
+    
+if long_exit or short_exit or invalidate_setup
+    trade_state := 0
+    setup_bar_index := na
+
+// ============================================================================
+// ENHANCED LIQUIDATION ANALYSIS
+// ============================================================================
+
+// Multi-level liquidation zones
+liquidation_zones = input.int(3, "Number of liquidation zones", minval=2, maxval=5, group="Liquidation Analysis")
+
+// Dynamic liquidation levels based on leverage
+var float[] liquidation_levels = array.new_float(liquidation_zones, 0.0)
+for i = 0 to liquidation_zones - 1
+    distance = liquidation_distance * (i + 1)  // Více úrovní
+    array.set(liquidation_levels, i, close * (1 - distance))
+
+// Liquidation cluster detection
+liquidation_cluster = 0
+closest_liquidation_distance = 999.0
+for i = 0 to liquidation_zones - 1
+    level = array.get(liquidation_levels, i)
+    distance_to_level = math.abs(close - level) / close
+    if distance_to_level < closest_liquidation_distance
+        closest_liquidation_distance := distance_to_level
+    if distance_to_level < 0.02  // 2% tolerance pro cluster
+        liquidation_cluster := liquidation_cluster + 1
+
+// Enhanced liquidation risk
+enhanced_liquidation_risk = liquidation_cluster > 1 ? "CRITICAL" : liquidation_cluster == 1 ? "HIGH" : liquidation_risk
+
+// ============================================================================
+// ALTCOIN-SPECIFIC SIGNAL TYPES
+// ============================================================================
+
+// Altcoin breakout detection
+altcoin_breakout_threshold = input.float(0.03, "Altcoin breakout threshold (3%)", minval=0.01, maxval=0.10, step=0.005, group="Altcoin Signals")
+
+// Volume-based breakout (používáme již definovanou volume_sma_20)
+volume_breakout = volume > volume_sma_20 * 2 and close > high[1] * (1 + altcoin_breakout_threshold)
+volume_breakdown = volume > volume_sma_20 * 2 and close < low[1] * (1 - altcoin_breakout_threshold)
+
+// Altcoin season momentum (používáme již definované proměnné)
+altcoin_season_momentum = altcoin_season and altcoin_momentum_rsi > 60 and volume > volume_sma_20 * 1.5
+
+// Enhanced signal types
+if volume_breakout and altcoin_season_momentum
+    signal_type := "ALTCOIN SEASON BREAKOUT"
+else if volume_breakout
+    signal_type := "ALTCOIN VOLUME BREAKOUT"
+else if is_pump_dump and altcoin_momentum_rsi > 70
+    signal_type := "PUMP & DUMP WARNING"
+else if signal_type == "NO SIGNAL" and altcoin_season
+    signal_type := "ALTCOIN SEASON OPPORTUNITY"
+
+// ============================================================================
+// SMART MONEY CONCEPTS (SMC) ANALYSIS
+// ============================================================================
+
+// --- Inputs ---
+smc_enabled = input.bool(true, "Zobrazit SMC Zóny (OB, FVG)", group="Smart Money")
+fvg_bull_color = input.color(color.new(color.green, 85), "Býčí FVG Barva", group="Smart Money")
+fvg_bear_color = input.color(color.new(color.red, 85), "Medvědí FVG Barva", group="Smart Money")
+ob_bull_color = input.color(color.new(color.blue, 85), "Býčí OB Barva", group="Smart Money")
+ob_bear_color = input.color(color.new(color.orange, 85), "Medvědí OB Barva", group="Smart Money")
+
+// --- Proměnné pro sledování zón ---
+var box bullish_fvg_box = na
+var box bearish_fvg_box = na
+var box bullish_ob_box = na
+var box bearish_ob_box = na
+
+// --- Logika Detekce ---
+if smc_enabled
+    // 1. Fair Value Gap (FVG) / Imbalance Detection
+    is_bullish_fvg = high[2] < low and close > high[1]
+    is_bearish_fvg = low[2] > high and close < low[1]
+
+    if is_bullish_fvg
+        bullish_fvg_box := box.new(bar_index - 2, high[2], bar_index, low, border_color=na, bgcolor=fvg_bull_color)
+    if is_bearish_fvg
+        bearish_fvg_box := box.new(bar_index - 2, low[2], bar_index, high, border_color=na, bgcolor=fvg_bear_color)
+
+    // Mitigace (vyplnění) FVG
+    if not na(bullish_fvg_box) and high >= box.get_bottom(bullish_fvg_box)
+        box.delete(bullish_fvg_box)
+    if not na(bearish_fvg_box) and low <= box.get_top(bearish_fvg_box)
+        box.delete(bearish_fvg_box)
+
+    // 2. Order Block (OB) Detection (zjednodušená verze)
+    // Býčí OB: poslední klesající svíčka před silným růstem, co vytvořil FVG
+    if is_bullish_fvg
+        bullish_ob_box := box.new(bar_index - 2, high[2], bar_index - 1, low[2], border_color=ob_bull_color, bgcolor=na, border_width=1)
+    
+    // Medvědí OB: poslední rostoucí svíčka před silným pádem, co vytvořil FVG
+    if is_bearish_fvg
+        bearish_ob_box := box.new(bar_index - 2, low[2], bar_index - 1, high[2], border_color=ob_bear_color, bgcolor=na, border_width=1)
+
+    // Mitigace OB
+    if not na(bullish_ob_box) and low <= box.get_top(bullish_ob_box)
+        box.delete(bullish_ob_box)
+    if not na(bearish_ob_box) and high >= box.get_bottom(bearish_ob_box)
+        box.delete(bearish_ob_box)
+
+// ============================================================================
+// MICRO-TREND ANALYSIS (SUPERTREND)
+// ============================================================================
+
+st_length = input.int(10, "SuperTrend Délka", group="Micro-Trend")
+st_multiplier = input.float(2.0, "SuperTrend Multiplikátor", group="Micro-Trend")
+st_fill_enabled = input.bool(true, "Zabarvit pozadí SuperTrendu", group="Micro-Trend")
+st_up_fill_color = input.color(color.new(color.green, 90), "Barva pozadí (Uptrend)", group="Micro-Trend")
+st_down_fill_color = input.color(color.new(color.red, 90), "Barva pozadí (Downtrend)", group="Micro-Trend")
+
+[supertrend, direction] = ta.supertrend(st_multiplier, st_length)
+
+micro_trend_direction = direction == -1 ? "UP" : "DOWN"
+
+// --- Vykreslení SuperTrendu a pozadí ---
+
+// 1. Vykreslíme samotnou čáru SuperTrendu
+st_plot = plot(supertrend, "SuperTrend", color=micro_trend_direction == "UP" ? color.new(color.green, 0) : color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+
+// 2. Vytvoříme neviditelné čáry pro high a low, které budou sloužit jako hranice pro naše pozadí
+price_high_plot = plot(high, color=na, title="Price High")
+price_low_plot = plot(low, color=na, title="Price Low")
+
+// 3. Vykreslíme samotné pozadí s použitím ternárního operátoru pro barvu
+// Barva pro uptrend fill: Pokud je povoleno a trend je UP, použij barvu, jinak na (žádná barva)
+uptrend_fill_color = st_fill_enabled and micro_trend_direction == "UP" ? st_up_fill_color : na
+fill(st_plot, price_low_plot, color=uptrend_fill_color, title="Uptrend Fill")
+
+// Barva pro downtrend fill: Pokud je povoleno a trend je DOWN, použij barvu, jinak na
+downtrend_fill_color = st_fill_enabled and micro_trend_direction == "DOWN" ? st_down_fill_color : na
+fill(st_plot, price_high_plot, color=downtrend_fill_color, title="Downtrend Fill")
+
+// ============================================================================
+// PULLBACK & CONTINUATION ANALYSIS
+// ============================================================================
+
+pullback_ema = ta.ema(close, pullback_ema_length)
+price_vs_ema = close > pullback_ema ? "ABOVE" : "BELOW"
+
+// Vykreslení EMA na graf
+plot(show_pullback_ema ? pullback_ema : na, "Pullback EMA", color=pullback_ema_color, linewidth=2)
+
+// ============================================================================
+// CANDLESTICK PATTERN RECOGNITION (INTELLIGENT CONTEXT-AWARE)
+// ============================================================================
+
+// --- Base Pattern Definitions ---
+is_bull_engulf_base = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+is_bear_engulf_base = close < open and close[1] > open[1] and open >= close[1] and close <= open[1]
+
+body_size = math.abs(close - open)
+upper_wick = high - math.max(open, close)
+lower_wick = math.min(open, close) - low
+body_size_ok = body_size > 0 
+
+is_hammer_base = body_size_ok and lower_wick > body_size * 2 and upper_wick < body_size
+is_shooting_star_base = body_size_ok and upper_wick > body_size * 2 and lower_wick < body_size
+
+// --- Intelligent Context: Was there a REACTION at a Key Level? ---
+
+// Bullish Reaction Logic
+prev_bar_tested_support = low[1] <= pullback_ema[1] or (micro_trend_direction[1] == "UP" and low[1] <= supertrend[1]) or (not na(bullish_ob_box) and low[1] <= box.get_top(bullish_ob_box)) or (not na(bullish_fvg_box) and low[1] <= box.get_top(bullish_fvg_box))
+is_bullish_engulfing_reversal = is_bull_engulf_base and prev_bar_tested_support
+
+hammer_pierced_support = (low <= pullback_ema and close > pullback_ema) or (micro_trend_direction == "UP" and low <= supertrend and close > supertrend) or (not na(bullish_ob_box) and low <= box.get_top(bullish_ob_box)) or (not na(bullish_fvg_box) and low <= box.get_top(bullish_fvg_box))
+is_hammer_rejection = is_hammer_base and hammer_pierced_support
+
+// Bearish Reaction Logic
+prev_bar_tested_resistance = high[1] >= pullback_ema[1] or (micro_trend_direction[1] == "DOWN" and high[1] >= supertrend[1]) or (not na(bearish_ob_box) and high[1] >= box.get_bottom(bearish_ob_box)) or (not na(bearish_fvg_box) and high[1] >= box.get_bottom(bearish_fvg_box))
+is_bearish_engulfing_reversal = is_bear_engulf_base and prev_bar_tested_resistance
+
+star_pierced_resistance = (high >= pullback_ema and close < pullback_ema) or (micro_trend_direction == "DOWN" and high >= supertrend and close < supertrend) or (not na(bearish_ob_box) and high >= box.get_bottom(bearish_ob_box)) or (not na(bearish_fvg_box) and high >= box.get_bottom(bearish_fvg_box))
+is_shooting_star_rejection = is_shooting_star_base and star_pierced_resistance
+
+// --- Final Confirmed Patterns ---
+is_bullish_engulfing = is_bullish_engulfing_reversal
+is_bearish_engulfing = is_bearish_engulfing_reversal
+is_hammer = is_hammer_rejection
+is_shooting_star = is_shooting_star_rejection
+
+// ============================================================================
+// TREND STRENGTH ANALYSIS
+// ============================================================================
+
+// Metrika síly trendu (0-100 bodů)
+trend_strength_score = 0.0
+trend_direction_for_score = signal_direction != 0 ? signal_direction : (price_vs_ema == "ABOVE" ? 1 : -1)
+
+// 1. Shoda na více časových rámcích (max 40 bodů)
+if trend_direction_for_score == 1 // Bullish
+    trend_strength_score += bull_score * 10
+else // Bearish
+    trend_strength_score += bear_score * 10
+
+// 2. Potvrzení krátkodobého trendu (max 40 bodů)
+if trend_direction_for_score == 1 // Bullish
+    if micro_trend_direction == "UP"
+        trend_strength_score += 20
+    if price_vs_ema == "ABOVE"
+        trend_strength_score += 20
+else // Bearish
+    if micro_trend_direction == "DOWN"
+        trend_strength_score += 20
+    if price_vs_ema == "BELOW"
+        trend_strength_score += 20
+
+// 3. Kontext a zdraví trhu (max 20 bodů)
+if volatility_state == "NORMAL" or volatility_state == "HIGH"
+    trend_strength_score += 10
+
+// Bonus za Altcoin Season v uptrendu nebo BTC Dominance v downtrendu
+if (trend_direction_for_score == 1 and altcoin_season) or (trend_direction_for_score == -1 and not altcoin_season)
+    trend_strength_score += 10
+
+
+// ============================================================================
+// TREND POTENTIAL ANALYSIS (FUEL GAUGE)
+// ============================================================================
+
+// --- Inputs ---
+stoch_len = input.int(14, "Stochastic Délka", group="Trend Potential")
+stoch_smooth = input.int(3, "Stochastic Vyhlazení", group="Trend Potential")
+max_dist_for_score = input.float(3.0, "Max vzdálenost pro plné skóre (%)", group="Trend Potential", minval=1.0, step=0.5)
+
+// --- Calculation ---
+trend_potential_score = 0.0
+trend_dir = trend_direction_for_score // Znovu použijeme směr trendu
+
+// 1. Vzdálenost k další překážce (max 50 bodů)
+var float nearest_obstacle_price = na
+if trend_dir == 1 // Býčí trend, hledáme nejbližší rezistenci
+    nearest_obstacle_price := not na(bearish_ob_box) ? box.get_bottom(bearish_ob_box) : not na(bearish_fvg_box) ? box.get_bottom(bearish_fvg_box) : na
+else // Medvědí trend, hledáme nejbližší support
+    nearest_obstacle_price := not na(bullish_ob_box) ? box.get_top(bullish_ob_box) : not na(bullish_fvg_box) ? box.get_top(bullish_fvg_box) : na
+
+if not na(nearest_obstacle_price)
+    dist_to_obstacle_pct = math.abs(close - nearest_obstacle_price) / close * 100
+    // Normalizace vzdálenosti na skóre 0-50
+    dist_score = math.min(dist_to_obstacle_pct / max_dist_for_score, 1) * 50
+    trend_potential_score += dist_score
+else
+    trend_potential_score += 50 // Žádná překážka nenalezena = plný počet bodů
+
+// 2. Stav vyčerpání momentu (Stochastic) (max 30 bodů)
+stoch_k = ta.sma(ta.stoch(close, high, low, stoch_len), stoch_smooth)
+if trend_dir == 1 // Býčí trend - vyšší Stochastic je lepší (není přeprodáno)
+    trend_potential_score += (stoch_k / 100) * 30
+else // Medvědí trend - nižší Stochastic je lepší (není překoupeno)
+    trend_potential_score += ((100 - stoch_k) / 100) * 30
+
+// 3. Objemová podpora (max 20 bodů)
+is_trend_candle = (trend_dir == 1 and close > open) or (trend_dir == -1 and close < open)
+if is_trend_candle and volume > volume_sma_20
+    trend_potential_score += 20
+
+
+// ============================================================================
+// PULLBACK HUNTER SYSTEM
+// ============================================================================
+
+// --- Proměnné pro sledování stavu ---
+var int ph_trend_start_bar = na
+var int ph_trend_direction = 0 // 1 pro UP, -1 pro DOWN
+var int ph_trend_bars_count = 0
+var float ph_trend_high = na
+var float ph_trend_low = na
+
+var int ph_pullback_start_bar = na
+var int ph_pullback_bars_count = 0
+
+// --- Detekce hlavního trendu ---
+is_uptrend_ph = close > pullback_ema and micro_trend_direction == "UP"
+is_downtrend_ph = close < pullback_ema and micro_trend_direction == "DOWN"
+
+new_uptrend_start = is_uptrend_ph and not is_uptrend_ph[1]
+new_downtrend_start = is_downtrend_ph and not is_downtrend_ph[1]
+
+// Reset a start nového trendu
+if new_uptrend_start or new_downtrend_start
+    ph_trend_start_bar := bar_index
+    ph_trend_direction := new_uptrend_start ? 1 : -1
+    ph_trend_bars_count := 1
+    ph_trend_high := high
+    ph_trend_low := low
+    ph_pullback_start_bar := na
+    ph_pullback_bars_count := 0
+
+// Pokračování trendu
+if ph_trend_direction == 1 and is_uptrend_ph
+    ph_trend_bars_count += 1
+    ph_trend_high := math.max(ph_trend_high, high)
+if ph_trend_direction == -1 and is_downtrend_ph
+    ph_trend_bars_count += 1
+    ph_trend_low := math.min(ph_trend_low, low)
+
+// --- Detekce korekce ---
+is_pullback_in_uptrend = ph_trend_direction == 1 and close < pullback_ema and ph_trend_bars_count >= ph_min_trend_bars
+is_pullback_in_downtrend = ph_trend_direction == -1 and close > pullback_ema and ph_trend_bars_count >= ph_min_trend_bars
+
+new_pullback_start = (is_pullback_in_uptrend and not is_pullback_in_uptrend[1]) or (is_pullback_in_downtrend and not is_pullback_in_downtrend[1])
+
+if new_pullback_start
+    ph_pullback_start_bar := bar_index
+    ph_pullback_bars_count := 1
+
+if not na(ph_pullback_start_bar) and (is_pullback_in_uptrend or is_pullback_in_downtrend)
+    ph_pullback_bars_count += 1
+
+// Konec korekce
+ph_pullback_ended = not na(ph_pullback_start_bar) and ((ph_trend_direction == 1 and is_uptrend_ph) or (ph_trend_direction == -1 and is_downtrend_ph))
+
+if ph_pullback_ended
+    ph_pullback_start_bar := na
+    ph_pullback_bars_count := 0
+
+// --- Výpočet skóre hloubky korekce (0-100) ---
+pullback_depth_score = 0.0
+if not na(ph_pullback_start_bar) and ph_pullback_bars_count >= ph_min_pullback_bars
+    trend_range = ph_trend_high - ph_trend_low
+    if trend_range > 0
+        if ph_trend_direction == 1
+            retracement = (ph_trend_high - close) / trend_range
+            if retracement >= 0.382
+                pullback_depth_score += 20
+            if retracement >= 0.5
+                pullback_depth_score += 15
+            if retracement >= 0.618
+                pullback_depth_score += 15
+        else
+            retracement = (close - ph_trend_low) / trend_range
+            if retracement >= 0.382
+                pullback_depth_score += 20
+            if retracement >= 0.5
+                pullback_depth_score += 15
+            if retracement >= 0.618
+                pullback_depth_score += 15
+
+    if (ph_trend_direction == 1 and low <= pullback_ema) or (ph_trend_direction == -1 and high >= pullback_ema)
+        pullback_depth_score += 15
+    if (ph_trend_direction == 1 and low <= supertrend) or (ph_trend_direction == -1 and high >= supertrend)
+        pullback_depth_score += 15
+
+    if volume < volume_sma_20 * 0.8
+        pullback_depth_score += 20
+
+// --- Finální stav a vstupní signál ---
+pullback_status = "NONE"
+if ph_trend_direction != 0 and ph_trend_bars_count >= ph_min_trend_bars
+    if na(ph_pullback_start_bar)
+        pullback_status := "HUNTING"
+    else if pullback_depth_score >= ph_depth_threshold
+        pullback_status := "READY"
+    else
+        pullback_status := "HUNTING"
+
+pullback_quality = pullback_depth_score >= 80 ? "EXCELLENT" : pullback_depth_score >= 60 ? "GOOD" : "FAIR"
+pullback_entry_signal = pullback_status == "READY" and ph_pullback_ended
+
+
+// ============================================================================
+// VIZUALIZACE - HELPER FUNKCE
+// ============================================================================
+
+// Funkce pro vytvoření progress baru
+f_get_progress_bar(value, max_val, width) =>
+    filled_count = math.round(value / max_val * width)
+    empty_count = width - filled_count
+    filled_str = str.repeat("■", filled_count)
+    empty_str = str.repeat(" ", empty_count)
+    "[" + filled_str + empty_str + "] " + str.tostring(value, "#") + "/" + str.tostring(max_val, "#")
+
+// Funkce pro barvu podle stavu
+f_get_color(value, threshold_good, threshold_bad) =>
+    value >= threshold_good ? bull_color : value >= threshold_bad ? neutral_color : bear_color
+
+// Funkce pro multi-timeframe status
+f_get_tf_str(tf_trend) => tf_trend == "BULL" ? "▲" : "▼"
+
+// Funkce pro popisky k typům signálů
+f_get_signal_tooltip(signal_type) =>
+    switch signal_type
+        "ALTCOIN SEASON BREAKOUT" => "Silný altcoin impuls, hledej long."
+        "ALTCOIN VOLUME BREAKOUT" => "Potvrzený průraz na objemu."
+        "PUMP & DUMP WARNING" => "Extrémní manipulace, vyhni se obchodu!"
+        "ALTCOIN SEASON OPPORTUNITY" => "Trh přeje altcoinům, buď připraven."
+        "FUNDING ARBITRAGE + MOMENTUM" => "Příležitost ve fundingu i trendu."
+        "LIQUIDATION SQUEEZE" => "Cena míří na likvidace, vysoké riziko."
+        "FUNDING ARBITRAGE" => "Vysoký funding, zvaž arbitráž."
+        "MOMENTUM BREAKOUT" => "Klasický průraz z konsolidace."
+        => "Čekej na jasný signál..." // Default pro "NO SIGNAL" atd.
+
+// ============================================================================
+// VIZUALIZACE - HLAVNÍ DASHBOARD
+// ============================================================================
+
+// Definujeme proměnné pro Pullback Hunter GLOBÁLNĚ (mimo if blok)
+pullback_status_text = ph_enabled ? (pullback_status == "HUNTING" ? "🔍 HUNTING" : pullback_status == "READY" ? "🎯 READY" : "⚪️ NONE") : "DISABLED"
+pullback_status_color = ph_enabled ? (pullback_status == "HUNTING" ? color.new(color.yellow, 20) : pullback_status == "READY" ? color.new(color.green, 20) : color.new(color.gray, 50)) : color.gray
+pullback_depth_color = f_get_color(pullback_depth_score, 70, 50)
+
+if show_dashboard
+    var table main_dashboard = table.new(position.top_right, 3, 17, bgcolor=color.new(color.black, 80), border_width=1)
+    
+    // Hlavní signál
+    main_signal_text = trade_state == 1 ? "🟢 IN LONG" : trade_state == -1 ? "🔴 IN SHORT" : trade_state == 10 ? "🔫 HUNTING LONG" : trade_state == -10 ? "🔫 HUNTING SHORT" : "⚪️ STAY OUT"
+    main_signal_color = (trade_state == 1 or trade_state == 10) ? bull_color : (trade_state == -1 or trade_state == -10) ? bear_color : neutral_color
+    table.merge_cells(main_dashboard, 0, 0, 2, 0)
+    table.cell(main_dashboard, 0, 0, main_signal_text, text_color=color.white, text_size=size.large, bgcolor=main_signal_color)
+
+    // Kvalita vstupu (Progress Bar)
+    quality_bar_str = f_get_progress_bar(entry_quality, 100, 10)
+    quality_color = f_get_color(entry_quality, 70, 50)
+    table.merge_cells(main_dashboard, 0, 1, 2, 1)
+    table.cell(main_dashboard, 0, 1, "Quality: " + quality_bar_str, text_color=quality_color, text_size=size.normal)
+
+    // Klíčové drivery
+    table.cell(main_dashboard, 0, 2, "MARKET DRIVERS", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(main_dashboard, 1, 2, "", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    table.cell(main_dashboard, 2, 2, "", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 80))
+    
+    // Momentum
+    momentum_direction = bull_score > bear_score ? "▲ BULLISH" : bear_score > bull_score ? "▼ BEARISH" : "― NEUTRAL"
+    momentum_color = bull_score > bear_score ? bull_color : bear_score > bull_score ? bear_color : neutral_color
+    table.cell(main_dashboard, 0, 3, "Momentum", text_color=color.white)
+    table.cell(main_dashboard, 1, 3, momentum_direction, text_color=momentum_color)
+
+    // Volatilita
+    volatility_emoji = volatility_state == "EXTREME" ? "🔥" : volatility_state == "HIGH" ? "⚡" : "💧"
+    volatility_color = volatility_state == "EXTREME" or volatility_state == "HIGH" ? warning_color : neutral_color
+    table.cell(main_dashboard, 0, 4, "Volatility", text_color=color.white)
+    table.cell(main_dashboard, 1, 4, volatility_emoji + " " + volatility_state, text_color=volatility_color)
+
+    // Funding Rate
+    funding_text = funding_rate > 0 ? "Longs Pay Shorts" : "Shorts Pay Longs"
+    funding_color_dyn = funding_opportunity ? funding_color : neutral_color
+    table.cell(main_dashboard, 0, 5, "Funding", text_color=color.white)
+    table.cell(main_dashboard, 1, 5, str.tostring(funding_rate * 100, "#.###") + "%", text_color=funding_color_dyn)
+    table.cell(main_dashboard, 2, 5, "(" + funding_text + ")", text_color=funding_color_dyn, text_size=size.tiny)
+
+    // ALTCOIN STATUS (nový řádek)
+    altcoin_status_text = altcoin_season ? "🟢 ALTCOIN SEASON" : "🔴 BTC DOMINANCE"
+    altcoin_status_color = altcoin_season ? bull_color : bear_color
+    table.cell(main_dashboard, 0, 6, "Altcoin Status", text_color=color.white)
+    table.cell(main_dashboard, 1, 6, altcoin_status_text, text_color=altcoin_status_color)
+
+    // PUMP & DUMP WARNING (nový řádek)
+    pump_dump_text = is_pump_dump ? "⚠️ DETECTED" : "✅ CLEAR"
+    pump_dump_color = is_pump_dump ? warning_color : bull_color
+    table.cell(main_dashboard, 0, 7, "Pump & Dump", text_color=color.white)
+    table.cell(main_dashboard, 1, 7, pump_dump_text, text_color=pump_dump_color)
+
+    // ENHANCED LIQUIDATION (nový řádek)
+    liq_cluster_text = liquidation_cluster > 1 ? "⚠️ " + str.tostring(liquidation_cluster) + " ZONES" : liquidation_cluster == 1 ? "🟡 1 ZONE" : "🟢 CLEAR"
+    liq_cluster_color = liquidation_cluster > 1 ? bear_color : liquidation_cluster == 1 ? warning_color : bull_color
+    table.cell(main_dashboard, 0, 8, "Liq. Clusters", text_color=color.white)
+    table.cell(main_dashboard, 1, 8, liq_cluster_text, text_color=liq_cluster_color)
+    table.cell(main_dashboard, 2, 8, str.tostring(closest_liquidation_distance * 100, "#.#") + "%", text_color=liq_cluster_color, text_size=size.small)
+
+    // SIGNAL TYPE (nový řádek) - VYLEPŠENO S POPISKEM
+    signal_color = signal_type == "ALTCOIN SEASON BREAKOUT" ? bull_color : signal_type == "PUMP & DUMP WARNING" ? warning_color : neutral_color
+    signal_tooltip = f_get_signal_tooltip(signal_type)
+    signal_display_text = signal_type + "\n" + signal_tooltip
+    table.cell(main_dashboard, 0, 9, "Signal Type", text_color=color.white)
+    table.merge_cells(main_dashboard, 1, 9, 2, 9)
+    table.cell(main_dashboard, 1, 9, signal_display_text, text_color=signal_color, text_size=size.small)
+
+    // MICRO-TREND (NOVÝ ŘÁDEK)
+    micro_trend_text = micro_trend_direction == "UP" ? "↗️ UP" : "↘️ DOWN"
+    micro_trend_color = micro_trend_direction == "UP" ? bull_color : bear_color
+    table.cell(main_dashboard, 0, 10, "Micro-Trend", text_color=color.white)
+    table.merge_cells(main_dashboard, 1, 10, 2, 10)
+    table.cell(main_dashboard, 1, 10, micro_trend_text, text_color=micro_trend_color, text_size=size.normal)
+
+    // SMC ANALYSIS (NOVÝ ŘÁDEK)
+    nearest_support_text = not na(bullish_ob_box) ? "OB @ " + str.tostring(box.get_top(bullish_ob_box), format.mintick) : not na(bullish_fvg_box) ? "FVG @ " + str.tostring(box.get_top(bullish_fvg_box), format.mintick) : "---"
+    nearest_resistance_text = not na(bearish_ob_box) ? "OB @ " + str.tostring(box.get_bottom(bearish_ob_box), format.mintick) : not na(bearish_fvg_box) ? "FVG @ " + str.tostring(box.get_bottom(bearish_fvg_box), format.mintick) : "---"
+    table.cell(main_dashboard, 0, 11, "SMC Zones", text_color=color.white, bgcolor=color.new(color.purple, 90))
+    table.cell(main_dashboard, 1, 11, "▲ " + nearest_support_text, text_color=color.new(color.green, 40), text_size=size.small)
+    table.cell(main_dashboard, 2, 11, "▼ " + nearest_resistance_text, text_color=color.new(color.red, 40), text_size=size.small)
+
+    // PULLBACK EMA STATUS (NOVÝ ŘÁDEK)
+    ema_status_text = price_vs_ema == "ABOVE" ? "▲ Nad EMA" : "▼ Pod EMA"
+    ema_status_color = price_vs_ema == "ABOVE" ? bull_color : bear_color
+    table.cell(main_dashboard, 0, 12, "Okamžitý Tlak", text_color=color.white)
+    table.merge_cells(main_dashboard, 1, 12, 2, 12)
+    table.cell(main_dashboard, 1, 12, ema_status_text, text_color=ema_status_color, text_size=size.small)
+
+    // SÍLA TRENDU (FINÁLNÍ KONTROLA)
+    trend_strength_bar_str = f_get_progress_bar(trend_strength_score, 100, 10)
+    trend_strength_color = f_get_color(trend_strength_score, 75, 50) // Přísnější hodnocení pro barvu
+    table.cell(main_dashboard, 0, 13, "Síla Trendu", text_color=color.white, bgcolor=color.new(color.blue, 85))
+    table.merge_cells(main_dashboard, 1, 13, 2, 13)
+    table.cell(main_dashboard, 1, 13, trend_strength_bar_str, text_color=trend_strength_color, text_size=size.normal)
+
+    // POTENCIÁL TRENDU (PALIVOVÁ NÁDRŽ)
+    potential_bar_str = "⛽︎ " + f_get_progress_bar(trend_potential_score, 100, 10)
+    potential_color = f_get_color(trend_potential_score, 60, 30)
+    table.cell(main_dashboard, 0, 14, "Potenciál Trendu", text_color=color.white, bgcolor=color.new(color.teal, 85))
+    table.merge_cells(main_dashboard, 1, 14, 2, 14)
+    table.cell(main_dashboard, 1, 14, potential_bar_str, text_color=potential_color, text_size=size.normal)
+
+    // PULLBACK HUNTER STATUS (NOVÝ ŘÁDEK)
+    table.cell(main_dashboard, 0, 15, "Pullback Status", text_color=color.white, bgcolor=color.new(color.purple, 85))
+    table.merge_cells(main_dashboard, 1, 15, 2, 15)
+    table.cell(main_dashboard, 1, 15, pullback_status_text, text_color=pullback_status_color, text_size=size.small)
+
+    // PULLBACK DEPTH (NOVÝ ŘÁDEK)
+    pullback_depth_bar_str = ph_enabled and pullback_status != "NONE" ? f_get_progress_bar(pullback_depth_score, 100, 10) : "N/A"
+    
+    table.cell(main_dashboard, 0, 16, "Pullback Depth", text_color=color.white)
+    table.merge_cells(main_dashboard, 1, 16, 2, 16)
+    table.cell(main_dashboard, 1, 16, pullback_depth_bar_str, text_color=pullback_depth_color, text_size=size.small)
+
+// ============================================================================
+// VIZUALIZACE - DETAILNÍ PANEL (PULLBACK HUNTER / RISK)
+// ============================================================================
+
+if show_risk_panel
+    if ph_enabled
+        // Zobrazíme PULLBACK HUNTER PANEL
+        var table ph_detail_panel = table.new(position.bottom_right, 2, 12, bgcolor=color.new(color.black, 80), border_width=1)
+        table.clear(ph_detail_panel, 0, 0, 1, 11)
+        
+        table.merge_cells(ph_detail_panel, 0, 0, 1, 0)
+        table.cell(ph_detail_panel, 0, 0, "PULLBACK HUNTER DETAILS", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.purple, 90))
+
+        ph_trend_direction_text = ph_trend_direction == 1 ? "▲ UPTREND" : ph_trend_direction == -1 ? "▼ DOWNTREND" : "― NEUTRAL"
+        ph_trend_direction_color = ph_trend_direction == 1 ? bull_color : ph_trend_direction == -1 ? bear_color : neutral_color
+        table.cell(ph_detail_panel, 0, 1, "Main Trend", text_color=color.white)
+        table.cell(ph_detail_panel, 1, 1, ph_trend_direction_text + " (" + str.tostring(ph_trend_bars_count) + " bars)", text_color=ph_trend_direction_color, text_size=size.small)
+
+        table.cell(ph_detail_panel, 0, 2, "Pullback Status", text_color=color.white)
+        table.cell(ph_detail_panel, 1, 2, pullback_status_text, text_color=pullback_status_color, text_size=size.small)
+
+        table.cell(ph_detail_panel, 0, 3, "Pullback Depth", text_color=color.white)
+        table.cell(ph_detail_panel, 1, 3, str.tostring(pullback_depth_score, "#") + "/100", text_color=pullback_depth_color, text_size=size.small)
+
+        // Zde by přišly další detaily z Vašeho návrhu...
+        
+    else
+        // Zobrazíme původní RISK PANEL
+        var table risk_panel = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 80), border_width=1)
+        table.clear(risk_panel, 0, 0, 1, 4)
+
+        table.merge_cells(risk_panel, 0, 0, 1, 0)
+        table.cell(risk_panel, 0, 0, "RISK & POSITION", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.red, 90))
+        // ... (Zde by byl zbytek kódu pro původní risk panel, pokud byste ho chtěl zachovat jako alternativu)
+
+// ============================================================================
+// TOOLTIPS A VYKRESLOVÁNÍ SIGNÁLŮ
+// ============================================================================
+
+// --- Vytvoření textů pro tooltips ---
+
+// Tooltip pro Setup
+setup_tooltip = "SETUP DETECTED\n" + 
+ "Type: " + signal_type + "\n" +
+ "Quality: " + str.tostring(entry_quality, "#") + "/100\n" +
+ "Await confirmation candle..."
+
+// Tooltip pro Entry
+entry_sl_price_long = close * (1 - stop_loss_pct / 100)
+entry_tp_price_long = close * (1 + take_profit_pct / 100)
+entry_sl_price_short = close * (1 + stop_loss_pct / 100)
+entry_tp_price_short = close * (1 - take_profit_pct / 100)
+
+long_entry_tooltip = "LONG ENTRY CONFIRMED\n" +
+ "Price: " + str.tostring(close, format.mintick) + "\n" +
+ "SL: " + str.tostring(entry_sl_price_long, format.mintick) + "\n" +
+ "TP: " + str.tostring(entry_tp_price_long, format.mintick)
+
+short_entry_tooltip = "SHORT ENTRY CONFIRMED\n" +
+ "Price: " + str.tostring(close, format.mintick) + "\n" +
+ "SL: " + str.tostring(entry_sl_price_short, format.mintick) + "\n" +
+ "TP: " + str.tostring(entry_tp_price_short, format.mintick)
+
+// Tooltip pro Exit
+exit_reason_danger_str = (volatility_state == "EXTREME" ? "Extreme Volatility" : "") + (liquidation_risk == "HIGH" ? " High Liq. Risk" : "")
+long_exit_reason = danger_exit_condition ? "Danger:" + exit_reason_danger_str : short_setup_condition ? "Opposite Signal" : "Exit"
+short_exit_reason = danger_exit_condition ? "Danger:" + exit_reason_danger_str : long_setup_condition ? "Opposite Signal" : "Exit"
+long_exit_tooltip = "LONG EXIT\n" + "Reason: " + long_exit_reason
+short_exit_tooltip = "SHORT EXIT\n" + "Reason: " + short_exit_reason
+
+// Tooltip pro Invalidation
+invalidation_reason = setup_timeout ? "Timeout" : "Danger:" + exit_reason_danger_str
+invalidation_tooltip = "SETUP INVALIDATED\n" + "Reason: " + invalidation_reason
+
+// Tooltip pro Scalp
+long_scalp_tooltip = "SCALP LONG (BULLISH DIVERGENCE)\n" + "RSI is oversold and momentum is weakening."
+short_scalp_tooltip = "SCALP SHORT (BEARISH DIVERGENCE)\n" + "RSI is overbought and momentum is weakening."
+
+
+// --- Vykreslení signálů pomocí label.new ---
+if show_signals
+    // Svíčkové formace (Kontextové)
+    if show_patterns
+        if is_bullish_engulfing
+            label.new(bar_index, low, 'E', yloc=yloc.belowbar, textcolor=bull_color, style=label.style_none, size=size.small, tooltip="Bullish Engulfing @ Key Level")
+        if is_bearish_engulfing
+            label.new(bar_index, high, 'E', yloc=yloc.abovebar, textcolor=bear_color, style=label.style_none, size=size.small, tooltip="Bearish Engulfing @ Key Level")
+        if is_hammer
+            label.new(bar_index, low, 'H', yloc=yloc.belowbar, textcolor=bull_color, style=label.style_none, size=size.small, tooltip="Hammer @ Key Level")
+        if is_shooting_star
+            label.new(bar_index, high, 'H', yloc=yloc.abovebar, textcolor=bear_color, style=label.style_none, size=size.small, tooltip="Shooting Star @ Key Level")
+
+    // Scalp signály
+    if long_scalp_signal
+        label.new(bar_index, low, 'S', yloc=yloc.belowbar, textcolor=color.aqua, style=label.style_none, size=size.tiny, tooltip=long_scalp_tooltip)
+    if short_scalp_signal
+        label.new(bar_index, high, 'S', yloc=yloc.abovebar, textcolor=color.fuchsia, style=label.style_none, size=size.tiny, tooltip=short_scalp_tooltip)
+
+    // Hlavní signály
+    if long_entry
+        label.new(bar_index, low, '▲', yloc=yloc.belowbar, textcolor=bull_color, style=label.style_none, size=size.normal, tooltip=long_entry_tooltip)
+    if short_entry
+        label.new(bar_index, high, '▼', yloc=yloc.abovebar, textcolor=bear_color, style=label.style_none, size=size.normal, tooltip=short_entry_tooltip)
+    if long_exit
+        label.new(bar_index, high, '✕', yloc=yloc.abovebar, textcolor=color.new(bull_color, 20), style=label.style_none, size=size.small, tooltip=long_exit_tooltip)
+    if short_exit
+        label.new(bar_index, low, '✕', yloc=yloc.belowbar, textcolor=color.new(bear_color, 20), style=label.style_none, size=size.small, tooltip=short_exit_tooltip)
+    if start_hunting_long or start_hunting_short
+        label.new(bar_index, low - ta.tr, '•', yloc=yloc.price, textcolor=color.new(color.blue, 50), style=label.style_none, size=size.tiny, tooltip=setup_tooltip)
+    if invalidate_setup
+        label.new(bar_index, low - ta.tr, '✖', yloc=yloc.price, textcolor=color.new(color.gray, 50), style=label.style_none, size=size.tiny, tooltip=invalidation_tooltip)
+
+    // Pullback Entry Signal
+    if ph_enabled and pullback_entry_signal
+        entry_symbol = ph_trend_direction == 1 ? "▲" : "▼"
+        entry_color = ph_trend_direction == 1 ? bull_color : bear_color
+        entry_tooltip = "PULLBACK ENTRY " + (ph_trend_direction == 1 ? "LONG" : "SHORT") + "\nDepth: " + str.tostring(pullback_depth_score, "#")
+        label.new(bar_index, ph_trend_direction == 1 ? low : high, entry_symbol, 
+                  yloc=ph_trend_direction == 1 ? yloc.belowbar : yloc.abovebar,
+                  textcolor=entry_color, style=label.style_label_up, size=size.large, 
+                  tooltip=entry_tooltip)
+
+// ============================================================================
+// BACKGROUND COLORING
+// ============================================================================
+
+// Background color based on trade state
+bg_color = 
+  trade_state == 1 ? color.new(bull_color, 90) :
+  trade_state == -1 ? color.new(bear_color, 90) :
+  trade_state == 10 ? color.new(bull_color, 95) :  // Tmavší barva pro hunting
+  trade_state == -10 ? color.new(bear_color, 95) : // Tmavší barva pro hunting
+  funding_opportunity ? color.new(funding_color, 95) :
+  liquidation_risk == "HIGH" ? color.new(warning_color, 95) : na
+
+bgcolor(bg_color)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition(start_hunting_long, title="CryptoEXP Long Setup", message="CryptoEXP: LONG SETUP DETECTED - {{ticker}} - Awaiting confirmation...")
+alertcondition(start_hunting_short, title="CryptoEXP Short Setup", message="CryptoEXP: SHORT SETUP DETECTED - {{ticker}} - Awaiting confirmation...")
+alertcondition(long_entry, title="CryptoEXP Long Entry", message="CryptoEXP: LONG ENTRY CONFIRMED - {{ticker}}")
+alertcondition(short_entry, title="CryptoEXP Short Entry", message="CryptoEXP: SHORT ENTRY CONFIRMED - {{ticker}}")
+alertcondition(long_exit, title="CryptoEXP Long Exit", message="CryptoEXP: LONG EXIT - {{ticker}}")
+alertcondition(short_exit, title="CryptoEXP Short Exit", message="CryptoEXP: SHORT EXIT - {{ticker}}")
+alertcondition(invalidate_setup, title="CryptoEXP Setup Invalidated", message="CryptoEXP: Setup Invalidated for {{ticker}}")
+alertcondition(funding_opportunity, title="CryptoEXP Funding Opportunity", message="CryptoEXP: FUNDING OPPORTUNITY - {{ticker}} - Rate: {{plot('Funding Rate %')}}%")
+
+// Pullback Hunter Alerty
+alertcondition(ph_enabled and pullback_status == "READY" and pullback_status[1] != "READY", title="Pullback Hunter: Ready", message="Pullback Hunter: Pullback is READY for entry on {{ticker}}")
+alertcondition(ph_enabled and pullback_entry_signal, title="Pullback Hunter: Entry Signal", message="Pullback Hunter: ENTRY SIGNAL on {{ticker}}")
+
+// ============================================================================
+// PLOTS FOR ALERTS
+// ============================================================================
+
+plot(entry_quality, title="Entry Quality", display=display.none)
+plot(funding_rate * 100, title="Funding Rate %", display=display.none)
+plot(volatility_ratio, title="Volatility Ratio", display=display.none)
+plot(liquidation_risk == "HIGH" ? 1 : 0, title="Liquidation Risk", display=display.none)
+plot(pullback_depth_score, title="Pullback Depth", display=display.none) 

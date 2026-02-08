@@ -1,0 +1,1039 @@
+//@version=6
+indicator(title="UT Bot Alerts BTC PRO v1.2.69 (CORE-BTC)", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// BTC PRO v1.2.69 - RECENT BULLRUN FIX v3 (GPT)
+// ============================================================================
+// BASE: BTC PRO v1.0 (CORE-BTC, на базе UNIVERSAL PRO v1.1)
+//
+// ЦЕЛИ v1.2.69 - RECENT BULLRUN FIX v3 (GPT - HYBRID LOGIC):
+//   • FIXED v3: Price gain check blocked valid reversals in uptrends (06:00/07:15/08:25)
+//   • BUG v1.2.68: close > close[10] * 1.012 blocked EVEN after 2+ red bars (correction)
+//   • NEW LOGIC: Ignore price gain if precedingBearStreak >= 2 (had correction = reversal)
+//   • Hybrid check: (greenCount >= 8 in last 10 bars) AND (no recent correction)
+//   • Block: 01:55 type (8+ green bars, no correction) = active continuation
+//   • Allow: 06:00/08:25 type (had 2+ red bars before) = post-correction reversal
+//   • REASON: Uptrend + correction + reversal = VALID entry, not late continuation
+//   • SOLUTION: recentBullRun = (greenCount >= 8) and (precedingBearStreak < 2)
+//   • ЦЕЛЬ: Block ONLY active momentum continuations, allow ALL post-correction reversals
+//
+// ЦЕЛИ v1.2.68 - RECENT BULLRUN FIX v2 (GPT - TOO STRICT):
+//   • BUG: close > close[10] * 1.012 blocked valid reversals in uptrends
+//   • REASON: Price gain check ignored local corrections (2-3 red bars)
+//   • DEPRECATED: Replaced by v1.2.69 hybrid logic with correction awareness
+//
+// ЦЕЛИ v1.2.67 - RECENT BULLRUN FIX (GPT - TOO STRICT):
+//   • FIXED: recentBullRun check - broken ta.highest(bullStreak) logic replaced
+//   • BUG: greenBarsRecent >= 15 in 30 bars blocked ALL entries (too wide window)
+//   • REASON: 150 min window caught old uptrends even after corrections
+//   • DEPRECATED: Replaced by v1.2.68 with narrower window
+//
+// ЦЕЛИ v1.2.66 - RECENT BULLRUN BLOCK (GPT):
+//   • Reverted earlyReversalEntry: bullStreak == 1 (was <= 2) - only first bar again
+//   • Added recentBullRun check: blocks if strong upward movement in last 6 bars
+//   • Checks: bullStreak[6] >= 10 OR close > close[6] * 1.015 (1.5% gain in 30min)
+//   • FIX: 01:55 type continuation entries (looks like reversal but part of 00:45-02:00 move)
+//   • ЦЕЛЬ: Block fake reversals after pullbacks in ongoing uptrend
+//
+// ЦЕЛИ v1.2.65 - EARLY ENTRY EXPAND (GPT):
+//   • Expanded earlyReversalEntry: bullStreak <= 2 (was == 1) - catches first 2 bars
+//   • Rationale: First bar may be weak (body <40%, ATR <0.25%, microFlat), second confirms
+//   • Protection: tooLateInBullRun=3 still blocks 3+ bars, only allows bar 1-2
+//   • FIX: 00:30 type weak first bars (low body/ATR/gap) catch on bar 2 if stronger
+//   • ЦЕЛЬ: Catch early reversal on bar 1 OR bar 2, block bar 3+ continuation entries
+//
+// ЦЕЛИ v1.2.64 - LATE ENTRY BLOCK (GPT):
+//   • Added tooLateInBullRun check to ALL LONG paths (except isVReversalLong + earlyReversalEntry)
+//   • Blocks: strongReversal_long, moderatePullbackEntry, moderateImpulseBreak after 3+ green bars
+//   • FIX: 09:15 type late entries that bypass through moderateImpulseBreak/strongReversal
+//   • maxBullStreakForEntry=3 now enforced globally, not just on final check
+//   • ЦЕЛЬ: Only 2 bypass paths: V-reversal (huge body) + earlyReversalEntry (first bar)
+//
+// ЦЕЛИ v1.2.63 - EMA21 BYPASS (GPT):
+//   • Softened EMA21 break: 1.0015→0.998 - allows entry 0.2% BELOW EMA21
+//   • FIX: Catches reversals starting below EMA21 (09:00 screenshot type)
+//   • Rationale: Strong reversals often start below EMA21, break through on bar 2-3
+//   • Without this: bullStreak > 3 when EMA21 breaks → tooLateInBullRun blocks
+//   • ЦЕЛЬ: Catch first bar even if below EMA21, trust other filters (body/gap/ATR)
+//
+// ЦЕЛИ v1.2.62 - EARLY ENTRY FIX (GPT):
+//   • Softened earlyReversalEntry: body 45%→40%, gap 0.08%→0.05%, ATR 0.28%→0.25%
+//   • EMA21 break: 1.002→1.0015 (softer), EMA200 dist: 0.3%→0.25% (closer allowed)
+//   • maxBullStreakForEntry: 5→3 bars - blocks late entries on 4+ green bars
+//   • FIX: Catches first weak reversal bar (08:20), blocks top entries (09:15 @ 12th bar)
+//   • ЦЕЛЬ: Enter at START (bar 1), not at TOP (bar 12+)
+//
+// ЦЕЛИ v1.2.61 - EARLY REVERSAL ENTRY (GPT):
+//   • Added earlyReversalEntry: catches FIRST strong green bar after downmove
+//   • Conditions: precedingBearStreak >= 2, bullStreak == 1, body >= 45%, gap >= 0.08%
+//   • Requirements: close > emaS * 1.002, atrp >= 0.28, not microFlat, ema200Dist >= 0.3%
+//   • minAtrPctLong: 0.28% (was 0.30%) - softer threshold for early reversals
+//   • minBarsBetweenSignals: 3 (was 4) - less cooldown blocking (15 min vs 20 min)
+//   • ЦЕЛЬ: Enter at START of movement, not 2-4 bars late (+$200-300 per trade)
+//
+// ЦЕЛИ v1.2.60 - ANTI-SINGLE-PULLBACK-SHORT (GPT):
+//   • Tightened strongReversal_short: requires bearStreak >= 2 OR close < emaS * 0.998
+//   • Added weakSingleShortPullback guard: blocks single red bar pullbacks in uptrends
+//   • Conditions: emaF > emaS, bearStreak == 1, close >= emaS * 0.998
+//   • Bypassed by: moderateShortEntry, isUltraStrongBreakdown, isCascadeBreakdown
+//   • ЦЕЛЬ: Block counter-trend single-bar shorts in strong uptrends
+//
+// ЦЕЛИ v1.2.59 - SOFT FLAT SHORT GUARD (GPT):
+//   • Added softFlatShort guard: blocks weak 1-2 bar shorts WITHOUT strong impulse ANYWHERE
+//   • Conditions: gapPct < 0.08, atrp < 2×minAtrPctShort, bearStreak ≤ 2, bodyPct < 45%
+//   • Bypassed by: shortImpulseBypass, moderateShortEntry, breakdowns, cascades
+//   • Tightened shortFlatNearEma200: dist < 0.75%, gap < 0.085, atrp < 0.55 (was 0.6/0.06/0.40)
+//   • ЦЕЛЬ: Block all weak flat shorts (1-2 bars, low vol) while keeping strong impulses
+//
+// ЦЕЛИ v1.2.58 - ANTI-FLAT FIX (GPT):
+//   • Added shortFlatNearEma200 guard: blocks weak shorts near EMA200 in narrow range
+//   • Conditions: ema200DistPctShort < 0.6, gapPct < 0.06, atrp < 0.40
+//   • Bypassed by: isUltraStrongBreakdown, isCascadeBreakdown
+//   • ЦЕЛЬ: Fix specific weak short signal in flat near EMA200
+//
+// ЦЕЛИ v1.2.56 - МАКСИМАЛЬНАЯ СТРОГОСТЬ (УСТРАНЕНИЕ ВСЕХ СЛАБЫХ ВХОДОВ):
+//   • minAtrPctLong: 0.30% (было 0.27%) - ULTRA строго, только высокая волатильность
+//   • minAtrPctShort: 0.26% (было 0.23%) - симметрично строже
+//   • longFlatGapThreshold: 0.0025 (было 0.0018) - 0.25% gap, строже блокируем флэт-LONG
+//   • microFlat: gapPct < 0.045 (возврат к 0.045 для лучшей детекции)
+//   • body_filter: moderatePullbackEntry байпас ТОЛЬКО вне microFlat (блокируем слабые развороты)
+//   • hadRedBar/hadGreenBar: 2+ бара (было 1+) - блокируем 1-bar reversals
+//   • ЦЕЛЬ: ZERO слабых сигналов, только сильные тренды
+//
+// ЦЕЛИ v1.2.55 - КРИТИЧЕСКИЙ ФИКС SHORT ВО ФЛЭТЕ (FIX 21:10):
+//   • strongReversal_short: добавлен 'not microFlat' (блокируем SHORT в боковике)
+//   • moderateShortEntry: добавлен 'not microFlat' (уже был, подтверждение)
+//   • EMA200 SHORT zone: блокируем SHORT в зоне ±0.8% от EMA200 (аналогично LONG)
+//   • isUltraStrongBreakdown: добавлен 'not ema200ShortFlatBlock'
+//   • isCascadeBreakdown: добавлен 'not ema200ShortFlatBlock'
+//   • hadGreenBar path: добавлен 'not ema200ShortFlatBlock'
+//   • bearStreak >= 2 path: добавлен 'not ema200ShortFlatBlock'
+//   • ЦЕЛЬ: ZERO SHORT в боковике и возле EMA200 (FIX 21:10 loss)
+//
+// ЦЕЛИ v1.2.54 - РАДИКАЛЬНАЯ БОРЬБА С ФЛЭТОМ:
+//   • ema200DistPct: 0.8% (было 0.5%) - только далеко от EMA200 для adaptive
+//   • V-reversal: body 75% (было 70%), gap 0.9% (было 0.7%) - супер-сильные развороты
+//   • microFlat: atrp < 0.38 (было 0.35) - более ранняя детекция боковика
+//   • moderatePullbackEntry: 2+ red (было 1+), body 38% (было 35%) - только реальные откаты
+//   • moderateImpulseBreak: EMA200 0.9% (было 0.7%), body 48% (было 45%) - строгий continuation
+//
+// ЦЕЛИ v1.2.53 - УСТРАНЕНИЕ ФЛЭТ-СИГНАЛОВ:
+//   • minCandleBodyPct: 32% (было 30%) - только сильные свечи
+//   • minAtrPctLong: 0.27% (было 0.25%) - только активный рынок
+//   • minAtrPctShort: 0.23% (было 0.21%) - симметрично строже
+//   • minBarsBetweenSignals: 4 (было 3) - cooldown 20 мин вместо 15
+//   • minEmaGapPct: 0.035% (было 0.030%) - против узких EMA в флэте
+//   • microFlat detection: gapPct < 0.040 (было 0.045), atrp < 0.35 (было 0.33)
+//   • body_filter micro-flat: 40% (было 38%) - ещё строже в боковике
+//   • ЦЕЛЬ: ZERO флэт-сигналов, только трендовые развороты и импульсы
+//
+// ЦЕЛИ v1.2.52 - ВОССТАНОВЛЕНИЕ ПРОПУЩЕННЫХ РАЗВОРОТОВ:
+//   • minLongMomentumBars: 1 (было 2) - ловим ранние развороты с 1 зелёным баром (FIX 08:45, 11:25)
+//   • minShortMomentumBars: 1 (было 2) - ловим ранние SHORT после пиков
+//   • minBarsBetweenSignals: 3 (было 4) - меньше блокировок по времени (15 мин вместо 20)
+//   • strongLongGapPct: 0.10% (было 0.12%) - больше импульсных разворотов проходят bypass
+//   • strongBullBodyBypass: 45.0% (было 50.0%) - реальные свечи разворота проходят фильтр
+//   • ema200DistPct > 0.5% для adaptive paths - блокируем слабые BUY возле EMA200
+//   • ЦЕЛЬ: вернуть 08:45 (+0.9%), 11:25 (+0.77%), 04:30, 15:15 БЕЗ шума возле EMA200
+//
+// ЦЕЛИ v1.2.51 - КРИТИЧЕСКАЯ ДИАГНОСТИКА (08:45, 11:25 всё ещё блокированы):
+//   • moderatePullbackEntry: body 35% (было 40%) - МАКСИМАЛЬНО мягко для weak reversals
+//   • moderatePullbackEntry: gap 0.03% (было 0.05%) - ловим даже слабые движения
+//   • Cooldown: 4 бара/20 мин (было 5/25) - меньше блокировок по времени
+//   • Added DETAILED rejection debug labels - покажут точную причину блокировки
+//   • body_filter_ok: 35% для reversal (было минимум 30%) - только реальные свечи
+//   • СОХРАНЕНО: защита от слабых impulse (bullStreak >= 3 требует 0.7% EMA200 distance)
+//   • РЕЗУЛЬТАТ: НЕ ПОМОГЛО - 08:45, 11:25 всё ещё заблокированы
+//
+// ЦЕЛИ v1.2.48 - БАЛАНСИРОВКА:
+//   • moderatePullbackEntry: УБРАНО требование ema200DistPct > 0.7% (reversal должен работать близко к EMA200)
+//   • longImpulseBypass с wasDownMove: УБРАНО требование 0.7% (разворот после падения)
+//   • longImpulseBypass БЕЗ wasDownMove (чистый импульс): СОХРАНЕНО 0.7% (защита от слабых отскоков)
+//   • moderateImpulseBreak: СОХРАНЕНО 0.7% (это continuation, не reversal)
+//   • РЕЗУЛЬТАТ: НЕ ПОМОГЛО - 08:45, 11:25 всё равно заблокированы
+//
+// ЦЕЛИ v1.2.47 - ФИНАЛЬНАЯ БЛОКИРОВКА:
+//   • Удалён слабый путь (bullBodyPct >= 42% and stopGapLongPct >= 0.08%) из longImpulseBypass
+//   • longImpulseBypass теперь требует bullStreak >= 3 ИЛИ wasDownMove
+//   • Все пути требуют EMA200 distance >= 0.7% (кроме V-reversal)
+//   • РЕЗУЛЬТАТ: заблокировал 2 из 3 слабых BUY, но ТАКЖЕ заблокировал хорошие развороты
+//
+// ЦЕЛИ v1.2.46 - РАДИКАЛЬНОЕ УЖЕСТОЧЕНИЕ:
+//   • longImpulseBypass: gap 0.12% (было 0.08%), body 50% (было 42%)
+//   • isStrongImpulseBreak: body 45% (было 40%), gap 0.10% (было 0.06%)
+//   • adaptiveImpulseLong: минимум 0.5% от EMA200 (было 0.30%)
+//   • moderate paths требуют ATR ≥ 0.30%
+//   • ЦЕЛЬ: блокировать ВСЕ слабые BUY возле EMA200
+//
+// ЦЕЛИ v1.2.45:
+//   • Cooldown увеличен: 5 баров/25 мин (было 4 бара/20 мин) - блокирует 13:15
+//   • EMA200 distance: 0.7% (было 0.5%) - только далеко от EMA200
+//   • Body requirement: 45% (было 40%) для moderatePullbackEntry - только сильные свечи
+//   • ЦЕЛЬ: блокировать 2 оставшихся слабых BUY из 3
+//
+// ЦЕЛИ v1.2.44:
+//   • Ужесточён moderatePullbackEntry: 2+ красных (было 1+), body 40% (было 35%)
+//   • Добавлена проверка расстояния от EMA200 (> 0.5%) для moderate paths
+//   • Cooldown увеличен: 4 бара/20 мин (было 3 бара/15 мин)
+//   • Блокирует слабые BUY возле EMA200 типа 13:00, 13:15
+//
+// ЦЕЛИ v1.2.43:
+//   • Фильтрация ложных SHORT в боковике (EMA9 ≈ EMA21)
+//   • Путь (hadGreenBar + strongImpulse) теперь требует trendDown
+//   • Блокирует "loss-like" входы на отскоках в рендже (01:00, 03:45 типы)
+//   • Сохраняет хорошие трендовые входы (09:15, 10:30)
+//
+// ЦЕЛИ v1.2.24:
+//   • MAXIMUM ENTRY: убрана ГЛАВНАЯ блокировка bullStreak >= 2
+//   • Cooldown: 15 мин (3 бара)
+//   • Adaptive momentum: 1+ зелёный достаточно
+//   • minLongMomentumBars: 1 (ловим старт тренда)
+//   • Смягчён longImpulseBypass: gap 0.08% ИЛИ body 42%
+//   • Блокировка слабых BUY в зоне ±0.30% от EMA200
+//   • ZERO слабых сигналов около EMA200
+//
+// ИЗМЕНЕНИЯ v1.2.24 vs v1.2.23:
+//   ✅ Cooldown: 3 бара (было 5) - меньше NO:COOL
+//   ✅ minAtrPctLong: 0.25 (было 0.27) - ловим тихий старт
+//   ✅ minCandleBodyPct: 30.0 (было 35.0) - больше входов
+//
+// Ожидаемый эффект:
+//   • BUY сигналов: 15-20/день (было 12-18)
+//   • Win Rate LONG: 85-90% (покрытие >>> строгость)
+//   • Флэт-BUY: 0/день (строгая блокировка ±0.30%)
+//
+// Alerts:
+//   • JSON-формат совместим с v1.0, preset остаётся "btc_pro_v1"
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// GRADUATED parameters (BTC tuned)
+// ---------------------------------------------------------------------------
+float minAtrPctLong          = 0.28  // v1.2.61: смягчён 0.30→0.28 для ранних разворотов (early entry)
+float minAtrPctShort         = 0.26  // v1.2.56: симметрично поднят 0.23→0.26
+float maxAtrPct              = 2.50
+float minEmaGapPct           = 0.030  // v1.2.24: чуть мягче раскрытие EMA, чтобы ранний тренд проходил
+float emaAlignToleranceLong  = 0.005
+float emaAlignTolShort       = 0.0005
+float longFlatGapThreshold   = 0.0025   // v1.2.56: ~0.25% gap (было 0.18%), строже блокируем флэт-LONG
+
+// CORE Settings (NO INPUTS - hardcoded BTC preset)
+int a = 1
+int c = 10
+bool h = false
+
+// Quality Filter - ALWAYS ON
+bool useSoftFilter          = true
+int emaFastLen             = 9
+int emaSlowLen             = 21
+bool confirmClose           = true
+
+// Filter modes
+string filterModeLong         = "OR"
+string filterModeShort        = "AND"
+int minBarsBetweenSignals  = 3   // v1.2.61: уменьшен 4→3 бара (15 мин cooldown), меньше блокировок early entry
+
+// Strict trend for entry (v1.2.1 fix)
+int minTrendBarsForEntry   = 1     // v1.2.1: было 2, смягчено для ранних разворотов
+
+// RangeGuard - BTC STRICT (режем флэт)
+bool useRangeGuard          = true
+int rangeLen               = 14
+float minRangePct            = 0.95   // v1.2.14: было 0.80, усилен против узких диапазонов
+
+// Crossover smoothing
+int crossSmoothLen         = 1
+
+// ShortGuard LITE - BTC STRICT (anti-1bar)
+bool useShortGuardLite      = true
+float minStopGapShortPct     = 0.08
+float minBearBodyShortPct    = 35.0   // v1.2.24: допускаем немного меньшие тела для сильных каскадных шортов
+int requireShortStayBars   = 1
+int minShortMomentumBars   = 1  // v1.2.52: FIX #5 - БЫЛО 2, возвращаем 1 (ловим ранние SHORT после пиков)
+float strongShortGapPct      = 0.10
+float strongBearBodyBypass   = 55.0
+
+// LONG filters (BTC MAXIMUM ENTRY)
+int minLongMomentumBars    = 1     // v1.2.52: FIX #1 - БЫЛО 2, возвращаем 1 (ловим ранние развороты типа 08:45, 11:25)
+float strongLongGapPct       = 0.10  // v1.2.52: FIX #3 - БЫЛО 0.12, снижаем до 0.10 (больше импульсов проходят bypass)
+float strongBullBodyBypass   = 45.0  // v1.2.52: FIX #3 - БЫЛО 50.0, снижаем до 45 (реальные свечи разворота проходят)
+
+// EMA Alignment - ON
+bool requireEmaAlignmentLong  = true
+bool requireEmaAlignmentShort = true
+
+// ---------------------------------------------------------------------------
+// BTC FILTERS (hardcoded v1.2)
+// ---------------------------------------------------------------------------
+
+// ADX Soft для BTC (включён)
+bool useAdxFilter       = true
+int adxLength          = 14
+float adxThresholdLong   = 14.0   // мягче для LONG
+float adxThresholdShort  = 18.0   // чуть строже для SHORT
+
+// EMA9 Close Filter - ON
+bool useEma9CloseFilter = true
+
+// HTF EMA200 - OFF
+bool useHtfEma200       = false
+string htfTf              = "15"
+int htfEmaLen          = 200
+
+// ATR Cap - ON
+bool useAtrCap          = true
+
+// Squeeze - ON (как в QUALITY)
+bool useSqueezeFilter = true
+int squeezeBbLength  = 20
+float squeezeBbMult    = 2.0
+float squeezeKcMult    = 1.5
+
+// MACD - OFF
+bool useMacdFilter    = false
+int macdFastLength   = 12
+int macdSlowLength   = 26
+int macdSignalLength = 9
+
+// Volume - OFF
+bool useVolumeFilter  = false
+int volumeEmaShort   = 5
+int volumeEmaLong    = 10
+float volumeThreshold  = 15.0
+
+// Body filter global - BTC MAXIMUM STRICT (режем doji/слабые свечи)
+float minCandleBodyPct       = 32.0  // v1.2.53: ужесточён 30→32% против флэт-BUY
+
+// EMA-200 Global - ON (SOFT-логика на финальном этапе)
+bool useEma200Filter        = true
+float ema200Tolerance        = 0.7
+
+// Anti-Bottom-Short - ON
+bool useAntiBottomShort     = true
+float dropThresholdPct       = 8.0
+int bottomLookbackBars     = 8
+
+// Debug - OFF
+bool enableDebug            = true
+
+// ============================================================================
+// FILTER CALCULATIONS
+// ============================================================================
+
+// ADX Calculation
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+adxLongOk  = not useAdxFilter or (adx > adxThresholdLong)
+adxShortOk = not useAdxFilter or (adx > adxThresholdShort)
+
+// Squeeze Momentum
+basisSqz = ta.sma(close, squeezeBbLength)
+dev = squeezeBbMult * ta.stdev(close, squeezeBbLength)
+upperBB = basisSqz + dev
+lowerBB = basisSqz - dev
+maSqz = ta.sma(close, squeezeBbLength)
+rangeMa = ta.sma(ta.tr, squeezeBbLength)
+upperKC = maSqz + rangeMa * squeezeKcMult
+lowerKC = maSqz - rangeMa * squeezeKcMult
+sqzOn = (lowerBB > lowerKC) and (upperBB < upperKC)
+squeezeBreakdown = sqzOn and close < lowerKC
+squeezeOk = not useSqueezeFilter or not sqzOn or squeezeBreakdown
+
+// MACD Histogram
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+macdLongOk  = not useMacdFilter or histLine > 0
+macdShortOk = not useMacdFilter or histLine < 0
+
+// Volume Confirmation
+volShort = ta.ema(volume, volumeEmaShort)
+volLong  = ta.ema(volume, volumeEmaLong)
+volOsc   = 100 * (volShort - volLong) / math.max(volLong, 1)
+volumeOk = not useVolumeFilter or (volOsc > volumeThreshold)
+
+// EMA-200 Global Filter
+ema200 = ta.ema(close, 200)
+toleranceMult = ema200Tolerance / 100.0
+ema200LongOk  = not useEma200Filter or (close > ema200 * (1.0 - toleranceMult))
+ema200ShortOk = not useEma200Filter or (close < ema200 * (1.0 + toleranceMult))
+
+// HTF EMA200 Filter (OFF, но логика оставлена на будущее)
+htfEma = useHtfEma200 ? request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaLen), lookahead=barmerge.lookahead_off) : na
+htfLongOk  = not useHtfEma200 or (close > htfEma)
+htfShortOk = not useHtfEma200 or (close < htfEma)
+
+// Anti-Bottom-Short Filter
+recentHigh = ta.highest(high, 25)
+recentLow  = ta.lowest(low, 25)
+recentDrop = (recentHigh - recentLow) / recentHigh * 100.0
+isAtBottom = low == ta.lowest(low, bottomLookbackBars)
+antiBottomShortOk = not useAntiBottomShort or not (recentDrop >= dropThresholdPct and isAtBottom)
+
+// ============================================================================
+// CORE UT BOT LOGIC
+// ============================================================================
+xATR  = ta.atr(c)
+nLoss = a * xATR
+haTkr = ticker.heikinashi(syminfo.tickerid)
+src   = h ? request.security(haTkr, timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+var float xATRTrailingStop = na
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ?
+     math.max(nz(xATRTrailingStop[1]), src - nLoss) :
+     src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ?
+     math.min(nz(xATRTrailingStop[1]), src + nLoss) :
+     src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+
+basis = crossSmoothLen == 1 ? src : nz(ta.ema(src, crossSmoothLen), src)
+above = ta.crossover(basis, xATRTrailingStop)
+below = ta.crossunder(basis, xATRTrailingStop)
+
+buy    = src > xATRTrailingStop and above
+sell   = src < xATRTrailingStop and below
+barbuy  = src > xATRTrailingStop
+barsell = src < xATRTrailingStop
+
+// HA-compatible open/high/low
+haOpen = request.security(haTkr, timeframe.period, open,  lookahead=barmerge.lookahead_off)
+haHigh = request.security(haTkr, timeframe.period, high,  lookahead=barmerge.lookahead_off)
+haLow  = request.security(haTkr, timeframe.period, low,   lookahead=barmerge.lookahead_off)
+src_open = h ? haOpen : open
+src_high = h ? haHigh : high
+src_low  = h ? haLow  : low
+
+// BTC V-reversal LONG: большой бычий бар после даун-движения
+vBody    = math.abs(src - src_open)
+vRange   = math.max(src_high - src_low, 1e-9)
+vBodyPct = (vRange > 0.0) ? (vBody / vRange * 100.0) : 0.0
+// v1.2.54: V-reversal ULTRA STRICT - только мощные импульсы вдали от EMA200
+//   • gap от EMA200 > 0.9% (было 0.7%, защита от флэт-BUY возле EMA200)
+//   • body ≥ 75% (было 70%, только супер-сильные свечи)
+//   • vBody ≥ 2.3×ATR (было 2.2, усилен импульс)
+//   • Финальный блок vReversalAllowed отфильтрует зону ±0.8% от EMA200
+ema200GapPct_vrev = math.abs((close - ema200) / math.max(math.abs(ema200), 1e-9)) * 100.0
+isVReversalLong = (src > src_open) and (vBody >= xATR * 2.3) and (vBodyPct >= 75.0) and (ema200GapPct_vrev > 0.9)
+
+// ============================================================================
+// QUALITY FILTERS
+// ============================================================================
+emaF    = ta.ema(src, emaFastLen)
+emaS    = ta.ema(src, emaSlowLen)
+
+// ATR%
+den_atr = math.max(math.abs(xATRTrailingStop), 1e-9)
+atrp    = (xATR / den_atr) * 100.0
+
+// EMA gap%
+den_ema = math.max(math.abs(emaS), 1e-9)
+gapPct  = na(emaS) or emaS == 0 ? na : math.abs((emaF - emaS) / den_ema) * 100.0
+
+trendUp   = emaF > emaS and gapPct >= minEmaGapPct
+trendDown = emaF < emaS and gapPct >= minEmaGapPct
+
+// Счётчики баров устойчивого тренда (для strict entry)
+var int trendUpBars = 0
+var int trendDownBars = 0
+trendUpBars   := trendUp   ? nz(trendUpBars[1])   + 1 : 0
+trendDownBars := trendDown ? nz(trendDownBars[1]) + 1 : 0
+
+// Тренд достаточно устойчив для входа в реверс
+longTrendConfirmed  = trendUpBars   >= minTrendBarsForEntry
+shortTrendConfirmed = trendDownBars >= minTrendBarsForEntry
+
+atr_gate_long  = atrp >= minAtrPctLong
+atr_gate_short = atrp >= minAtrPctShort
+
+atr_cap_ok = not useAtrCap or (atrp <= maxAtrPct)
+
+ema9_close_long  = not useEma9CloseFilter or (close > emaF)
+ema9_close_short = not useEma9CloseFilter or (close < emaF)
+
+// ADX Soft Bypass (BTC)
+adxLongOk  := not useAdxFilter or (adx > adxThresholdLong) or (trendUp and atr_gate_long)
+adxShortOk := not useAdxFilter or (adx > adxThresholdShort) or (trendDown and atr_gate_short)
+
+// long_core с учётом V-reversal
+long_core  = buy or isVReversalLong
+short_core = sell
+
+// RangeGuard (будет использоваться только в micro-flat)
+rangeHigh = ta.highest(src, rangeLen)
+rangeLow  = ta.lowest(src, rangeLen)
+den_rng   = math.max(math.abs(src), 1e-9)
+rangePct  = (rangeHigh - rangeLow) / den_rng * 100.0
+
+// Pre-calc cascade bypass (SHORT)
+var int bearStreak_early = 0
+bearStreak_early := (src < src_open) ? nz(bearStreak_early[1]) + 1 : 0
+// v1.2.33: Pre-calc bullStreak early for moderate impulse
+var int bullStreak_early = 0
+bullStreak_early := (src > src_open) ? nz(bullStreak_early[1]) + 1 : 0
+
+denAbs_early = math.max(math.abs(src), 1e-9)
+rng_early = math.max(src_high - src_low, 1e-9)
+body_early = math.abs(src_open - src)
+bearBodyPct_early = (src < src_open) ? (body_early / rng_early * 100.0) : 0.0
+stopGapShortPct_early = (xATRTrailingStop - src) / denAbs_early * 100.0
+
+// v1.2.49: Pre-calc bullBodyPct and stopGapLongPct early for moderatePullbackEntry
+bullBodyPct_early = (src > src_open) ? (body_early / rng_early * 100.0) : 0.0
+stopGapLongPct_early = (src - xATRTrailingStop) / denAbs_early * 100.0
+
+// v1.2.49: Moderate Pullback Entry - DEFINED EARLY for use in body_filter_ok
+// v1.2.53: SMART REVERSAL - body 30% (was 35%), but REJECT long upper wicks (trap protection)
+upperWick_early = (src > src_open) ? (src_high - src) : 0.0
+isSolidCandle = (body_early >= upperWick_early)
+
+// v1.2.54: SMART FILTER - 2+ red bars (было 1+), body 38% (было 35%), gap 0.04% (было 0.03%) - только реальные развороты
+precedingBearStreak_early = (bullStreak_early > 0 and bullStreak_early < 10) ? bearStreak_early[bullStreak_early] : 0
+moderatePullbackEntry = (precedingBearStreak_early >= 2) and (bullBodyPct_early >= 38.0) and (stopGapLongPct_early >= 0.04)
+
+// v1.2.38: cascade_bypass УЖЕСТОЧЁН - требуем РЕАЛЬНЫЙ каскад (4+ бара), не слабые откаты
+// Вариант 1: 3+ красных бара + тело >= 40% (было 35%, убираем слабые откаты)
+// Вариант 2: 4+ красных бара + тело >= 30% (длинный каскад, можно немного слабее)
+// Вариант 3: супер-сильный gap (0.18%+) + огромное тело (55%+) + высокий ATR
+cascade_bypass = (bearStreak_early >= minShortMomentumBars + 1 and bearBodyPct_early >= 40.0) or (bearStreak_early >= minShortMomentumBars + 2 and bearBodyPct_early >= 30.0) or (stopGapShortPct_early >= strongShortGapPct * 1.8 and bearBodyPct_early >= strongBearBodyBypass and atrp >= minAtrPctShort * 1.4)
+
+// EMA Alignment
+emaGapAbs = math.abs(emaF - emaS) / den_ema
+ema_aligned_long  = not requireEmaAlignmentLong or (emaF > emaS) or (emaGapAbs < emaAlignToleranceLong)
+ema_aligned_short = not requireEmaAlignmentShort or (emaF < emaS) or (emaGapAbs < emaAlignTolShort)
+
+// ============================================================================
+// MICRO-FLAT DETECTOR + BODY FILTER LOGIC
+// ============================================================================
+
+// Расстояние до EMA200 (в %)
+ema200DistPct = math.abs((close - ema200) / math.max(math.abs(ema200), 1e-9)) * 100.0
+
+// v1.2.54: STRICT - adaptive paths требуют расстояние от EMA200 > 0.8% (было 0.5%, строже блокируем флэт)
+// moderatePullbackEntry разрешён ТОЛЬКО если: (расстояние > 0.8%) ИЛИ (это сильный V-reversal)
+// V-reversal определён выше как isVReversalLong - используем его напрямую
+adaptiveLongAllowed = (ema200DistPct > 0.8) or isVReversalLong
+
+// v1.2.56: флэт MAXIMUM строго — ранняя детекция боковика.
+//   • gapPct < 0.055 → EMA9/21 слишком близко (было 0.045, расширено для лучшей детекции SHORT‑флэта)
+//   • atrp  < 0.42  → низкая волатильность, боковик (было 0.38, ужесточено против флэт‑шортов)
+microFlat = (gapPct < 0.055) and (atrp < 0.42)
+
+// v1.2.66: earlyReversalEntry moved to after recentBullRun calculation (line ~615)
+
+// Основные параметры свечи
+denAbs           = math.max(math.abs(src), 1e-9)
+stopGapShortPct  = (xATRTrailingStop - src) / denAbs * 100.0
+rng              = math.max(src_high - src_low, 1e-9)
+body             = math.abs(src_open - src)
+bodyPct          = (rng > 0.0) ? (body / rng * 100.0) : 0.0
+
+// BODY filter v1.2.56:
+//   • minCandleBodyPct: 32% - только сильные свечи, режем флэт
+//   • moderatePullbackEntry BYPASSES только вне microFlat (блокируем слабые развороты в флэте)
+//   • В micro-flat строже - 40% минимум (усилена защита от флэт-сигналов)
+//   • V-reversal БЕЗ байпаса (должен пройти глобальный порог)
+body_filter_ok = (bodyPct >= 32.0 or (moderatePullbackEntry and not microFlat)) and (not microFlat or (bodyPct >= 40.0))
+
+// v1.2.42: Moderate Short Entry TIGHTENED (filter weak pullbacks in uptrends)
+//   • Streak: 3+ bars minimum (was 2+, real cascade only)
+//   • Body: 40% minimum (was 35%, strong candles only)
+//   • StopGap: 0.10% (restored from 0.08%)
+//   • EMA21 dist: 0.2% (restored, clear downtrend break)
+// v1.2.55: CRITICAL FIX - added 'not microFlat' (блокируем SHORT в боковике, FIX 21:10)
+moderateShortEntry = (bearStreak_early >= 3 and bearBodyPct_early >= 40.0) and (stopGapShortPct_early >= 0.10) and (close < emaS * 0.998) and not microFlat
+
+// RangeGuard LITE:
+//   • работает только в micro-flat режиме
+range_ok = not useRangeGuard or (not microFlat or (rangePct >= minRangePct))
+
+// Подготовка для impulse detection (нужны рано для longTrendBreakOk)
+bullBodyPct_pre = bullBodyPct_early  // используем ранее определённое значение
+stopGapLongPct_pre = stopGapLongPct_early  // используем ранее определённое значение
+// v1.2.25: strongImpulseLong ужесточён (body 55 → 60%) для финальной фильтрации слабых разворотов
+strongImpulseLong = (bullBodyPct_pre >= 60.0) or (stopGapLongPct_pre >= 0.18)
+
+// v1.2.54: ULTRA TIGHTENED - EMA200 dist > 0.9% (было 0.7%), body 48% (было 45%), gap 0.06% (было 0.05%)
+// Только сильные continuation-импульсы вдали от EMA200
+moderateImpulseBreak = (bullStreak_early >= 2) and (bullBodyPct_pre >= 48.0) and (stopGapLongPct_pre >= 0.06) and (ema200DistPct > 0.9)
+
+// moderatePullbackEntry already defined early (v1.2.49) - no need to redefine
+
+// ============================================================================
+// FINAL FILTER COMBINATION
+// ============================================================================
+
+// LONG filters
+long_filt = filterModeLong == "AND"
+     ? (long_core and atr_gate_long and trendUp)
+     : (long_core and (atr_gate_long or trendUp))
+
+// доп. фильтры для LONG:
+//  • требуем break тренда (close выше EMA 21) или V-reversal или сильный импульс С пробоем
+//  • режем лонги во флэте при сжатом EMA-gap
+isFlatLongRegion = (emaGapAbs < longFlatGapThreshold) and not trendUp
+// v1.2.24: пробой EMA21 чуть мягче (0.15% вместо 0.2%), чтобы ранние сильные бары не отваливались
+// v1.2.32: Added impulse bypass to longTrendBreakOk.
+// FIX: Use _pre variables because main variables are defined later
+// v1.2.46: RADICAL - body 45% (was 40%), gap 0.10% (was 0.06%)
+// v1.2.52: FIX #4 - moderatePullbackEntry bypass requires adaptiveLongAllowed
+isStrongImpulseBreak = (bullBodyPct_pre >= 45.0 and stopGapLongPct_pre >= 0.10)
+longTrendBreakOk = (close > emaS * 1.0015) or isVReversalLong or isStrongImpulseBreak or moderateImpulseBreak or (moderatePullbackEntry and adaptiveLongAllowed)
+
+// Allow strong impulse to bypass flat region lock and alignment/ADX filters
+long_filt := long_filt and longTrendBreakOk and not (isFlatLongRegion and not isVReversalLong and not isStrongImpulseBreak and not moderateImpulseBreak and not (moderatePullbackEntry and adaptiveLongAllowed))
+long_filt := long_filt and (ema_aligned_long or isStrongImpulseBreak or moderateImpulseBreak or (moderatePullbackEntry and adaptiveLongAllowed)) and (adxLongOk or isStrongImpulseBreak or moderateImpulseBreak or (moderatePullbackEntry and adaptiveLongAllowed)) and macdLongOk and volumeOk
+long_filt := long_filt and ema9_close_long and atr_cap_ok and htfLongOk
+
+// SHORT filters
+short_base = filterModeShort == "AND"
+     ? (short_core and atr_gate_short and trendDown)
+     : (short_core and (atr_gate_short or trendDown))
+
+// v1.2.41: moderateShortEntry BYPASSES all base filters
+short_filt = (cascade_bypass or moderateShortEntry)
+     ? short_core
+     : (short_base and ema_aligned_short and adxShortOk and squeezeOk and macdShortOk and volumeOk)
+
+// v1.2.41: moderateShortEntry also bypasses EMA9 filter for early cascade detection
+short_filt := short_filt and (ema9_close_short or moderateShortEntry) and atr_cap_ok and htfShortOk
+
+// ShortGuard LITE + stay bars + anti-1bar
+short_lite_ok     = not useShortGuardLite or ((stopGapShortPct >= minStopGapShortPct) or (bodyPct >= minBearBodyShortPct))
+
+isBelowStop = src < xATRTrailingStop
+barsBelowStop_raw = ta.barssince(not isBelowStop)
+barsBelowStop     = na(barsBelowStop_raw) ? 0 : barsBelowStop_raw
+stay_ok_short     = (requireShortStayBars == 0) or (barsBelowStop >= requireShortStayBars)
+
+var int bearStreak = 0
+bearStreak := (src < src_open) ? nz(bearStreak[1]) + 1 : 0
+
+// LONG momentum / импульс
+var int bullStreak = 0
+bullStreak := (src > src_open) ? nz(bullStreak[1]) + 1 : 0
+bullBodyPct    = bullBodyPct_pre  // используем предварительное значение
+stopGapLongPct = stopGapLongPct_pre  // используем предварительное значение
+
+// Anti-overextension LONG: не входим ОЧЕНЬ поздно в разогнанный импульс
+// v1.2.62: CRITICAL FIX - maxBullStreak 5→3 для блокировки late entries (09:15 @ 12 bars type)
+// Блокируем: 3+ зелёных ВСЕГДА (кроме V-reversal), предотвращаем entry на топах
+maxBullStreakForEntry = 3
+ema21DistPct = math.abs((close - emaS) / math.max(math.abs(emaS), 1e-9)) * 100.0
+earlyStrongImpulse = (bullStreak >= 3) and (bullStreak < 5) and (stopGapLongPct_pre >= 0.09)  // v1.2.52: 6→5 для мягкого фильтра
+
+// v1.2.69: CRITICAL FIX v3 - hybrid logic with correction awareness
+// PROBLEM v1.2.68: close > close[10] * 1.012 blocked 06:00/08:25 (valid reversals after corrections)
+// Why: Price gain check ignored local 2-3 red bar corrections in uptrends
+// SOLUTION: ONLY block if (8+ green bars in last 10) AND (NO recent correction)
+// Logic: If precedingBearStreak >= 2 → had correction → ALLOW entry (reversal)
+//        If precedingBearStreak < 2 + greenCount >= 8 → active run → BLOCK
+// Result: Blocks 01:55 (8 green, no correction), allows 06:00/08:25 (had 2+ red bars)
+var int greenCountRecent = 0
+greenCountRecent := 0
+for i = 0 to 9
+    if close[i] > open[i]
+        greenCountRecent := greenCountRecent + 1
+// HYBRID: Block only if strong momentum (8+ green) AND no correction (bearStreak < 2)
+// If had 2+ red bars before → it's a reversal → ALLOW even if greenCount high
+recentBullRun = (greenCountRecent >= 8) and (precedingBearStreak_early < 2)
+tooLateInBullRun = (bullStreak >= maxBullStreakForEntry) or ((ema21DistPct > 0.70 and bullStreak >= 3) and not earlyStrongImpulse) or recentBullRun
+
+// v1.2.66: EARLY REVERSAL ENTRY - catch ONLY FIRST bar, block continuation after pullbacks
+// v1.2.66 FIX: Вернули bullStreak == 1 (было <= 2) + добавлена защита от продолжений
+// Требования:
+//   • precedingBearStreak >= 2 - было падение (минимум 2 красных бара)
+//   • bullStreak == 1 - ТОЛЬКО ПЕРВАЯ зелёная (не 2+, строго!)
+//   • bullBodyPct >= 40% - слабая свеча OK (было 45%, ловим ранний старт)
+//   • stopGapLongPct >= 0.05% - минимальный отрыв (было 0.08%, мягче)
+//   • close > emaS * 0.998 - НИЖЕ EMA21 разрешено (было 1.0015, bypass для ранних разворотов)
+//   • atrp >= 0.25% - низкая волатильность OK (было 0.28%, утренний старт)
+//   • ema200DistPct >= 0.25% - ближе к EMA200 разрешено (было 0.3%)
+//   • not recentBullRun - НЕТ сильного роста за последние 10 баров (блокируем продолжения)
+earlyReversalEntry = (precedingBearStreak_early >= 2) and (bullStreak_early == 1) and (bullBodyPct_early >= 40.0) and (stopGapLongPct_early >= 0.05) and (close > emaS * 0.998) and (atrp >= 0.25) and (ema200DistPct >= 0.25) and not recentBullRun
+
+// SHORT momentum body % (определяем рано для использования в strongImpulseShort)
+bearBodyPct = (src < src_open) ? (body / rng * 100.0) : 0.0
+
+// Определяем движения ПЕРЕД использованием
+// v1.2.35: Calculate preceding bear streak (valid for bullStreak 1 or 2)
+precedingBearStreak = (bullStreak > 0 and bullStreak < 10) ? bearStreak[bullStreak] : 0
+wasDownMove = precedingBearStreak >= 2  // v1.2.35: было 4+, смягчено до 2+ для ранних разворотов
+wasUpMove   = bullStreak[1] >= 1  // v1.2.35: было 2+, смягчено до 1+ для ранних разворотов
+
+// Более мягкая проверка: хотя бы 1 красный/зелёный бар (для ранних разворотов)
+// v1.2.56: ULTRA FIX - требуем 2+ бара (было 1+), блокируем слабые 1-bar reversals
+hadRedBar = bearStreak[1] >= 2  // было хотя бы 2 красных бара
+hadGreenBar = bullStreak[1] >= 2  // было хотя бы 2 зелёных бара
+
+// Сильный импульс для разворотов (strongImpulseLong уже определён выше)
+// v1.2.24: чуть мягче порог по телу для SHORT (55 → 50), gap оставляем прежним
+strongImpulseShort = (bearBodyPct >= 50.0) or (stopGapShortPct >= 0.18)
+
+// v1.2.15: hadRedBar байпас требует пробой EMA21 + ATR + НЕ microFlat
+hasRedBarBypass = hadRedBar and (stopGapLongPct >= 0.12) and (bullBodyPct >= 25.0) and (close > emaS * 1.003) and (atrp >= 0.25) and not microFlat
+// v1.2.27: разворотный байпас усилен ещё сильнее
+// Требуем: глубокое падение (3+ красных) + сильный импульс + подтверждение (2+ зелёных)
+// Блокируем отскоки после 1-2 красных баров полностью
+earlyReversalLong = wasDownMove and strongImpulseLong and (bullStreak >= 2)
+
+// Аналогично для SHORT: был аптренд (wasUpMove) и пришёл сильный медвежий импульс
+earlyReversalShort = wasUpMove and strongImpulseShort
+
+// v1.2.25: momentum LONG дополнительно требует серии для ранних разворотов
+// v1.2.46: RADICAL - moderate impulse bypass tightened (body 45%, gap 0.10%)
+long_momo_ok   = (minLongMomentumBars == 0)
+     or (bullStreak >= minLongMomentumBars)
+     or (stopGapLongPct >= strongLongGapPct)
+     or (bullBodyPct >= strongBullBodyBypass)
+     or (bullBodyPct >= 45.0 and stopGapLongPct >= 0.10 and atrp >= 0.30) // v1.2.46: tightened
+     or hasRedBarBypass
+     or isVReversalLong
+     or (earlyReversalLong and bullStreak >= 2)
+     or earlyReversalEntry  // v1.2.61: new path for first bar entry
+
+short_momo_ok = (minShortMomentumBars == 0)
+     or (bearStreak >= minShortMomentumBars)
+     or (stopGapShortPct >= strongShortGapPct)
+     or (bodyPct >= strongBearBodyBypass)
+     or (hadGreenBar and strongImpulseShort)
+     or earlyReversalShort
+
+// Импульсные байпасы
+longImpulseBypass  = (stopGapLongPct >= strongLongGapPct) or (bullBodyPct >= strongBullBodyBypass)
+shortImpulseBypass = (stopGapShortPct >= strongShortGapPct * 1.2) or (bodyPct >= strongBearBodyBypass)
+
+// Простой cooldown: 7 баров между ЛЮБЫМИ сигналами (разворот или выход)
+var int lastSigBar = na
+
+barsSinceLast = na(lastSigBar) ? 1000 : (bar_index - lastSigBar)
+cooldown_ok = na(lastSigBar) or (barsSinceLast >= minBarsBetweenSignals)
+
+// Combine filters c учётом RangeGuard и BODY
+long_filt  := long_filt  and range_ok and long_momo_ok and body_filter_ok
+short_quality_ok = short_lite_ok and stay_ok_short and short_momo_ok
+short_filt := short_filt and range_ok and (cascade_bypass or moderateShortEntry or short_quality_ok) and body_filter_ok
+
+// КРИТИЧЕСКИЙ БАЙПАС: сильный импульс на crossover + EMA сближаются (тренд готов развернуться)
+// Требуем: gap EMA < 0.08% (EMA9/21 почти пересеклись) ИЛИ уверенный пробой EMA9 (close > EMA9 + 0.05%)
+emaBreakBufferLong  = emaF * 1.0005  // +0.05% буфер для уверенного пробоя
+emaBreakBufferShort = emaF * 0.9995  // -0.05% буфер для уверенного пробоя
+
+emaConvergingLong  = (gapPct < 0.08) or (close > emaBreakBufferLong)
+emaConvergingShort = (gapPct < 0.08) or (close < emaBreakBufferShort)
+
+// v1.2.28: strongReversal_long требует wasDownMove (4+ красных), чтобы не ловить откаты во флэте
+strongReversal_long  = above and strongImpulseLong and atr_gate_long and emaConvergingLong and (close > emaS * 1.002) and not microFlat and wasDownMove
+// v1.2.55: CRITICAL FIX - добавлен not microFlat к SHORT (блокируем SHORT в боковике, FIX 21:10)
+// v1.2.60: TIGHTENED - требуем bearStreak >= 2 ИЛИ пробой EMA21 (close < emaS * 0.998)
+// Блокируем одиночные контртрендовые шорты в аптренде без подтверждения
+strongReversal_short = below and strongImpulseShort and atr_gate_short and emaConvergingShort and not microFlat and (bearStreak >= 2 or close < emaS * 0.998)
+
+// v1.2.12: strongReversal теперь усиливает long_filt/short_filt, но НЕ байпасит все фильтры
+long_ok  = useSoftFilter ? (long_filt and cooldown_ok) : long_core
+short_ok = useSoftFilter ? (short_filt and cooldown_ok) : short_core
+
+// v1.2.55: CRITICAL FIX - SHORT блокируется в зоне ±0.8% от EMA200 (FIX 21:10 флэт-SHORT)
+// Объявляем ПЕРЕД использованием в short_ok путях
+ema200DistPctShort = math.abs((close - ema200) / math.max(math.abs(ema200), 1e-9)) * 100.0
+ema200ShortFlatBlock = ema200DistPctShort < 0.8  // Блокируем SHORT в зоне ±0.8% от EMA200
+
+// ============================================================================
+// STRICT TREND FILTER FOR ENTRY (v1.2 GPT patch + импульсный байпас)
+// ============================================================================
+// Разделяем "exit" и "reversal entry":
+//   • Если был LONG на предыдущем баре → short_ok = exit signal (без фильтра)
+//   • Если не было LONG → short_ok = reversal entry (требуем подтверждённый тренд
+//     ИЛИ очень сильный импульсный разворот)
+//   • Аналогично для LONG
+
+wasInLong  = barbuy[1]
+wasInShort = barsell[1]
+
+// v1.2.23: MAXIMUM ENTRY - УБРАНА блокировка bullStreak >= 2!
+// Требуем явный импульсный путь через один из трёх вариантов:
+//   • strongReversal (сильный импульс + пробой EMA21)
+//   • ИЛИ V-reversal (большая бычья свеча)
+//   • ИЛИ longImpulseBypass (gap >= 0.08% ИЛИ body >= 42%) БЕЗ streak требований!
+
+// SHORT: strongReversal смягчает требования (разрешает bearStreak >= 1), но НЕ отменяет фильтры
+// v1.2.43 SHORT filter: block sideways noise (trendDown requirement for hadGreenBar path)
+// v1.2.54: Added ultra-strong breakdown path (bearStreak = 1, body >= 60%, close < EMA9) - no trendDown required
+// v1.2.55: CRITICAL FIX - добавлена блокировка SHORT в зоне ±0.8% от EMA200 (FIX 21:10)
+// v1.2.57: ANTI-FLAT FIX - bearStreak >= 2 path также блокируется microFlat (режем флэт-шорты)
+isUltraStrongBreakdown = (bearStreak == 1) and (bearBodyPct >= 60.0) and (close < emaF) and not ema200ShortFlatBlock
+isCascadeBreakdown = (bearStreak >= 2) and (bearStreak <= 3) and (bearBodyPct >= 50.0) and (close < emaF) and (stopGapShortPct >= 0.08) and not ema200ShortFlatBlock
+
+// v1.2.59: SOFT FLAT SHORT GUARD - blocks weak 1-2 bar shorts without strong impulse
+// Catches weak sells in narrow range (low ATR, small gap, weak body) ANYWHERE, not just near EMA200
+// Does NOT block: strong impulses, cascades, moderateShortEntry, breakdowns
+bool softFlatShort = (gapPct < 0.08) and (atrp < minAtrPctShort * 2.0) and (bearStreak <= 2) and (bodyPct < 45.0) and not shortImpulseBypass and not moderateShortEntry and not isUltraStrongBreakdown and not isCascadeBreakdown
+
+short_ok := short_ok and (strongReversal_short or (hadGreenBar and strongImpulseShort and trendDown and (close < emaS * 0.998) and not ema200ShortFlatBlock) or ((bearStreak >= 2) and shortImpulseBypass and (close < emaS * 0.998) and not ema200ShortFlatBlock and not microFlat) or moderateShortEntry or isUltraStrongBreakdown or isCascadeBreakdown)
+
+// v1.2.58: ANTI-FLAT FIX - Block weak shorts near EMA200 in narrow range (GPT fix)
+// v1.2.59: TIGHTENED - dist 0.6→0.75%, gap 0.06→0.085, atrp 0.40→0.55 (catches real flat signals)
+bool shortFlatNearEma200 = (ema200DistPctShort < 0.75) and (gapPct < 0.085) and (atrp < 0.55) and not isUltraStrongBreakdown and not isCascadeBreakdown
+short_ok := short_ok and not shortFlatNearEma200
+
+// v1.2.59: SOFT FLAT SHORT - Block weak 1-2 bar shorts anywhere (not just near EMA200)
+short_ok := short_ok and not softFlatShort
+
+// v1.2.60: ANTI-SINGLE-PULLBACK-SHORT - Block single red bar pullbacks in strong uptrends
+// Режем одиночные красные бары в аптренде, которые не пробивают EMA21 и не имеют подтверждения
+// Условия: EMA9 > EMA21 (uptrend), bearStreak == 1 (single bar), close >= emaS * 0.998 (no EMA21 break)
+// Bypassed by: moderateShortEntry, isUltraStrongBreakdown, isCascadeBreakdown
+bool weakSingleShortPullback = (emaF > emaS) and (bearStreak == 1) and (close >= emaS * 0.998) and not moderateShortEntry and not isUltraStrongBreakdown and not isCascadeBreakdown
+short_ok := short_ok and not weakSingleShortPullback
+
+// LONG v1.2.31: 'moderatePullbackEntry' is now defined early (v1.2.34) to bypass filters.
+// It catches 11:25 type moves (1+ red bars, body 35%, gap 0.05%).
+// v1.2.47: CRITICAL FIX - removed weak (bullBodyPct >= 42% and stopGapLongPct >= 0.08%) path
+//   longImpulseBypass now requires: bullStreak >= 3 OR wasDownMove, AND EMA200 distance >= 0.7%
+// v1.2.48: BALANCE - split paths:
+//   • wasDownMove (reversal) - NO EMA200 distance requirement (08:45, 11:25 type reversals)
+//   • bullStreak >= 3 (continuation) - KEEP 0.7% requirement (block weak impulses near EMA200)
+// v1.2.52: FIX #4 - moderatePullbackEntry now requires adaptiveLongAllowed (EMA200 distance > 0.5% or V-reversal)
+// v1.2.64: CRITICAL - добавлен tooLateInBullRun check к ВСЕМ путям (кроме V-reversal + earlyReversalEntry)
+//          Блокирует late entries через strongReversal/moderateImpulse после 3+ зелёных
+
+long_ok := long_ok and ((strongReversal_long and not tooLateInBullRun) or (isVReversalLong and wasDownMove) or (longImpulseBypass and not tooLateInBullRun and wasDownMove) or (longImpulseBypass and not tooLateInBullRun and (bullStreak >= 3 and close > emaS * 1.0015) and ema200DistPct >= 0.7) or (moderatePullbackEntry and adaptiveLongAllowed and not tooLateInBullRun) or (moderateImpulseBreak and not tooLateInBullRun) or earlyReversalEntry)
+
+// ============================================================================
+// APPLY EMA-200 + Anti-Trap / Anti-Rollback / Anti-Fake Early Uptrend
+// ============================================================================
+
+// === ABSOLUTE NO BYPASS NEAR EMA200 (v1.2.18) ===
+// EMA200 STRICT: минимум -0.7% буфер для всех LONG (без байпасов)
+ema200StrictOk = close > ema200 * (1.0 - 0.007)
+
+// Расчёт расстояния до EMA200 (используется для anti-trap и impulse блокировки)
+ema200Dist_antitrap = math.abs((close - ema200) / math.max(math.abs(ema200), 1e-9)) * 100.0
+
+// v1.2.25: EARLY ENTRY DETECTOR для зоны 0.30-0.85% от EMA200 (усилен)
+// Максимально ранний вход, но только по «настоящим» сильным свечам:
+//   • Расстояние от EMA200: 0.30-0.85% (раньше входит в тренд)
+//   • StopGap ≥ 0.10% (минимальный отрыв от стопа)
+//   • Body ≥ 35% (равно глобальному minCandleBodyPct, режем более слабые развороты)
+//   • ATR ≥ 0.30% (базовый минимум для всех LONG)
+//   • Пробой EMA21 на 0.3% (подтверждение тренда)
+//   • Пробой high ИЛИ momentum (1+ зелёный бар, было 2+)
+//   • НЕ в microFlat зоне
+
+// Базовые условия Early Entry
+// v1.2.26: body 35 → 38%, только реально сильные свечи для early entry
+// v1.2.46: RADICAL - distance >= 0.5% (was 0.30%), only far from EMA200
+adaptiveImpulseBase = (ema200Dist_antitrap >= 0.5) and (ema200Dist_antitrap < 0.85) and
+     (stopGapLongPct >= 0.10) and
+     (bullBodyPct >= 38.0) and
+     (atrp >= 0.30) and
+     (close > emaS * 1.003) and
+     not microFlat
+
+// v1.2.27: подтверждение early entry требует 3 зелёных бара (было 2)
+// Отскоки после 1-2 красных баров полностью блокированы
+adaptiveConfirmation = (bullStreak >= 3)
+
+// Финальный Early Entry Impulse
+adaptiveImpulseLong = adaptiveImpulseBase and adaptiveConfirmation
+
+// Блокируем импульсные лонги в УЗКОЙ зоне около EMA200 (кроме V-reversal и Early Entry)
+// v1.2.24b: чуть мягче критерий «супер‑сильных» баров, чтобы хорошие старты от EMA200 не отваливались
+allowSuperStrongNearEma200 = (atrp >= 0.33) or (bodyPct >= 42.0)
+impulseNearEma200 = (ema200Dist_antitrap < 0.24) and longImpulseBypass and not isVReversalLong and not allowSuperStrongNearEma200
+
+// v1.2.22: Разрешаем Early Entry в зоне 0.30-0.85%
+// Только: ema200StrictOk OR trendUp OR atr_gate_long OR V-reversal OR Adaptive Impulse
+long_ok  := long_ok  and (ema200StrictOk or trendUp or atr_gate_long or isVReversalLong or adaptiveImpulseLong)
+// Блокируем обычные импульсы ТОЛЬКО в зоне ±0.30%
+long_ok  := long_ok  and not impulseNearEma200
+// Запрещаем новые LONG после длинной зелёной серии, кроме явного V‑разворота или earlyReversalEntry
+// v1.2.62: Added earlyReversalEntry bypass - never block first bar entries
+long_ok  := long_ok  and not (tooLateInBullRun and not isVReversalLong and not earlyReversalEntry)
+short_ok := short_ok and (ema200ShortOk or shortImpulseBypass or moderateShortEntry) and antiBottomShortOk
+
+// Anti-trap LONG: слабый контртренд ВОЗЛЕ EMA200 (v1.2.22: зона ±0.30%)
+// Блокируем если: возле EMA200 (±0.30%) + низкий gap + низкий ATR + НЕТ пробоя EMA21 + маленькое тело
+// v1.2.24b: немного смягчаем порог по телу (40 → 37), чтобы не резать адекватные импульсы
+// v1.2.49: Added moderatePullbackEntry bypass - reversal entries должны работать возле EMA200
+// v1.2.52: FIX #4 - moderatePullbackEntry bypass now requires adaptiveLongAllowed check
+// Early Entry уже отфильтрует сильные движения в зоне 0.30-0.85%
+weakLongNearEma200 = (ema200Dist_antitrap < 0.30) and (gapPct < 0.08) and (atrp < 0.35) and (close < emaS * 1.002) and (bodyPct < 37.0) and not (moderatePullbackEntry and adaptiveLongAllowed)
+long_ok := long_ok and not weakLongNearEma200
+
+// Anti-fake SHORT в раннем аптренде (v1.2.14 усилен):
+//   • emaF > emaS  → зарождающийся аптренд
+//   • gapPct < 0.15 → v1.2.14: было 0.12, увеличен порог
+//   • bearStreak < 2 → только первый красный бар
+//   • close > EMA9 * 0.998 → слабый откат выше EMA9
+//   • не блокируем сильные импульсы
+// v1.2.40: Added moderateShortEntry bypass
+// v1.2.54: Allow strong breakdown through EMA9 (body >= 45% AND close < EMA9)
+isStrongBreakdown = (bodyPct >= 45.0) and (close < emaF)
+weakShortEarlyUptrend = (emaF > emaS) and (gapPct < 0.15) and (bearStreak < 2) and (close > emaF * 0.998) and not shortImpulseBypass and not moderateShortEntry and not isStrongBreakdown
+short_ok := short_ok and not weakShortEarlyUptrend
+
+// Anti-rollback SHORT: слабый откат над EMA200 (режем только мелкие тела, сильные импульсы пускаем)
+// v1.2.32: Relaxed bodyPct check 40 -> 35 to match moderateShortEntry
+// v1.2.40: Added moderateShortEntry bypass
+weakShortAboveEma200 = (close > ema200) and (gapPct < 0.06) and (atrp < 0.40) and (bodyPct < 35.0) and not shortImpulseBypass and not moderateShortEntry
+short_ok := short_ok and not weakShortAboveEma200
+
+// ============================================================================
+// ФИНАЛЬНЫЙ БЛОК V-REVERSAL (v1.2.17 CRITICAL)
+// ============================================================================
+// Последняя линия защиты: V-reversal ЗАПРЕЩЁН в anti-trap зоне ±0.7% от EMA200
+// Требуем минимум 0.7% расстояния от EMA200 ИЛИ сильный пробой выше (>0.6% буфер)
+vReversalAllowed = (ema200Dist_antitrap >= 0.7) or (close > ema200 * 1.006)
+long_ok := long_ok and (not isVReversalLong or vReversalAllowed)
+// ============================================================================
+
+// v1.2.50 EMERGENCY: microFlat block REMOVED for LONG (reversal должен работать в низкой волатильности)
+// SHORT protection kept (блокируем слабые шорты в боковике)
+// v1.2.54: isUltraStrongBreakdown bypasses microFlat (body >= 60% is NOT flat)
+// v1.2.55: isCascadeBreakdown also bypasses microFlat (2-3 red bars with body >= 50%)
+short_ok := short_ok and (not microFlat or isUltraStrongBreakdown or isCascadeBreakdown)
+
+// === DEBUG: Identify which path allowed LONG ===
+//: показываем причину (STR = strongReversal, VREV = V-reversal, IMP = longImpulseBypass, ADP = adaptiveImpulseLong, UNK = unknown)
+long_impulse_allowed = longImpulseBypass and ((bullStreak >= 3) or (bullBodyPct >= 50.0) or (stopGapLongPct >= 0.12))
+adaptive_impulse_allowed = adaptiveImpulseLong
+strong_rev_allowed = strongReversal_long
+vrev_allowed = isVReversalLong
+moderate_pullback_allowed = moderatePullbackEntry
+moderate_impulse_allowed = moderateImpulseBreak
+early_reversal_allowed = earlyReversalEntry
+debug_reason = strong_rev_allowed ? "STR" : (vrev_allowed ? "VREV" : (long_impulse_allowed ? "IMP" : (adaptive_impulse_allowed ? "ADP" : (moderate_pullback_allowed ? "MPB" : (moderate_impulse_allowed ? "MIM" : (early_reversal_allowed ? "ERE" : "UNK"))))))
+
+// v1.2.51: Debug ONLY rejections (removed green bar spam to keep chart clean)
+
+if (long_ok or short_ok) and (not confirmClose or barstate.isconfirmed)
+    lastSigBar := bar_index
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+shouldPlot = (confirmClose ? barstate.isconfirmed : true)
+plotshape(shouldPlot and long_ok,  title="Buy",  text="Buy",
+     style=shape.labelup,   location=location.belowbar,
+     color=color.green, textcolor=color.white, size=size.tiny)
+
+plotshape(shouldPlot and short_ok, title="Sell", text="Sell",
+     style=shape.labeldown, location=location.abovebar,
+     color=color.red,   textcolor=color.white, size=size.tiny)
+
+barcolor(shouldPlot ? (barbuy ? color.new(color.green, 0) : (barsell ? color.new(color.red, 0) : na)) : na)
+
+// Diagnostics (plot_0 / plot_1 for alerts)
+plot(atrp,   title="atr_pct",     display=display.none)     // -> {{plot_0}}
+plot(gapPct, title="ema_gap_pct", display=display.none)     // -> {{plot_1}}
+
+// EMA overlay
+plot(emaF,   title="EMA 9",    color=color.new(#2196F3, 0), linewidth=1)
+plot(emaS,   title="EMA 21",   color=color.new(#FF9800, 0), linewidth=2)
+plot(ema200, title="EMA 200",  color=color.new(#9C27B0, 0), linewidth=2)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+alertcondition((confirmClose ? barstate.isconfirmed : true) and long_ok,
+  "BTC Long",
+  message='{"action":"entry","side":"long","source":"utbot","symbol":"{{ticker}}","preset":"btc_pro_v1.69","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')
+
+alertcondition((confirmClose ? barstate.isconfirmed : true) and short_ok,
+  "BTC Short",
+  message='{"action":"entry","side":"short","source":"utbot","symbol":"{{ticker}}","preset":"btc_pro_v1.69","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')
+
+// ============================================================================
+// DEBUG REJECTION DIAGNOSTICS
+// ============================================================================
+if enableDebug and (not confirmClose or barstate.isconfirmed)
+    // v1.2.51: Show ONLY rejections (removed green bar spam)
+
+    // LONG Rejection - DETAILED DIAGNOSTICS v1.2.51
+    if buy and not long_ok
+        string reason = "UNK"
+        string detail = ""
+
+        // Check ALL blocking conditions in order
+        if not cooldown_ok
+            reason := "COOL"
+            detail := " bars:" + str.tostring(barsSinceLast)
+        else if microFlat
+            reason := "FLAT"
+            detail := " g:" + str.tostring(gapPct, "#.###") + " a:" + str.tostring(atrp, "#.##")
+        else if not body_filter_ok
+            reason := "BODY"
+            detail := " b:" + str.tostring(bodyPct, "#.#") + " MPE:" + str.tostring(moderatePullbackEntry)
+        else if not long_momo_ok
+            reason := "MOMO"
+            detail := " str:" + str.tostring(bullStreak) + " gap:" + str.tostring(stopGapLongPct, "#.##")
+        else if not (ema200StrictOk or trendUp or atr_gate_long or isVReversalLong or adaptiveImpulseLong)
+            reason := "E200"
+            detail := " c:" + str.tostring(close, "#.#") + " e200:" + str.tostring(ema200, "#.#") + " dist:" + str.tostring(ema200Dist_antitrap, "#.##") + "%"
+        else if weakLongNearEma200
+            reason := "TRAP"
+            detail := " dist:" + str.tostring(ema200Dist_antitrap, "#.##") + "% b:" + str.tostring(bodyPct, "#.#") + " MPE:" + str.tostring(moderatePullbackEntry) + " adapt:" + str.tostring(adaptiveLongAllowed)
+        else if not (strongReversal_long or (isVReversalLong and wasDownMove) or (longImpulseBypass and not tooLateInBullRun and wasDownMove) or (longImpulseBypass and not tooLateInBullRun and (bullStreak >= 3 and close > emaS * 1.0015) and ema200DistPct >= 0.7) or (moderatePullbackEntry and adaptiveLongAllowed) or moderateImpulseBreak)
+            reason := "PATH"
+            detail := " MPE:" + str.tostring(moderatePullbackEntry) + " adapt:" + str.tostring(adaptiveLongAllowed) + " e200d:" + str.tostring(ema200DistPct, "#.##") + "% was↓:" + str.tostring(wasDownMove) + " str:" + str.tostring(bullStreak)
+        else if not (ema_aligned_long or isStrongImpulseBreak or moderateImpulseBreak or (moderatePullbackEntry and adaptiveLongAllowed))
+            reason := "ALIGN"
+            detail := " gap:" + str.tostring(emaGapAbs, "#.####")
+        else
+            reason := "FILT"
+            detail := " long_filt:" + str.tostring(long_filt)
+
+        // Show ALL rejection labels for debugging
+        label.new(bar_index, low, text="NO:" + reason + detail, color=color.new(color.yellow, 0), style=label.style_label_up, size=size.tiny, textcolor=color.black)
+
+    // SHORT Rejection - DETAILED DIAGNOSTICS (v1.2.55 - ULTRA DEBUG)
+    if sell and not short_ok
+        string reason = "UNK"
+        string detail = ""
+
+        // Check sell crossunder first
+        if not sell
+            reason := "XUND"
+            detail := " no crossunder"
+        else if not short_filt
+            reason := "FILT"
+            detail := " base"
+        else if not (strongReversal_short or (hadGreenBar and strongImpulseShort and trendDown and (close < emaS * 0.998)) or ((bearStreak >= 2) and shortImpulseBypass and (close < emaS * 0.998)) or moderateShortEntry or isUltraStrongBreakdown or isCascadeBreakdown)
+            reason := "PATH"
+            detail := " USBreak:" + str.tostring(isUltraStrongBreakdown) + " CascBreak:" + str.tostring(isCascadeBreakdown) + " str:" + str.tostring(bearStreak) + " b:" + str.tostring(bearBodyPct, "#.#") + " <F:" + str.tostring(close < emaF)
+        else if microFlat and not isUltraStrongBreakdown and not isCascadeBreakdown
+            reason := "FLAT"
+            detail := " g:" + str.tostring(gapPct, "#.###") + " a:" + str.tostring(atrp, "#.##") + " USB:" + str.tostring(isUltraStrongBreakdown) + " CB:" + str.tostring(isCascadeBreakdown)
+        else if shortFlatNearEma200
+            reason := "FLAT200"
+            detail := " dist:" + str.tostring(ema200DistPctShort, "#.##") + " g:" + str.tostring(gapPct, "#.###") + " a:" + str.tostring(atrp, "#.##")
+        else if softFlatShort
+            reason := "SOFTF"
+            detail := " g:" + str.tostring(gapPct, "#.###") + " a:" + str.tostring(atrp, "#.##") + " str:" + str.tostring(bearStreak) + " b:" + str.tostring(bodyPct, "#.#")
+        else if weakSingleShortPullback
+            reason := "PULL1"
+            detail := " F>S:" + str.tostring(emaF > emaS) + " str:" + str.tostring(bearStreak) + " c>S:" + str.tostring(close >= emaS * 0.998)
+        else if not body_filter_ok
+            reason := "BODY"
+            detail := " b:" + str.tostring(bodyPct, "#.#")
+        else if not short_momo_ok
+            reason := "MOMO"
+            detail := " str:" + str.tostring(bearStreak) + " b:" + str.tostring(bodyPct, "#.#")
+        else if weakShortEarlyUptrend
+            reason := "EARLY"
+            detail := " F>S gap:" + str.tostring(gapPct, "#.##")
+        else if weakShortAboveEma200
+            reason := "TRAP"
+            detail := " >200 g:" + str.tostring(gapPct, "#.##")
+        else if not cooldown_ok
+            reason := "COOL"
+            detail := " bars:" + str.tostring(barsSinceLast)
+        else if not (ema_aligned_short or shortImpulseBypass or moderateShortEntry)
+            reason := "ALIGN"
+            detail := " gap:" + str.tostring(emaGapAbs, "#.####")
+        else if not (cascade_bypass or moderateShortEntry or short_quality_ok)
+            reason := "QUAL"
+            detail := " sgap:" + str.tostring(stopGapShortPct, "#.##")
+        else
+            reason := "FILT"
+            detail := " unk"
+
+        label.new(bar_index, high, text="NO:" + reason + detail, color=color.new(color.fuchsia, 0), style=label.style_label_down, size=size.tiny, textcolor=color.black)

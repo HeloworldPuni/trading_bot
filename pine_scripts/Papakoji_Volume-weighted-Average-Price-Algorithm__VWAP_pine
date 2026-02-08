@@ -1,0 +1,235 @@
+//@version=5
+strategy(title="AXXELA PROJECT", shorttitle="AXXELA PROJECT", overlay=true , calc_on_every_tick = true)
+
+hideonDWM = input(false, title="Hide VWAP on 1D or Above", group="VWAP Settings", display = display.data_window)
+var anchor = input.string(defval = "Session", title="Anchor Period",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"], group="VWAP Settings")
+src = input(title = "Source", defval = hlc3, group="VWAP Settings", display = display.data_window)
+offset = input.int(0, title="Offset", group="VWAP Settings", minval=0, display = display.data_window)
+
+BANDS_GROUP = "Bands Settings"
+CALC_MODE_TOOLTIP = "Determines the units used to calculate the distance of the bands. When 'Percentage' is selected, a multiplier of 1 means 1%."
+calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode", options = ["Standard Deviation", "Percentage"], group = BANDS_GROUP, tooltip = CALC_MODE_TOOLTIP, display = display.data_window)
+showBand_1 = input(true, title = "", group = BANDS_GROUP, inline = "band_1", display = display.data_window)
+bandMult_1 = input.float(1.0, title = "Bands Multiplier #1", group = BANDS_GROUP, inline = "band_1", step = 0.5, minval=0, display = display.data_window)
+showBand_2 = input(false, title = "", group = BANDS_GROUP, inline = "band_2", display = display.data_window)
+bandMult_2 = input.float(2.0, title = "Bands Multiplier #2", group = BANDS_GROUP, inline = "band_2", step = 0.5, minval=0, display = display.data_window)
+showBand_3 = input(false, title = "", group = BANDS_GROUP, inline = "band_3", display = display.data_window)
+bandMult_3 = input.float(3.0, title = "Bands Multiplier #3", group = BANDS_GROUP, inline = "band_3", step = 0.5, minval=0, display = display.data_window)
+
+if barstate.islast and ta.cum(volume) == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+	"Earnings"  => not na(new_earnings)
+	"Dividends" => not na(new_dividends)
+	"Splits"    => not na(new_split)
+	"Session"   => timeframe.change("D")
+	"Week"      => timeframe.change("W")
+	"Month"     => timeframe.change("M")
+	"Quarter"   => timeframe.change("3M")
+	"Year"      => timeframe.change("12M")
+	"Decade"    => timeframe.change("12M") and year % 10 == 0
+	"Century"   => timeframe.change("12M") and year % 100 == 0
+	=> false
+
+isEsdAnchor = anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits"
+if na(src[1]) and not isEsdAnchor
+	isNewPeriod := true
+
+float vwapValue = na
+float upperBandValue1 = na
+float lowerBandValue1 = na
+float upperBandValue2 = na
+float lowerBandValue2 = na
+float upperBandValue3 = na
+float lowerBandValue3 = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, _stdevUpper, _] = ta.vwap(src, isNewPeriod, 1)
+	vwapValue := _vwap
+    stdevAbs = _stdevUpper - _vwap
+	bandBasis = calcModeInput == "Standard Deviation" ? stdevAbs : _vwap * 0.01
+	upperBandValue1 := _vwap + bandBasis * bandMult_1
+	lowerBandValue1 := _vwap - bandBasis * bandMult_1
+	upperBandValue2 := _vwap + bandBasis * bandMult_2
+	lowerBandValue2 := _vwap - bandBasis * bandMult_2
+	upperBandValue3 := _vwap + bandBasis * bandMult_3
+	lowerBandValue3 := _vwap - bandBasis * bandMult_3
+
+plot(vwapValue, title="VWAP", color=#2962FF, offset=offset)
+
+upperBand_1 = plot(upperBandValue1, title="Upper Band #1", color=color.green, offset=offset, display = showBand_1 ? display.all : display.none)
+lowerBand_1 = plot(lowerBandValue1, title="Lower Band #1", color=color.green, offset=offset, display = showBand_1 ? display.all : display.none)
+fill(upperBand_1, lowerBand_1, title="Bands Fill #1", color= color.new(color.green, 95)    , display = showBand_1 ? display.all : display.none)
+
+upperBand_2 = plot(upperBandValue2, title="Upper Band #2", color=color.olive, offset=offset, display = showBand_2 ? display.all : display.none)
+lowerBand_2 = plot(lowerBandValue2, title="Lower Band #2", color=color.olive, offset=offset, display = showBand_2 ? display.all : display.none)
+fill(upperBand_2, lowerBand_2, title="Bands Fill #2", color= color.new(color.olive, 95)    , display = showBand_2 ? display.all : display.none)
+
+upperBand_3 = plot(upperBandValue3, title="Upper Band #3", color=color.teal, offset=offset, display = showBand_3 ? display.all : display.none)
+lowerBand_3 = plot(lowerBandValue3, title="Lower Band #3", color=color.teal, offset=offset, display = showBand_3 ? display.all : display.none)
+fill(upperBand_3, lowerBand_3, title="Bands Fill #3", color= color.new(color.teal, 95)    , display = showBand_3 ? display.all : display.none)
+
+EMAperiod = input(20, title = "EMAperiod")
+
+// Calculate the 20-day EMA
+ema20 = ta.ema(close, 20)
+
+// Plot the 20-day EMA
+plot(ema20, title="20 Day EMA", color=color.red, linewidth=2)
+
+
+//calculate the day's first candle high and low 
+var float firstCandleHigh = na
+var float firstCandleLow = na
+var bool newDay = na
+var float topLine = na
+var float bottomLine = na
+
+// Check if a new day has started
+if dayofweek != dayofweek[1]
+    newDay := true
+
+// Get the high and low of the first candle of the day
+if newDay
+    firstCandleHigh := high[0]
+    firstCandleLow := low[0]
+    topLine := firstCandleHigh + syminfo.mintick * 200
+    bottomLine := firstCandleLow - syminfo.mintick * 200
+    newDay := false
+
+// Plot the levels
+plot(firstCandleHigh, "Day's First Candle High", color.white)
+plot(firstCandleLow, "Day's First Candle Low", color.yellow)
+
+
+// Calculations
+vwap = vwapValue
+high_level = firstCandleHigh
+low_level =firstCandleLow
+upper_band = upperBandValue1
+lower_band = lowerBandValue1
+
+// Entry Conditions
+longCondition1 = close>= vwap and close>= ema20 and close>= firstCandleHigh
+shortCondition1 =  close<= vwap and close<= ema20 and close<=  firstCandleLow
+longCondition2 = ta.crossover(close,vwap) and ta.crossover(close,upperBandValue1)
+shortCondition2 = ta.crossunder(close,vwap) and ta.crossunder(close,lowerBandValue1)
+longCondition3 = close>= vwap and close >=upperBandValue1
+shortCondition3 = close <= vwap and close <= lowerBandValue1
+bool flag = true
+
+//risk managment 
+entry_price = close 
+percent_diff = 0.01
+rrr = 2
+stop_loss_price = (1 - percent_diff / 100.) * entry_price 
+take_profit_price = (1 + rrr * percent_diff / 100.) * entry_price 
+
+stop_loss_in_ticks = (entry_price - stop_loss_price) / syminfo.mintick
+take_profit_in_ticks = (take_profit_price - entry_price) / syminfo.mintick
+
+// Exit Conditions
+longExit = close <= vwapValue
+shortExit =  close >= vwapValue
+
+// time constraints 
+startTime = 1130
+endTime = 2230
+
+// Convert current time to minutes since midnight
+currentTime = hour(time) * 100 + minute(time)
+
+// Check if current time is within the desired range
+isInTimeRange = currentTime >= startTime and currentTime <= endTime
+
+// check if you are currently in a trade or not 
+notInTrade = strategy.position_size <=0 
+inTrade = strategy.position_size > 0 
+
+// keep a counter for trade count 
+// Variable to store trade count
+var int count_trades = 0
+
+// Set isFirstTrade based on initial count
+isFirstTrade = count_trades == 0  // Check if count_trades is initially 0
+
+// Reset trade count within the if statement
+if isInTimeRange == false 
+    count_trades := 0  // Use ":=" for variable assignment
+
+// store the direction of the last trade
+bool direction = true 
+// Plotting
+
+// limiting trades 
+
+enableFilter = input(true,  "Enable Backtesting Range Filtering")
+fromDate     = input.time(timestamp("20 Apr 2023 00:00 +0300"), "Start Date")
+toDate       = input.time(timestamp("20 Jul 2099 00:00 +0300"), "End Date")
+
+tradeDateIsAllowed = not enableFilter or (time >= fromDate and time <= toDate)
+
+
+
+// Strategy
+//1
+if ( isFirstTrade and longCondition1 and isInTimeRange and notInTrade and tradeDateIsAllowed) //1
+	strategy.entry("LC1", strategy.long)
+	direction := true 
+	strategy.exit("LC1", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Long1" , comment_profit = "TP Long1" )
+
+//2
+if (isFirstTrade and shortCondition1 and isInTimeRange and notInTrade and tradeDateIsAllowed) //2
+	strategy.entry("SC1", strategy.short) 
+	direction := false 
+    strategy.exit("SC1", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Short1", comment_profit = "TP Short1")
+
+//3
+if ( longCondition2 and isInTimeRange and notInTrade and tradeDateIsAllowed) //3
+	strategy.entry("LC2", strategy.long) 
+	direction := true 
+	strategy.exit("LC2", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Long2" , comment_profit = "TP Long2" )
+
+if ( longCondition3 and isInTimeRange and notInTrade and tradeDateIsAllowed) //3
+	strategy.entry("LC3", strategy.long) 
+	direction := true 
+	strategy.exit("LC3", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Long3" , comment_profit = "TP Long3" )
+
+//4
+if ( direction  and shortCondition1 and isInTimeRange and notInTrade) //4
+	strategy.entry("Short", strategy.short)  
+	direction := false 
+    strategy.exit("Short", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Short", comment_profit = "TP Short")
+
+//5
+
+if (shortCondition2 and isInTimeRange and notInTrade and tradeDateIsAllowed) //5
+	strategy.entry("SC2", strategy.short )  
+	direction := false 
+    strategy.exit("SC2", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Short2", comment_profit = "TP Short2")
+
+if (shortCondition3 and isInTimeRange and notInTrade and tradeDateIsAllowed) //5
+	strategy.entry("SC3", strategy.short )  
+	direction := false 
+    strategy.exit("SC3", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Short3", comment_profit = "TP Short3")
+
+//6
+if ( direction == false and  longCondition1 and isInTimeRange and notInTrade) //6
+	strategy.entry("Long", strategy.long) 
+	direction := true 
+	strategy.exit("Long", loss = stop_loss_in_ticks, profit = take_profit_in_ticks, comment_loss = "SL Long" , comment_profit = "TP Long" )
+// strategy close condition 
+if (direction and longExit and inTrade) 
+	strategy.close("Long", "Exit long") // force immediate closure at current market price 
+
+if (direction == false  and shortExit and inTrade) 
+    strategy.close("Short" ,"Exit Short")
+
+
+

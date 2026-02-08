@@ -1,0 +1,162 @@
+//@version=5
+indicator("Dawn V1.0.0", overlay = true)
+
+//---------RSI-----------
+
+// Parameters
+rsiLength = 10
+maLength = 5
+rsiUpperBand = 70
+rsiMiddleBand = 50
+rsiLowerBand = 30
+
+// Calculate RSI
+rsi = ta.rsi(hlcc4, rsiLength)
+
+// Calculate EMA
+ma = ta.ema(rsi, maLength)
+
+//----------MACD-------------
+
+// Getting inputs
+fast_length = input(title = "Fast Length", defval = 3)
+slow_length = input(title = "Slow Length", defval = 12)
+source = input.source(title = "Source", defval = close)
+signal_length = input.int(title = "Signal Smoothing", minval = 1, maxval = 50, defval = 9, display = display.data_window)
+sma_source = input.string(title = "Oscillator MA Type", defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+sma_signal = input.string(title = "Signal Line MA Type", defval = "EMA", options = ["SMA", "EMA"], display = display.data_window)
+// Calculating
+fast_ma = sma_source == "SMA" ? ta.sma(source, fast_length) : ta.ema(source, fast_length)
+slow_ma = sma_source == "SMA" ? ta.sma(source, slow_length) : ta.ema(source, slow_length)
+macd = fast_ma - slow_ma
+signal = sma_signal == "SMA" ? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+
+//--------assembling-----UPs------
+
+uptrend1 = (rsiUpperBand < ma and ma < rsi) and (0 < signal and signal < macd)
+uptrend2 = (rsiMiddleBand < ma and ma < rsiUpperBand and rsiUpperBand < rsi) and (0 < signal and signal < macd)
+uptrend3 = (rsiMiddleBand < ma and ma < rsi and rsi < rsiUpperBand) and ((0 < signal and signal < macd) or (0 < macd and macd < signal))
+uptrend4 = (rsiLowerBand < ma and ma < rsiMiddleBand and rsiMiddleBand < rsi and rsi < rsiUpperBand) and ((signal < 0 and 0 < macd) or (0 < macd and macd < signal) or (macd < signal and signal < 0) or (signal < macd and macd < 0))
+uptrend5 = (rsiLowerBand < ma and ma < rsi and rsi < rsiMiddleBand) and (signal < macd and macd < 0)
+uptrend6 = (rsiLowerBand < rsi and rsi < ma and ma < rsiMiddleBand) and (macd < 0 and 0 < signal)
+uptrend7 = (ma < rsi and rsi < rsiLowerBand) and ((macd < signal and signal < 0) or (signal < macd and macd < 0))
+uptrend8 = (rsi < ma and ma < rsiLowerBand) and (signal < macd and macd < 0)
+
+bgcolor(uptrend1 ? color.new(color.green, 90) : na)
+bgcolor(uptrend2 ? color.new(color.green, 90) : na)
+bgcolor(uptrend3 ? color.new(color.green, 90) : na)
+bgcolor(uptrend4 ? color.new(color.green, 90) : na)
+bgcolor(uptrend5 ? color.new(color.green, 90) : na)
+bgcolor(uptrend6 ? color.new(color.green, 90) : na)
+bgcolor(uptrend7 ? color.new(color.green, 90) : na)
+bgcolor(uptrend8 ? color.new(color.green, 90) : na)
+
+//--------assembling-----DOWNs------
+
+downtrend1 = (rsiUpperBand < rsi and rsi < ma) and ((0 < signal and signal < macd) or (0 < macd and macd < signal))
+downtrend2 = (rsiMiddleBand < rsi and rsi < rsiUpperBand and rsiUpperBand < ma) and (0 < macd and macd < signal)
+downtrend3 = (rsiMiddleBand < rsi and rsi < ma and ma < rsiUpperBand) and ((0 < signal and signal < macd) or (macd < signal and signal < 0) or (0 < macd and macd < signal))
+downtrend4 = (rsiMiddleBand < ma and ma < rsi and rsi < rsiUpperBand) and (0 < macd and macd < signal)
+downtrend5 = (rsiLowerBand < rsi and rsi < rsiMiddleBand and rsiMiddleBand < ma and ma < rsiUpperBand) and ((macd < 0 and 0 < signal) or (0 < signal and signal < macd))
+downtrend6 = (rsiLowerBand < rsi and rsi < ma and ma < rsiMiddleBand) and ((macd < signal and signal < 0) or (0 < macd and macd < signal) or (signal < macd and macd < 0))
+downtrend7 = (rsi < rsiLowerBand and rsiLowerBand < ma and ma < rsiMiddleBand) and (macd < signal and signal < 0)
+
+bgcolor(downtrend1 ? color.new(color.red, 90) : na)
+bgcolor(downtrend2 ? color.new(color.red, 90) : na)
+bgcolor(downtrend3 ? color.new(color.red, 90) : na)
+bgcolor(downtrend4 ? color.new(color.red, 90) : na)
+bgcolor(downtrend5 ? color.new(color.red, 90) : na)
+bgcolor(downtrend6 ? color.new(color.red, 90) : na)
+bgcolor(downtrend7 ? color.new(color.red, 90) : na)
+
+//-----Start--NWE----------
+
+h = input.float(8.,'Bandwidth', minval = 0)
+mult = input.float(3., minval = 0)
+src = input(close, 'Source')
+    
+repaint = input(true, 'Repainting Smoothing', tooltip = 'Repainting is an effect where the indicators historical output is subject to change over time. Disabling repainting will cause the indicator to output the endpoints of the calculations')
+
+upCss = input.color(color.teal, 'Colors', inline = 'inline1', group = 'Style')
+dnCss = input.color(color.red, '', inline = 'inline1', group = 'Style')
+
+gauss(x, h) => math.exp(-(math.pow(x, 2)/(h * h * 2)))
+
+n = bar_index
+
+var ln = array.new_line(0) 
+    
+if barstate.isfirst and repaint
+    for i = 0 to 499
+        array.push(ln,line.new(na,na,na,na))
+
+var coefs = array.new_float(0)
+var den = 0.
+
+if barstate.isfirst and not repaint
+    for i = 0 to 499
+        w = gauss(i, h)
+        coefs.push(w)
+
+    den := coefs.sum()
+
+out = 0.
+if not repaint
+    for i = 0 to 499
+        out += src[i] * coefs.get(i)
+out /= den
+mae = ta.sma(math.abs(src - out), 499) * mult
+
+upper = out + mae
+lower = out - mae
+
+float y2 = na
+float y1 = na
+
+nwe = array.new<float>(0)
+if barstate.islast and repaint
+    sae = 0.
+    //Compute and set NWE point 
+    for i = 0 to math.min(499,n - 1)
+        sum = 0.
+        sumw = 0.
+        //Compute weighted mean 
+        for j = 0 to math.min(499,n - 1)
+            w = gauss(i - j, h)
+            sum += src[j] * w
+            sumw += w
+
+        y2 := sum / sumw
+        sae += math.abs(src[i] - y2)
+        nwe.push(y2)
+    
+    sae := sae / math.min(499,n - 1) * mult
+    for i = 0 to math.min(499,n - 1)
+        if i%2
+            line.new(n-i+1, y1 + sae, n-i, nwe.get(i) + sae, color = upCss)
+            line.new(n-i+1, y1 - sae, n-i, nwe.get(i) - sae, color = dnCss)
+        
+        if src[i] > nwe.get(i) + sae and src[i+1] < nwe.get(i) + sae
+            label.new(n-i, src[i], '▼', color = color(na), style = label.style_label_down, textcolor = dnCss, textalign = text.align_center)
+        if src[i] < nwe.get(i) - sae and src[i+1] > nwe.get(i) - sae
+            label.new(n-i, src[i], '▲', color = color(na), style = label.style_label_up, textcolor = upCss, textalign = text.align_center)
+        
+        y1 := nwe.get(i)
+
+var tb = table.new(position.top_right, 1, 1
+  , bgcolor = #1e222d
+  , border_color = #373a46
+  , border_width = 1
+  , frame_color = #373a46
+  , frame_width = 1)
+
+if repaint
+    tb.cell(0, 0, 'Repainting Mode Enabled', text_color = color.white, text_size = size.small)
+
+plot(repaint ? na : out + mae, 'Upper', upCss)
+plot(repaint ? na : out - mae, 'Lower', dnCss)
+
+plotshape(ta.crossunder(close, out - mae) ? low : na, "Crossunder", shape.labelup, location.absolute, color(na), 0 , text = '▲', textcolor = upCss, size = size.tiny)
+plotshape(ta.crossover(close, out + mae) ? high : na, "Crossover", shape.labeldown, location.absolute, color(na), 0 , text = '▼', textcolor = dnCss, size = size.tiny)
+
+//-----End--NWE----------

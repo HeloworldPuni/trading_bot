@@ -1,0 +1,163 @@
+//@version=5
+indicator("Mean Reversion Strategy (Daily Timeframe)", overlay=true)
+
+// Parameters
+ma_200_length = input.int(200, "MA 200 Length")
+ma_20_length = input.int(20, "MA 20 Length")
+bb_std_mult = input.float(2.0, "Bollinger Bands StdDev Multiplier")
+rsi_length = input.int(2, "RSI Length")
+price_change_period = input.int(150, "Price Change Period (Days)")
+max_hold_days = input.int(10, "Maximum Hold Days")
+limit_order_pct = input.float(3.0, "Limit Order Percent Below", minval=0.1, step=0.1)
+
+// Force daily timeframe for all calculations
+[daily_close, daily_high, daily_low, daily_open] = request.security(syminfo.tickerid, "D", [close, high, low, open])
+
+// Calculate indicators using daily data
+daily_ma_200 = request.security(syminfo.tickerid, "D", ta.sma(close, ma_200_length))
+daily_ma_20 = request.security(syminfo.tickerid, "D", ta.sma(close, ma_20_length))
+daily_bb_std = request.security(syminfo.tickerid, "D", ta.stdev(close, ma_20_length))
+daily_bb_lower = daily_ma_20 - (bb_std_mult * daily_bb_std)
+daily_rsi_2 = request.security(syminfo.tickerid, "D", ta.rsi(close, rsi_length))
+
+// Calculate price change over specified period (daily timeframe)
+daily_price_change_150d = request.security(syminfo.tickerid, "D", close / close[price_change_period] - 1)
+
+// Core entry conditions
+daily_uptrend = daily_close > daily_ma_200
+daily_pullback = daily_close < daily_bb_lower
+
+// Volume analysis
+daily_volume = request.security(syminfo.tickerid, "D", volume)
+daily_volume_sma = request.security(syminfo.tickerid, "D", ta.sma(volume, 20))
+volume_ratio = daily_volume / daily_volume_sma
+
+// Enhanced entry conditions with volume
+volume_confirmation = volume_ratio > 1.2  // Above average volume on pullback
+daily_buy_limit_price = daily_close * (1 - limit_order_pct/100)  // Limit order price
+
+// Market regime filter
+vix = request.security("VIX", "D", close)
+vix_sma = request.security("VIX", "D", ta.sma(close, 20))
+low_fear_environment = vix < vix_sma * 1.2  // VIX not spiking
+
+// Sector relative strength (using SPY as benchmark)
+spy_close = request.security("SPY", "D", close)
+spy_sma20 = request.security("SPY", "D", ta.sma(close, 20))
+stock_vs_spy = (daily_close / daily_close[20]) / (spy_close / spy_close[20])
+sector_strength = stock_vs_spy > 1.0  // Outperforming market
+
+// Final buy signal with all filters
+// Option 1: Just core conditions (most relaxed)
+daily_buy_signal = daily_uptrend and daily_pullback
+
+// Option 2: Core + at least 2 of 3 filters
+// filter_count = (volume_confirmation ? 1 : 0) + (low_fear_environment ? 1 : 0) + (sector_strength ? 1 : 0)
+// daily_buy_signal = daily_uptrend and daily_pullback and filter_count >= 2
+
+// Option 3: Core + volume only (volume is most important)
+// daily_buy_signal = daily_uptrend and daily_pullback and volume_confirmation
+
+// Calculate days held (needs to be tracked across timeframes)
+var float last_buy_time = 0.0
+var int days_held = 0
+var float entry_price = na
+var float trailing_stop = na
+var label status_label = na
+
+// Get current day
+current_day_time = request.security(syminfo.tickerid, "D", time)
+is_new_day = current_day_time != last_buy_time and not na(current_day_time)
+
+// Exit conditions - MOVED BEFORE LOGIC
+daily_rsi_exit = daily_rsi_2 > 50
+daily_time_exit = days_held >= max_hold_days
+daily_stop_loss = not na(trailing_stop) and daily_close < trailing_stop
+daily_profit_target = not na(entry_price) and daily_close > entry_price * 1.08
+daily_sell_signal = (daily_rsi_exit or daily_time_exit or daily_stop_loss or daily_profit_target) and days_held > 0
+
+// Position management logic
+if (daily_sell_signal and is_new_day)
+    days_held := 0
+    entry_price := na
+    trailing_stop := na
+
+// Check for new buy signals
+if (daily_buy_signal and days_held == 0)
+    days_held := 1
+    last_buy_time := current_day_time
+    entry_price := daily_close
+    trailing_stop := entry_price * 0.95
+else if (days_held > 0 and is_new_day)
+    days_held := days_held + 1
+
+// Update trailing stop
+if days_held > 0 and not na(entry_price) and daily_close > entry_price * 1.02  // If up 2%
+    new_stop = daily_close * 0.98  // 2% trailing stop
+    trailing_stop := math.max(trailing_stop, new_stop)
+
+// Plotting
+plot(daily_ma_200, "200-day MA", color.rgb(255, 165, 0), 2)
+plot(daily_ma_20, "20-day MA", color.rgb(0, 128, 255), 1)
+plot(daily_bb_lower, "Lower Bollinger Band", color.rgb(255, 0, 0), 1)
+
+// Plot buy and sell signals
+plotshape(daily_buy_signal, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(daily_sell_signal, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// Enhanced status display using swing_signals.pine styling
+if (barstate.islast)
+    // Delete old label if exists
+    if (not na(status_label))
+        label.delete(status_label)
+    
+    // Create dynamic status table with swing_signals styling
+    var table status_table = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 70), border_width=1)
+    
+    // Clear and populate table
+    table.clear(status_table, 0, 0, 2, 7)
+    
+    // Headers (matching swing_signals style)
+    table.cell(status_table, 0, 0, "Mean Reversion", bgcolor=color.gray, text_color=color.white)
+    table.cell(status_table, 1, 0, "Status", bgcolor=color.gray, text_color=color.white)
+    table.cell(status_table, 2, 0, "Details", bgcolor=color.gray, text_color=color.white)
+    
+    // Status rows
+    table.cell(status_table, 0, 1, "Uptrend")
+    table.cell(status_table, 1, 1, daily_uptrend ? "Bullish" : "Bearish", text_color=daily_uptrend ? color.green : color.red)
+    table.cell(status_table, 2, 1, "Price > 200MA")
+    
+    table.cell(status_table, 0, 2, "Pullback")
+    table.cell(status_table, 1, 2, daily_pullback ? "Active" : "None", text_color=daily_pullback ? color.green : color.red)
+    table.cell(status_table, 2, 2, "Close:" + str.tostring(math.round(daily_close, 2)) + " BB:" + str.tostring(math.round(daily_bb_lower, 2)))
+    
+    table.cell(status_table, 0, 3, "Volume")
+    table.cell(status_table, 1, 3, volume_confirmation ? "Strong" : "Weak", text_color=volume_confirmation ? color.green : color.red)
+    table.cell(status_table, 2, 3, str.tostring(math.round(volume_ratio, 2)) + "x avg")
+    
+    table.cell(status_table, 0, 4, "VIX Filter")
+    table.cell(status_table, 1, 4, low_fear_environment ? "Bullish" : "Bearish", text_color=low_fear_environment ? color.green : color.red)
+    table.cell(status_table, 2, 4, "Low fear env")
+    
+    table.cell(status_table, 0, 5, "Sector Strength")
+    table.cell(status_table, 1, 5, sector_strength ? "Strong" : "Weak", text_color=sector_strength ? color.green : color.red)
+    table.cell(status_table, 2, 5, "vs SPY")
+    
+    table.cell(status_table, 0, 6, "Position")
+    table.cell(status_table, 1, 6, days_held > 0 ? "Active" : "None", text_color=days_held > 0 ? color.yellow : color.gray)
+    table.cell(status_table, 2, 6, "Days: " + str.tostring(days_held))
+    
+    // P&L row (only if in position)
+    if not na(entry_price) and days_held > 0
+        pnl_pct = (daily_close / entry_price - 1) * 100
+        table.cell(status_table, 0, 7, "P&L")
+        table.cell(status_table, 1, 7, pnl_pct > 0 ? "Profit" : "Loss", text_color=pnl_pct > 0 ? color.green : color.red)
+        table.cell(status_table, 2, 7, str.tostring(math.round(pnl_pct, 2)) + "%")
+    else
+        table.cell(status_table, 0, 7, "")
+        table.cell(status_table, 1, 7, "")
+        table.cell(status_table, 2, 7, "")
+
+// Alert conditions
+alertcondition(daily_buy_signal, "Buy Signal", "Mean Reversion Strategy: Buy Signal")
+alertcondition(daily_sell_signal, "Sell Signal", "Mean Reversion Strategy: Sell Signal")

@@ -1,0 +1,132 @@
+//@version=5
+indicator(title="MJ - RTH VWAP", shorttitle="MJ - RTH VWAP", overlay=true)
+
+groupShared = 'Shared'
+inlineDev = 'Deviations'
+inlineSharedStyles = 'Styling'
+inlineSharedToggles = 'Toggles'
+groupV1 = 'VWAP1'
+inlineOptions1 = 'V1 Options'
+inlineMain1 = 'main1'
+inlineFine1 = 'fine1'
+
+inputRth = input.session("0930-1600", title="Regular Session Time (EST)", tooltip="If you want to get full session (including overnight) high/low values, then change the regular session interval.  For example, on a 5-mninute chart, 1800-1655 will provide the high and low for the full daily session.")
+rthSession = time("1440",str.format("{0}:23456", inputRth), "America/New_York")
+
+
+bandMult1 = input.float(1.0, title="B1", group=groupShared, inline=inlineDev, step=0.5)
+bandMult2 = input.float(1.5, title="B2", group=groupShared, inline=inlineDev, step=0.5)
+bandMult3 = input.float(2.0, title="B3", group=groupShared, inline=inlineDev, step=0.5)
+bandMult4 = input.float(3.0, title="B4", group=groupShared, inline=inlineDev, step=0.5)
+bandMult5 = input.float(0.5, title="B5", group=groupShared, inline=inlineDev, step=0.5)
+
+
+inputPlotStyleVwap = input.string("line", options = ["circles","line","cross"],title = "VWAP", group=groupShared, inline=inlineSharedStyles)
+inputPlotStyleBands = input.string("line", options = ["circles","line","cross"],title = "Bands", group=groupShared, inline=inlineSharedStyles)
+inputPlotStylePVA = input.string("line", options = ["circles","line","cross"],title = "PVA", group=groupShared, inline=inlineSharedStyles)
+inputPlotStylePpoc = input.string("cross", options = ["circles","line","cross"],title = "PPOC", group=groupShared, inline=inlineSharedStyles)
+vwapPlotWidth = input.int(2, 'VWAP Line Width', options=[1,2,3,4], group=groupShared, inline=inlineSharedStyles)
+bandsPlotWidth = input.int(2, 'Bands Line Width', options=[1,2,3,4], group=groupShared, inline=inlineSharedStyles)
+
+_getLineStyle(_style) => (_style == "line") ? plot.style_linebr : (_style == "circles") ? plot.style_circles : (_style == "cross") ? plot.style_cross : na
+
+plotStyleVwap = _getLineStyle(inputPlotStyleVwap)
+plotStyleBands = _getLineStyle(inputPlotStyleBands)
+plotStylePVA = _getLineStyle(inputPlotStylePVA)
+plotStylePpoc = _getLineStyle(inputPlotStylePpoc)
+
+//oneTextColor = input.color(color.new(#8a294a, 0), title="Text", group=groupV1, inline=inlineMain1)
+oneVwapColor = input.color(color.new(#8a294a, 30), title = "VWAP/Close", group=groupV1, inline=inlineMain1)
+oneBandColor = input.color(color.new(#8a294a, 70), title = "Bands", group=groupV1, inline=inlineMain1)
+//onePpocColor = input.color(color.new(color.white, 75), title = "PPOC", group=groupV1, inline=inlineMain1)
+//onePvaEdgeColor = input.color(color.new(color.white, 80), title = "PVA Edge", group=groupV1, inline=inlineMain1)
+//onePvaFillColor = input.color(color.new(color.white, 88), title = "PVA Fill", group=groupV1, inline=inlineMain1)
+oneDvaFillColor = input.color(color.new(#8a294a, 70), title = "DVA Fill", group=groupV1, inline=inlineMain1)
+
+groupSingleColor = 'Single Color'
+singleColorActive = input(true, 'Active', group=groupSingleColor, inline=groupSingleColor)
+singleColor = input.color(color.black, 'C', group=groupSingleColor, inline=groupSingleColor)
+singleVwapOpacity = input.int(30, 'VWAP', maxval=100, minval=0, group=groupSingleColor, inline=groupSingleColor)
+singleBandsOpacity = input.int(60, 'Bands', maxval=100, minval=0, group=groupSingleColor, inline=groupSingleColor)
+singleDvaFillOpacity = input.int(80, 'DVA Fill', maxval=100, minval=0, group=groupSingleColor, inline=groupSingleColor)
+
+
+showOneLines = input(true, title="Lines", group=groupV1, inline=inlineOptions1)
+// showOneLabels = input(true, title="Labels", group=groupV1, inline=inlineOptions1)
+showOneVwap = input(true, title="VWAP", group=groupV1, inline=inlineOptions1) and showOneLines
+showBands = input(true, title="Bands", group=groupV1, inline=inlineOptions1) and showOneLines
+//showOnePPOC = input(true, title="PPOC", group=groupV1, inline=inlineOptions1) and showOneLines
+//showOnePva = input(true, title="PVA", group=groupV1, inline=inlineOptions1) and showOneLines
+//onePvaFillActive = input(true, title="PVA Fill", group=groupV1, inline=inlineOptions1)
+oneDvaFillActive = input(true, title="DVA Fill", group=groupV1, inline=inlineOptions1)
+
+showBand1 = input(true, title="B1", group=groupV1, inline=inlineFine1) and showBands
+showBand2 = input(true, title="B2", group=groupV1, inline=inlineFine1) and showBands
+showBand3 = input(true, title="B3", group=groupV1, inline=inlineFine1) and showBands
+showBand4 = input(false, title="B4", group=groupV1, inline=inlineFine1) and showBands
+showBand5 = input(false, title="B5", group=groupV1, inline=inlineFine1) and showBands
+
+
+// RTH High/Low
+
+var float rthVwap = na
+var float rthP = na
+var float rthVol = na
+
+if rthSession
+    if not rthSession[1]
+        rthP := hlc3 * volume
+        rthVol := volume
+        rthVwap := hlc3
+    else
+        rthP := rthP[1] + hlc3 * volume
+        rthVol := rthVol[1] + volume
+        rthVwap := rthP / rthVol
+else
+    rthVwap := na
+
+
+
+_computeBands(src, isNewPeriod, sdMult, _vwap, sumVol) =>
+    var float sumSrcSrcVol = na
+
+    sumSrcSrcVol := isNewPeriod ? volume * math.pow(src, 2) : volume * math.pow(src, 2) + sumSrcSrcVol[1]
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+	lowerBand = sdMult > 0 ? (_vwap - stDev * sdMult) : na
+	upperBand = sdMult > 0 ? (_vwap + stDev * sdMult) : na
+
+	[lowerBand, upperBand]
+
+
+
+isFirstBarOfSession = not rthSession[1]
+
+[band1High, band1Low] = _computeBands(hlc3, isFirstBarOfSession, bandMult1, rthVwap, rthVol)
+[band2High, band2Low] = _computeBands(hlc3, isFirstBarOfSession, bandMult2, rthVwap, rthVol)
+[band3High, band3Low] = _computeBands(hlc3, isFirstBarOfSession, bandMult3, rthVwap, rthVol)
+[band4High, band4Low] = _computeBands(hlc3, isFirstBarOfSession, bandMult4, rthVwap, rthVol)
+[band5High, band5Low] = _computeBands(hlc3, isFirstBarOfSession, bandMult5, rthVwap, rthVol)
+
+
+// Plots
+
+_vwapColor = singleColorActive ? color.new(singleColor, singleVwapOpacity) : oneVwapColor
+_bandsColor = singleColorActive ? color.new(singleColor, singleBandsOpacity) : oneBandColor
+_dvaFillColor = singleColorActive ? color.new(singleColor, singleDvaFillOpacity) : oneDvaFillColor
+
+rthVwapPlot = plot(rthSession and showOneVwap ? rthVwap : na, title="rthVwap", color=_vwapColor, linewidth=vwapPlotWidth, style=plotStyleVwap)
+band1HighPlot = plot(rthSession and showBand1 ? band1High : na, title="Band 1 High", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band1LowPlot = plot(rthSession and showBand1 ? band1Low : na, title="Band 1 Low", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band2HighPlot = plot(rthSession and showBand2 ? band2High : na, title="Band 2 High", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band2LowPlot = plot(rthSession and showBand2 ? band2Low : na, title="Band 2 Low", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band3HighPlot = plot(rthSession and showBand3 ? band3High : na, title="Band 3 High", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band3LowPlot = plot(rthSession and showBand3 ? band3Low : na, title="Band 3 Low", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band4HighPlot = plot(rthSession and showBand4 ? band4High : na, title="Band 4 High", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band4LowPlot = plot(rthSession and showBand4 ? band4Low : na, title="Band 4 Low", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band5HighPlot = plot(rthSession and showBand5 ? band5High : na, title="Band 5 High", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+band5LowPlot = plot(rthSession and showBand5 ? band5Low : na, title="Band 5 Low", color=_bandsColor, linewidth=bandsPlotWidth, style=plotStyleBands)
+
+
+fill(band1HighPlot, band1LowPlot, oneDvaFillActive ? _dvaFillColor : na, title='One DVA Fill')

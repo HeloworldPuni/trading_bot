@@ -1,0 +1,654 @@
+// PMatrix++ for kNN Forecasting with Historical Predictions
+// Forked from https://www.tradingview.com/script/ayYqzK8u-AiTrend-Pattern-Matrix-for-kNN-Forecasting-AiBitcoinTrend/
+// Enhanced with Volume Integration, Pattern Success Tracking, Dynamic Time Horizon, Historical Prediction Tracking and Improved Distance Metric by smcleod
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/ © aibitcointrend , © smcleod
+
+//@version=6
+indicator("PMatrix++ for kNN Forecasting with Historical Predictions", shorttitle = "PMatrix++", overlay = true)
+
+// === Parameters, variables, constants and definitions
+//@enum     Defines various dictionary input types
+enum dict_input
+    crange = "crange"
+    body = "body"
+    wick_low = "wick_low"
+    wick_high = "wick_high"
+    volume_profile = "volume_profile"
+    volume_delta = "volume_delta"
+
+//@enum     Defines various historical inputs
+enum hist_input
+    hhigh = "hhigh"
+    hlow = "hlow"
+
+//@enum     Defines kNN weighting
+enum knn_weighting
+    distance = "distance"
+    average = "average"
+
+// === General Settings
+src = input.source(close, "Primary prediction target", tooltip = 'Primary prediction target', group = 'General settings')
+N   = input.int(20, "Pattern length", minval=4, step=1, tooltip = "How many bars of data to use to construct patterns", group = 'General Settings')
+ND  = input.int(50, "Dictionary size", minval=5, maxval=100, step=1, tooltip = "Number of patterns to store for matching (reduce for more performance, less accuracy)", group = 'General Settings')
+NY  = input.int(2, "Base Prediction horizon", minval=1, maxval=100, step=1, tooltip = "The base horizon (in bars) of the prediction. Will be adjusted if Dynamic Time Horizon is enabled", group = 'General Settings')
+ema_n = input.int(14, "Smoothing lookback", minval=2, step=1, tooltip = "How many bars of data to use to smooth prediction target", group = 'General Settings')
+prediction_offset = input.int(-2, "Prediction Offset", minval=-10, maxval=10, step=1, tooltip = "Offset predictions by N bars. Negative values show predictions earlier, positive values show predictions later. Example: -2 on 30min chart shows predictions 1 hour earlier", group = 'General Settings')
+
+// === Enhancement Toggles
+enable_volume = input.bool(true, "Enable Volume Integration", tooltip = "Include volume patterns in the analysis", group = 'Enhancement Features')
+enable_success_tracking = input.bool(true, "Enable Pattern Success Tracking", tooltip = "Track and weight patterns based on their historical success rate", group = 'Enhancement Features')
+enable_dynamic_horizon = input.bool(true, "Enable Dynamic Time Horizon", tooltip = "Adjust prediction horizon based on current volatility", group = 'Enhancement Features')
+enable_improved_distance = input.bool(true, "Enable Improved Distance Metric", tooltip = "Use correlation-based distance metric instead of simple Euclidean", group = 'Enhancement Features')
+enable_historical_predictions = input.bool(true, "Show Historical Predictions", tooltip = "Keep past predictions visible on the chart to compare with actual price movement", group = 'Enhancement Features')
+
+// === Historical Predictions Settings
+max_historical_predictions = input.int(50, "Max Historical Predictions", minval=10, maxval=400, step=10, tooltip = "Maximum number of historical predictions to keep on chart", group = 'Historical Predictions')
+historical_prediction_color = input.color(color.new(#900190, 72), "Historical Prediction Colour", tooltip = "Colour for historical prediction boxes", group = 'Historical Predictions')
+historical_predictions_filled = input.bool(true, "Fill Historical Predictions", tooltip = "Fill historical prediction boxes with colour or show outline only", group = 'Historical Predictions')
+historical_prediction_height_mult = input.float(0.4, "Historical Prediction Height", minval=0.1, maxval=2.0, step=0.1, tooltip = "Height of historical prediction boxes as multiplier of ATR", group = 'Historical Predictions')
+
+// === kNN Settings
+n_neighbors = input.int(3, "# of neighbors", minval=1, maxval=32, step=1, tooltip = "How many nearest neighbors to consider", group = 'kNN')
+atr_n    = 100
+atr_mult = input.float(2.0, "ATR multiplier", minval=.1, step=.1, tooltip = "ATR bands multiplier", group = 'kNN')
+selected_knn_weighting = knn_weighting.distance
+prediction_filter_n    = input.int(5, "EMA Prediction filter", minval=2, step=1, tooltip = "Lookback for smoothing of prediction, set to 0 to disable", group = 'kNN')
+
+// === Success Tracking Settings
+success_decay = input.float(0.95, "Success Rate Decay Factor", minval=0.5, maxval=1.0, step=0.05, tooltip = "How much to decay old success rates (1.0 = no decay)", group = 'Pattern Success Tracking')
+min_pattern_uses = input.int(3, "Minimum Pattern Uses", minval=1, maxval=10, tooltip = "Minimum times a pattern must be used before weighting by success", group = 'Pattern Success Tracking')
+
+// === Volume Settings
+volume_lookback = input.int(20, "Volume Normalisation Period", minval=10, maxval=50, tooltip = "Period for volume moving average", group = 'Volume Integration')
+volume_weight = input.float(0.25, "Volume Pattern Weight", minval=0.1, maxval=0.5, step=0.05, tooltip = "Weight of volume patterns in distance calculation", group = 'Volume Integration')
+
+// === Additional Settings
+lookback_n = input.int(30, "Regime bands lookback", minval=5, step=1, tooltip = "How many bars of data to use to calculate regime bands", group = 'Additional Settings')
+
+// === Style
+pos_col = input.color(color.rgb(96, 195, 10, 10), title="Positive Colour", group="Style", inline="Style")
+neg_col = input.color(color.rgb(240, 46, 56, 12), title="Negative Colour",group="Style", inline="Style")
+
+// === Dictionaries
+var Y = array.new<float>()
+var D = matrix.new<float>()
+var D2 = matrix.new<float>()
+var D3 = matrix.new<float>()
+var D4 = matrix.new<float>()
+var D5 = matrix.new<float>()  // Volume profile patterns
+var D6 = matrix.new<float>()  // Volume delta patterns
+var H = matrix.new<float>()
+var L = matrix.new<float>()
+
+// === Pattern Success Tracking Arrays
+var pattern_success = array.new<float>()  // Success rate for each pattern
+var pattern_usage = array.new<int>()      // Usage count for each pattern
+var pattern_predictions = array.new<float>()  // Store predictions for later evaluation
+var pattern_indices = array.new<int>()    // Store which pattern was used
+var pattern_bar_indices = array.new<int>()  // Store when pattern was used
+
+// === Historical Predictions Storage
+var historical_prediction_boxes = array.new<box>()  // Store historical prediction boxes
+
+// === Pattern Visualization Storage
+var pattern_boxes = array.new<box>()  // Store pattern visualization boxes
+
+// === Variables and constants
+y_src = ta.ema(src, ema_n)
+N_total = NY + N
+atr_bands = ta.atr(atr_n)
+var float conf = na
+var float nearest_neighbor = na
+var int  n_bars = 0
+var int  n_up = int(na)
+var int  n_dn = int(na)
+var float l_min = float(na)
+var float h_max = float(na)
+var float m_mid = float(na)
+var bool Y_hat_trend = false
+
+// Calculate volume MA on every bar (fixes linter warning)
+vol_ma = ta.sma(volume, volume_lookback)
+
+// Calculate volatility percentile on every bar (fixes linter warning)
+volatility_percentile = ta.percentile_nearest_rank(atr_bands, 100, 50)
+
+// Dynamic Time Horizon variables
+var int NY_dynamic = NY
+
+// Lines
+var float Y_hat = na
+var float Y_hat_line = na
+var float Y_hat_bands = na
+var float Y_hat_smooth = na
+var line reg_lu = line(na)
+var line reg_ll = line(na)
+var line reg_lm = line(na)
+
+// === Functions
+
+// Function to store historical predictions as boxes (modified to include offset)
+store_historical_prediction(start_bar, end_bar, prediction_value, current_atr, offset) =>
+    if enable_historical_predictions
+        // Calculate box height based on ATR
+        box_height = current_atr * historical_prediction_height_mult
+
+        // Make box width 1/6 of the original span
+        box_width = math.max(1, (end_bar - start_bar) / 6)
+
+        // Apply offset to both start and end positions
+        actual_start_bar = start_bar + offset
+        actual_end_bar = actual_start_bar + int(box_width)
+
+        // Create a box for the historical prediction
+        pred_box = box.new(left=actual_start_bar, top=prediction_value + box_height/2, right=actual_end_bar, bottom=prediction_value - box_height/2, border_color=historical_prediction_color, border_style=line.style_solid, border_width=1, bgcolor=historical_predictions_filled ? historical_prediction_color : na)
+
+        // Add to array
+        array.push(historical_prediction_boxes, pred_box)
+
+        // Remove oldest predictions if we exceed the maximum
+        if array.size(historical_prediction_boxes) > max_historical_predictions
+            old_box = array.shift(historical_prediction_boxes)
+            box.delete(old_box)
+
+// Calculate Dynamic Time Horizon (now uses pre-calculated volatility_percentile)
+calculate_dynamic_horizon(vol_rank) =>
+    if enable_dynamic_horizon
+        // Adjust horizon based on volatility percentile
+        if vol_rank > 75
+            1  // High volatility = shorter horizon
+        else if vol_rank > 50
+            2  // Medium-high volatility
+        else if vol_rank > 25
+            3  // Medium-low volatility
+        else
+            4  // Low volatility = longer horizon
+    else
+        NY  // Use base horizon if dynamic is disabled
+
+// Update Pattern Success
+update_pattern_success(pattern_idx, predicted, actual) =>
+    if enable_success_tracking and pattern_idx >= 0 and pattern_idx < pattern_success.size()
+        // Calculate accuracy (0 to 1, where 1 is perfect prediction)
+        error = math.abs(actual - predicted)
+        max_error = math.abs(predicted) * 2  // Normalise error
+        accuracy = max_error > 0 ? math.max(0, 1 - (error / max_error)) : 0.5
+
+        // Get current stats
+        current_success = array.get(pattern_success, pattern_idx)
+        current_usage = array.get(pattern_usage, pattern_idx)
+
+        // Update with decay
+        if current_usage > 0
+            new_success = (current_success * current_usage * success_decay + accuracy) / (current_usage * success_decay + 1)
+            array.set(pattern_success, pattern_idx, new_success)
+        else
+            array.set(pattern_success, pattern_idx, accuracy)
+
+        array.set(pattern_usage, pattern_idx, current_usage + 1)
+
+// Update dictionary function (now uses pre-calculated vol_ma)
+update_dictionary(D, input_type, current_vol_ma) =>
+    x = array.new<float>(N_total)
+
+    for i = 0 to N_total-1
+        if input_type == dict_input.body
+            array.set(x, -(i+1), close[i]-open[i])
+        else if input_type == dict_input.crange
+            array.set(x, -(i+1), high[i]-low[i])
+        else if input_type == dict_input.wick_low
+            array.set(x, -(i+1), math.min(close[i], open[i])-low[i])
+        else if input_type == dict_input.wick_high
+            array.set(x, -(i+1), high[i]-math.max(close[i], open[i]))
+        else if input_type == dict_input.volume_profile and enable_volume
+            // Normalised volume using pre-calculated MA
+            array.set(x, -(i+1), current_vol_ma > 0 ? volume[i]/current_vol_ma : 1.0)
+        else if input_type == dict_input.volume_delta and enable_volume
+            // Directional volume (volume * price change)
+            norm_vol = current_vol_ma > 0 ? volume[i]/current_vol_ma : 1.0
+            array.set(x, -(i+1), (close[i]-open[i]) * norm_vol / atr_bands)
+
+    x_current = array.slice(x, N_total-N, N_total)
+    x_prev = array.slice(x, 0, N)
+
+    x_current_normed = matrix.new<float>(1, array.size(x_current), 0.0)
+    for i = 0 to array.size(x_current)-1
+        if input_type == dict_input.volume_profile or input_type == dict_input.volume_delta
+            // Volume patterns are already normalised
+            matrix.set(x_current_normed, 0, i, array.get(x_current, i))
+        else
+            matrix.set(x_current_normed, 0, i, array.get(x_current, i)/atr_bands)
+
+    x_prev_normed = array.new<float>(array.size(x_prev), 0.0)
+    for i = 0 to array.size(x_prev)-1
+        if input_type == dict_input.volume_profile or input_type == dict_input.volume_delta
+            array.set(x_prev_normed, i, array.get(x_prev, i))
+        else
+            array.set(x_prev_normed, i, array.get(x_prev, i)/atr_bands)
+
+    // add to dictionaries
+    if D.rows() >= ND
+        D.remove_row(0)
+
+    D.add_row(D.rows(), x_prev_normed)
+    x_current_normed
+
+update_historical(D, input_type) =>
+    x = array.new<float>(N_total)
+
+    for i = 0 to N_total-1
+        if input_type == hist_input.hhigh
+            array.set(x, -(i+1), high[i])
+        else
+            array.set(x, -(i+1), low[i])
+
+    x_seg = array.slice(x, 0, N)
+
+    if D.rows() >= ND
+        D.remove_row(0)
+
+    D.add_row(D.rows(), x_seg)
+
+// Improved Distance Metric
+calculate_improved_distance(pattern1, pattern2) =>
+    if enable_improved_distance
+        // Extract arrays from patterns for correlation calculation
+        p1_array = pattern1.row(0)
+        p2_array = pattern2.row(0)
+
+        // Correlation component (captures shape similarity)
+        sum_p1 = array.sum(p1_array)
+        sum_p2 = array.sum(p2_array)
+        mean_p1 = sum_p1 / p1_array.size()
+        mean_p2 = sum_p2 / p2_array.size()
+
+        cov = 0.0
+        var_p1 = 0.0
+        var_p2 = 0.0
+        for i = 0 to p1_array.size() - 1
+            diff_p1 = p1_array.get(i) - mean_p1
+            diff_p2 = p2_array.get(i) - mean_p2
+            cov += diff_p1 * diff_p2
+            var_p1 += diff_p1 * diff_p1
+            var_p2 += diff_p2 * diff_p2
+
+        correlation = (var_p1 > 0 and var_p2 > 0) ? cov / math.sqrt(var_p1 * var_p2) : 0
+        correlation := math.max(-1, math.min(1, correlation))  // Clamp to [-1, 1]
+
+        // Magnitude difference (captures size similarity)
+        mag_diff = math.abs(sum_p1 - sum_p2) / math.max(math.abs(sum_p1), math.abs(sum_p2) + 0.0001)
+
+        // Volatility similarity
+        stdev_p1 = math.sqrt(var_p1 / p1_array.size())
+        stdev_p2 = math.sqrt(var_p2 / p2_array.size())
+        vol_diff = math.abs(stdev_p1 - stdev_p2) / math.max(stdev_p1, stdev_p2 + 0.0001)
+
+        // Combined distance (lower is better)
+        // Convert correlation to distance (1 - correlation)/2 gives range [0, 1]
+        corr_dist = (1 - correlation) / 2
+        combined_distance = corr_dist * 0.5 + mag_diff * 0.3 + vol_diff * 0.2
+
+        combined_distance
+    else
+        // Standard Euclidean distance
+        diff = pattern1.diff(pattern2).row(0)
+        sum = 0.0
+        for j = 0 to N-1
+            sum += math.pow(diff.get(j), 2)
+        math.sqrt(sum)
+
+// Modified run_query function to support improved distance and volume
+run_query(x1, x2, x3, x4, x5, x6, D1, D2, D3, D4, D5, D6) =>
+    // Ensure we have data to query
+    min_rows = math.min(D1.rows(), D2.rows(), D3.rows(), D4.rows())
+    if enable_volume
+        min_rows := math.min(min_rows, math.min(D5.rows(), D6.rows()))
+
+    // Also limit by Y array size to avoid index out of bounds
+    min_rows := math.min(min_rows, Y.size())
+
+    dist = array.new<float>(min_rows, 0.0)
+
+    for i = 0 to min_rows-1
+        if enable_improved_distance
+            // Calculate improved distance for each pattern type
+            dist1 = calculate_improved_distance(x1, D1.submatrix(i, i+1))
+            dist2 = calculate_improved_distance(x2, D2.submatrix(i, i+1))
+            dist3 = calculate_improved_distance(x3, D3.submatrix(i, i+1))
+            dist4 = calculate_improved_distance(x4, D4.submatrix(i, i+1))
+
+            // Combine distances with weights
+            combined_dist = dist1 * 0.25 + dist2 * 0.25 + dist3 * 0.25 + dist4 * 0.25
+
+            // Add volume distances if enabled
+            if enable_volume
+                dist5 = calculate_improved_distance(x5, D5.submatrix(i, i+1))
+                dist6 = calculate_improved_distance(x6, D6.submatrix(i, i+1))
+                // Reweight to include volume
+                price_weight = 1.0 - volume_weight
+                combined_dist := combined_dist * price_weight + (dist5 * 0.5 + dist6 * 0.5) * volume_weight
+
+            dist.set(i, combined_dist)
+        else
+            // Original Euclidean distance calculation
+            sum = 0.0
+            diff1 = x1.diff(D1.submatrix(i, i+1)).row(0)
+            diff2 = x2.diff(D2.submatrix(i, i+1)).row(0)
+            diff3 = x3.diff(D3.submatrix(i, i+1)).row(0)
+            diff4 = x4.diff(D4.submatrix(i, i+1)).row(0)
+
+            for j = 0 to N-1
+                sum += math.pow(diff1.get(j), 2) * 0.25 + math.pow(diff2.get(j), 2) * 0.25
+                sum += math.pow(diff3.get(j), 2) * 0.25 + math.pow(diff4.get(j), 2) * 0.25
+
+            if enable_volume
+                diff5 = x5.diff(D5.submatrix(i, i+1)).row(0)
+                diff6 = x6.diff(D6.submatrix(i, i+1)).row(0)
+                for j = 0 to N-1
+                    sum += math.pow(diff5.get(j), 2) * volume_weight * 0.5
+                    sum += math.pow(diff6.get(j), 2) * volume_weight * 0.5
+
+            dist.set(i, math.sqrt(sum))
+    dist
+
+// Modified kNN function to incorporate success tracking
+kNN(dist, n_neighbors, weighting_type) =>
+    // Early exit if not enough data
+    if Y.size() == 0 or dist.size() == 0
+        [0.0, 0.0, 0.0]
+
+    idx = dist.sort_indices()
+
+    // Filter indices to only include valid ones for Y array
+    valid_indices = array.new<int>()
+    valid_distances = array.new<float>()
+    for i = 0 to idx.size() - 1
+        pattern_idx = idx.get(i)
+        if pattern_idx < Y.size()
+            array.push(valid_indices, pattern_idx)
+            array.push(valid_distances, dist.get(pattern_idx))
+
+    // Early exit if no valid indices
+    if valid_indices.size() == 0
+        [0.0, 0.0, 0.0]
+
+    dist_sum = 0.0
+    up_count = 0
+    down_count = 0
+    n = math.min(n_neighbors, valid_indices.size())
+
+    // Calculate distance sum for normalisation
+    for i = 0 to n-1
+        dist_sum += valid_distances.get(i)
+
+    // Count up/down predictions
+    for i = 0 to n-1
+        pattern_idx = valid_indices.get(i)
+        if Y.get(pattern_idx) > 0
+            up_count += 1
+        else
+            down_count += 1
+
+    avg = 0.0
+    total_weight = 0.0
+
+    if weighting_type == knn_weighting.distance
+        for i = 0 to n-1
+            pattern_idx = valid_indices.get(i)
+            base_weight = n > 1 and dist_sum > 0 ? (1-(valid_distances.get(i)/dist_sum)) : 1
+
+            // Apply success-based weighting if enabled
+            if enable_success_tracking and pattern_idx < pattern_success.size()
+                usage_count = array.get(pattern_usage, pattern_idx)
+                if usage_count >= min_pattern_uses
+                    success_rate = array.get(pattern_success, pattern_idx)
+                    // Weight by success rate (0.5 to 1.5 multiplier)
+                    base_weight *= (0.5 + success_rate)
+
+            avg += Y.get(pattern_idx) * base_weight
+            total_weight += base_weight
+
+        avg := total_weight > 0 ? avg / total_weight : avg
+    else if weighting_type == knn_weighting.average
+        for i = 0 to n-1
+            pattern_idx = valid_indices.get(i)
+            avg += Y.get(pattern_idx)
+        avg := n > 0 ? avg / n : 0
+
+    confidence = n > 0 ? math.max(up_count, down_count) / n : 0
+    nearest_idx = valid_indices.size() > 0 ? valid_indices.get(0) : 0
+
+    [avg, confidence, nearest_idx]
+
+// Call update functions on every bar to maintain consistency
+// These create dummy matrices when not needed, preventing linter warnings
+x_body_dummy = update_dictionary(D, dict_input.body, vol_ma)
+x_range_dummy = update_dictionary(D2, dict_input.crange, vol_ma)
+x_wick_low_dummy = update_dictionary(D3, dict_input.wick_low, vol_ma)
+x_wick_high_dummy = update_dictionary(D4, dict_input.wick_high, vol_ma)
+x_volume_dummy = update_dictionary(D5, dict_input.volume_profile, vol_ma)
+x_vol_delta_dummy = update_dictionary(D6, dict_input.volume_delta, vol_ma)
+
+// Calculate dynamic horizon on every bar
+NY_dynamic := calculate_dynamic_horizon(volatility_percentile)
+
+// Store previous prediction for historical tracking
+var float prev_Y_hat_line = na
+var int prev_prediction_bar = na
+
+// Main execution on bar confirmation
+if barstate.isconfirmed and bar_index > N_total and D.rows() >= 2  // Need at least 2 patterns to compare
+
+    // Store historical prediction from previous bar if we have one
+    if not na(prev_Y_hat_line) and not na(prev_prediction_bar) and enable_historical_predictions
+        store_historical_prediction(prev_prediction_bar, bar_index + NY_dynamic, prev_Y_hat_line, atr_bands, prediction_offset)
+
+    // Check and evaluate previous predictions
+    if enable_success_tracking and pattern_predictions.size() > 0
+        for i = pattern_predictions.size() - 1 to 0
+            pred_bar = array.get(pattern_bar_indices, i)
+            if bar_index - pred_bar >= NY_dynamic
+                // Evaluate prediction
+                predicted = array.get(pattern_predictions, i)
+                actual = math.log(y_src[0]) - math.log(y_src[bar_index - pred_bar])
+                pattern_idx = array.get(pattern_indices, i)
+
+                update_pattern_success(pattern_idx, predicted, actual)
+
+                // Remove evaluated prediction
+                array.remove(pattern_predictions, i)
+                array.remove(pattern_indices, i)
+                array.remove(pattern_bar_indices, i)
+
+    y = math.log(y_src[0])-math.log(y_src[NY_dynamic])
+
+    // Update historical records
+    update_historical(H, hist_input.hhigh)
+    update_historical(L, hist_input.hlow)
+
+    // Update labels
+    if Y.size() >= ND
+        Y.shift()
+
+    Y.push(y)
+
+    // Initialise success tracking arrays if needed
+    if enable_success_tracking
+        while pattern_success.size() < ND
+            array.push(pattern_success, 0.5)  // Start with neutral success rate
+            array.push(pattern_usage, 0)
+
+    // Use the already calculated patterns from dummy calls
+    // run query
+    dist = run_query(x_body_dummy, x_range_dummy, x_wick_low_dummy, x_wick_high_dummy,
+                     x_volume_dummy, x_vol_delta_dummy, D, D2, D3, D4, D5, D6)
+
+    // get knn prediction
+    [avg, confidence, nearest] = kNN(dist, n_neighbors, selected_knn_weighting)
+
+    // Store prediction for later evaluation
+    if enable_success_tracking
+        array.push(pattern_predictions, avg)
+        array.push(pattern_indices, int(nearest))
+        array.push(pattern_bar_indices, bar_index)
+
+        // Keep arrays manageable
+        if pattern_predictions.size() > 100
+            array.shift(pattern_predictions)
+            array.shift(pattern_indices)
+            array.shift(pattern_bar_indices)
+
+    Y_hat := avg
+    conf := confidence
+    nearest_neighbor := nearest
+
+    // Calculate offset Y_hat_line using offset bars ago
+    offset_src = math.abs(prediction_offset) <= bar_index ? y_src[math.abs(prediction_offset)] : y_src
+    Y_hat_line := offset_src + (offset_src*(math.exp(avg)-1))
+
+    // Store for historical tracking
+    prev_Y_hat_line := Y_hat_line
+    prev_prediction_bar := bar_index
+
+// Calculate EMA on every bar to avoid linter warning
+Y_hat_ema = ta.ema(nz(Y_hat, 0), prediction_filter_n)
+
+// Apply smoothing if Y_hat is valid
+if not na(Y_hat)
+    Y_hat_smooth := prediction_filter_n > 0 ? Y_hat_ema : Y_hat
+
+// Band calculation with offset
+ref_offset_high = math.abs(prediction_offset) <= bar_index ? y_src[math.abs(prediction_offset)] + (y_src[math.abs(prediction_offset)]*(math.exp(Y_hat_smooth)-1)) + atr_mult*atr_bands : Y_hat_line + atr_mult*atr_bands
+ref_offset_low = math.abs(prediction_offset) <= bar_index ? y_src[math.abs(prediction_offset)] + (y_src[math.abs(prediction_offset)]*(math.exp(Y_hat_smooth)-1)) - atr_mult*atr_bands : Y_hat_line - atr_mult*atr_bands
+
+ref_high = ref_offset_high
+ref_low = ref_offset_low
+
+hh = ta.highest(ref_high, lookback_n)
+ll = ta.lowest(ref_low, lookback_n)
+
+if hh == ref_high
+    Y_hat_trend := true
+
+if ll == ref_low
+    Y_hat_trend := false
+
+if Y_hat_trend
+    n_bars += 1
+
+if not Y_hat_trend
+    n_bars += 1
+
+if ta.change(Y_hat_trend)
+    n_bars := 1
+    n_up := 0
+    n_dn := 0
+
+h_max := ta.highest(ref_high, n_bars)
+l_min := ta.lowest(ref_low, n_bars)
+m_mid := math.avg(h_max, l_min)
+
+if n_bars == 1
+    h_max := na
+    l_min := na
+    m_mid := na
+
+// Pattern visualisation with offset
+if barstate.islast and not na(nearest_neighbor) and nearest_neighbor >= 0
+    // Delete all previous pattern boxes
+    if array.size(pattern_boxes) > 0
+        for i = 0 to array.size(pattern_boxes) - 1
+            box.delete(array.get(pattern_boxes, i))
+        array.clear(pattern_boxes)
+
+    // Delete all lines
+    all_lines = line.all.copy()
+    if all_lines.size() > 0
+        for i = 0 to all_lines.size()-1
+            line.delete(array.get(all_lines, i))
+
+    // Ensure we have enough patterns to visualise
+    if H.rows() > 5 and L.rows() > 5
+        nearest_idx = int(math.min(nearest_neighbor, H.rows() - 1))
+        nearest_idx := math.max(0, nearest_idx)  // Ensure non-negative
+
+        if nearest_idx < H.rows() and nearest_idx < L.rows()
+            pattern_high = H.row(nearest_idx)
+            pattern_low = L.row(nearest_idx)
+
+            // Arrays to store bar high and low points
+            float[] bar_highs = array.new_float(0)
+            float[] bar_lows = array.new_float(0)
+
+            for i = 1 to pattern_high.size()-1
+                float bar_high = (pattern_high.get(i)/pattern_high.get(0))*high
+                float bar_low = (pattern_low.get(i)/pattern_low.get(0))*low
+
+                // Store bar high and low points
+                array.push(bar_highs, bar_high)
+                array.push(bar_lows, bar_low)
+
+            // Find the highest and lowest points
+            if bar_highs.size() > 0 and bar_lows.size() > 0
+                float highest_point = array.max(bar_highs)
+                float lowest_point = array.min(bar_lows)
+
+                // Get pattern success info for display
+                pattern_info = ""
+                if enable_success_tracking and nearest_idx < pattern_success.size()
+                    success_rate = array.get(pattern_success, nearest_idx)
+                    usage_count = array.get(pattern_usage, nearest_idx)
+                    if usage_count > 0
+                        pattern_info := " [" + str.tostring(math.round(success_rate * 100)) + "% success, " + str.tostring(usage_count) + " uses]"
+
+                // Apply offset to pattern visualisation positions
+                viz_start = bar_index + prediction_offset
+                viz_end = viz_start + array.size(bar_highs) - 1
+
+                // Plot top, bottom, and middle sloped lines with offset
+                line.new(x1=viz_start, y1=highest_point, x2=viz_end, y2=highest_point, color=color.new(pos_col,0), style=line.style_solid, extend=extend.right, width = 1)
+                line.new(x1=viz_start, y1=(highest_point + lowest_point) / 2, x2=viz_end, y2=(highest_point + lowest_point) / 2, color=color.new(chart.fg_color,30), style=line.style_solid, extend=extend.right, width = 1)
+                line.new(x1=viz_start, y1=lowest_point, x2=viz_end, y2=lowest_point, color=color.new(neg_col,0), style=line.style_solid, extend=extend.right, width = 1)
+
+                // Calculate and plot the slope line with offset
+                float first_high = array.get(bar_highs, 0)
+                float first_low = array.get(bar_lows, 0)
+                float last_high = array.get(bar_highs, array.size(bar_highs) - 1)
+                float last_low = array.get(bar_lows, array.size(bar_lows) - 1)
+                box_color = last_low < first_low ? color.new(neg_col,0) : color.new(pos_col,0)
+
+                if last_low < first_low
+                    line.new(x1=viz_start, y1=highest_point, x2=viz_end, y2=lowest_point, color=box_color, style=line.style_arrow_right, width = 2)
+                else
+                    line.new(x1=viz_start, y1=first_low, x2=viz_end, y2=last_high, color=box_color, style=line.style_arrow_right, width = 2)
+
+                // Draw pattern boxes with offset
+                for i = 1 to pattern_high.size()-1
+                    float bar_high = (pattern_high.get(i)/pattern_high.get(0))*high
+                    float bar_low = (pattern_low.get(i)/pattern_low.get(0))*low
+
+                    box_left = viz_start + (i-1)
+                    box_right = viz_start + i
+                    pattern_box = box.new(box_left, bar_high, box_right, bar_low, border_style=line.style_dashed, bgcolor=na, border_color=box_color)
+                    array.push(pattern_boxes, pattern_box)
+
+// === Plotting with offset
+plot_l = plot(l_min, color = neg_col, style = plot.style_linebr, title="Min", offset=prediction_offset)
+plot_h = plot(h_max, color = pos_col, style = plot.style_linebr, title="Max", offset=prediction_offset)
+plot_m = plot(m_mid, color = bar_index % 3 == 0 ? chart.fg_color : na , style = plot.style_linebr, title="Mid", offset=prediction_offset)
+
+fill(plot_m, plot_h, h_max, m_mid, color.new(pos_col, 90), na)
+fill(plot_m, plot_l, m_mid, l_min, na, color.new(neg_col, 90))
+
+// Colour prediction line based on confidence when success tracking is enabled
+pred_color = Y_hat_smooth >= 0 ? color.new(pos_col,20) : color.new(neg_col,20)
+if enable_success_tracking and nearest_neighbor < pattern_success.size()
+    success_rate = array.get(pattern_success, int(nearest_neighbor))
+    usage_count = array.get(pattern_usage, int(nearest_neighbor))
+    if usage_count >= min_pattern_uses
+        // Adjust transparency based on success rate
+        transparency = int(80 - success_rate * 60)  // 20-80 range
+        pred_color := Y_hat_smooth >= 0 ? color.new(pos_col, transparency) : color.new(neg_col, transparency)
+
+// Plot prediction line with offset
+plot(Y_hat_line, title="Predicted value of the primary target", color=pred_color, linewidth=2, offset=prediction_offset)

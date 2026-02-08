@@ -1,0 +1,375 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ayaxhector666 for Two Level Capital 
+// Any question please contact Héctor Bello at ayaxhector666@gmail.com
+//
+// The originality of this script is that allows you to use the combination of the buy sell signals up to 5 indicators which have the same range 
+// (0, 100), to give a unique buy-sell signal. No available codes  allows to use the combination of the buy sell signals from separate indicators every 
+// time you use one or more of this indicators. And with this code you can do it by just selecting  the desire indicators  from the configuration options. 
+// Also you can test the differents results on the win/rates in the backtesting of the strategy in order to understand how efective are (in terms of the win rate)
+// this indicators or the combination of them are. Using this script  allows to test signals by separately and in combination in an easy way that could be usefull 
+// for educational propose.
+//
+// Here we describe FIVE indicators that runs from 0-100
+//. We have momentum indicators: Relative Strenght Index RSI (with divergence searching), Stochastic RSI (STOCHRSI)
+//. we also have volume-momentum indicator: Money Flow Index (MFI)
+//. We also have volatility indicators: Relative Volatility Index (RVI) and Average Directional Index (ADX)
+//. All this indicators can be configured and turned on/off from settings menu
+//.
+//. The Indicator takes into acount which indicators you have selected from configuration setup:
+//. 1.-If  Stochastic RSI (STOCH) is selected it will trigger a buy/sell signal if STOCH K and D crosses over or under for OverBought and OverSold values
+//. 2.-If Relative Strenght Index (RSI) is selected it will trigger a buy/sell signal if RSI Value crosses over or under for OverBought and OverSold values
+//. 3.-If Money Flow Index (MFI) is selected it will trigger a buy/sell signal if RSI Value crosses over or under for Extreme OverBought and Extreme OverSold values
+//. 4.-If Relative Volatility Index (RVI) filter is selected it will trigger a buy/sell signal if volatility is below or above OverBought and OverSold values
+//. 5.-If Average Directional Index (ADX) filter is selected it will trigger a buy/sell signal if volatility is below or above the threshold value
+//. 6.-Any possible on/off combination of this indicators (2^5=32 posibles) are taken into account and will trigger a buy/sell signal   
+//.
+//  By default we had setted the combination of the 5 indicators, where the combined signal maximize the win rate of the strategy but decrease the number of closed trades 
+///////////////////////////////////
+
+//@version=5
+indicator("TLC_0TO100FIVEINDICATORS_VOLMOM") 
+
+//RSI PARAM
+isRSI= input.bool(defval=true, title="Want RSI?", tooltip="type false if you dont want to be displayed", group="Indicator group")
+lengthRSI = input.int(14, "RSI Length", minval=1)
+isRSIM= input.bool(defval=false, title="Want RSI MA?", tooltip="type false if you dont want to be displayed")
+//For STOCH
+lengthStoch = input.int(14, "Stochastic Length", minval=1)
+isSTOCHK=input.bool(defval=true, title="Want STOCH K?", tooltip="type false if you dont want to be displayed")
+smoothK = input.int(3, title="K", minval=1)
+isSTOCHD=input.bool(defval=true, title="Want STOCH D?", tooltip="type false if you dont want to be displayed")
+smoothD = input.int(3, title="D", minval=1)
+// For RVI
+isRVI=input.bool(defval=true, title="Want RVI?", tooltip="type false if you dont want to be displayed")
+lengthRVI = input.int(14, "RVI Length", minval=1)
+isRVIM=input.bool(defval=false, title="Want RVI MA?", tooltip="type false if you dont want to be displayed")
+// For ADX
+isADX=input.bool(defval=true, title="Want ADX?", tooltip="type false if you dont want to be displayed")
+adxlen = input(14, title="ADX Smoothing")
+dilen = input(14, title="DI Length")
+// For MFI
+isMFI=input.bool(defval=true, title="Want MFI?", tooltip="type false if you dont want to be displayed")
+lengthMFI = input.int(title="MFI Length", defval=14)
+
+// {DIVERGENCE INPUT
+isRSIDiv=input.bool(defval=true, title="Want RSI Divergence?", tooltip="type false if you dont want to be displayed",group="Toggle Divergence Plotting")
+plotBull = input(title='Plot Bullish', defval=true)
+plotBear = input(title='Plot Bearish', defval=true)
+plotHiddenBull = input(title='Plot Hidden Bullish', defval=true) 
+plotHiddenBear = input(title='Plot Hidden Bearish', defval=true) 
+//For RSI Divergence search
+lbR = input(5, title="Right bars", tooltip= "limit of bars to the right from pivot")
+lbL = input(5, title="Left bars", tooltip= "limit of bars to the left from pivot")
+rangeUpper = input(60, title="Max bars in rage", tooltip= "limit of maximum bars in range to consider for for divergence")
+rangeLower = input(5, title="Min bars in range", tooltip= "limit of minimum bars in range to consider for for divergence")
+
+// } 
+
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "Bollinger Bands" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+maTypeInput = input.string("SMA", title="MA Type", options=["SMA", "Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Settings")
+
+
+length = input( 14, "MA lenght" )
+
+fastLength = input(13) 
+goldenLength = input(21)
+slowLength = input(48) 
+
+
+
+//Limits Overbought, Oversold and threshold
+overSold = input( 30, title = "Over Sold region", group = "Limits" )
+overBought = input( 70, title = "Over Bougth region" )
+overSoldExt = input( 20, title = "Extreme Over Sold region" )
+overBoughtExt = input( 80, title = "Extreme Over Bougth region" )
+adxthreshold =input( 50, title= "ADX Threshold" )
+
+price = close
+
+
+///// vWAP ////
+myVwap= ta.vwap(price,length)
+vwapRsi=ta.rsi(myVwap,length)
+covwaprsi = ta.crossover(vwapRsi, overSold)
+cuvwaprsi = ta.crossunder(vwapRsi, overBought)
+
+////////.  MOMENTUM.    ////
+//. RSI
+//. MFI
+//. STOCH RSI
+//.
+///////////////// RELATIVE STRENGHT INDEX RSI
+up = ta.rma(math.max(ta.change(price), 0), length)
+down = ta.rma(-math.min(ta.change(price), 0), length)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+vrsi = ta.rsi(price, length)
+rsiMA = ma(vrsi, length, maTypeInput)
+co = ta.crossover(vrsi, overSold)
+cu = ta.crossunder(vrsi, overBought)
+co50 = ta.crossover(vrsi, 50)
+cu50 = ta.crossunder(vrsi, 50)
+
+//// DIVERGENCE CALCULATION
+oscrsi =vrsi
+plFound = na(ta.pivotlow(oscrsi, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(oscrsi, lbL, lbR)) ? false : true
+// {RSI TREND IDENTIFICATION 
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+oscHL = oscrsi > ta.valuewhen(plFound, oscrsi, 1) and _inRange(plFound[1]) and oscrsi <= 50
+oscLL = oscrsi < ta.valuewhen(plFound, oscrsi, 1) and _inRange(plFound[1]) and oscrsi <= 50
+oscHH = oscrsi > ta.valuewhen(phFound, oscrsi, 1) and _inRange(phFound[1]) and oscrsi >= 50
+oscLH = oscrsi < ta.valuewhen(phFound, oscrsi, 1) and _inRange(phFound[1]) and oscrsi >= 50
+// }
+// {PRICE TREND IDENTIFICATION
+priceLL = low < ta.valuewhen(plFound, low, 1) 
+priceHL = low > ta.valuewhen(plFound, low, 1)
+priceHH = high > ta.valuewhen(phFound, high, 1)
+priceLH = high < ta.valuewhen(phFound, high, 1)
+//}
+//{DIVERGENCE IDENTIFICATION
+bullCond = plotBull and priceLL and oscHL and plFound
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+bearCond = plotBear and priceHH and oscLH and phFound
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+// } 
+// { COLOR ASSIGNMENT 
+bearColor = color.red 
+bullColor = color.green 
+hiddenBullColor = color.new(color.yellow,50) 
+hiddenBearColor = color.new(color.purple,50)  
+textColor = color.white
+noneColor = color.new(color.white, 100)
+//}
+
+///////////////////// Money Flow Index (MFI)
+
+// MFI similar to common RSI function
+_money_flow_index(uppermfi, lowermfi) =>
+    if lowermfi == 0
+        100
+	if uppermfi == 0
+        0
+    100.0 - (100.0 / (1.0 + uppermfi / lowermfi))
+float mfiUp  = math.sum(volume * (ta.change(hlc3) <= 0.0 ? 0.0 : hlc3), lengthMFI)
+float mfiDown = math.sum(volume * (ta.change(hlc3) >= 0.0 ? 0.0 : hlc3), lengthMFI)
+
+mfi = _money_flow_index(mfiUp, mfiDown)
+vmfi =ta.mfi(hlc3,lengthMFI)
+comfi = ta.crossover(mfi, overSoldExt)
+cumfi = ta.crossunder(mfi, overBoughtExt)
+
+/////////////////////// STOCHASTIC RSI 
+
+
+rsi1 = ta.rsi(price, lengthRSI)
+k = ta.sma(ta.stoch(rsi1, rsi1, rsi1, lengthStoch), smoothK)
+d = ta.sma(k, smoothD)
+cokd = ta.crossover(k, d)
+cukd = ta.crossunder(k, d)
+
+///. VOLATILITY. 
+//. RVI
+//. ADX
+/////////////////// RELATIVE VOLATILITY INDEX
+stddev = ta.stdev(price, lengthRVI)
+upper = ta.ema(ta.change(price) <= 0 ? 0 : stddev, lengthRVI)
+lower = ta.ema(ta.change(price) > 0 ? 0 : stddev, lengthRVI)
+rvi = upper / (upper + lower) * 100
+corvi = ta.crossover(rvi, overSold)
+curvi = ta.crossunder(rvi, overBought)
+rviMA = ma(rvi, length, maTypeInput)
+
+//////////////// AVERAGE DIRECTIONAL INDEX ADX (volat) //////////
+dirmov(len) =>
+	upadx = ta.change(high)
+	downadx = -ta.change(low)
+	plusDM = na(upadx) ? na : (upadx > downadx and upadx > 0 ? upadx : 0)
+	minusDM = na(downadx) ? na : (downadx > upadx and downadx > 0 ? downadx : 0)
+	truerange = ta.rma(ta.tr, len)
+	plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+	minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+	[plus, minus]
+adx(dilen, adxlen) =>
+	[plus, minus] = dirmov(dilen)
+	sum = plus + minus
+	adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+sig = adx(dilen, adxlen)
+
+coadx = ta.crossover(sig, adxthreshold)
+cuadx = ta.crossunder(sig, adxthreshold)
+
+
+///////// Define Filters depending on the election of indicator combination
+
+filterbuy=false 
+filtersell=false 
+
+if(isADX==false)
+    if(isRVI==false) 
+        if(isMFI==false) 
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false) 
+                    filterbuy:=false
+                    filtersell:=false
+                else    
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd//k<overSold and cokd   
+                    filtersell:=isSTOCHD and isSTOCHK and cukd //k>overBought and cukd 
+            else
+                if(isSTOCHD==false or isSTOCHK==false) 
+                    filterbuy:=co
+                    filtersell:=cu
+                else    
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and vrsi<overSold  //k<overSold and cokd and vrsi<overSold  
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and vrsi>overBought //k>overBought and cukd and vrsi>overBought
+        else
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false) 
+                    filterbuy:=comfi
+                    filtersell:=cumfi
+                else 
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and mfi<overSoldExt //k<overSold and cokd and mfi<overSoldExt  
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and mfi>overBoughtExt //k>overBought and cukd and mfi>overBoughtExt
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold and mfi<overSoldExt  
+                    filtersell:= vrsi>overBought and mfi>overBoughtExt
+                else
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and vrsi<overSold and mfi<overSoldExt //k<overSold and cokd and vrsi<overSold and mfi<overSoldExt  
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and vrsi>overBought and mfi>overBoughtExt //k>overBought and cukd and vrsi>overBought and mfi>overBoughtExt
+    else
+        if(isMFI==false) 
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= corvi
+                    filtersell:= curvi
+                else 
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and rvi<overBought //k<overSold and cokd and rvi<overBought
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and  rvi>overSold //k>overBought and cukd and  rvi>overSold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold  and rvi<overBought
+                    filtersell:=vrsi>overBought and  rvi>overSold
+                else
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and vrsi<overSold and rvi<overBought //k<overSold and cokd and vrsi<overSold and rvi<overBought
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and vrsi>overBought and  rvi>overSold //k>overBought and cukd and vrsi>overBought and  rvi>overSold            
+        else
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= mfi<overSoldExt and rvi<overBought
+                    filtersell:= mfi>overBoughtExt and  rvi>overSold
+                else
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and mfi<overSoldExt and rvi<overBought //k<overSold and cokd and mfi<overSoldExt and  rvi<overBought
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and mfi>overBoughtExt and  rvi>overSold  //k>overBought and cukd and mfi>overBoughtExt and  rvi>overSold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold and mfi<overSoldExt and rvi<overBought
+                    filtersell:= vrsi>overBought and mfi>overBoughtExt and  rvi>overSold
+                else
+                    filterbuy:= isSTOCHD and isSTOCHK and cokd and vrsi<overSold and mfi<overSoldExt and rvi<overBought //k<overSold and cokd and vrsi<overSold and mfi<overSoldExt and rvi<overBought
+                    filtersell:=isSTOCHD and isSTOCHK and cukd and vrsi>overBought and mfi>overBoughtExt and  rvi>overSold //k>overBought and cukd and vrsi>overBought and mfi>overBoughtExt and  rvi>overSold
+else 
+    if(isRVI==false)
+        if(isMFI==false) 
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:=coadx
+                    filtersell:=cuadx
+                else    
+                    filterbuy:= cokd and sig>adxthreshold //k<overSold and cokd and sig>adxthreshold
+                    filtersell:= cukd and sig>adxthreshold //k>overBought and cukd and sig>adxthreshold //sig<adxthreshold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:=vrsi<overSold and sig>adxthreshold
+                    filtersell:= vrsi>overBought and sig>adxthreshold //sig<adxthreshold 
+                else            
+                    filterbuy:= cokd and vrsi<overSold and sig>adxthreshold //k<overSold and cokd and vrsi<overSold and sig>adxthreshold
+                    filtersell:= cukd and vrsi>overBought and sig>adxthreshold //k>overBought and cukd and vrsi>overBought and sig>adxthreshold //sig<adxthreshold
+        else
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= mfi<overSoldExt and sig>adxthreshold
+                    filtersell:=mfi>overBoughtExt  and sig>adxthreshold //sig<adxthreshold
+                else 
+                    filterbuy:= cokd and mfi<overSoldExt and sig>adxthreshold //k<overSold and cokd and mfi<overSoldExt and sig>adxthreshold
+                    filtersell:= cukd and mfi>overBoughtExt  and sig>adxthreshold //k>overBought and cukd and mfi>overBoughtExt  and sig>adxthreshold //sig<adxthreshold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold and mfi<overSoldExt and sig>adxthreshold
+                    filtersell:= vrsi>overBought and mfi>overBoughtExt  and sig>adxthreshold // sig<adxthreshold
+                else           
+                    filterbuy:= cokd and vrsi<overSold and mfi<overSoldExt and sig>adxthreshold //k<overSold and cokd and vrsi<overSold and mfi<overSoldExt and sig>adxthreshold
+                    filtersell:= cukd and vrsi>overBought and mfi>overBoughtExt  and sig>adxthreshold //k>overBought and cukd and vrsi>overBought and mfi>overBoughtExt  and sig>adxthreshold // sig<adxthreshold
+    else
+        if(isMFI==false) 
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= rvi<overBought and sig>adxthreshold
+                    filtersell:= rvi>overSold and sig>adxthreshold // //sig<adxthreshold
+                else
+                    filterbuy:= cokd and rvi<overBought and sig>adxthreshold //k<overSold and cokd and rvi<overBought and sig>adxthreshold
+                    filtersell:= cukd and  rvi>overSold and sig>adxthreshold// k>overBought and cukd and  rvi>overSold and sig>adxthreshold // sig<adxthreshold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold and rvi<overBought and sig>adxthreshold
+                    filtersell:= vrsi>overBought and  rvi>overSold and sig>adxthreshold// sig<adxthreshold
+                else 
+                    filterbuy:= cokd and vrsi<overSold and rvi<overBought and sig>adxthreshold //k<overSold and cokd and vrsi<overSold and rvi<overBought and sig>adxthreshold
+                    filtersell:= cukd and vrsi>overBought and  rvi>overSold and sig>adxthreshold //k>overBought and cukd and vrsi>overBought and  rvi>overSold and sig>adxthreshold //sig<adxthreshold
+        else
+            if(isRSI==false)
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:=  mfi<overSoldExt and rvi<overBought and sig>adxthreshold
+                    filtersell:= mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //sig<adxthreshold
+                else
+                    filterbuy:= cokd and mfi<overSoldExt and rvi<overBought and sig>adxthreshold //k<overSold and cokd and mfi<overSoldExt and rvi<overBought and sig>adxthreshold
+                    filtersell:= cukd and mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //k>overBought and cukd and mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //sig<adxthreshold
+            else
+                if(isSTOCHD==false or isSTOCHK==false)
+                    filterbuy:= vrsi<overSold and mfi<overSoldExt and rvi<overBought and sig>adxthreshold
+                    filtersell:= vrsi>overBought and mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //sig<adxthreshold
+                else
+                    filterbuy:= cokd and vrsi<overSold and mfi<overSoldExt and rvi<overBought and sig>adxthreshold //k<overSold and cokd and vrsi<overSold and mfi<overSoldExt and rvi<overBought and sig>adxthreshold
+                    filtersell:= cukd and vrsi>overBought and mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //k>overBought and cukd and vrsi>overBought and mfi>overBoughtExt and  rvi>overSold and sig>adxthreshold //sig<adxthreshold
+
+///////// Define BUY AND SELL conditions
+
+buyCondition = filterbuy
+sellCondition= filtersell
+plotshape(sellCondition ? true : na ,title="Sell", style=shape.labeldown, location=location.top, size=size.small, text="S", color=color.new(color.red,0),textcolor = color.white) //, display = display.pane)
+plotshape(buyCondition ? true : na, title="Buy", style=shape.labelup, location=location.absolute, size=size.small, text="B", color=color.new(color.green,0),textcolor = color.white)//, display = display.pane) 
+
+// PLOTING
+plot(sig, title="ADX", color=isADX ? color.rgb(4, 207, 242) : noneColor) 
+plot(mfi, "MFI", color=isMFI ? color.yellow : noneColor, linewidth=1) 
+plot(vrsi, title="RSI", color=isRSI ? color.rgb(14, 237, 100) : noneColor, linewidth=1) 
+plot(rsiMA, "RSI-based MA", color=isRSIM ? color.rgb(160, 239, 189) : noneColor)
+plot(rvi, title="RVI", color=isRVI ? color.rgb(236, 12, 184) : noneColor) 
+plot(rviMA, "RVI-based MA", color=isRVIM ? color.rgb(234, 97, 223) : noneColor)
+plot(k, "K", color=isSTOCHK ? #2962FF : noneColor)
+plot(d, "D", color=isSTOCHD ? #FF6D00 : noneColor)
+plot(plFound ? oscrsi[lbR] : na, offset=-lbR, title='Regular Bullish', linewidth=3, color=bullCond and isRSIDiv ? bullColor : noneColor)
+plot(plFound ? oscrsi[lbR] : na, offset=-lbR, title='Hidden Bullish', linewidth=3, color=hiddenBullCond and isRSIDiv ? hiddenBullColor : noneColor)
+plot(phFound ? oscrsi[lbR] : na, offset=-lbR, title='Regular Bearish', linewidth=3, color=bearCond and isRSIDiv ? bearColor : noneColor)
+plot(phFound ? oscrsi[lbR] : na, offset=-lbR, title='Hidden Bearish', linewidth=3, color=hiddenBearCond and isRSIDiv ? hiddenBearColor : noneColor)
+
+hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+hline(0, "RSI 0 Band", color=color.new(#f5f6f9, 50),linestyle = hline.style_solid)
+hline(100, "RSI 100 Band", color=color.new(#f8f8f9, 50),linestyle = hline.style_solid)
+LowerBand = hline(overSold, "Oversold Lower Band", color=#787B86)
+UpperBand = hline(overBought, "OverBought Upper Band", color=#787B86)
+fill(UpperBand, LowerBand, color=color.rgb(126, 87, 194, 90), title=" Background Fill")
+UpperBandExt = hline(overBoughtExt, "Extreme Upper Band", color=#787B86)
+LowerBandExt = hline(overSoldExt, "Extreme Lower Band", color=#787B86)
+fill(UpperBandExt, LowerBandExt, color=color.rgb(33, 150, 243, 90), title="Background")
+
+

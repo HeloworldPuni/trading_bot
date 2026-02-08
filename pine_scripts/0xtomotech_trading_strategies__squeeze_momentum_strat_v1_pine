@@ -1,0 +1,80 @@
+//@version=5
+// Simple Squeeze Momentum Strategy based on LazyBear's Squeeze Momentum Indicator
+strategy("Squeeze Momentum STRAT 1 LIVE")
+
+// Inputs for Bollinger Bands (BB) and Keltner Channels (KC)
+length = input(20, title="BB Length")
+mult = input(2.0, title="BB MultFactor")
+lengthKC = input(20, title="KC Length")
+multKC = input(1.5, title="KC MultFactor")
+useTrueRange = input(true, title="Use TrueRange (KC)")
+
+// Inputs for strategy
+stopLoss = input(2, title="Stop Loss (%)")
+takeProfit = input(10, title="Take Profit (%)")
+
+// Calculate BB
+source = close
+basis = ta.sma(source, length)
+dev = multKC * ta.stdev(source, length)
+upperBB = basis + dev
+lowerBB = basis - dev
+
+// Calculate KC
+ma = ta.sma(source, lengthKC)
+range_1 = useTrueRange ? ta.tr : high - low
+rangema = ta.sma(range_1, lengthKC)
+upperKC = ma + rangema * multKC
+lowerKC = ma - rangema * multKC
+
+// Calculate Squeeze Momentum Indicator values
+
+sqzOn  = (lowerBB > lowerKC) and (upperBB < upperKC)
+sqzOff = (lowerBB < lowerKC) and (upperBB > upperKC)
+noSqz  = (sqzOn == false) and (sqzOff == false)
+
+val = ta.linreg(source - math.avg(math.avg(ta.highest(high, lengthKC), ta.lowest(low, lengthKC)), ta.sma(close, lengthKC)), lengthKC, 0)
+
+// Define buying and selling conditions from the indicator
+buy = ta.crossover(val, 0)
+short = ta.crossunder(val, 0)
+
+// Enter long position when 'buy' condition is met
+if (buy)
+    strategy.entry("Long Entry", strategy.long)
+    strategy.exit("Exit Long", "Long Entry", stop=strategy.equity * stopLoss / 100, limit=strategy.equity * takeProfit / 100)
+
+// Enter short position when 'short' condition is met
+if (short)
+    strategy.entry("Short Entry", strategy.short)
+    strategy.exit("Exit Short", "Short Entry", stop=strategy.equity * stopLoss / 100, limit=strategy.equity * takeProfit / 100)
+
+// Plot shapes for visual confirmation
+// plotshape(series=buy, title="BUY", style=shape.triangleup, color=color.green, location=location.belowbar, text="BUY", textcolor=color.white, size=size.small)
+// plotshape(series=short, title="SHORT", style=shape.triangledown, color=color.red, location=location.abovebar, text="SHORT", textcolor=color.white, size=size.small)
+
+// Alert conditions NO EFFECT INSIDE STRATEGIES
+// alertcondition(buy, title="Buy Alert", message="Squeeze Momentum Indicator: BUY signal detected.")
+// alertcondition(short, title="Sell Alert", message="Squeeze Momentum Indicator: SELL signal detected.")
+
+
+// Get the last value when 'val' was positive and the last value when 'val' was negative
+valWasPositive = ta.valuewhen(val > 0, val, 1)
+valWasNegative = ta.valuewhen(val < 0, val, 1)
+// Define the color of the histogram based on the conditions, using the retrieved values above
+bcolor = val > 0 ? (val > valWasPositive ? color.rgb(48, 255, 55) : color.rgb(0, 67, 2)) : (val < valWasNegative ? color.rgb(244, 45, 45) : color.rgb(106, 0, 56))
+// Define the color of the zero line based on squeeze conditions
+scolor = noSqz ? color.blue : sqzOn ? color.rgb(0, 0, 0) : color.gray
+// Plot the histogram
+plot(val, color=bcolor, style=plot.style_histogram, linewidth=4)
+// Plot the zero line
+plot(0, color=scolor, style=plot.style_cross, linewidth=2)
+
+
+// Outdated Version for Plotting
+// bcolor = iff( val > 0, 
+//             iff( val > nz(val[1]), lime, green),
+//             iff( val < nz(val[1]), red, maroon))
+// scolor = noSqz ? blue : sqzOn ? black : gray 
+// plot(val, color=bcolor, style=histogram, linewidth=4)
+// plot(0, color=scolor, style=cross, linewidth=2)

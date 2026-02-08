@@ -1,0 +1,162 @@
+//@version=5
+indicator("Volume Profile, Pivot Anchored by DGT — Full H1 JSON", overlay=true, max_bars_back=5000, max_boxes_count=500)
+
+// -------------------- Inputs --------------------
+pvtLength         = input.int(20, "Pivot Points Left/Right Length", minval=1)
+volumeProfile     = input.bool(true, 'Volume Profile (Common Interest)')
+totalVolumeColor  = input.color(color.new(#fbc02d, 35))
+vaVolumeColor     = input.color(color.new(#434651, 35))
+isValueArea       = input.float(68, "Value Area Volume %") / 100
+pointOfControl    = input.bool(true, 'Point of Control (PoC)')
+pocColor          = input.color(color.new(#ff0000, 0))
+pocExtend         = input.string('None', 'Extend Point of Control (PoC)', options=['Until Last Bar', 'Until Bar Cross', 'Until Bar Touch', 'None'])
+valueAreaHigh     = input.bool(true, 'Value Area High (VAH)')
+vahColor          = input.color(color.new(#2962ff, 0))
+valueAreaLow      = input.bool(true, 'Value Area Low (VAL)')
+valColor          = input.color(color.new(#2962ff, 0))
+vaBackground      = input.bool(true, 'Background Fill of Value Area (VA)')
+vaBackgroundColor = input.color(color.new(#2962ff, 89))
+profileLevels     = input.int(25, 'Number of Rows', minval = 10, maxval = 100)
+profilePlacement  = input.string('Left', 'Placement', options = ['Right', 'Left'])
+profileWidth      = input.int(30, 'Profile Width %', minval = 0, maxval = 100) / 100
+backgroundFill    = input.bool(true, 'Background Fill of Profile Range')
+backgroundColor   = input.color(color.new(#2962ff, 95))
+vwcb              = input.bool(true, 'Volume Weighted Colored Bars')
+vSMA_len          = input.int(89, 'Volume Moving Average Length')
+upThesh           = input.float(1.618, 'Bold Bars above Volume Average *')
+
+// -------------------- Variables --------------------
+barPriceHigh  = high
+barPriceLow   = low
+bullCandle    = close > open
+nzVolume      = nz(volume)
+
+var a_poc     = array.new_box()
+var a_profile = array.new_box()
+
+var pvtHigh1 = 0.
+var pvtLow1  = 0.
+var pvtLast  = ""
+
+// -------------------- Pivot Points --------------------
+pvtHigh = ta.pivothigh(pvtLength, pvtLength)
+pvtLow  = ta.pivotlow(pvtLength, pvtLength)
+proceed = not na(pvtHigh) or not na(pvtLow)
+
+if not na(pvtHigh)
+    pvtHigh1 := pvtHigh
+    pvtLast := "H"
+
+if not na(pvtLow)
+    pvtLow1 := pvtLow
+    pvtLast := "L"
+
+// -------------------- Profile Calculation --------------------
+x1 = 0
+x2 = 0
+if proceed
+    x1 := x2
+    x2 := bar_index
+
+profileLength = x2 - x1 > 0 ? x2 - x1 : 1
+priceHighest  = ta.highest(high, profileLength)
+priceLowest   = ta.lowest(low , profileLength)
+priceStep     = (priceHighest - priceLowest) / profileLevels
+
+var volumeStorageT = array.new_float(profileLevels, 0.)
+
+// Заполняем объем по уровням
+if proceed and nzVolume > 0 and priceStep > 0
+    for barIdx = 1 to profileLength
+        level = 0
+        for priceLevel = priceLowest to priceHighest by priceStep
+            if barPriceHigh[barIdx] >= priceLevel and barPriceLow[barIdx] < priceLevel + priceStep
+                array.set(volumeStorageT, level, array.get(volumeStorageT, level) + nzVolume[barIdx] * ((barPriceHigh[barIdx]-barPriceLow[barIdx])==0 ? 1 : priceStep/(barPriceHigh[barIdx]-barPriceLow[barIdx])))
+            level += 1
+
+// -------------------- POC/VAH/VAL Levels --------------------
+pocLevel      = array.indexof(volumeStorageT, array.max(volumeStorageT))
+totalVolume   = array.sum(volumeStorageT) * isValueArea
+valueArea     = array.get(volumeStorageT, pocLevel)
+levelAbovePoc = pocLevel
+levelBelowPoc = pocLevel
+
+while valueArea < totalVolume
+    volAbove = levelAbovePoc < profileLevels-1 ? array.get(volumeStorageT, levelAbovePoc+1) : 0
+    volBelow = levelBelowPoc > 0 ? array.get(volumeStorageT, levelBelowPoc-1) : 0
+    if volAbove >= volBelow
+        valueArea += volAbove
+        levelAbovePoc += 1
+    else
+        valueArea += volBelow
+        levelBelowPoc -= 1
+
+poc_price = priceLowest + (pocLevel + 0.5) * priceStep
+vah_price = priceLowest + (levelAbovePoc + 1.0) * priceStep
+val_price = priceLowest + (levelBelowPoc + 0.0) * priceStep
+
+// -------------------- Volume Weighted Colored Bars --------------------
+vSMA = ta.sma(nzVolume, vSMA_len)
+barcolor(vwcb and nzVolume > 0 ? (nzVolume > vSMA*upThesh ? (open<close? #006400:#910000) : (nzVolume<vSMA*0.618? (open<close? #7FFFD4:#FF9800) : (open<close? color.green:color.red))) : na)
+
+// -------------------- JSON ALERT (H1) --------------------
+atr_value = ta.atr(14)
+safe_vol  = nzVolume > 0 ? nzVolume : 0
+poc_touch = ta.cross(close, poc_price)
+vah_touch = ta.cross(close, vah_price)
+val_touch = ta.cross(close, val_price)
+
+f_json_msg(_event,_price,_poc,_vah,_val,_priceHigh,_priceLow,_vol,_atr,_pivot)=>
+    part1='{"event":"'+_event+'","time":"'+str.tostring(time,"yyyy-MM-dd HH:mm")+'","price":'+str.tostring(_price)+',"poc":'+str.tostring(_poc)
+    part2=',"vah":'+str.tostring(_vah)+',"val":'+str.tostring(_val)+',"va_width":'+str.tostring((_vah-_val)/(_priceHigh-_priceLow))
+    part3=',"poc_pos":'+str.tostring((_poc-_priceLow)/(_priceHigh-_priceLow))+',"volume":'+str.tostring(_vol)
+    part4=',"atr":'+str.tostring(_atr)+',"pivot":"'+_pivot+'"}'
+    part1+part2+part3+part4
+
+if poc_touch and safe_vol>0 and atr_value>0
+    ai_msg=f_json_msg("POC", close, poc_price, vah_price, val_price, priceHighest, priceLowest, safe_vol, atr_value, pvtLast)
+    alert(ai_msg, alert.freq_once_per_bar_close)
+
+if vah_touch and safe_vol>0 and atr_value>0
+    ai_msg=f_json_msg("VAH", close, poc_price, vah_price, val_price, priceHighest, priceLowest, safe_vol, atr_value, pvtLast)
+    alert(ai_msg, alert.freq_once_per_bar_close)
+
+if val_touch and safe_vol>0 and atr_value>0
+    ai_msg=f_json_msg("VAL", close, poc_price, vah_price, val_price, priceHighest, priceLowest, safe_vol, atr_value, pvtLast)
+    alert(ai_msg, alert.freq_once_per_bar_close)
+
+// ================= AI EXPORT =================
+
+is_H1 = timeframe.period == "60"
+
+// уровни H1
+poc_H1 = poc_price
+vah_H1 = vah_price
+val_H1 = val_price
+
+// функция (ОДНА СТРОКА!)
+f_vp_levels() => [poc_price, vah_price, val_price]
+
+// старшие ТФ
+[poc_H4, vah_H4, val_H4] = request.security(syminfo.tickerid, "240", f_vp_levels())
+[poc_D1, vah_D1, val_D1] = request.security(syminfo.tickerid, "D", f_vp_levels())
+[poc_W1, vah_W1, val_W1] = request.security(syminfo.tickerid, "W", f_vp_levels())
+
+// триггеры
+poc_evt = is_H1 and barstate.isconfirmed and poc_touch
+vah_evt = is_H1 and barstate.isconfirmed and vah_touch
+val_evt = is_H1 and barstate.isconfirmed and val_touch
+
+// JSON (ОДНА СТРОКА!)
+f_json(e) => '{"event":"' + e + '","symbol":"' + syminfo.ticker + '","tf":"H1","time":"' + str.tostring(time) + '","price":' + str.tostring(close) + ',"H1":{"poc":' + str.tostring(poc_H1) + ',"vah":' + str.tostring(vah_H1) + ',"val":' + str.tostring(val_H1) + '},"H4":{"poc":' + str.tostring(poc_H4) + ',"vah":' + str.tostring(vah_H4) + ',"val":' + str.tostring(val_H4) + '},"D1":{"poc":' + str.tostring(poc_D1) + ',"vah":' + str.tostring(vah_D1) + ',"val":' + str.tostring(val_D1) + '},"W1":{"poc":' + str.tostring(poc_W1) + ',"vah":' + str.tostring(vah_W1) + ',"val":' + str.tostring(val_W1) + '}}'
+
+// alerts
+if poc_touch
+    alert(f_json("POC"), alert.freq_once_per_bar_close)
+
+if vah_touch
+    alert(f_json("VAH"), alert.freq_once_per_bar_close)
+
+if val_touch
+    alert(f_json("VAL"), alert.freq_once_per_bar_close)
+

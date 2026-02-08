@@ -1,0 +1,296 @@
+//@version=4
+study("base27 A", shorttitle="base27 A", overlay=true)
+
+
+// COLORS
+colorWhite = #ffffff
+colorRed = #ff0000
+colorBrightRed = #ff0080
+colorMutedRed = #b8005d
+colorGreen = #008000
+colorBrightGreen = #00ff80
+colorMutedGreen = #00b36b
+colorBlue = #0000ff
+colorBrightGrey = #b2b5be
+colorPurple = #e600e6
+colorOrange = #e2a400
+colorYellow = #ffe500
+
+superguppy = input(false, title="Super Guppy Mode")
+
+
+//////////////////////////////////////////////////////////////////////////
+// HMA colored
+//////////////////////////////////////////////////////////////////////////
+func_hma(_src, length)=> wma((2 * wma(_src, length / 2)) - wma(_src, length), round(sqrt(length)))
+
+shortPeriod = input(14, title="Short HMA Period")
+shma = func_hma(close, shortPeriod)
+shmacurrent = shma[0]
+shmaprev = shma[1]
+plot(shma, color=shmacurrent > shmaprev ? colorBrightGreen : colorBrightRed, linewidth=3, title="Short HMA")
+
+
+
+//////////////////////////////////////////////////////////////////////////
+// RANGE FILTER, optimised for 5min
+//////////////////////////////////////////////////////////////////////////
+period = input(defval=100, minval=1, title="RF Sampling Period")
+mult = input(defval=2.0, minval=0.1, title="RF Multiplier")
+
+// Smooth Average Range
+smoothrng(x, t, m)=>
+    wper      = (t*2) - 1
+    avrng     = ema(abs(x - x[1]), t)
+    smoothrng = ema(avrng, wper)*m
+    smoothrng
+
+smrng = smoothrng(close, period, mult)
+
+// Range Filter
+rngfilt(x, r)=>
+    rngfilt  = x
+    rngfilt := x > nz(rngfilt[1]) ? ((x - r) < nz(rngfilt[1]) ? nz(rngfilt[1]) : (x - r)) : ((x + r) > nz(rngfilt[1]) ? nz(rngfilt[1]) : (x + r))
+    rngfilt
+filt = rngfilt(close, smrng)
+
+// Filter Direction
+upward   = 0.0
+upward  := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+// Break Outs
+longCond = bool(na)
+shortCond = bool(na)
+longCond := ((close > filt) and (close > close[1]) and (upward > 0)) or ((close > filt) and (close < close[1]) and (upward > 0)) 
+shortCond := ((close < filt) and (close < close[1]) and (downward > 0)) or ((close < filt) and (close > close[1]) and (downward > 0))
+
+CondIni = 0
+CondIni := longCond ? 1 : shortCond ? -1 : CondIni[1]
+longCondition = longCond and CondIni[1] == -1
+shortCondition = shortCond and CondIni[1] == 1
+
+// Plots & Alerts
+plotshape(superguppy ? na : longCondition, title = "RF: Buy Signal", text ="Buy", textcolor = colorWhite, style=shape.labelup, size = size.normal, location=location.belowbar, color = colorGreen, transp = 0)
+plotshape(superguppy ? na : shortCondition, title = "RF: Sell Signal", text ="Sell", textcolor = colorWhite, style=shape.labeldown, size = size.normal, location=location.abovebar, color = colorRed, transp = 0)
+
+alertcondition(longCondition, title="Buy Alert", message = "BUY")
+alertcondition(shortCondition, title="Sell Alert", message = "SELL")
+
+
+
+//////////////////////////////////////////////////////////////////////////
+// Donchian Fibonacci
+//////////////////////////////////////////////////////////////////////////
+dftPeriod=input(24, minval=15, maxval=60, title="DFT Multiplier")
+preunit=input('atr', title="prediction in atr or percent", options=['atr', 'percent'])
+preamount=input(1, title="added amount of prediction", minval=0, maxval=6)
+
+//CHANNEL
+hb= highest(high,dftPeriod) //High Border
+lb = lowest(low,dftPeriod)   //Low Border
+dist = hb-lb          //range of the channel 
+med = (hb+lb)/2        //median of the channel
+
+hf = hb-dist*0.236    //Highest Fib
+chf = hb-dist*0.382    //Center High Fib
+clf = hb-dist*0.618    //Center Low Fib
+lf = hb-dist*0.764     //Lowest Fib
+
+//PULL BACK LEVELS
+//initialise mutatables
+leh=hb
+lel=lb
+hbtrue=true
+
+evpup = high>hb[1] //push up event
+evhbstart =  hb[3]==hb[2] and hb[2]==hb[1] and evpup //horizontal then up, part of evhb calculation
+evpdown = low<lb[1] //push down event
+evlbstart = lb[3]==lb[2] and lb[2]==lb[1] and evpdown //horizontal then down, part of evlb calculation
+
+//two levels will be merged in the plot
+evhb = evhbstart or high[1] == hb //event with high border
+leh := evhb? hf :leh[1] //level high mutatable set to highest fib on event or kept on value
+evlb = evlbstart or low[1] == lb  //event with low border
+lel := evlb? lf :lel[1] //level low mutatable set to lowest fib on event or kept on value
+hbtrue := evhb?true :evlb?false :hbtrue[1] //last event mutatable
+
+//ENTRY MARKERS
+tol=atr(dftPeriod)*0.2 //tolerance for placing triangles and prediction candles at borders
+//initialise mutatables
+hftrue = true
+lftrue = true
+cftrue = true
+evupin = crossover(close, hf) //market enters up trend
+evupout = crossunder(close, hf) //market leaves up trend
+hftrue := evupin? true :evupout? false :hftrue[1] //mutatable true if in up trend
+evdownin = crossunder(close, lf) //market enters down trend
+evdownout = crossover(close, lf) //market leaves down trend
+lftrue := evdownin? true :evdownout? false :lftrue[1] //mutatable true if in down trend
+cftrue := not hftrue and not lftrue? true : false    //mutatable true if instrument is ranging
+
+//IDENTIFY LAST BAR
+last= barstate.islast
+last:= barstate.isrealtime and timeframe.isintraday ? not barstate.isconfirmed : barstate.islast 
+//barstate.islast works also when all bars are confirmed and are history. However in real time and intradaycharts bars never lose this state.
+//In that situation 'not barstate.isconfirmed' (like not ishistory) is the better alternative. if you use intraday charts after closing time of
+//the markets "barstate.isrealtime and isintraday" will be false and the script will use barstate.islast.
+
+//SITUATION 
+hbdtrue = last and hftrue  //up trend
+lbdtrue = last and lftrue  //down trend
+chfdtrue = last and cftrue and hbtrue //high ranging
+clfdtrue = last and cftrue and not hbtrue //low ranging
+
+//expected levels
+schigh = hb
+schigh := hbdtrue? hb :lbdtrue? lf :chfdtrue ? hf :clfdtrue? chf :na //situation candle high
+sclow = lb
+sclow := hbdtrue? hf :lbdtrue? lb :chfdtrue ? clf :clfdtrue? lf :na //situation candle low
+
+//prediction levels
+pred= preunit=='atr'? preamount*atr(dftPeriod) :preunit=='percent' ? preamount*close/100 :0 
+prcahigh = med
+prcahigh := hbdtrue and (evpup or evpup[1]) ? hb+pred :na //prediction level higher than high border
+prcalow = med
+prcalow :=  lbdtrue and (evpdown or evpdown[1])? lb-pred :na //prediction level lower than low border
+
+//plot channel and fibzones
+phb=plot(superguppy or hbdtrue? na :hb, title="high border", transp= 100)
+phf = plot(superguppy or hbdtrue or chfdtrue? na :hf, title="highest fib", transp= 100)
+plf = plot(superguppy or lbdtrue or clfdtrue? na :lf, title= "lowest fib", transp= 100)
+plb = plot(superguppy or lbdtrue? na :lb, title="low border", transp= 100)
+
+fill(phb, phf, color= hftrue ? color.new(colorMutedGreen, 90) : color.new(colorMutedGreen, 97), title="up trend zone") //up trend zone, blue or transparant blue
+fill(plf, plb, color= lftrue ? color.new(colorMutedRed, 90) : color.new(colorMutedRed, 97), title="down trend zone")   //down trend zone, orange or transparant orange
+
+//plot entry markers
+plotshape(not superguppy and evupin?hb+tol :na, style=shape.triangleup, location=location.absolute, color=color.blue, size=size.tiny)
+plotshape(not superguppy and evupout?hb+tol :na, style=shape.xcross, location=location.absolute, color=color.gray, size=size.tiny)
+plotshape(not superguppy and evdownin?lb-tol :na, style=shape.triangledown, location=location.absolute, color=color.red, size=size.tiny)
+plotshape(not superguppy and evdownout?lb-tol :na, style=shape.xcross, location=location.absolute, color=color.gray, size=size.tiny)
+
+//plot future circle markers
+plotshape(not superguppy and hbdtrue?hb:na, style=shape.circle, location=location.absolute, color=color.blue, offset=1, size=size.tiny)
+plotshape(not superguppy and lbdtrue?lb:na, style=shape.circle, location=location.absolute, color=color.red, offset=1, size=size.tiny)
+plotshape(not superguppy and chfdtrue?chf:na, style=shape.circle, location=location.absolute, color=color.green, offset=1, size=size.tiny)
+plotshape(not superguppy and clfdtrue?clf:na, style=shape.circle, location=location.absolute, color=color.maroon, offset=1, size=size.tiny)
+
+//plot expected range levels
+plot(superguppy ? na : schigh, linewidth = 5, title=" expect", color=color.teal, offset=3)
+plot(superguppy ? na : sclow, linewidth = 5, title=" expect", color=color.teal, offset=3)
+
+//plot prediction levels 
+plot(not superguppy and last and (evpup or evpup[1]) and preamount>0?prcahigh :na, style = plot.style_cross, title=" predict", linewidth = 4, color = color.blue, offset=3)
+plot(not superguppy and last and (evpdown or evpdown[1]) and preamount>0?prcalow :na, style = plot.style_cross, title=" predict", linewidth = 4, color = color.red, offset=3)
+
+//plot predictionmarkers
+plotshape(not superguppy and hbdtrue and (evpup or evpup[1])? hb+tol :na, style=shape.diamond, location=location.absolute, color=color.blue, size=size.tiny, offset=3)
+plotshape(not superguppy and lbdtrue and (evpdown or evpdown[1])? lb-tol :na, style=shape.diamond, location=location.absolute, color=color.red, size=size.tiny, offset=3)
+
+
+
+//////////////////////////////////////////////////////////////////////////
+// Cipher A
+//////////////////////////////////////////////////////////////////////////
+f_wavetrend(_src, _chlen, _avg, _malen) =>
+    _esa = ema(_src, _chlen)
+    _de = ema(abs(_src - _esa), _chlen)
+    _ci = (_src - _esa) / (0.015 * _de)
+    _tci = ema(_ci, _avg)
+    _wt1 = _tci
+    _wt2 = sma(_wt1, _malen)
+    [_wt1, _wt2]
+
+f_emaRibbon(_src, _e1, _e2, _e3, _e4, _e5, _e6, _e7, _e8) =>
+    _ema1 = ema(_src, _e1)
+    _ema2 = ema(_src, _e2)
+    _ema3 = ema(_src, _e3)
+    _ema4 = ema(_src, _e4)
+    _ema5 = ema(_src, _e5)
+    _ema6 = ema(_src, _e6)
+    _ema7 = ema(_src, _e7)
+    _ema8 = ema(_src, _e8)
+    [_ema1, _ema2, _ema3, _ema4, _ema5, _ema6, _ema7, _ema8]
+    
+f_rsimfi(_period, _multiplier, _tf) => security(syminfo.tickerid, _tf, sma(((close - open) / (high - low)) * _multiplier, _period))
+
+// PARAMETERS
+// WaveTrend
+wtChannelLen = input(9, title = 'WT Channel Length')
+wtAverageLen = input(12, title = 'WT Average Length')
+wtMASource = input(hlc3, title = 'WT MA Source')
+wtMALen = input(3, title = 'WT MA Length')
+
+// WaveTrend Overbought & Oversold lines
+obLevel = input(53, title = 'WT Overbought Level 1')
+obLevel2 = input(60, title = 'WT Overbought Level 2')
+obLevel3 = input(100, title = 'WT Overbought Level 3')
+osLevel = input(-53, title = 'WT Oversold Level 1')
+osLevel2 = input(-60, title = 'WT Oversold Level 2')
+osLevel3 = input(-80, title = 'WT Oversold Level 3')
+
+// EMA Ribbon
+ema1Len = input(5, title = "EMA 1 Length")
+ema2Len = input(11, title = "EMA 2 Length")
+ema3Len = input(15, title = "EMA 3 Length")
+ema4Len = input(18, title = "EMA 4 Length")
+ema5Len = input(21, title = "EMA 5 Length")
+ema6Len = input(24, title = "EMA 6 Length")
+ema7Len = input(28, title = "EMA 7 Length")
+ema8Len = input(34, title = "EMA 8 Length")
+
+// RSI
+rsiLen = input(14, title = "RSI Length")
+rsiOversold = input(30, title = 'RSI Oversold', minval = 50, maxval = 100)
+rsiOverbought = input(60, title = 'RSI Overbought', minval = 0, maxval = 50)
+
+// RSI+MFI
+rsiMFIperiod = input(60, title = 'RSI+MFI Period')
+rsiMFIMultiplier = input(150, title = 'RSI+MFI Area multiplier')
+
+// CALCULATE INDICATORS
+[ema1, ema2, ema3, ema4, ema5, ema6, ema7, ema8] = f_emaRibbon(close, ema1Len, ema2Len, ema3Len, ema4Len, ema5Len, ema6Len, ema7Len, ema8Len)
+rsi = rsi(close, rsiLen)
+rsiMFI = f_rsimfi(rsiMFIperiod, rsiMFIMultiplier, timeframe.period)
+[wt1, wt2] = f_wavetrend(wtMASource, wtChannelLen, wtAverageLen, wtMALen)
+
+// WaveTrend Conditions
+wtOverSold = wt2 <= osLevel
+wtOverBought = wt2 >= obLevel
+wtCross = cross(wt1, wt2)
+wtCrossUp = wt2 - wt1 <= 0
+wtCrossDown = wt2 - wt1 >= 0
+
+// Signals
+longEma = crossover(ema2, ema8)
+redCross = crossunder(ema1, ema2)
+blueTriangle = crossover(ema2, ema3)
+redDiamond = wtCross and wtCrossDown
+yellowCross = redDiamond and wt2 < 45 and wt2 > osLevel3 and rsi < 30 and rsi > 15 and rsiMFI < -5
+bloodDiamond = redDiamond and redCross
+bullCandle = open > ema2 and open > ema8 and (close[1] > open[1]) and (close > open) and not redDiamond and not redCross
+shortEma = crossover(ema8, ema2)
+
+// DRAW
+// EMA 8 with guppy alerts
+plot(ema8, color= ema8 < ema2 ? color.green : color.red, linewidth=2, transp=0, title="EMA 8")
+
+// SHAPES
+plotshape(longEma, style=shape.circle, color=#00ff00, location=location.abovebar, size=size.tiny, title="Long EMA Signal", transp=0)
+plotshape(shortEma, style=shape.circle, color=#ff0000, location=location.abovebar, size=size.tiny, title="Short EMA Signal", transp=0)
+plotshape(bloodDiamond ? na : redCross, style=shape.xcross, color=#ff0000, location=location.abovebar, size=size.tiny, title="Red cross", transp=25)
+plotshape(blueTriangle, style=shape.triangleup, color=#0064ff, location=location.abovebar, size=size.small, title="Blue Triangle", transp=25)
+plotshape(bloodDiamond ? na : redDiamond, style=shape.diamond, color=#ff0000, location=location.abovebar, size=size.tiny, title="Red Diamond", transp=25)
+plotshape(bullCandle, style=shape.diamond, color=color.yellow, location=location.abovebar, size=size.tiny, title="Bull candle", transp=25)
+plotshape(bloodDiamond, style=shape.diamond, color=#ff0000, location=location.abovebar, size=size.small, title="Blood Diamond", transp=15)
+plotshape(yellowCross, style=shape.xcross, color=color.yellow, location=location.abovebar, size=size.small, title="Yellow Cross", transp=25)
+
+// ALERTS {
+alertcondition(redDiamond != 0, "Red Diamond", "Red Diamond")
+alertcondition(bloodDiamond != 0, "Blood Diamond", "Blood Diamond")
+alertcondition(yellowCross != 0, "YellowX", "YellowX")
+alertcondition(redCross != 0, "RedX", "RedX")
+alertcondition(longEma != 0, "Longema", "Longema")
+alertcondition(blueTriangle != 0, "Bluetriangle", "Bluetriangle")

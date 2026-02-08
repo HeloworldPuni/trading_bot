@@ -1,0 +1,2192 @@
+/// ╔═══════════════════════════════╗
+/// ║	Globals						║
+/// ╚═══════════════════════════════╝
+
+/// ╔═══════════════════════════════╗
+/// ║	Fx Market Sessions			║
+/// ╔═══════════════════════════════╗
+/// ║	ZeroLag Trend				║
+/// ╔═══════════════════════════════╗
+/// ║	Volumatic VIDYA				║
+/// ╚═══════════════════════════════╝
+
+/// ╔═══════════════════════════════╗
+/// ║	Market Structure Oscillador	║
+/// ╔═══════════════════════════════╗
+/// ║	AI Adaptive Money Flow Index║
+/// ╔═══════════════════════════════╗
+/// ║	Adx							║
+/// ╔═══════════════════════════════╗
+/// ║	Tsi dual speed				║
+/// ╚═══════════════════════════════╝
+
+/// ╔═══════════════════════════════╗
+/// ║	xTrend indicators Panel		║
+/// ║	xMulti indicators Panel		║
+/// ║	xTicker Panel				║
+/// ║	@	Allen	㔬				║
+/// ╚═══════════════════════════════╝
+
+
+//@version=5
+indicator(title							= 'FxMarketSession & MarketStructureOsc & ZeroLag & Vidya & AiMfi & Adx & xTsi & xMtPanel [🎱 Allen 㔬]',
+		  shorttitle					= 'MkMS ZlDya MfiAdx xTsiPnl [🎱 Allen 㔬]',
+		//   shorttitle					= 'MkS MSOsc ZLag vidya Mfi Adx xTsiM xPanels [🎱 Allen 㔬]',
+		  overlay						= true,
+		  max_boxes_count				= 500,
+		  max_labels_count				= 500,
+		  max_lines_count				= 500,
+		  max_bars_back					= 1000,
+		  format						= format.price,
+		//   timeframe_gaps				= true,
+		  precision						= 1,
+		  explicit_plot_zorder			= true)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+globalGroupIndicat						= 'Visualización Global'
+globalGroupTimeframe					= 'Configuración Global'
+
+strGlobalKeikinAshiTooltip				= 'Establecido para uso en gráficos diferentes a Heikin Ashi, de lo contrario genera distorsión.'
+
+/// Title Global ――――――――――――――――――――
+
+/// Visual Global ―――――――――――――――――――
+display_xTsiMu_TSI						= input.bool	(defval = true,			title = 'Mostrar xTSI',				group = globalGroupIndicat)
+
+display_zeLagTrend						= input.bool	(defval = true,			title = 'Mostrar ZeroLag Trend',	group = globalGroupIndicat)
+
+display_vVidya_VoVidya					= input.bool	(defval = true,			title = "Mostrar Vidya",			group = globalGroupIndicat)
+
+display_FxMkSs__Sessions				= input.bool	(defval = true,			title = 'Fx Market Sessions',		group = globalGroupIndicat)
+
+display_msOsc_MarketOSC					= input.bool	(defval = true,			title = 'Market Oscillator',		group = globalGroupIndicat)
+
+display_adapMon_MFI						= input.bool	(defval = true,			title = 'Mostrar Ai Adaptative MFI', group = globalGroupIndicat)
+
+display_DmiAdx_AdxHisto					= input.bool	(defval = false,		title = 'Mostrar ADX Histograma',	group = globalGroupIndicat)
+
+display_MltObsPnlTimeFrPanel			= input.bool	(defval = true,			title = 'Mostrar Panel Tsi',		group = globalGroupIndicat)
+
+display_MltObsPnlIndicatPanel			= input.bool	(defval = true,			title = 'Mostrar Panel Multi Inc',	group = globalGroupIndicat)
+
+showxTsiMuTSIDivSpeed					= input.string 	(defval = 'Slow',		title = 'Diverg Speed',				group = globalGroupTimeframe,
+			  options					=				['Fast', 'Slow'])
+
+strGlobalAreasTimeFrame					= input.string 	(defval = '30 min',		title = 'Mostrar Sessions x TimeF',	group = globalGroupTimeframe,
+			  options					=				['All', '2 Horas', '1 Hora', '45 min', '30 min'])
+
+strGlobalMultiTimeFrame					= input.string 	(defval = 'Grafico',	title = 'Multi Timeframe',			group = globalGroupTimeframe,
+			  options					=				['Grafico', '15 min', '30 min', '1 Hora', '2 Horas', '3 Horas', '4 Horas', '1 Dia', '1 Semana'])
+
+strGlobalMultiHistogram					= input.string 	(defval = 'Dual',		title = 'Histograma',				group = globalGroupTimeframe,
+			  options					=				['Mfi', 'Adx', 'Dual'])
+
+strGlobalColorSelector					= input.string 	(defval = 'Allen',		title = 'Color Selector',			group = globalGroupTimeframe,
+			  options					=				['Allen', 'Ultr', 'Light'])
+
+
+/// Heikin Ashi ───────────────────────
+
+
+showGlobal_HknAshi						= input.bool	(defval = true,			title = 'Activar Heikin Ashi',		group = 'Heikin Ashi mode',			tooltip = strGlobalKeikinAshiTooltip)
+
+vGlobalHeiAsTicker						= ticker.heikinashi(syminfo.tickerid)
+[heAsGblO, heAsGblH, heAsGblL, heAsGblC]= request.security(vGlobalHeiAsTicker, timeframe.period, [open, high, low, close])
+
+gbl_Source_O							= showGlobal_HknAshi ? heAsGblO : open
+gbl_Source_H							= showGlobal_HknAshi ? heAsGblH : high
+gbl_Source_L							= showGlobal_HknAshi ? heAsGblL : low
+gbl_Source_C							= showGlobal_HknAshi ? heAsGblC : close
+gbl_Source_2							= showGlobal_HknAshi ? (heAsGblH + heAsGblL) / 2 : hl2
+gbl_Source_3							= showGlobal_HknAshi ? (heAsGblH + heAsGblL + heAsGblC) / 3 : hlc3
+
+
+/// Switch ────────────────────────────
+
+
+[_co_gbl_buy,	_co_gbl_sell,	_co_gbl_up,	_co_gbl_dn,	_co_gbl_extra,	_co_gbl_neutral]				= switch	strGlobalColorSelector
+	'Allen'								=> [#33FFAC,	#CCF8FF,	#30D453,	#0061FE,	#E3FF53,	#CCF8FF]
+	'Ultr'								=> [#98F1F4,	#E0D8CA,	#E3FF53,	#E0D8CA,	#CCF657,	#121F3D]
+	'Light'								=> [#0061FE,	#FF4054,	#E6F7FF,	#121F3D,	#121F3D,	#FFF87C]
+
+
+/// Colors ───────────────────────────
+
+_co_gbl_long							= #30D453							// AllenGreen50
+_co_gbl_short							= #EA1889							// AllenFucsia50
+
+_co_gbl_white							= #E6F7FF							//	CitiAccentUltraLightBlue
+_co_gbl_pink							= #FFB7FF							//	WavBehPink20
+_co_gbl_sky								= #98F1F4							//	NexusSky
+_co_gbl_mint							= #7AFFA1							//	SalesforceMint
+_co_gbl_yellow							= #FDF43C							//	BrLiYel30
+_co_gbl_lime							= #E3FF53							//	Ex1Lime
+_co_gbl_blue							= #0035FF							//	ARoPrimary
+_co_gbl_cocoa							= #E0D8CA							//	NetsuiteCocoa
+_co_gbl_black							= #0C1633							//	PlatziBlue80
+_co_gbl_dark							= #121F3D							//	PlatziBlue70
+_co_gbl_light							= #FBFD73							//	BrLiYel10
+_co_gbl_txt_dark						= #121F3D							//	PlatziBlue70
+_co_gbl_txt_light						= #FFF87C							//	SalesforceYellow
+
+
+// WiskAeroYellow							= #F9F940
+// SalesforceLime							= #CCF657
+// SalesforceLile							= #D5BEF2
+// SalesforceOrange							= #FF8C7D
+// SalesforceRed							= #FF4B4B
+// SalesforceBlue							= #3F73F7
+// Ex1Orange600								= #D93D04
+// Ex1Red									= #A60303
+// Ex1Wine									= #730202
+// Ex1Teal									= #1CD8E1
+// Ex1Ocean									= #00315e
+// TaxusRed									= #F20505
+// OsomeBlue								= #0061FE
+// OsomeRed									= #FF4054
+
+
+/// ＴＰＳ ―――――――――――――――――――――――――――――――――
+
+
+type globalTypeOHL
+	float O						    	= open
+	float H				    			= high
+	float L				    			= low
+	float C				    			= close
+	float V				    			= volume
+	int   I				    			= bar_index
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――――――
+
+
+/// ─── function timeframe
+FunGlobalTimeFrame(_timeframe) =>
+	switch _timeframe
+		'Grafico'						=> timeframe.period
+		'1 seg'							=> 'S'	
+		'5 seg'							=> '5S'
+		'10 seg'						=> '10S'
+		'15 seg'						=> '15S'
+		'30 seg'						=> '30S'
+		'1 min'							=> '1'	
+		'3 min'							=> '3'	
+		'5 min'							=> '5'
+		'15 min'						=> '15'
+		'30 min'						=> '30'
+		'1 Hora'						=> '60'
+		'2 Horas'						=> '120'
+		'3 Horas'						=> '180'
+		'4 Horas'						=> '240'
+		'8 horas'						=> '480'
+		'Dia'							=> 'D'
+		'1 Dia'							=> '1D'
+		'Semana'						=> 'W'
+		'1 Semana'						=> '1W'
+		'Mes'							=> 'M'
+		'1 Mes'							=> '1M'
+
+/// ─── function location vertical
+FunGlobalVertical(_vertical) =>
+	switch _vertical
+		'Arriba'						=> 'top'
+		'Medio'							=> 'middle'
+		'Abajo'							=> 'bottom'
+
+/// ─── function location horizontal
+FunGlobalHorizontal(_horizontal) =>
+	switch _horizontal
+
+		'Izquierda'						=> 'left'
+		'Centro'						=> 'center'
+		'Derecha'						=> 'right'
+
+/// ─── function position
+FunGlobalPositionIn(_position) =>
+	switch _position
+		'Externo'						=> 'outside'
+		'Interno'						=> 'inside'
+
+/// ─── function text size
+FunGlobalTextSize(_textsize) =>
+	switch _textsize
+		'Mini'							=> size.tiny
+		'Pequeño'						=> size.small
+		'Normal'						=> size.normal
+		'Grande'						=> size.large
+		'Enorme'						=> size.huge
+		'Auto'							=> size.auto
+
+/// ─── function line style
+FunGlobalLineStyle(_linestyle) =>
+	switch _linestyle
+		'⎯⎯⎯⎯'							=> line.style_solid
+		'----'							=> line.style_dashed
+		'····'							=> line.style_dotted
+
+/// ─── function Days of Week
+FunGlobalDayofWeek(_days) =>
+	switch _days
+		1								=> 'Domingo'
+		2								=> 'Lunes'
+		3								=> 'Martes'
+		4								=> 'Miercoles'
+		5								=> 'Jueves'
+		6								=> 'Viernes'
+		7								=> 'Sabado'
+
+/// ─── function Timezone
+FunGlobalTimeZone(_timezone) =>
+	switch _timezone
+		'NYSE'							=> 'UTC-5'
+		'New York'						=> 'America/New_York'
+		'Chicago'						=> 'America/Chicago'
+		'Londres'						=> 'Europe/London'
+		'Tokyo'							=> 'Asia/Tokyo'
+		'Shanghai'						=> 'Asia/Shanghai'
+		'Sydney'						=> 'Australia/Sydney'
+		'Argentina'						=> 'America/Argentina/Buenos_Aires'
+
+
+/// ─── function tsi
+FunGlobalCalcTSI(_speed, _x) =>
+	_plus								= 50
+	_source								= gbl_Source_C
+
+	_long								= 25		// gbl_speed_long			= 6			// _smooth
+	_short								= 0			// gbl_speed_short			= 13		// _smooth
+	_signal								= 0			// gbl_speed_signal			= 5			// _smooth
+
+	switch _speed
+		'Fast' =>
+			_short						:= 5
+			_signal						:= 14
+
+		'Slow' =>
+			_short						:= 13
+			_signal						:= 13
+
+	_tsi								= _x * ta.tsi(_source, _short, _long) + _plus
+	_tsi_ema							= ta.ema(_tsi, _signal)
+
+	[_tsi, _tsi_ema]
+
+/// ─── function timeframe conditional
+FunGlobalCalculateTimeframeIf(_timeframe) =>
+	_tonumber							= str.tonumber(_timeframe)
+	_minor_dayly						= _tonumber < 500
+	_operat_minor						= 30
+	_operat_medium						= _tonumber * 3
+	_operat_mayor						= _tonumber * 2
+	_conditional						= _tonumber >= 45 ? _operat_mayor : _tonumber <= 14 ? _operat_minor : _operat_medium
+	_result								= _minor_dayly ? str.tostring(math.round(_conditional)) : timeframe.period
+
+
+/// ＩＮＳＴＡＮＣＳ ――――――――――――――――――――
+
+
+gblSource								= globalTypeOHL.new()
+
+
+/// ＰＬＯＴ ――――――――――――――――――――――――――――――
+
+
+_plot_gbl_midline						= plot(50,			title = 'Equilibrio',		display = display.none,			editable = false)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	ZeroLag Trend				║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+co_zeLag_buy							= _co_gbl_up
+co_zeLag_sell							= _co_gbl_dn
+co_zeLag_signal							= _co_gbl_white
+co_zeLag_text							= _co_gbl_light
+co_zeLag_text_dark						= _co_gbl_txt_dark
+
+/// Title Indicator ――――――――――――――――――――
+zeLag_GroupVar							= 'ZEROLAG TREND'
+
+showZeLag_level_box						= input.bool	(true,			title = 'Mostrar box ZeroLag',		group = zeLag_GroupVar,		inline = 'zerocheck')
+zeLag_length							= input.int		(13,			title = 'Longitud',					group = zeLag_GroupVar)
+zeLag_lengthEmax						= input.int		(20,			title = 'Longitud Ema',				group = zeLag_GroupVar)
+zeLag_lengthEma50						= 50
+
+var bZeLag_BOX							= box(na)
+series float iZeLag_ATR					= ta.atr(200)
+
+
+/// ＣＡＬＣＵＬＡＴＩＯＮＳ ―――――――――――――
+
+
+series float iZeLag_EMA					= ta.ema(gblSource.C, zeLag_length)
+series float iZeLag_correction			= gblSource.C + (gblSource.C - iZeLag_EMA)				// factor zerolag
+series float iZeLag_ZLMA				= ta.ema(iZeLag_correction, zeLag_length)
+series float iZeLag_EMAx				= ta.ema(gblSource.C, zeLag_lengthEmax)
+series float iZeLag_EMA50				= ta.ema(gblSource.C, zeLag_lengthEma50)
+
+bool  zeLag_signal_buy					= ta.crossover(iZeLag_ZLMA, iZeLag_EMA)
+bool  zeLag_signal_sell					= ta.crossunder(iZeLag_ZLMA, iZeLag_EMA)
+
+// Determine the color of ZLMA based on its direction
+co_zeLag_ZLMA							= iZeLag_ZLMA	> iZeLag_ZLMA[3]	? co_zeLag_buy	: iZeLag_ZLMA	< iZeLag_ZLMA[3]	? co_zeLag_sell	: na
+co_zeLag_EMAx							= iZeLag_EMA	> iZeLag_EMA[3]		? co_zeLag_buy	: iZeLag_EMA	< iZeLag_EMA[3]		? co_zeLag_sell	: na
+co_zeLag_EMA							= iZeLag_EMAx	< iZeLag_EMA		? co_zeLag_buy	: co_zeLag_sell			// ema color variant
+
+// Method to draw a box on the chart
+method FUN_zeLag_draw_box(color _color, top, _bottom, price) =>
+	box.new(
+			 bar_index, top, bar_index, _bottom,
+			 border_color				= color.new(_color, 50),
+			 border_width				= 1,
+			 border_style				= line.style_dotted,
+			 bgcolor					= color.new(_color, 90), 
+			 text						= str.tostring(math.round(price, 2)), 
+			 text_size					= size.tiny,
+			 text_color					= chart.fg_color,
+			 text_halign				= text.align_right,
+			 force_overlay				= true
+			 )
+
+// Logic to draw trend levels as boxes on the chart
+if showZeLag_level_box and display_zeLagTrend
+	bool _check_signals					= zeLag_signal_buy or zeLag_signal_sell // Check if there is an up or down signal
+
+	switch
+		// Draw a box when a bullish signal is detected
+		zeLag_signal_buy				=> bZeLag_BOX		:= co_zeLag_buy.FUN_zeLag_draw_box(iZeLag_ZLMA, iZeLag_ZLMA - iZeLag_ATR, gblSource.C)
+
+		// Draw a box when a bearish signal is detected
+		zeLag_signal_sell				=> bZeLag_BOX		:= co_zeLag_sell.FUN_zeLag_draw_box(iZeLag_ZLMA + iZeLag_ATR, iZeLag_ZLMA, gblSource.C)
+
+	switch
+		// Extend the right side of the box if no new signal is detected
+		not zeLag_signal_buy or not zeLag_signal_sell => bZeLag_BOX.set_right(bar_index + 4)  
+		=> bZeLag_BOX := box(na) // Otherwise, reset the box
+
+
+/// ＰＬＯＴ――――――――――――――――――――――――――――
+
+
+// Plot the Zero-Lag Moving Average
+plot_zeLag_EMA							= plot(display_zeLagTrend	? iZeLag_EMA	: na,	color = color.new(co_zeLag_EMA,		25),		linewidth = 1,		force_overlay		= true)
+plot_zeLag_EMAx							= plot(display_zeLagTrend	? iZeLag_EMAx	: na,	color = color.new(co_zeLag_EMAx,	25),		linewidth = 2,		force_overlay		= true)
+plot_zeLag_EMA50						= plot(iZeLag_EMA50,		display = display.none,	force_overlay	= true)
+
+fill(plot_zeLag_EMA, plot_zeLag_EMAx, iZeLag_EMA, iZeLag_EMAx,								color.new(co_zeLag_EMAx, 90),					color.new(co_zeLag_EMA, 70))
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	Volumatic VIDYA				║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+// Define colors for up and down trends
+col_vVidya_uptrend						= _co_gbl_up
+col_vVidya_downtrend					= _co_gbl_dn
+col_vVidya_txt							= _co_gbl_white
+
+/// Title Indicator ――――――――――――――――――――
+vVidya_GroupInput						= 'VOLUMATIC VIDYA'
+
+show_vVidya_shadow						= input.bool(true,				title = "Vidya Shadow",						group = vVidya_GroupInput,		inline = "vidya vars")
+
+vVidya_length							= input.int(defval = 10,		title = "Longitud",							group = vVidya_GroupInput)
+vVidya_momentum							= input.int(defval = 20,		title = "Momentum",							group = vVidya_GroupInput)
+vVidya_band_distance					= input.float(defval = 2,		title = "Factor de distancia entre bandas",	group = vVidya_GroupInput,		step = 0.1)
+
+// Define pivot
+int		vVidya_pivot_leftbars			= 3
+int		vVidya_pivot_rightbars			= vVidya_pivot_leftbars
+
+float	vVidya_source					= gblSource.C
+
+// Initialize variables for line, volume, and trend state
+var		line vVidya_pivotline			= na
+var		float vVidya_volumevalue		= na
+float	vVidya_smoothed_value			= na
+var		bool vVidya_trend_up			= na
+
+// Initialize arrays for storing line and volume information
+var	array<line> vVidya_liquid_lines_low	= array.new<line>(500)
+var	array<line> vVidya_liquid_lines_high= array.new<line>(500)
+var		float vVidya_volume_uptrend		= na
+var		float vVidya_volume_downtrend	= na
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――――――
+
+
+// Define VIDYA (Variable Index Dynamic Average) function
+Fun_vVidya_calculate(_source, _length, _momentum) =>
+	float	_chg_momentum				= ta.change(_source)
+	float	_sum_posmomentum			= math.sum((_chg_momentum >= 0) ? _chg_momentum : 0.0, _momentum)
+	float	_sum_negmomentum			= math.sum((_chg_momentum >= 0) ? 0.0 : -_chg_momentum, _momentum)
+	float	_abs_cmo					= math.abs(100 * (_sum_posmomentum - _sum_negmomentum) / (_sum_posmomentum + _sum_negmomentum))
+	float	_alpha						= 2 / (_length + 1)
+	var	float	_vidya_value			= 0.0
+	_vidya_value						:= _alpha * _abs_cmo / 100 * _source + (1 - _alpha * _abs_cmo / 100) * nz(_vidya_value[1])
+
+	ta.sma(_vidya_value, 15)
+
+// Method to extend lines and add labels for liquidity levels
+method Fun_vVidya_extend_liquidity_lines(array<line> _line_array, _price_level, _cross, _volume) =>
+	if _line_array.size() > 0 and last_bar_index - bar_index < 5000
+		for i = 0 to _line_array.size() - 1 
+			if i < _line_array.size()
+				line	_liquidity_line	= _line_array.get(i)
+				float	_current_line_level= line.get_y2(_liquidity_line)
+				bool	_price_cross	= _cross 
+								  ? _price_level < _current_line_level and _price_level[1] >= _current_line_level 
+								  : _price_level > _current_line_level and _price_level[1] <= _current_line_level
+
+				bool	_is_short_line	= bar_index - line.get_x1(_liquidity_line) < 50
+
+				if _price_cross and _is_short_line
+					line.set_x2(_liquidity_line, bar_index)
+					_line_array.remove(i)
+
+					// Add a circle label to represent liquidity zone
+					label.new(bar_index-1, _price_level[1], 
+							 text		= "◉", 
+							 color		= #00000003, 
+							 textcolor	= _cross ? col_vVidya_downtrend : col_vVidya_uptrend, 
+							 style		= label.style_label_center, 
+							 size		= size.normal,
+							 force_overlay	= true
+							 )
+
+
+/// ＣＡＬＣＵＬＡＴＩＯＮＳ ――――――――――――――――
+
+
+// Calculate the Average True Range (ATR)
+float	vVi_ATR_value					= ta.atr(200)
+
+// Calculate the VIDYA (Variable Index Dynamic Average)
+vidya_value = Fun_vVidya_calculate(vVidya_source, vVidya_length, vVidya_momentum)
+
+// Calculate upper and lower bands based on VIDYA and ATR
+float	vVi_upper_band					= vidya_value + vVi_ATR_value * vVidya_band_distance
+float	vVi_lower_band					= vidya_value - vVi_ATR_value * vVidya_band_distance
+
+// Detect trend direction using crossovers of source with bands
+if ta.crossover(vVidya_source, vVi_upper_band)
+	vVidya_trend_up						:= true 
+if ta.crossunder(vVidya_source, vVi_lower_band)
+	vVidya_trend_up						:= false 
+
+// Set trend-based smoothing variable
+if vVidya_trend_up
+	vVidya_smoothed_value				:= vVi_lower_band
+if not vVidya_trend_up
+	vVidya_smoothed_value				:= vVi_upper_band
+if ta.change(vVidya_trend_up)
+	vVidya_smoothed_value				:= na
+
+// Calculate pivot highs and lows for price action
+float	vVi_pivot_high					= ta.pivothigh(vVidya_pivot_leftbars, vVidya_pivot_rightbars)
+float	vVi_pivot_low					= ta.pivotlow(close, vVidya_pivot_leftbars, vVidya_pivot_rightbars)
+
+// Create and store lines for pivot lows (support zones)
+if low[vVidya_pivot_rightbars] > vVidya_smoothed_value and vVi_pivot_low and display_vVidya_VoVidya 
+	vVidya_pivotline					:= line.new(
+		  bar_index[vVidya_pivot_rightbars], 
+		  low[vVidya_pivot_rightbars], 
+		  bar_index[vVidya_pivot_rightbars]+5, 
+		  low[vVidya_pivot_rightbars], 
+		  color							= color.new(col_vVidya_uptrend, 50),
+		  force_overlay					= true
+		  )
+
+	vVidya_liquid_lines_low.push(vVidya_pivotline)
+	vVidya_volumevalue					:= math.sum(volume, vVidya_pivot_rightbars + vVidya_pivot_leftbars) / (vVidya_pivot_rightbars + vVidya_pivot_leftbars)
+
+// Create and store lines for pivot highs (resistance zones)
+if high[vVidya_pivot_rightbars] < vVidya_smoothed_value and vVi_pivot_high and display_vVidya_VoVidya
+	vVidya_pivotline					:= line.new(
+		  bar_index[vVidya_pivot_rightbars], 
+		  high[vVidya_pivot_rightbars], 
+		  bar_index[vVidya_pivot_rightbars]+5, 
+		  high[vVidya_pivot_rightbars],
+		  color							= color.new(col_vVidya_downtrend, 50),
+		  force_overlay					= true
+		  )
+
+	vVidya_liquid_lines_high.push(vVidya_pivotline)
+	vVidya_volumevalue					:= math.sum(-volume, vVidya_pivot_rightbars + vVidya_pivot_leftbars) / (vVidya_pivot_rightbars + vVidya_pivot_leftbars)
+
+// Extend lines to track price movements
+vVidya_liquid_lines_high.Fun_vVidya_extend_liquidity_lines(vVidya_smoothed_value, true, vVidya_volumevalue)
+vVidya_liquid_lines_low.Fun_vVidya_extend_liquidity_lines(vVidya_smoothed_value, false, vVidya_volumevalue)
+
+// Detect changes in the trend direction
+bool vVi_trend_cross_up					= not vVidya_trend_up[1] and vVidya_trend_up
+bool vVi_trend_cross_down				= not vVidya_trend_up and vVidya_trend_up[1]
+
+// Reset volume counters when trend changes
+if ta.change(vVi_trend_cross_up) or ta.change(vVi_trend_cross_down)
+	vVidya_volume_uptrend				:= 0
+	vVidya_volume_downtrend				:= 0
+
+// Accumulate volume during trends
+if not(ta.change(vVi_trend_cross_up) or ta.change(vVi_trend_cross_down))
+	vVidya_volume_uptrend				+= (close > open ? volume : 0)
+	vVidya_volume_downtrend				+= (close < open ? volume : 0)
+
+// Calculate average volume
+float	vVidya_avg_volume_delta			= (vVidya_volume_uptrend + vVidya_volume_downtrend) / 2
+
+// Calculate delta volume percentage
+string vVidya_delta_volume = 
+		  str.tostring(((vVidya_volume_uptrend - vVidya_volume_downtrend) / vVidya_avg_volume_delta) * 100, format.percent) == "NaN%" 
+		  ? "0 %" 
+		  : str.tostring(((vVidya_volume_uptrend - vVidya_volume_downtrend) / vVidya_avg_volume_delta) * 100, format.percent)
+
+// Calculate delta float
+float	vVidya_delta_float				= ((vVidya_volume_uptrend - vVidya_volume_downtrend) / vVidya_avg_volume_delta * 100)
+
+
+/// ＰＬＯＴ ――――――――――――――――――――――――――――――
+
+
+fvVi_show								= show_vVidya_shadow
+fvVi_opacity							= 70
+fvVi_opacity_none						= 100
+fvVi_line_width							= 2
+fvVi_line_style							= plot.style_linebr
+
+col_vVidya_plotBuy						= color.new(col_vVidya_uptrend, 50)
+col_vVidya_plotSell						= color.new(col_vVidya_downtrend, 50)
+
+// Determine the color of the trend
+fvVi_color_conditional					= vVidya_trend_up ? col_vVidya_plotBuy : not vVidya_trend_up ? col_vVidya_plotSell : chart.fg_color
+
+fvVi_vidya_up							= vVidya_smoothed_value
+fvVi_vidya_dn							= gbl_Source_2
+
+// Plot the VIDYA trend line
+fvVi_plot_up							= plot(display_vVidya_VoVidya ? fvVi_vidya_up : na,
+		  color							= fvVi_color_conditional,
+		  linewidth						= fvVi_line_width,
+		  style							= fvVi_line_style,
+		  force_overlay					= true)
+
+fvVi_plot_dn							= plot(display_vVidya_VoVidya ? fvVi_vidya_dn : na,
+		  display						= display.none,
+		  force_overlay					= true)
+
+// Fill between the plot and the VIDYA line
+fill(fvVi_plot_up, fvVi_plot_dn,
+		  fvVi_vidya_up,
+		  fvVi_vidya_dn,
+		  color.new(fvVi_color_conditional, fvVi_show ? fvVi_opacity : fvVi_opacity_none),
+		  na
+		  )
+
+// Display labels for volume and trend statistics on the last bar
+if barstate.islast and display_vVidya_VoVidya
+	label.delete(
+		 label.new(bar_index + 10, vVidya_smoothed_value, 
+		 "Compra: " + str.tostring(vVidya_volume_uptrend, format.volume) + "\n" +
+		 "Venta: " + str.tostring(vVidya_volume_downtrend, format.volume) + "\n" +
+		 "Delta: " + vVidya_delta_volume, 
+		//  "Delta: " + str.tostring(vVidya_delta_volume, '#.0') + '%', 
+
+		 color							= color.new(fvVi_color_conditional, 90),
+		 style							= label.style_label_left, 
+		 textcolor						= _co_gbl_white,
+		 force_overlay					= true
+		 )[1])
+	
+	label.delete(
+		 label.new(bar_index, vVidya_smoothed_value, 
+				 text					= "✪", 
+				 color					= #00000003,
+				 textcolor				= fvVi_color_conditional, 
+				 style					= label.style_label_center, 
+				 size					= size.large,
+				 force_overlay			= true
+				 )[1])
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	Fx Market Sessions			║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+/// Title Indicator ――――――――――――――――――――
+fxMrkSsGroupGral						= 'FX MARKET SESSIONS'
+// fxMrkSsGroupGral						= 'General'
+
+fxMrkSsGroupSyd							= 'Sesión Sydney'
+fxMrkSsGroupTyo							= 'Sesión Tokyo'
+fxMrkSsGroupLon							= 'Sesión Londres'
+fxMrkSsGroupNewY						= 'Sesión New York'
+fxMrkSsGroupBox							= 'Box'
+fxMrkSsGroupTag							= 'Etiquetas'
+fxMrkSsGroupRng							= 'Rango Abierto'
+fxMrkSsGroupOsc							= 'Oscilador'
+fxMrkSsGroupFibo						= 'Niveles Fibonacci'
+fxMrkSsGroupOpc							= 'Opciones'
+fxMrkSsGroupBar							= 'Vela'
+fxMrkSsGroupAlrt						= 'Alertas Visuales'
+fxMrkSsGroupInf							= 'Información'
+fxMrkSsGroupLine						= 'Box'
+
+vFxMkSs_Show							= true
+vFxMkSs_Yes								= 'Si'
+vFxMkSs_No								= 'No'
+vFxMkSs_Extend							= 'Extendido'
+vfxMkSs_Hide							= 'Hide'
+tooltipFfxMkSs_TimeZ					= "Mas opciones de zonas horarias, por ej: 'GMT-4', 'GMT-3', 'GMT-2', 'GMT-1', \n 'GMT', 'GMT+1', 'GMT+2', 'GMT+3', 'GMT+4'"
+
+vFxMkSs_LondonColor						= _co_gbl_sky
+vFxMkSs_NewYorkColor					= _co_gbl_mint
+vFxMkSs_TokyoColor						= _co_gbl_pink
+vFxMkSs_SydneyColor						= _co_gbl_yellow
+
+vFxMkSs_KillLonColor					= _co_gbl_sky
+vFxMkSs_KillNwYColor					= _co_gbl_mint
+// vFxMkSs_KillTykColor					= _co_gbl_pink
+// vFxMkSs_KillSydColor					= _co_gbl_yellow
+
+vFxMkSs_NoneColor						= _co_gbl_black
+
+
+/// ─── Timezone
+optFxMkSs_TimeZone						= input.string	(defval = 'New York',	title = 'Timezone',											group = fxMrkSsGroupGral,			tooltip = tooltipFfxMkSs_TimeZ ,
+		  options						= 				['New York', 'Chicago', 'NYSE', 'Londres', 'Tokyo', 'Sydney', 'Argentina'])
+showFxMkSs_History						= input.string	(defval = vFxMkSs_Yes,	title = 'Historico',										group = fxMrkSsGroupGral,			options = [vFxMkSs_Yes, vFxMkSs_No]) == vFxMkSs_Yes
+vFxMkSs_Lookback						= 12 * 60
+
+/// ─── Sessions
+
+/// ─── London
+showFxMkSs_SessLon						= input.bool	(true,					title = 'Londres  ',										group = fxMrkSsGroupLon,			inline = 'session1_1') and vFxMkSs_Show
+vFxMkSs_SessLnLabel						= input.string	('Londres',				title = ' ',												group = fxMrkSsGroupLon,			inline = 'session1_1')
+vFxMkSs_SessLnColor						= input.color	(vFxMkSs_LondonColor,	title = ' ',												group = fxMrkSsGroupLon,			inline = 'session1_1')
+vFxMkSs_SessLnTimeZ						= input.session	('0300-1200',			title = 'Periodo',											group = fxMrkSsGroupLon)
+vFxMkSs_SessLnExtend					= input.string	(vFxMkSs_No,			title = 'Extender',											group = fxMrkSsGroupLon,
+		  options						= [vFxMkSs_No, vFxMkSs_Extend])
+
+/// Killzones London
+showFxMkSs_KillLonOpen					= input.bool	(true,					title = 'KillZone Open',									group = fxMrkSsGroupLon,			inline = 'KillLonOpen')
+vFxMkSs_KillLonTimeOpen					= input.session	('0330-0445',			title = ' ',												group = fxMrkSsGroupLon,			inline = 'KillLonOpen')
+showFxMkSs_KillLonRally					= input.bool	(true,					title = 'KillZone Rally',									group = fxMrkSsGroupLon,			inline = 'KillLonRally')
+vFxMkSs_KillLonTimeRally				= input.session	('0515-0615',			title = ' ',												group = fxMrkSsGroupLon,			inline = 'KillLonRally')
+showFxMkSs_KillLonClose					= input.bool	(true,					title = 'KillZone Close',									group = fxMrkSsGroupLon,			inline = 'KillLonClose')
+vFxMkSs_KillLonTimeClose				= input.session	('1115-1200',			title = ' ',												group = fxMrkSsGroupLon,			inline = 'KillLonClose')
+
+/// ─── New York
+showFxMkSs_SessNy						= input.bool	(true,					title = 'New York  ',										group = fxMrkSsGroupNewY,			inline = 'session2_1') and vFxMkSs_Show
+vFxMkSs_SessNyLabel						= input.string	('New York',			title = ' ',												group = fxMrkSsGroupNewY,			inline = 'session2_1')
+vFxMkSs_SessNyColor						= input.color	(vFxMkSs_NewYorkColor,	title = ' ',												group = fxMrkSsGroupNewY,			inline = 'session2_1')
+vFxMkSs_SessNyTimeZ						= input.session	('0800-1700',			title = 'Periodo',											group = fxMrkSsGroupNewY)
+vFxMkSs_SessNyExtend					= input.string	(vFxMkSs_No,			title = 'Extender',											group = fxMrkSsGroupNewY,
+		  options						= [vFxMkSs_No, vFxMkSs_Extend])
+
+/// Killzones New York
+showFxMkSs_KillNwYOpen					= input.bool	(true,					title = 'KillZone Open',									group = fxMrkSsGroupNewY,			inline = 'KillNwYOpen')
+vFxMkSs_KillNwYTimeOpen					= input.session	('0700-0830',			title = ' ',												group = fxMrkSsGroupNewY,			inline = 'KillNwYOpen')
+showFxMkSs_KillNwYRally					= input.bool	(true,					title = 'KillZone Rally',									group = fxMrkSsGroupNewY,			inline = 'KillNwYRally')
+vFxMkSs_KillNwYTimeRally				= input.session	('0930-1045',			title = ' ',												group = fxMrkSsGroupNewY,			inline = 'KillNwYRally')
+showFxMkSs_KillNwYClose					= input.bool	(true,					title = 'KillZone Close',									group = fxMrkSsGroupNewY,			inline = 'KillNwYClose')
+vFxMkSs_KillNwYTimeClose				= input.session	('1230-1345',			title = ' ',												group = fxMrkSsGroupNewY,			inline = 'KillNwYClose')
+
+/// ─── Tokyo
+showFxMkSs_SessTk						= input.bool	(true,					title = 'Tokyo   ',											group = fxMrkSsGroupTyo,			inline = 'session3_1') and vFxMkSs_Show
+vFxMkSs_SessTkLabel						= input.string	('Tokyo',				title = ' ',												group = fxMrkSsGroupTyo,			inline = 'session3_1')
+vFxMkSs_SessTkColor						= input.color	(vFxMkSs_TokyoColor,	title = ' ',												group = fxMrkSsGroupTyo,			inline = 'session3_1')
+vFxMkSs_SessTkTimeZ						= input.session	('1800-0300',			title = 'Periodo',											group = fxMrkSsGroupTyo)
+vFxMkSs_SessTkExtend					= input.string	(vFxMkSs_No,			title = 'Extender',											group = fxMrkSsGroupTyo,
+		  options						= [vFxMkSs_No, vFxMkSs_Extend])
+
+/// ─── Sydney
+showFxMkSs_SessSyd						= input.bool	(false,					title = 'Sydney  ',											group = fxMrkSsGroupSyd,			inline = 'session4_1') and vFxMkSs_Show
+vFxMkSs_SessSdLabel						= input.string	('Sydney',				title = ' ',												group = fxMrkSsGroupSyd,			inline = 'session4_1')
+vFxMkSs_SessSdColor						= input.color	(vFxMkSs_SydneyColor,	title = ' ',												group = fxMrkSsGroupSyd,			inline = 'session4_1')
+vFxMkSs_SessSdTimeZ						= input.session	('1600-0100',			title = 'Periodo',											group = fxMrkSsGroupSyd)
+vFxMkSs_SessSdExtend					= input.string	(vFxMkSs_No,			title = 'Extender',											group = fxMrkSsGroupSyd,
+		  options						= [vFxMkSs_No, vFxMkSs_Extend])
+
+/// ─── Show & Styles
+optFxMkSs_LineStyle						= input.string	('····',				title = 'Box style', 										group = fxMrkSsGroupLine,
+		  options						= 				['⎯⎯⎯⎯', '----', '····'])
+vFxMkSs_BorderWidth						= input.int		(1,						title = 'Ancho de Linea',	minval = 0,						group = fxMrkSsGroupLine)
+vFxMkSs_BgOpacity						= input.int		(90,					title = 'Transp fondo',	minval = 0,maxval = 100,step = 1,	group = fxMrkSsGroupLine,			tooltip = 'backg color')
+vFxMkSs_LineOpacity						= input.int		(20,					title = 'Transp contorno',minval = 0,maxval = 100,step = 1,	group = fxMrkSsGroupLine,			tooltip = 'border color')
+
+/// ─── Labels
+showFxMkSs_Labels						= input.bool	(true,					title = 'Información',										group = fxMrkSsGroupTag,			inline = 'label_show') and vFxMkSs_Show
+optFxMkSs_LabelSize						= input.string	('Pequeño',				title = '',													group = fxMrkSsGroupTag,			inline = 'label_show',
+		  options						= 				['Auto', 'Mini', 'Pequeño', 'Normal', 'Grande', 'Enorme'])
+optFxMkSs_LabelPositionY				= input.string	('Arriba',				title = '',													group = fxMrkSsGroupTag,			inline = 'label_loc',
+		  options						= 				['Arriba', 'Abajo'])
+optFxMkSs_LabelPositionIn				= input.string	('Externo',				title = '',													group = fxMrkSsGroupTag,			inline = 'label_loc',
+		  options						= 				['Interno', 'Externo'])
+
+/// ─── Info
+showFxMkSs_LabelName					= input.bool	(true,					title = 'Sesión',											group = fxMrkSsGroupTag,			inline = 'label_format')
+showFxMkSs_LabelDay						= input.bool	(true,					title = 'Dia',												group = fxMrkSsGroupTag,			inline = 'label_format')
+showFxMkSs_LabelPrice					= input.bool	(false,					title = 'Precio',											group = fxMrkSsGroupTag,			inline = 'label_format')
+showFxMkSs_LabelPips					= input.bool	(true,					title = 'Pips',												group = fxMrkSsGroupTag,			inline = 'label_format')
+
+vFxMkSsPips								= syminfo.mintick * 10
+vFxMkSs_MaxBars							= 500
+
+vFxMkSs_FmtPrice						= '{0,number,#.#####}'
+vFxMkSs_FmtPips							= '{0,number,#.#}'
+vFxMkSs_IconSeparator					= ' • '
+vFxMkSs_IsWeekends						= dayofweek == 7 or dayofweek == 1
+
+optFxMkSs_LineKillzone					= '⎯⎯⎯⎯'
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――――――
+
+
+/// ─── function visual temp mayor
+FunFxMkSs_AreasIfTimeframe(_cond) =>
+	switch _cond
+		'2 Horas'						=> 120	
+		'1 Hora'						=> 60	
+		'45 min'						=> 45	
+		'30 min'						=> 30	
+
+
+FunFxMkSs_GetPeriod(_session, _start, _lookback) =>
+	_result								= math.max(_start, 1)
+	for i 								= _result to _lookback
+		if na(_session[i+1])			and _session[i]
+			_result						:= i+1
+			break
+	_result
+
+FunFxMkSs_GetStarted(_session) => na(_session[1]) and _session
+
+FunFxMkSs_GetEnded(_session) => na(_session) and _session[1]
+
+FunFxMkSs_GetLabelPosition(_y, _side) =>
+	switch _y
+		'top'							=> _side == 'outside' ? label.style_label_lower_left : label.style_label_upper_left
+		'bottom'						=> _side == 'outside' ? label.style_label_upper_left : label.style_label_lower_left
+
+vFxMkSs_LabelPosition					= FunFxMkSs_GetLabelPosition(FunGlobalVertical(optFxMkSs_LabelPositionY), FunGlobalPositionIn(optFxMkSs_LabelPositionIn))
+
+/// ─── Labels
+FunFxMkSs_RenderLabel(_show, _session, _is_started, _color, _top, _bottom, _text, _delete_history) =>
+	var label my_label					= na
+	var int start_time					= na
+
+	v_position_y						= (FunGlobalVertical(optFxMkSs_LabelPositionY) == 'top') ? _top : _bottom
+	v_label								= array.new_string()
+	v_chg								= _top - _bottom
+	
+	if _is_started
+		start_time						:= time
+	
+	if showFxMkSs_LabelName and not na(_text)
+		array.push(v_label, _text)
+
+	/// day
+	if showFxMkSs_LabelDay
+		array.push(v_label, FunGlobalDayofWeek(dayofweek(start_time, FunGlobalTimeZone(optFxMkSs_TimeZone))))
+
+	/// price
+	if showFxMkSs_LabelPrice
+		array.push(v_label, str.format(vFxMkSs_FmtPrice, v_chg))
+
+	/// pip
+	if showFxMkSs_LabelPips
+		array.push(v_label, str.format(vFxMkSs_FmtPips, v_chg / vFxMkSsPips) + ' pips')
+
+	if _show
+		if _is_started
+			my_label					:= label.new(time, v_position_y, array.join(v_label, vFxMkSs_IconSeparator),
+				  textcolor				= color.new(_color, vFxMkSs_LineOpacity),
+				  color					= color.new(vFxMkSs_NoneColor, 100),
+				  size					= FunGlobalTextSize(optFxMkSs_LabelSize),
+				  style					= vFxMkSs_LabelPosition,
+				  xloc					= xloc.bar_time,
+				  force_overlay			= true)
+			
+			if _delete_history
+				label.delete(my_label[1])
+
+		if _session
+			label.set_y(my_label, v_position_y)
+			label.set_text(my_label, array.join(v_label, vFxMkSs_IconSeparator))
+
+/// ─── Markets ───
+FunFxMkSs_RenderSession(_show, _session, _is_started, _is_ended, _color, _top, _bottom, _extend, _is_extend, _delete_history) =>
+	var box my_box						= na
+
+	x0_1								= ta.valuewhen(na(_session[1])	and _session,		bar_index, 1)
+	x0_2								= ta.valuewhen(na(_session)		and _session[1],	bar_index, 0)
+	var x1								= 0
+	var x2								= 0
+	var session_open					= 0.0
+	var session_high					= 0.0
+	var session_low						= 0.0
+
+	if _show
+		if _is_started
+			diff						= math.abs(x0_2 - x0_1)
+			x1							:= bar_index
+			x2							:= bar_index + (math.min(diff, vFxMkSs_MaxBars))
+			my_box						:= box.new(x1, _top, x2, _bottom,
+				  border_color			= color.new(_color, vFxMkSs_LineOpacity),
+				  border_width			= vFxMkSs_BorderWidth,
+				  border_style			= FunGlobalLineStyle(optFxMkSs_LineStyle),
+				  bgcolor				= color.new(_color, vFxMkSs_BgOpacity),
+				  force_overlay			= true)
+
+			session_open				:= open
+			session_high				:= _top
+			session_low					:= _bottom
+
+			if _is_extend
+				box.set_extend(my_box, extend.right)
+
+			if _delete_history
+				box.delete(my_box[1])
+
+		else if _session
+			box.set_top(my_box, _top)
+			box.set_bottom(my_box, _bottom)
+
+			session_high				:= _top
+			session_low					:= _bottom
+		
+		else if _is_ended
+			session_open				:= na
+			box.set_right(my_box, bar_index)
+
+	[x1, x2, session_open, session_high, session_low]
+
+/// ─── Boxes
+FunFxMkSs_DrawBox(_show, _session, _color, _label, _extend, _lookback) =>
+	_max								= FunFxMkSs_GetPeriod(_session, 1, _lookback)
+	_top								= ta.highest(high, _max)
+	_bottom								= ta.lowest(low, _max)
+	
+	_is_started							= FunFxMkSs_GetStarted(_session)
+	_is_ended							= FunFxMkSs_GetEnded(_session)
+	_is_extend							= _extend != vFxMkSs_No
+
+	delete_history						= (not showFxMkSs_History) or _is_extend
+
+	[x1, x2, _open, _high, _low]		= FunFxMkSs_RenderSession(_show, _session, _is_started, _is_ended, _color, _top, _bottom, _extend, _is_extend, delete_history)
+
+	if showFxMkSs_Labels
+		FunFxMkSs_RenderLabel(_show, _session, _is_started, _color, _top, _bottom, _label, delete_history)
+
+	[_session, _open, _high, _low]
+
+/// ─── Killzones
+FunFxMkSs_RenderKillZones(_show, _on, _color) =>
+	if _show
+		var int Bar						= 0
+		var float High					= 0.0 
+		var float Low					= 0.0
+		var box BoX						= na
+		var label LabeL					= na 
+
+		if  (_on[1] == 0 and _on == 1)
+			Bar							:= bar_index
+			High						:= high
+			Low							:= low
+
+		else if (_on[1] == 1 and _on == 1)
+			High						:= math.max(high , High) 
+			Low							:= math.min(low , Low)
+
+		else if _on == 0
+			High						:= 0.0 
+			Low							:= 0.0
+			Bar							:= 0
+
+		if _on > _on[1]
+			BoX							:= box.new(bar_index, High, bar_index, Low,
+				  bgcolor				= color.new(_color, 70),
+				  border_color			= color.new(_color, 90),
+				  border_width			= 1,
+				  border_style			= FunGlobalLineStyle(optFxMkSs_LineKillzone),
+				  force_overlay			= true)
+
+		if _on and _on == _on[1]
+			box.set_top(BoX, High)
+			box.set_bottom(BoX, Low)
+			box.set_right(BoX, bar_index)
+			label.set_x(LabeL,math.round(math.avg(Bar,bar_index)))
+			label.set_y(LabeL, High)
+
+		[High , Low]
+
+
+/// ＩＮＳＴＡＮＣＳ ――――――――――――――――――――
+
+
+/// ─── Timeframe
+iTimeMkSs_TimeFCond						= FunFxMkSs_AreasIfTimeframe(strGlobalAreasTimeFrame)
+bool	timeMkSs_TimeFrameIf			= str.tonumber(timeframe.period)		<=	iTimeMkSs_TimeFCond
+
+string	MkSs_timeZone					= (FunGlobalTimeZone(optFxMkSs_TimeZone) == vFxMkSs_No or FunGlobalTimeZone(optFxMkSs_TimeZone) == '') ? na : FunGlobalTimeZone(optFxMkSs_TimeZone)
+
+/// ─── Timeframe London
+int		timeMkSs_SessLon				= time(timeframe.period,	vFxMkSs_SessLnTimeZ,	MkSs_timeZone)
+
+/// ─── Timeframe New York
+int timeMkSs_SessNewY					= time(timeframe.period,	vFxMkSs_SessNyTimeZ,	MkSs_timeZone)
+
+/// ─── Timeframe Tokyo
+int timeMkSs_SessTyk					= time(timeframe.period,	vFxMkSs_SessTkTimeZ,	MkSs_timeZone)
+
+/// ─── Timeframe Sydney
+int timeMkSs_SessSyd					= time(timeframe.period,	vFxMkSs_SessSdTimeZ,	MkSs_timeZone)
+
+/// ─── killzones london
+
+timeMkSs_KillLonOpen					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillLonTimeOpen,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+timeMkSs_KillLonRally					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillLonTimeRally,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+timeMkSs_KillLonClose					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillLonTimeClose,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+
+/// ─── killzones new york
+timeMkSs_KillNwYOpen					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillNwYTimeOpen,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+timeMkSs_KillNwYRally					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillNwYTimeRally,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+timeMkSs_KillNwYClose					= math.sign(nz(time(timeframe.period,		vFxMkSs_KillNwYTimeClose,	FunGlobalTimeZone(optFxMkSs_TimeZone))))
+
+
+/// ＰＬＯＴ ――――――――――――――――――――――――――――――
+
+
+/// ─── Session London
+[DRAWMkSsSessLon,	DwMkSsSessLon_Open,		DwMkSsSessLon_High,		DwMkSsSessLon_Low]		= FunFxMkSs_DrawBox(display_FxMkSs__Sessions and timeMkSs_TimeFrameIf and showFxMkSs_SessLon,	timeMkSs_SessLon,	vFxMkSs_SessLnColor,	vFxMkSs_SessLnLabel,	vFxMkSs_SessLnExtend,	vFxMkSs_Lookback)
+
+/// ─── Session New York
+[DRAWMkSsSessNewY,	DwMkSsSessNewY_Open,	DwMkSsSessNewY_High,	DwMkSsSessNewY_Low]		= FunFxMkSs_DrawBox(display_FxMkSs__Sessions and timeMkSs_TimeFrameIf and showFxMkSs_SessNy,	timeMkSs_SessNewY,	vFxMkSs_SessNyColor,	vFxMkSs_SessNyLabel,	vFxMkSs_SessNyExtend,	vFxMkSs_Lookback)
+
+/// ─── Session Tokyo
+[DRAWMkSsSessTyk,	DwMkSsSessTyk_Open,		DwMkSsSessTyk_High,		DwMkSsSessTyk_Low]		= FunFxMkSs_DrawBox(display_FxMkSs__Sessions and timeMkSs_TimeFrameIf and showFxMkSs_SessTk,	timeMkSs_SessTyk,	vFxMkSs_SessTkColor,	vFxMkSs_SessTkLabel,	vFxMkSs_SessTkExtend,	vFxMkSs_Lookback)
+
+/// ─── Session Sydney
+[DRAWMkSsSessSyd,	DwMkSsSessSyd_Open,		DwMkSsSessSyd_High,		DwMkSsSessSyd_Low]		= FunFxMkSs_DrawBox(display_FxMkSs__Sessions and timeMkSs_TimeFrameIf and showFxMkSs_SessSyd,	timeMkSs_SessSyd,	vFxMkSs_SessSdColor,	vFxMkSs_SessSdLabel,	vFxMkSs_SessSdExtend,	vFxMkSs_Lookback)
+
+
+/// ─── KillZones London
+[DwMkSs_KillLon_Open,	DwMkSs_KillLon_Op]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessLon	and	showFxMkSs_KillLonOpen,		timeMkSs_KillLonOpen,	vFxMkSs_KillLonColor)
+
+[DwMkSs_KillLon_Rally,	DwMkSs_KillLon_Rl]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessLon	and	showFxMkSs_KillLonRally,	timeMkSs_KillLonRally,	vFxMkSs_KillLonColor)
+
+[DwMkSs_KillLon_Close,	DwMkSs_KillLon_Cl]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessLon	and	showFxMkSs_KillLonClose,	timeMkSs_KillLonClose,	vFxMkSs_KillLonColor)
+
+/// ─── KillZones New York
+[DwMkSs_KillNwY_Open,	DwMkSs_KillNwY_Op]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessNy	and	showFxMkSs_KillNwYOpen,		timeMkSs_KillNwYOpen,	vFxMkSs_KillNwYColor)
+
+[DwMkSs_KillNwY_Rally,	DwMkSs_KillNwY_Rl]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessNy	and	showFxMkSs_KillNwYRally,	timeMkSs_KillNwYRally,	vFxMkSs_KillNwYColor)
+
+[DwMkSs_KillNwY_Close,	DwMkSs_KillNwY_Cl]		= FunFxMkSs_RenderKillZones(display_FxMkSs__Sessions	and	timeMkSs_TimeFrameIf	and showFxMkSs_SessNy	and	showFxMkSs_KillNwYClose,	timeMkSs_KillNwYClose,	vFxMkSs_KillNwYColor)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	AI Adaptive Money Flow Index║
+/// ║	 @	Allen.					║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+/// Title Indicator ――――――――――――――――――――
+adapMonGrpSet							= 'ADAPTATIVE MFI'
+
+adapMonToolAdj							= 'Ajusta el MFI en su lugar para que los niveles de Sobrecompra, Sobreventa y Neutral permanezcan fijos'
+adapMonGrpLim							= 'Clustering Setting'
+adapMonGrpApar							= 'Apariencia'
+
+adapMonColorLong						= 				_co_gbl_buy
+adapMonColorShort						= 				_co_gbl_sell
+adapMonColorAux							= 				_co_gbl_white
+adapMonColorDark						= 				_co_gbl_black
+
+showadapMonVarADJ						= input.bool	(defval = true,				title = 'Mostrar MFI ajustado',								group = adapMonGrpApar,		tooltip = adapMonToolAdj)
+showadapMonStDev						= input.bool	(defval = false,			title = 'Mostrar Desviación Estándar',						group = adapMonGrpApar,		tooltip = adapMonToolAdj)
+
+adapMonVarLENGTH						= input.int		(defval = 10,				title = 'Longitud MFI',						minval = 1,		group = adapMonGrpSet)	// 14
+adapMonVarDataLength					= input.int		(defval = 300,				title = 'Nº de datos de entrenamiento',		minval = 1,		group = adapMonGrpLim)
+adapMonVarIterations					= input.int		(defval = 5,				title = 'Nº de iteraciones por barra',		minval = 1,		group = adapMonGrpLim)
+
+float adapMonVarOverbought				= 				75.0			// 80.0
+float adapMonVarNeutral					= 				50.0
+float adapMonVarOversold				= 				25.0			// 20.0
+
+adapMonVarSRC							=				gbl_Source_3	// Fuente MFI
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――――――
+
+
+adapMonVarOSC							= ta.mfi(adapMonVarSRC, adapMonVarLENGTH)
+
+var adapMonArrOB						= array.new_float(1, adapMonVarOverbought)
+var adapMonArrNE						= array.new_float(1, adapMonVarNeutral)
+var adapMonArrOS						= array.new_float(1, adapMonVarOversold)
+
+adapMonArrNE_NEW						= array.avg(adapMonArrNE)
+adapMonArrOB_NEW						= array.avg(adapMonArrOB)
+adapMonArrOS_NEW						= array.avg(adapMonArrOS)
+
+positionBetweenBands					= 100 * ((adapMonVarOSC - adapMonArrOS_NEW)/(adapMonArrOB_NEW - adapMonArrOS_NEW))
+
+adapMonIfVAL							= showadapMonVarADJ ? positionBetweenBands : adapMonVarOSC
+
+adapMonFuncStD							= ta.stdev(adapMonIfVAL, adapMonVarLENGTH)
+
+ifAdapMonDesvStd						= showadapMonStDev ? adapMonFuncStD	: adapMonIfVAL
+
+adapMonIfCOLOR100						= adapMonVarOSC > adapMonArrNE_NEW		? color.new(adapMonColorLong, 75)		: color.new(adapMonColorShort, 75)
+
+
+/// ＰＬＯＴ ――――――――――――――――――――――――――
+
+
+adapMonPlotIf							= strGlobalMultiHistogram  == 'Mfi' or strGlobalMultiHistogram == 'Dual' ? 'True' : 'False'
+
+adapMonPlotMAIN							= plot	(adapMonPlotIf == 'True' and display_adapMon_MFI ? ifAdapMonDesvStd : na,						color = adapMonIfCOLOR100)
+adapMonPlotMID							= plot	(adapMonPlotIf == 'True' and display_adapMon_MFI and showadapMonVarADJ ? adapMonVarNeutral	:	adapMonArrNE_NEW, color = adapMonIfCOLOR100)
+
+// adapMonPlotStDev						= plot	(strGlobalMultiHistogram == 'Mfi' and display_adapMon_MFI ? adapMonFuncST : na,					color = adapMonIfCOLOR100)
+
+/// ─── fill areas de tendencia
+fill									(adapMonPlotMID, adapMonPlotMAIN,																		color = adapMonIfCOLOR100, title = 'Area de Tendencia')
+fill									(adapMonPlotMID, adapMonPlotMAIN, ifAdapMonDesvStd, showadapMonVarADJ ? 50 : adapMonArrNE_NEW,			color.new(chart.bg_color, 1000), adapMonVarOSC > adapMonArrNE_NEW ? adapMonColorLong : adapMonColorShort)
+// fill									(adapMonPlotMID, adapMonPlotMAIN, ifAdapMonDesvStd, _plot_gbl_midline,									color.new(chart.bg_color, 1000), adapMonVarOSC > adapMonArrNE_NEW ? adapMonColorLong : adapMonColorShort)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║ 	Market Structure Oscilador	║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+co_msOscBuy								= _co_gbl_up
+co_msOscSell							= _co_gbl_dn
+co_msOscLong							= _co_gbl_buy
+co_msOscShort							= _co_gbl_sell
+
+co_msOscRange							= _co_gbl_white
+msOscilColorOsc							= _co_gbl_white
+msOscilColorMid							= _co_gbl_white
+
+display									= display.all - display.status_line	
+
+/// Title Indicator ――――――――――――――――――――
+msOsc_VarsGroup							= 'OSCILADOR MARKET STRUCTURE'
+
+msOsc_WeightK1							= input.float	(defval = 1,					title = '  Escala Corta',					minval = 0,			group = msOsc_VarsGroup,	step=.1,		display = display)
+msOsc_WeightK2							= input.float	(defval = 3,					title = '  Escala Intermedia',				minval = 0,			group = msOsc_VarsGroup,	step=.1,		display = display)
+msOsc_WeightK3							= input.float	(defval = 2,					title = '  Escala Larga',					minval = 0,			group = msOsc_VarsGroup,	step=.1,		display = display)
+msOsc_Norm_Smooth						= input.int		(defval = 4,					title = '  Oscilador Suavizado',			minval = 1,			group = msOsc_VarsGroup,					display = display)
+
+msOsc_Group								= 'Oscilador Gradiente'
+show_msOsc_OSC							= input			(defval = true,					title = 'Oscilador Cycle - Gradiente',							group = msOsc_Group)
+
+cyc_Group								= 'Oscilador Cycle'
+cycleOpt								= input			(defval = false,				title = 'Oscilador Cycle - Histograma',							group = cyc_Group)
+cyc_Smooth								= input.int		(defval = 7,					title = '  Cycle Marca Longitud',			minval = 1,			group = cyc_Group,						display = display)
+
+genericGroup							= 'Mk Osc en Gráfico'
+msOnChart1								= input			(defval = true,					title = 'Estructura de rango Corto',							group = genericGroup)
+msOnChartK1								= input.string	(defval = '····',				title = 'Linea  ',		options = ['⎯⎯⎯⎯', '----', '····'],		group = genericGroup,	inline = 'K1',	display = display)
+stMSLblK1T								= input.string	(defval = 'Disabled',			title = 'Tags  ',		options = ['Enabled', 'Disabled'],		group = genericGroup,	inline = 'K1',	display = display),	stMSLblK1 = stMSLblK1T == 'Enabled'
+
+msOnChart2								= input			(defval = true,					title = 'Estructura de rango Intermedio',						group = genericGroup)
+msOnChartK2								= input.string	(defval = '----',				title = 'Linea  ',		options = ['⎯⎯⎯⎯', '----', '····'],		group = genericGroup,	inline = 'K2',	display = display)
+stMSLblK2T								= input.string	(defval = 'Disabled',			title = 'Tags  ',		options = ['Enabled', 'Disabled'],		group = genericGroup,	inline = 'K2',	display = display),	stMSLblK2 = stMSLblK2T == 'Enabled'
+
+msOnChart3								= input			(defval = true,					title = 'Estructura de rango Largo', 							group = genericGroup)
+msOnChartK3								= input.string	(defval = '⎯⎯⎯⎯',				title = 'Linea  ',		options = ['⎯⎯⎯⎯', '----', '····'],		group = genericGroup,	inline = 'K3',	display = display)
+stMSLblK3T								= input.string	(defval = 'Enabled',			title = 'Tags  ',		options = ['Enabled', 'Disabled'],		group = genericGroup,	inline = 'K3',	display = display),	stMSLblK3 = stMSLblK3T == 'Enabled'
+
+msOscSizeBosChoch						= size.tiny
+
+
+/// ＴＩＰＳ ―――――――――――――――――――――――――――
+
+
+type SWINGS
+	float	lastPrice
+	float	midPrice
+	float	prevPrice
+
+	int		lastIndex
+	int		midIndex
+	int		prevIndex
+
+	bool	isCrossed
+
+type MS
+	int		type						= 0
+
+
+/// ＩＮＳＴＡＮＣＳ ――――――――――――――――――――
+
+
+var SWINGS stLow						= SWINGS.new()
+var SWINGS stHigh						= SWINGS.new()
+var MS stMS								= MS.new()
+
+var SWINGS itLow						= SWINGS.new()
+var SWINGS itHigh						= SWINGS.new()
+var MS itMS								= MS.new()
+
+var SWINGS ltLow						= SWINGS.new()
+var SWINGS ltHigh						= SWINGS.new()
+var MS ltMS								= MS.new()
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――
+
+
+Fun_msOsc_queryPatterns(lastPrice, midPrice, prevPrice, isSwingHigh) =>
+	if isSwingHigh
+		prevPrice < midPrice and midPrice >= lastPrice
+	else
+		prevPrice > midPrice and midPrice <= lastPrice
+
+method Fun_msOsc_queryPatterns(SWINGS this, isSwingHigh) =>
+	if isSwingHigh
+		this.prevPrice < this.midPrice and this.midPrice >= this.lastPrice
+	else
+		this.prevPrice > this.midPrice and this.midPrice <= this.lastPrice
+
+method Fun_msOsc_updatePattern(SWINGS this, _price, _index) =>
+	this.isCrossed					:= false
+	this.prevPrice					:= this.midPrice, this.midPrice := this.lastPrice, this.lastPrice := _price
+	this.prevIndex					:= this.midIndex, this.midIndex := this.lastIndex, this.lastIndex := _index
+
+method Fun_msOsc_setType(MS this, value) =>
+	this.type						:= value
+
+Fun_msOsc_normalize(_buy, _sell, _smooth) =>
+	var _os							= 0
+	var float _max					= na
+	var float _min					= na
+	_os := _buy ? 1 : _sell ? -1 : _os
+	
+	_max := _os > _os[1] ? gblSource.C : _os < _os[1] ? _max : math.max(gblSource.C, _max)
+	_min := _os < _os[1] ? gblSource.C : _os > _os[1] ? _min : math.min(gblSource.C, _min)
+
+	ta.sma((gblSource.C - _min)/(_max - _min), _smooth) * 100
+
+Fun_msOsc_shortMarketStructure() => 
+
+	_bull							= false
+	_bear							= false
+
+	if Fun_msOsc_queryPatterns(gblSource.H, gblSource.H[1], gblSource.H[2], true )
+		stHigh.Fun_msOsc_updatePattern(gblSource.H[1], bar_index[1])
+		stHigh.isCrossed			:= false
+
+	if gblSource.C > stHigh.lastPrice and not stHigh.isCrossed
+		stHigh.isCrossed			:= true
+		_bull						:= true
+
+	if Fun_msOsc_queryPatterns(gblSource.L , gblSource.L[1] , gblSource.L[2] , false) 
+		stLow.isCrossed				:= false
+		stLow.Fun_msOsc_updatePattern(gblSource.L[1], bar_index[1])
+
+	if gblSource.C < stLow.lastPrice and not stLow.isCrossed
+		stLow.isCrossed				:= true
+		_bear						:= true
+
+	Fun_msOsc_normalize(_bull, _bear, msOsc_Norm_Smooth)
+
+Fun_msOsc_marketStructure(SWINGS hSwingHigh, SWINGS hSwingLow, SWINGS lSwingHigh, SWINGS lSwingLow) => 
+
+	_bull							= false
+	_bear							= false 
+
+	cSwingHigh						= lSwingHigh.Fun_msOsc_queryPatterns(true)
+
+	if cSwingHigh and cSwingHigh != cSwingHigh[1]
+		hSwingHigh.Fun_msOsc_updatePattern(lSwingHigh.midPrice, lSwingHigh.midIndex)
+		hSwingHigh.isCrossed		:= false
+
+	if gblSource.C > hSwingHigh.lastPrice and not hSwingHigh.isCrossed
+		hSwingHigh.isCrossed		:= true
+		_bull						:= true
+
+	cSwingLow						= lSwingLow.Fun_msOsc_queryPatterns(false)
+
+	if cSwingLow and cSwingLow != cSwingLow[1]
+		hSwingLow.Fun_msOsc_updatePattern(lSwingLow.midPrice, lSwingLow.midIndex)
+		hSwingLow.isCrossed			:= false
+
+	if gblSource.C < hSwingLow.lastPrice and not hSwingLow.isCrossed
+		hSwingLow.isCrossed			:= true
+		_bear						:= true
+
+	Fun_msOsc_normalize(_bull, _bear, msOsc_Norm_Smooth)
+
+Fun_msOsc_collectData() => [Fun_msOsc_shortMarketStructure(), Fun_msOsc_marketStructure(itHigh, itLow, stHigh, stLow), Fun_msOsc_marketStructure(ltHigh, ltLow, itHigh, itLow)]
+
+
+/// ＣＡＬＣＵＬＡＴＩＯＮＳ ――――――――――――
+
+
+log.info('yaz_kizim {0} {1}', ltHigh.lastPrice, ltHigh.isCrossed)
+
+if msOnChart1
+	if gblSource.C > stHigh.lastPrice and not stHigh.isCrossed
+
+		line.new(stHigh.lastIndex, stHigh.lastPrice, gblSource.I, stHigh.lastPrice,
+					  color				= color.new(co_msOscLong, 35),
+					  style				= FunGlobalLineStyle(msOnChartK1),
+					  width				= 1,
+					  force_overlay		= true)
+
+		if stMSLblK1
+			box.new(stHigh.lastIndex, stHigh.lastPrice, gblSource.I, stHigh.lastPrice,
+					  border_color		= color(na),
+					  text				= stMS.type < 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscLong, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_bottom,
+					  force_overlay		= true)
+
+			stMS.Fun_msOsc_setType(1)
+
+	if gblSource.C < stLow.lastPrice and not stLow.isCrossed
+
+		line.new(stLow.lastIndex, stLow.lastPrice, gblSource.I, stLow.lastPrice,
+					  color				= color.new(co_msOscShort, 35),
+					  style				= FunGlobalLineStyle(msOnChartK1),
+					  width				= 1,
+					  force_overlay		= true)
+
+		if stMSLblK1
+			box.new(stLow.lastIndex, stLow.lastPrice, gblSource.I, stLow.lastPrice,
+					  border_color		= color(na),
+					  text				= stMS.type > 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscShort, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_top,
+					  force_overlay		= true)
+
+			stMS.Fun_msOsc_setType(-1)
+
+if msOnChart2
+	if gblSource.C > itHigh.lastPrice and not itHigh.isCrossed
+
+		line.new(itHigh.lastIndex, itHigh.lastPrice, gblSource.I, itHigh.lastPrice,
+					  color				= color.new(co_msOscLong, 35),
+					  style				= FunGlobalLineStyle(msOnChartK2),
+					  width				= 1,
+					  force_overlay		= true)
+		if stMSLblK2
+			box.new(itHigh.lastIndex, itHigh.lastPrice, gblSource.I, itHigh.lastPrice,
+					  border_color		= color(na),
+					  text				= itMS.type < 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscLong, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_bottom,
+					  force_overlay		= true)
+
+			itMS.Fun_msOsc_setType(1)
+
+	if gblSource.C < itLow.lastPrice and not itLow.isCrossed
+
+		line.new(itLow.lastIndex, itLow.lastPrice, gblSource.I, itLow.lastPrice,
+					  color				= color.new(co_msOscShort, 35),
+					  style				= FunGlobalLineStyle(msOnChartK2),
+					  width				= 1,
+					  force_overlay		= true)
+		if stMSLblK2
+			box.new(itLow.lastIndex, itLow.lastPrice, gblSource.I, itLow.lastPrice,
+					  border_color		= color(na),
+					  text				= itMS.type > 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscShort, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_top,
+					  force_overlay		= true)
+
+			itMS.Fun_msOsc_setType(-1)
+
+if msOnChart3
+	if gblSource.C > ltHigh.lastPrice and not ltHigh.isCrossed
+
+		line.new(ltHigh.lastIndex, ltHigh.lastPrice, gblSource.I, ltHigh.lastPrice,
+					  color				= color.new(co_msOscLong, 35),
+					  style				= FunGlobalLineStyle(msOnChartK3),
+					  width				= 1,
+					  force_overlay		= true)
+
+		if stMSLblK3
+			box.new(ltHigh.lastIndex, ltHigh.lastPrice, gblSource.I, ltHigh.lastPrice,
+					  border_color		= color(na),
+					  text				= ltMS.type < 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscLong, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_bottom,
+					  force_overlay		= true)
+
+			ltMS.Fun_msOsc_setType(1)
+
+	if gblSource.C < ltLow.lastPrice and not ltLow.isCrossed
+
+		line.new(ltLow.lastIndex, ltLow.lastPrice, gblSource.I, ltLow.lastPrice,
+					  color				= color.new(co_msOscShort, 35),
+					  style				= FunGlobalLineStyle(msOnChartK3),
+					  width				= 1,
+					  force_overlay		= true)
+
+		if stMSLblK3
+			box.new(ltLow.lastIndex, ltLow.lastPrice, gblSource.I, ltLow.lastPrice,
+					  border_color		= color(na),
+					  text				= ltMS.type > 0 ? 'CHoCH' : 'BoS',
+					  text_color		= color.new(co_msOscShort, 35),
+					  text_size			= msOscSizeBosChoch,
+					  text_halign		= text.align_left,
+					  text_valign		= text.align_top,
+					  force_overlay		= true)
+
+			ltMS.Fun_msOsc_setType(-1)
+
+
+/// ＯＳＣ ――――――――――――――――――――――――――――
+
+
+/// ＰＬＯＴ ――――――――――――――――――――――――――
+
+
+/// ─── Lineal
+
+[stValue1, stValue2, stValue3] = Fun_msOsc_collectData()
+
+/// ─── Oscilador
+msOSC				= (msOsc_WeightK1 * nz(stValue1, 0) + msOsc_WeightK2 * nz(stValue2, 0) + msOsc_WeightK3 * nz(stValue3, 0)) / (msOsc_WeightK1 * (na(stValue1) ? 0 : 1) + msOsc_WeightK2 * (na(stValue2) ? 0 : 1) + msOsc_WeightK3 * (na(stValue3) ? 0 : 1))
+msPlot				= plot(display_msOsc_MarketOSC and show_msOsc_OSC ? msOSC : na,	'Oscilador Market Structure',			color.from_gradient(msOSC, 0, 100, color.new(co_msOscSell, 0), color.new(co_msOscBuy, 0)), 1,	display = display)
+
+cycleFast			= cycleOpt ? msOSC - ta.ema(msOSC, cyc_Smooth) + 50 : 50
+plotcandle			(50., 50., 50., cycleFast,										'Histograma Cycle',						cycleFast > 50 ? color.new(co_msOscBuy, 20) : color.new(co_msOscSell, 20),	display = display,	bordercolor = cycleOpt ? cycleFast > 50 ? color.new(co_msOscBuy, 20) : color.new(co_msOscSell, 20) : color.gray)
+
+fill				(msPlot, _plot_gbl_midline, 100, cycleOpt ? 60 : 50, top_color = color.new(co_msOscBuy,   0), bottom_color = color.new(co_msOscBuy, 100), title = 'Bullish Gradient Fill')
+fill				(msPlot, _plot_gbl_midline,  cycleOpt ? 40 : 50,  0, top_color = color.new(co_msOscSell, 100), bottom_color = color.new(co_msOscSell,   0), title = 'Bearish Gradient Fill')
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════════════╗
+/// ║	Adx Histogram           			║
+/// ║	Base	50							║
+/// ║	@	Allen.							║
+/// ╚═══════════════════════════════════════╝
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+colorxAdxDiHi_Buy						= _co_gbl_buy
+colorxAdxDiHi_Sell						= _co_gbl_sell
+colorxAdxDiHi_Extra						= _co_gbl_extra
+
+/// Title Indicator ――――――――――――――――――――
+AdxDiHiGroupVars						= 'ADX HISTOGRAM 50'
+
+adxDiHi_Length							= input.int(defval = 14,		title = 'Longitud Adx',			group = AdxDiHiGroupVars)
+adxDiHi_Th								= input.int(defval = 50,		title = 'Umbral',				group = AdxDiHiGroupVars)
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――
+
+
+xAdxDiHi_TrueRange						= math.max(math.max(gbl_Source_H				- gbl_Source_L, math.abs(gbl_Source_H			- nz(gbl_Source_C[1]))),		math.abs(gbl_Source_L		- nz(gbl_Source_C[1])))
+xAdxDiHi_DirectMovePlus					= gbl_Source_H			- nz(gbl_Source_H[1])	> nz(gbl_Source_L[1])	- gbl_Source_L			? math.max(gbl_Source_H			- nz(gbl_Source_H[1]), 0)	: 0
+xAdxDiHi_DirectMoveMinus				= nz(gbl_Source_L[1])	- gbl_Source_L			> gbl_Source_H			- nz(gbl_Source_H[1])	? math.max(nz(gbl_Source_L[1])	- gbl_Source_L, 0)			: 0
+
+var float xAdxDiHi_SmoothTrueRange		= na
+var float xAdxDiHi_SmoothDirectMovePlus	= na
+var float xAdxDiHi_SmoothDirectMoveMinus= na
+
+xAdxDiHi_SmoothTrueRange				:= na(xAdxDiHi_SmoothTrueRange)			? xAdxDiHi_TrueRange		: xAdxDiHi_SmoothTrueRange			- (xAdxDiHi_SmoothTrueRange			/ adxDiHi_Length)	+ xAdxDiHi_TrueRange
+xAdxDiHi_SmoothDirectMovePlus			:= na(xAdxDiHi_SmoothDirectMovePlus)	? xAdxDiHi_DirectMovePlus	: xAdxDiHi_SmoothDirectMovePlus		- (xAdxDiHi_SmoothDirectMovePlus	/ adxDiHi_Length)	+ xAdxDiHi_DirectMovePlus
+xAdxDiHi_SmoothDirectMoveMinus			:= na(xAdxDiHi_SmoothDirectMoveMinus)	? xAdxDiHi_DirectMoveMinus	: xAdxDiHi_SmoothDirectMoveMinus	- (xAdxDiHi_SmoothDirectMoveMinus	/ adxDiHi_Length)	+ xAdxDiHi_DirectMoveMinus
+
+
+/// ＣＡＬＣＵＬＡＴＩＯＮＳ ―――――――――――――
+
+
+xAdxDiHi_DIPlus							= xAdxDiHi_SmoothDirectMovePlus				/ xAdxDiHi_SmoothTrueRange		* 100
+xAdxDiHi_DIMinus						= xAdxDiHi_SmoothDirectMoveMinus			/ xAdxDiHi_SmoothTrueRange		* 100
+xAdxDiHi_DX								= math.abs(xAdxDiHi_DIPlus					- xAdxDiHi_DIMinus)		/ (xAdxDiHi_DIPlus		+ xAdxDiHi_DIMinus)		* 100
+xAdxDiHi_ADX							= ta.sma(xAdxDiHi_DX,						adxDiHi_Length)
+
+xAdxDiHi_Didi							= adxDiHi_Th		+ (xAdxDiHi_DIPlus		- xAdxDiHi_DIMinus)
+
+xAdxDiHi_CR								= 
+					  xAdxDiHi_Didi		>=	adxDiHi_Th + 25		?	60	:
+					  xAdxDiHi_Didi		>=	adxDiHi_Th + 20		?	50	:
+					  xAdxDiHi_Didi		>=	adxDiHi_Th + 15		?	40	:
+					  xAdxDiHi_Didi		>=	adxDiHi_Th + 10		?	30	:
+					  xAdxDiHi_Didi		>=	adxDiHi_Th + 5		?	20	:
+					  10
+xAdxDiHi_CG								= 
+					  xAdxDiHi_Didi		<=	adxDiHi_Th - 25		?	60	:
+					  xAdxDiHi_Didi		<=	adxDiHi_Th - 20		?	50	:
+					  xAdxDiHi_Didi		<=	adxDiHi_Th - 15		?	40	:
+					  xAdxDiHi_Didi		<=	adxDiHi_Th - 10		?	30	:
+					  xAdxDiHi_Didi		<=	adxDiHi_Th - 5		?	20	:
+					  10
+
+
+/// ＰＬＯＴ ―――――――――――――――――――――――――――
+
+
+adxDiHiPlotIf							= strGlobalMultiHistogram  == 'Adx' or strGlobalMultiHistogram == 'Dual' ? 'True' : 'False'
+
+plot(adxDiHiPlotIf == 'True' and display_DmiAdx_AdxHisto	? xAdxDiHi_Didi	: na,
+	  style								= plot.style_area,
+	  linewidth							= 2,
+	  color								= xAdxDiHi_Didi			>= adxDiHi_Th			?
+										  color.new(colorxAdxDiHi_Buy,	xAdxDiHi_CR)	:
+										  color.new(colorxAdxDiHi_Sell,	xAdxDiHi_CG),
+	  histbase							= adxDiHi_Th,
+	  title								= 'DI')
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	Tsi Multi Speed				║
+/// ║	@	Allen.					║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+/// ─── Colors ───
+
+co_xTsiMuTSIBaseUp						= _co_gbl_long
+co_xTsiMuTSIBaseDn						= _co_gbl_short
+
+co_xTsiMuTSIFastUp						= _co_gbl_lime
+co_xTsiMuTSIFastDn						= _co_gbl_light
+
+co_xTsiMuTSIMainLong					= _co_gbl_buy
+co_xTsiMuTSIMainShort					= _co_gbl_sell
+
+co_xTsiMuText							= color.new(_co_gbl_txt_dark,		0)
+
+/// Title Indicator ――――――――――――――――――――
+xTsiMu_GroupInput						= 'xTSI Ultra'
+strxTsiMuTSIOptSlowTool					= 'Tsi Slow, gráfico principal'
+strxTsiMuTSIOptFastTool					= 'Tsi Fast'
+
+showxTsiMuTSISlow						= input.bool	(defval = true,			title = 'Mostrar Tsi',				group = xTsiMu_GroupInput,		tooltip = strxTsiMuTSIOptSlowTool)
+showxTsiMuTSIFast						= input.bool	(defval = true,			title = 'Mostrar Tsi Fast',			group = xTsiMu_GroupInput,		tooltip = strxTsiMuTSIOptFastTool)
+showxTsiMuTSIDiverg						= input.bool	(defval = true,			title = 'Divergencias',				group = xTsiMu_GroupInput)
+
+ixTsiMu_RSILength						= 14
+
+
+/// ＩＮＳＴＡＮＣＳ ――――――――――――――――――――
+
+/// rsi
+ixTsiMu_RSI								= ta.rsi(gbl_Source_C, ixTsiMu_RSILength)
+
+/// Multitimeframe
+
+/// instance function calculate multitimeframe Tsi
+[ixTsiMuCalcMultiTfTSI, ixTsiMuCalcMultiTfEMA]= FunGlobalCalcTSI('Slow', 125)
+
+/// instance function global timeframe
+ixTsiMuCalcMultiTfTSIRange				= str.tonumber(FunGlobalTimeFrame(strGlobalMultiTimeFrame)) > 500				? 
+										  FunGlobalCalculateTimeframeIf(FunGlobalTimeFrame(strGlobalMultiTimeFrame))	:
+										  timeframe.period
+
+/// ─── Timeframe multitimeframe Tsi
+arrxTsiMuMultiTimeframeTsiTicker		= request.security(syminfo.tickerid,	ixTsiMuCalcMultiTfTSIRange,	ixTsiMuCalcMultiTfTSI,	barmerge.gaps_on)
+
+/// Principal
+
+/// instance function Tsi fast
+[ixTsiMuCalcTsiFast, ixTsiMuCalcEmaFast]= FunGlobalCalcTSI('Fast', 100)
+
+/// instance function Tsi slow
+[ixTsiMuCalcTsiSlow, ixTsiMuCalcEmaSlow]= FunGlobalCalcTSI('Slow', 130)
+
+/// ─── plot color fast
+insxTsiMuPlotColorFast					= ixTsiMuCalcTsiFast	> ixTsiMuCalcEmaFast	? co_xTsiMuTSIFastUp	: ixTsiMuCalcTsiFast	<= ixTsiMuCalcEmaFast	? co_xTsiMuTSIFastDn	: na
+
+/// ─── plot color slow
+insxTsiMuPlotColor						= ixTsiMuCalcTsiSlow	> ixTsiMuCalcEmaSlow	? co_xTsiMuTSIBaseUp	: ixTsiMuCalcTsiSlow	<= ixTsiMuCalcEmaSlow	? co_xTsiMuTSIBaseDn	: na
+
+
+/// ＰＬＯＴ ―――――――――――――――――――――――――――
+
+
+/// plot sobrecompra/sobreventa
+insxTsiMuTsiPlotUpLine					= plot(display_xTsiMu_TSI ? 100 : na,	color = color.from_gradient(ixTsiMuCalcTsiSlow,	60,	100,	color.new(_co_gbl_dark, 70),	color.new(_co_gbl_sell, 25)),		linewidth = 4)
+insxTsiMuTsiPlotDnLine					= plot(display_xTsiMu_TSI ? 0 : na,		color = color.from_gradient(ixTsiMuCalcTsiSlow,	0,	40,		color.new(_co_gbl_buy, 25),		color.new(_co_gbl_dark, 70)),		linewidth = 4)
+
+/// plot principal TSI
+/// plot TSI fast
+insxTsiMuTsiPlotFast					= plot(display_xTsiMu_TSI and showxTsiMuTSIFast ? ixTsiMuCalcTsiFast	: na,		color = color.new(insxTsiMuPlotColorFast, 50),		linewidth = 2)		//	plot TsiSI
+insxTsiMuEmaPlotFast					= plot(display_xTsiMu_TSI and showxTsiMuTSIFast ? ixTsiMuCalcEmaFast	: na,		color = color.new(insxTsiMuPlotColorFast, 50),		linewidth = 1)		//	plot EMA
+/// fill fast
+fill(insxTsiMuTsiPlotFast, insxTsiMuEmaPlotFast,																			color = showxTsiMuTSIFast ? color.new(insxTsiMuPlotColorFast, 85) : na)	//	fill
+
+/// plot TSI slow
+insxTsiMuTsiPlotLine					= plot(display_xTsiMu_TSI and showxTsiMuTSISlow ? ixTsiMuCalcTsiSlow	: na,		color = color.new(insxTsiMuPlotColor, 20),			linewidth = 2)		//	plot TsiSI
+insxTsiMuEmaPlotLine					= plot(display_xTsiMu_TSI and showxTsiMuTSISlow ? ixTsiMuCalcEmaSlow	: na,		color = color.new(insxTsiMuPlotColor, 20),			linewidth = 2)		//	plot EMA
+
+/// fill principal
+fill(insxTsiMuTsiPlotLine, insxTsiMuEmaPlotLine,																			color = showxTsiMuTSISlow ? color.new(insxTsiMuPlotColor, 60) : na)		//	fill
+
+/// plot rsi
+// plot(MltObsPnl_RSI, color = color.new(_co_gbl_sky, 60), linewidth = 2)
+
+
+/// Divergences ───────────────────────
+
+
+vxTsiMuLBR								= 5				//	Corrección a la derecha
+vxTsiMuLBL								= 5				//	Corrección a la izquierda
+
+
+vxTsiMu_speed							= showxTsiMuTSIDivSpeed == 'Slow' ?	ixTsiMuCalcTsiSlow				: ixTsiMuCalcTsiFast
+vxTsiMu_speed_back						= showxTsiMuTSIDivSpeed == 'Slow' ?	ixTsiMuCalcTsiSlow[vxTsiMuLBR]	: ixTsiMuCalcTsiFast[vxTsiMuLBR]
+
+insxTsiMuPLFound						= na(ta.pivotlow(vxTsiMu_speed, vxTsiMuLBL, vxTsiMuLBR)) ? false : true
+insxTsiMuPHFound						= na(ta.pivothigh(vxTsiMu_speed, vxTsiMuLBL, vxTsiMuLBR)) ? false : true
+
+FunxTsiMu_inRange(_cond) =>
+	_range_upper						= 30			//	Rango de corrección maximo
+	_range_lower						= 2				//	Rango de corrección minimo
+	_bars_since							= ta.barssince(_cond == true)
+
+	_range_lower <= _bars_since and _bars_since <=  _range_upper
+
+
+/// Compra regular ────────────────────
+
+
+/// ─── Osc: Higher Low ─ Price: Lower Low
+tsiDiInsOSCHL							= vxTsiMu_speed_back				> ta.valuewhen(insxTsiMuPLFound, vxTsiMu_speed_back, 1)	and FunxTsiMu_inRange(insxTsiMuPLFound[1])
+tsiDiInsPRICELL							= low[vxTsiMuLBR]					< ta.valuewhen(insxTsiMuPLFound, low[vxTsiMuLBR], 1)
+tsiDiInsBULLCond						= showxTsiMuTSIDiverg				and tsiDiInsPRICELL	and tsiDiInsOSCHL	and insxTsiMuPLFound
+
+plotshape(display_xTsiMu_TSI			and	tsiDiInsBULLCond				? vxTsiMu_speed_back : na,
+			  offset					= -vxTsiMuLBR,
+			  title						= 'Etiqueta de Compra',
+			  text						= ' Buy ',
+			  size						= size.auto,
+			  style						= shape.labelup,
+			  location					= location.belowbar,
+			  color						= color.new(co_xTsiMuTSIMainLong, 10),
+			  textcolor					= co_xTsiMuText,
+			  force_overlay				= true)
+
+
+/// Compra scalp ──────────────────────
+
+
+/// ─── Osc: Lower Low ─ Price: Higher Low
+tsiDiInsOSCLL							= vxTsiMu_speed_back				< ta.valuewhen(insxTsiMuPLFound, vxTsiMu_speed_back, 1)	and FunxTsiMu_inRange(insxTsiMuPLFound[1])
+tsiDiInsPRICEHL							= low[vxTsiMuLBR]					> ta.valuewhen(insxTsiMuPLFound, low[vxTsiMuLBR], 1)
+tsiDiInsHiddenBullCond					= showxTsiMuTSIDiverg				and tsiDiInsPRICEHL	and tsiDiInsOSCLL	and insxTsiMuPLFound
+
+plotshape(display_xTsiMu_TSI			and tsiDiInsHiddenBullCond			? vxTsiMu_speed_back : na,
+			  offset					= -vxTsiMuLBR,
+			  title						= 'Compra trend',
+			  text						= ' ▲ % ',
+			  size						= size.auto,
+			  style						= shape.labelup,
+			//   style						= shape.triangleup,
+			  location					= location.belowbar,
+			  color						= color.new(co_xTsiMuTSIMainLong, 30),
+			  textcolor					= co_xTsiMuText,
+			  force_overlay				= true)
+
+
+/// Venta regular ─────────────────────
+
+
+/// ─── Osc: Lower High ─ Price: Higher High
+tsiDiInsOSCLH							= vxTsiMu_speed_back				< ta.valuewhen(insxTsiMuPHFound, vxTsiMu_speed_back, 1) and FunxTsiMu_inRange(insxTsiMuPHFound[1])
+tsiDiInsPRICEHH							= high[vxTsiMuLBR]					> ta.valuewhen(insxTsiMuPHFound, high[vxTsiMuLBR], 1)
+tsiDiInsBEARCond						= showxTsiMuTSIDiverg				and tsiDiInsPRICEHH	and tsiDiInsOSCLH	and insxTsiMuPHFound
+
+plotshape(display_xTsiMu_TSI			and tsiDiInsBEARCond				? vxTsiMu_speed_back : na,
+			  offset					= -vxTsiMuLBR,
+			  title						= 'Etiqueta de Venta',
+			  text						= ' Sell ',
+			  size						= size.auto,
+			  style						= shape.labeldown,
+			  location					= location.abovebar,
+			  color						= color.new(co_xTsiMuTSIMainShort, 10),
+			  textcolor					= co_xTsiMuText,
+			  force_overlay				= true)
+
+
+/// Venta scalp ───────────────────────
+
+
+/// ─── Osc: Higher High ─ Price: Lower High
+tsiDiInsOSCHH							= vxTsiMu_speed_back				> ta.valuewhen(insxTsiMuPHFound, vxTsiMu_speed_back, 1) and FunxTsiMu_inRange(insxTsiMuPHFound[1])
+tsiDiInsPRICELH							= high[vxTsiMuLBR]					< ta.valuewhen(insxTsiMuPHFound, high[vxTsiMuLBR], 1)
+tsiDiInsHiddenBearCond					= showxTsiMuTSIDiverg				and tsiDiInsPRICELH	and tsiDiInsOSCHH	and insxTsiMuPHFound
+
+plotshape(display_xTsiMu_TSI			and tsiDiInsHiddenBearCond			? vxTsiMu_speed_back : na,
+			  offset					= -vxTsiMuLBR,
+			  title						= 'Venta trend',
+			  text						= ' ▼ % ',
+			  size						= size.auto,
+			  style						= shape.labeldown,
+			//   style						= shape.triangledown,
+			  location					= location.abovebar,
+			  color						= color.new(co_xTsiMuTSIMainShort, 30),
+			  textcolor					= co_xTsiMuText,
+			  force_overlay				= true)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+/// ╔═══════════════════════════════╗
+/// ║	Panel Multi Timeframe		║
+/// ║	Panel Multi Indicator		║
+/// ║	@	Allen.					║
+/// ╚═══════════════════════════════╝
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+
+/// ＩＮＰＵＴＳ ――――――――――――――――――――――――
+
+
+co_MltObsPnl_Buy						= _co_gbl_long
+co_MltObsPnl_Sell						= _co_gbl_short
+co_MltObsPnl_Neutral					= _co_gbl_neutral
+co_MltObsPnl_White						= _co_gbl_white
+co_MltObsPnl_Black						= _co_gbl_black
+co_MltObsPnl_TextDark					= _co_gbl_txt_dark
+co_MltObsPnl_TextLight					= _co_gbl_txt_light
+co_MltObsPnl_TiPnBg						= _co_gbl_yellow
+
+/// Title Indicator ――――――――――――――――――――
+MltObsPnlGroupTimeframes				=				'xMULTI TIMEFRAME PANEL'
+
+display_MltObsPnlMultiTFIndicPanel		= input.bool	(true,				title = 'Mostrar MultiTF Panel',	group = MltObsPnlGroupTimeframes,		inline = 'showsignals')
+
+display_MltObsPnlCalcTimeTicker			= input.bool	(true,				title = 'Mostrar Ticker Panel',		group = MltObsPnlGroupTimeframes,		inline = 'showsignals')
+
+show_MltObsPnlColumn_Now				= input.bool	(true,				title = 'Timeframe',				group = MltObsPnlGroupTimeframes,		inline = 'tf amplit')
+
+show_MltObsPnlRow_TREND					= input.bool	(true,				title = 'ZeroLag',					group = MltObsPnlGroupTimeframes,		inline = 'Indicators')
+show_MltObsPnlRow_VIDYA					= input.bool	(true,				title = 'Vidya',					group = MltObsPnlGroupTimeframes,		inline = 'Indicators')
+show_MltObsPnlRow_DELTA					= input.bool	(true,				title = 'Delta',					group = MltObsPnlGroupTimeframes,		inline = 'Indicators')
+show_MltObsPnlRow_OSC					= input.bool	(true,				title = 'Oscillator',				group = MltObsPnlGroupTimeframes,		inline = 'Indicators')
+show_MltObsPnlRow_tSLOW					= input.bool	(true,				title = 'Tsi Slow',					group = MltObsPnlGroupTimeframes,		inline = 'Indicators 2')
+show_MltObsPnlRow_tFAST					= input.bool	(true,				title = 'Tsi Fast',					group = MltObsPnlGroupTimeframes,		inline = 'Indicators 2')
+show_MltObsPnlRow_RSI					= input.bool	(false,				title = 'Rsi',						group = MltObsPnlGroupTimeframes,		inline = 'Indicators 2')
+show_MltObsPnlRow_MFI					= input.bool	(true,				title = 'Mfi',						group = MltObsPnlGroupTimeframes,		inline = 'Indicators 2')
+show_MltObsPnlRow_ADX					= input.bool	(true,				title = 'Adx',						group = MltObsPnlGroupTimeframes,		inline = 'Indicators 2')
+
+MltObsPnl_PosiVert						= input.string	(defval = 'Abajo',	title = ' Y: ',						group = MltObsPnlGroupTimeframes,		inline = 'ubic',
+		  options						=				['Arriba', 'Abajo'])
+MltObsPnl_PosiHoriz						= input.string	(defval = 'Derecha',	title = ' X: ',					group = MltObsPnlGroupTimeframes,		inline = 'ubic',
+		  options						=				['Izquierda', 'Centro','Derecha'])
+
+/// Title Indicator ――――――――――――――――――――
+MltObsPnlGroupIndicat					=				'PANEL MULTI INDiCATOR'
+
+show_MltObsPnlIndicatDelta				= input.bool	(true,				title = 'Delta',					group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+show_MltObsPnlIndicatTsi				= input.bool	(true,				title = 'Tsi ',						group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+show_MltObsPnlIndicatMtf				= input.bool	(true,				title = 'Mtf ',						group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+show_MltObsPnlIndicatRsi				= input.bool	(false,				title = 'Rsi ',						group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+show_MltObsPnlIndicatMfi				= input.bool	(true,				title = 'Mfi ',						group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+show_MltObsPnlIndicatAdx				= input.bool	(true,				title = 'Adx ',						group = MltObsPnlGroupIndicat,			inline = 'multi indic')
+
+MltObsPnl_LocatMlIndVert				= input.string	(defval = 'Medio',	title = ' Y: ',						group = MltObsPnlGroupIndicat,			inline = 'ubic signal',
+		  options						=				['Arriba', 'Medio','Abajo'])
+MltObsPnl_LocatMlIndHoriz				= input.string	(defval = 'Derecha',title = ' X: ',						group = MltObsPnlGroupIndicat,			inline = 'ubic signal',
+		  options						=				['Izquierda', 'Derecha'])
+
+stMltObsPnl_TextSize					= input.string	(defval = 'Normal',	title = 'Tamaño de texto',
+		  options						=				['Mini', 'Pequeño', 'Normal', 'Grande', 'Enorme', 'Auto'])
+
+
+/// ＩＮＳＴＡＮＣＳ ――――――――――――――――――――
+
+
+/// ＣＡＬＣＵＬＡＴＩＯＮＳ ―――――――――――――
+
+
+MltObsPnl_Middle						= adxDiHi_Th
+
+MltObsPnl_ZeroLag						= iZeLag_EMA		>	iZeLag_EMA50	?	'Buy'	:	'Sell'		//	ZeroLag
+MltObsPnl_Vidya							= fvVi_vidya_dn		>	fvVi_vidya_up	?	'Buy'	:	'Sell'		//	Vidya
+
+MltObsPnl_DELTA							= vVidya_delta_volume					//	Delta Volume
+MltObsPnl_DELTA_f						= vVidya_delta_float					//	Delta float
+MltObsPnl_OSC							= msOSC									//	Market Oscillator
+MltObsPnl_TSI_slow						= ixTsiMuCalcTsiSlow					//	Tsi Slow		Fast/Slow
+MltObsPnl_TSI_fast						= ixTsiMuCalcTsiFast					//	Tsi Fast		Fast/Slow
+MltObsPnl_Ema							= ixTsiMuCalcEmaSlow					//	Tsi Ema Slow	Fast/Slow
+MltObsPnl_RSI							= ixTsiMu_RSI							//	Rsi
+MltObsPnlMTFRange						= ixTsiMuCalcMultiTfTSIRange			//	Tsi Multitimeframe
+MltObsPnl_MFI							= ifAdapMonDesvStd						//	Mfi
+MltObsPnl_ADX							= xAdxDiHi_Didi							//	Adx
+// MltObsPnl_ADX							= iDmiAdx_DIFF
+
+
+/// ＦＵＮＣＴＩＯＮＳ ――――――――――――――――――
+
+/// ─── TRENDS INDICATORS
+
+/// ─── New table trends
+var vTsiPnlTableTrend					= table.new(
+	  position							= FunGlobalVertical(MltObsPnl_PosiVert) + '_' + FunGlobalHorizontal(MltObsPnl_PosiHoriz),
+	  columns							= 3,
+	  rows								= 11,
+	  border_width						= 2,
+	  frame_color						= color.new(co_MltObsPnl_Black,		70),
+	  force_overlay						= true)
+
+/// ─── Function head trends
+FunMltObsPnlCalcCellHead(_col, _row, _title) =>
+	_bgcolor							= _co_gbl_black
+	_opacity							= 60
+	_cell_text							= _title
+	_txtcolor							= co_MltObsPnl_TextLight
+	_txtsize							= FunGlobalTextSize(stMltObsPnl_TextSize)
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_bgcolor,	_opacity),
+		  text_size						= _txtsize,
+		  text_color					= _txtcolor
+		  )
+
+/// ─── Function cell trends
+FunMltObsPnlCalcTrends(_col, _row, _ticker) =>
+	_cell_text							= _ticker
+	_col_up								= co_MltObsPnl_Buy
+	_col_dn								= co_MltObsPnl_Sell
+
+	_cell_color							= _ticker == 'Buy' ? _col_up : _col_dn
+
+	_text_color							= co_MltObsPnl_TextDark
+	_text_size							= FunGlobalTextSize(stMltObsPnl_TextSize)
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,	10),
+  		  text_size						= _text_size,
+		  text_color					= color.new(_text_color,	10)
+		  )
+
+/// ─── DELTA
+
+/// ─── Function cell delta trends
+FunMltObsPnlCalcTrendDelta(_col, _row, _ticker) =>
+	_number								= _ticker
+	_upper								= 30
+	_lower								= -30
+
+	_if_buy								= _ticker	>	_ticker[2]	and	_ticker[1]	>	_ticker[3]	and	_ticker		>=	_upper
+	_if_sell							= _ticker	<	_ticker[2]	and	_ticker[1]	<	_ticker[3]	and	_ticker		<=	_lower
+
+	_if_structure						= _if_buy	?	'🟢'		:	_if_sell	?	'🔴'	:	''
+
+	_cell_color							=
+		  _number	>=	_upper			?
+		  co_MltObsPnl_TiPnBg			:
+		  _number	<=	_lower			?
+		  co_MltObsPnl_TiPnBg			:
+		  co_MltObsPnl_Neutral
+
+	_cell_text							= str.tostring(_ticker, '#.0')	+ '%'	+ ' '	+ _if_structure
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,			15),
+  		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= color.new(co_MltObsPnl_TextDark,	15)
+		  )
+
+/// ─── Function cell mfi / osc trends
+FunMltObsPnlCalcTrendMfiOsc(_col, _row, _ticker) =>
+	_distance							= 25
+
+	_mid								= MltObsPnl_Middle
+	_div								= 5
+
+	//	overbought/oversold
+	_overbought							=  _mid			+	_distance
+	_oversold							=  _mid			-	_distance
+
+	_fract_bougth						= math.round		(_overbought	-	(_overbought	/	_div))
+	_fract_sold							= math.ceil			(_oversold		+	(_overbought	/	_div))
+
+	/// ─── signal buy/sell
+	_if_buy								= _ticker	>	_ticker[2]	and	_ticker[1]	>	_ticker[3]	and _ticker	>=	_mid
+	_if_sell							= _ticker	<	_ticker[2]	and	_ticker[1]	<	_ticker[3]	and _ticker	<=	_mid
+
+	_if_structure						=
+						  _if_buy		and		_ticker		>=	_fract_bougth	?
+						  '🟢'													:
+						  _if_sell		and		_ticker		<=	_fract_sold		?
+						  '🔴'													:
+						  '    '
+
+	_cell_color							=
+		  _if_buy						?
+		  co_MltObsPnl_Buy				:
+		  _if_sell						?
+		  co_MltObsPnl_Sell				:
+		  co_MltObsPnl_Neutral
+
+	_cell_opacity						=
+		  _ticker	>=	_overbought		or
+		  _ticker	<=	_oversold		?
+		  20							:
+		  _ticker	>=	_fract_bougth	or
+		  _ticker	<=	_fract_sold		?
+		  40							:
+		  60
+
+	_cell_text							= str.tostring(_ticker, '#.0')	+ ' '	+ _if_structure
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,	_cell_opacity),
+  		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= co_MltObsPnl_TextDark)
+
+/// ─── Function cell adx trends
+FunMltObsPnlCalcTrendAdx(_col, _row, _ticker) =>
+	_number								= _ticker
+	_mid								= 50
+
+	_if_buy								= _ticker	>	_ticker[2]	and	_ticker[1]	>	_ticker[3]	and	_ticker		>	_mid
+	_if_sell							= _ticker	<	_ticker[2]	and	_ticker[1]	<	_ticker[3]	and	_ticker		<	_mid
+
+	_if_structure						= _if_buy	?	'🟢'		:	_if_sell	?	'🔴'	:	'    '
+
+	_cell_color							=
+		  _number	>=	_mid			?
+		  co_MltObsPnl_Buy				:
+		  co_MltObsPnl_Sell
+
+	_cell_text							= str.tostring(_ticker, '#.0')	+ ' '	+ _if_structure
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,			15),
+  		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= color.new(co_MltObsPnl_TextDark,	15)
+		  )
+
+/// ─── Function table cells Signal
+FunMltObsPnlCalcDirections(_col, _row, _index, _distance) =>
+	_mid								= MltObsPnl_Middle
+	_div								= 5
+
+	//	overbought/oversold
+	_overbought							=  _mid			+	_distance
+	_oversold							=  _mid			-	_distance
+
+	_fract_bougth						= math.round		(_overbought	-	(_overbought	/	_div))
+	_fract_sold							= math.ceil			(_oversold		+	(_overbought	/	_div))
+
+	/// ─── signal buy/sell
+	_if_buy								= _index		>	_index[2]		and	_index[1]		>	_index[3]	and _index		<=	_fract_sold
+	_if_sell							= _index		<	_index[2]		and	_index[1]		<	_index[3]	and _index		>=	_fract_bougth
+
+	_if_structure						= _if_buy		?	'🟢'			:	_if_sell		?	'🔴'	:	'    '
+
+	_cell_color							=
+		  _if_buy	and _oversold		?
+		  co_MltObsPnl_Buy				:
+		  _if_sell	and	_overbought		?
+		  co_MltObsPnl_Sell				:
+		  co_MltObsPnl_Neutral
+
+	_cell_opacity						=
+		  _index	>=	_overbought		or
+		  _index	<=	_oversold		?
+		  25							:
+		  _index	>=	_fract_bougth	or
+		  _index	<=	_fract_sold		?
+		  40							:
+		  60
+
+	_cell_text							= str.tostring(_index, '#.0')	+ ' ' +  _if_structure
+
+	table.cell							(vTsiPnlTableTrend, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,	_cell_opacity),
+		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= co_MltObsPnl_TextDark,
+		  text_halign					= text.align_right,
+		  width							= 5)
+
+//// ─────────────────────────────────────────────────────────────────────
+
+/// ─── MULTI INDICATORS
+
+/// ─── New table indicators
+var vTsiPnlTableMtlIndicator			= table.new(
+		  position						= FunGlobalVertical(MltObsPnl_LocatMlIndVert) + '_' + FunGlobalHorizontal(MltObsPnl_LocatMlIndHoriz),
+		  columns						= 1,
+		  rows							= 6,
+		  border_width					= 2,
+		  frame_color					= color.new(co_MltObsPnl_Black,		15))
+
+/// ─── Function table multi indicador
+FunMltObsPnlCalcMultiIndic(_col, _row, _title, _ticker, _distance) =>
+	/// ─── signal buy/sell
+	_if_buy								= _ticker		>	_ticker[2]		and	_ticker[1]		>	_ticker[3]
+	_if_sell							= _ticker		<	_ticker[2]		and	_ticker[1]		<	_ticker[3]
+	_if_structure						= _if_buy		?	' ⬈'			:	_if_sell		?	' ⬊'	:	' '
+
+	_mid								= MltObsPnl_Middle
+	_div								= 5
+
+	_overbought							=  _mid			+	_distance
+	_oversold							=  _mid			-	_distance
+
+	_fract_upper						= math.round		(_overbought	-	(_overbought	/	_div))
+	_fract_lower						= math.ceil			(_oversold		+	(_overbought	/	_div))
+
+	_cell_color							=
+		  _ticker	>=	_fract_upper	?
+		  co_MltObsPnl_Buy				:
+		  _ticker	<=	_fract_lower	?
+		  co_MltObsPnl_Sell				:
+		  co_MltObsPnl_Neutral
+
+	_cell_opacity						=
+		  _ticker	>=	_overbought		or
+		  _ticker	<=	_oversold		?
+		  25							:
+		  _ticker	>=	_fract_upper	or
+		  _ticker	<=	_fract_lower	?
+		  40							:
+		  60
+
+	_cell_text							= str.tostring(_ticker, '#.0')	+ ' ' +	_if_structure		+ '\n'	+ _title
+
+	/// ─── table
+	table.cell							(vTsiPnlTableMtlIndicator, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,	_cell_opacity),
+		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= co_MltObsPnl_TextDark,
+		  width							= 4)
+
+/// ─── DELTA
+
+/// ─── Function cell delta multiindicators
+FunMltObsPnlCalcMltIndDelta(_col, _row, _text, _ticker) =>
+	_number								= str.tonumber(_ticker)
+	_upper								= 30
+	_lower								= -30
+
+	_cell_color							=
+		  _number	>=	_upper			?
+		  co_MltObsPnl_Buy				:
+		  _number	<=	_lower			?
+		  co_MltObsPnl_Sell				:
+		  co_MltObsPnl_Neutral
+
+	_cell_text							= _text + '\n' + _ticker
+
+	table.cell							(vTsiPnlTableMtlIndicator, _col, _row, _cell_text,
+		  bgcolor						= color.new(_cell_color,			15),
+  		  text_size						= FunGlobalTextSize(stMltObsPnl_TextSize),
+		  text_color					= color.new(co_MltObsPnl_TextDark,	15)
+		  )
+
+//// ─────────────────────────────────────────────────────────────────────
+
+/// ─── TICKER PANEL 
+
+/// ─── function timeframe string
+FunMltObsPnlStringTime() =>
+	switch timeframe.period
+		'1'								=> '1 min'
+		'3'								=> '3 min'
+		'5'								=> '5 min'
+		'15'							=> '15 min'
+		'30'							=> '30 min'
+		'60'							=> '1 Hora'
+		'120'							=> '2 Horas'
+		'180'							=> '3 Horas'
+		'240'							=> '4 Horas'
+		'480'							=> '8 horas'
+		'D'								=> 'Dia'
+		'1D'							=> 'Dia'
+		'W'								=> 'Semana'
+		'1W'							=> 'Semana'
+		'M'								=> 'Mes'
+
+/// ─── table ticker time
+var vTsiPnlTableTimeTicker			= table.new(
+		  position						= position.top_center,
+		  columns						= 1,
+		  rows							= 1,
+		  border_width					= 2,
+		  frame_color					= color.new(co_MltObsPnl_Black,		80),
+		  force_overlay					= true)
+
+/// ─── Function cell delta multiindicators
+FunMltObsPnlCalcTimeTicker() =>
+	_col								= 0
+	_row								= 0
+	_bg_color							= _co_gbl_neutral
+	_txt_color							= _co_gbl_txt_dark
+	_txt_size							= FunGlobalTextSize('Grande')
+
+	_cell_text							= 'ALLENx' + ' | ' + syminfo.ticker + ' | ' +  str.tostring(gbl_Source_C) + ' | ' + FunMltObsPnlStringTime()		//	syminfo.tickerid
+
+	table.cell							(vTsiPnlTableTimeTicker, _col, _row, _cell_text,
+		  bgcolor						= color.new(_bg_color,	15),
+  		  text_size						= _txt_size,
+		  text_color					= color.new(_txt_color,	15)
+		  )
+
+
+/// ＰＬＯＴ ―――――――――――――――――――――――――――
+
+
+/// ─── Table Trend indicators
+if display_MltObsPnlMultiTFIndicPanel
+	// FunMltObsPnlCalcCellHead				(0,		0,			'Trend Score')
+	if show_MltObsPnlRow_TREND
+		FunMltObsPnlCalcCellHead			(0,		1,			'Trend ')
+	if show_MltObsPnlRow_VIDYA
+		FunMltObsPnlCalcCellHead			(0,		2,			'Dya   ')
+	if show_MltObsPnlRow_tSLOW
+		FunMltObsPnlCalcCellHead			(0,		3,			'Tsi   ')
+	if show_MltObsPnlRow_tFAST
+		FunMltObsPnlCalcCellHead			(0,		4,			'xFast ')
+	if show_MltObsPnlRow_RSI
+		FunMltObsPnlCalcCellHead			(0,		5,			'Rsi   ')
+	if show_MltObsPnlRow_OSC
+		FunMltObsPnlCalcCellHead			(0,		6,			'Osc   ')
+	if show_MltObsPnlRow_MFI
+		FunMltObsPnlCalcCellHead			(0,		7,			'Mfi   ')
+	if show_MltObsPnlRow_ADX
+		FunMltObsPnlCalcCellHead			(0,		8,			'Adx   ')
+	if show_MltObsPnlRow_DELTA
+		FunMltObsPnlCalcCellHead			(0,		9,			'Delta ')
+
+	if show_MltObsPnlColumn_Now
+		// FunMltObsPnlCalcXTendency			(1,		0,		vMltObsPnlTFNow)
+		if show_MltObsPnlRow_TREND
+			FunMltObsPnlCalcTrends			(1,		1,			MltObsPnl_ZeroLag)
+		if show_MltObsPnlRow_VIDYA
+			FunMltObsPnlCalcTrends			(1,		2,			MltObsPnl_Vidya)
+		if show_MltObsPnlRow_tSLOW
+			FunMltObsPnlCalcDirections		(1,		3,			MltObsPnl_TSI_slow,			40)
+		if show_MltObsPnlRow_tFAST
+			FunMltObsPnlCalcDirections		(1,		4,			MltObsPnl_TSI_fast,			30)
+		if show_MltObsPnlRow_RSI
+			FunMltObsPnlCalcDirections		(1,		5,			MltObsPnl_RSI,				30)
+		if show_MltObsPnlRow_OSC
+			FunMltObsPnlCalcTrendMfiOsc		(1,		6,			MltObsPnl_OSC)
+		if show_MltObsPnlRow_MFI
+			FunMltObsPnlCalcTrendMfiOsc		(1,		7,			MltObsPnl_MFI)
+		if show_MltObsPnlRow_ADX
+			FunMltObsPnlCalcTrendAdx		(1,		8,			MltObsPnl_ADX)
+		if show_MltObsPnlRow_DELTA
+			FunMltObsPnlCalcTrendDelta		(1,		9,			MltObsPnl_DELTA_f)
+
+//// ─────────────────────────────────────────────────────────────────────
+
+/// ─── Table Multi indicators
+if display_MltObsPnlIndicatPanel
+	if show_MltObsPnlIndicatDelta
+		FunMltObsPnlCalcMltIndDelta			(0,	0,	'Delta',	MltObsPnl_DELTA)
+
+	if show_MltObsPnlIndicatTsi
+		FunMltObsPnlCalcMultiIndic			(0,	1,	'TSI',		MltObsPnl_TSI_slow,		40)
+
+	if show_MltObsPnlIndicatMtf
+		FunMltObsPnlCalcMultiIndic			(0,	2,	'Fast',		MltObsPnl_TSI_fast,		30)
+
+	if show_MltObsPnlIndicatRsi
+		FunMltObsPnlCalcMultiIndic			(0,	3,	'RSI',		MltObsPnl_RSI,			30)
+
+	if show_MltObsPnlIndicatMfi
+		FunMltObsPnlCalcMultiIndic			(0, 4,	'MFI',		MltObsPnl_MFI,			25)
+
+	if show_MltObsPnlIndicatAdx
+		FunMltObsPnlCalcMultiIndic			(0,	5,	'ADX',		MltObsPnl_ADX,			20)			// base 50
+
+//// ─────────────────────────────────────────────────────────────────────
+
+/// ─── Table Ticker
+if display_MltObsPnlCalcTimeTicker
+	FunMltObsPnlCalcTimeTicker()
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+

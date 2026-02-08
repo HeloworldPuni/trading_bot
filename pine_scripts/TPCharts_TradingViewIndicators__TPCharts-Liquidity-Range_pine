@@ -1,0 +1,145 @@
+//@version=4
+study(title="TPCharts Liquidity Range", overlay=true)
+
+resolution = input(title="Resolution", type=input.resolution, defval="D")
+period = input(title="Period", type=input.integer, defval=20)
+
+isPDHLShown = input(title="Show Previous Day's Highs and Lows?", type=input.bool, defval=true)
+isPDHLLabelShown = input(title="Show PDHL labels?", type=input.bool, defval=true)
+isPDHLLabelDescriptorShown = input(title="Show PDHL Label Descriptor?", type=input.bool, defval=true)
+isPDHLPriceShown = input(title="Show PDHL prices?", type=input.bool, defval=true)
+
+isNumbersShown = input(title="Show Candle Numbers?", type=input.bool, defval=false)
+
+isEQShown = input(title="Show Range EQ?", type=input.bool, defval=true)
+isEQLabelShown = input(title="Show EQ Label?", type=input.bool, defval=true)
+isEQLabelDescriptorShown = input(title="Show EQ Label Descriptor?", type=input.bool, defval=true)
+isEQPriceShown = input(title="Show EQ Price?", type=input.bool, defval=true)
+
+isRangeLabelShown = input(title="Show Range Label?", type=input.bool, defval=true)
+isRangeLabelDescriptorShown = input(title="Show Range Label Descriptor?", type=input.bool, defval=true)
+isRangePriceShown = input(title="Show Range Price?", type=input.bool, defval=true)
+
+isSundayIgnored = input(title="Ignore Sunday (don't use on Sunday then)?", type=input.bool, defval=false)
+
+isCurrentDay = security(syminfo.tickerid, "D", barstate.islast)
+
+pdh = security(syminfo.tickerid, "D", high[1])
+pdl = security(syminfo.tickerid, "D", low[1])
+tdot = security(syminfo.tickerid, "D", time[1]) 
+
+periodOffset() => (isSundayIgnored and syminfo.type != 'forex' ? (dayofweek(timenow) == dayofweek.saturday ? floor(period / 7) + 1 : floor(period / 7)) : 0)
+
+rangeStartTime = security(syminfo.tickerid, "D", time[period+periodOffset()])
+
+
+// Ignoring Sundays
+
+// How many sundays are there?
+// floor(period/7) UNLESS today is a sunday, then add one
+
+
+rangeHighPrice = security(syminfo.tickerid, resolution, highest(high, period+1+periodOffset()), lookahead=barmerge.lookahead_on)
+rangeLowPrice = security(syminfo.tickerid, resolution, lowest(low, period+1+periodOffset()), lookahead=barmerge.lookahead_on)
+rangeEQPrice = rangeHighPrice - ((rangeHighPrice - rangeLowPrice) / 2)
+
+alertcondition(crossover(high, rangeHighPrice) or crossunder(low, rangeHighPrice), title="Liq range high cross", message="Liq range high cross")
+alertcondition(crossover(high, rangeLowPrice) or crossunder(low, rangeLowPrice), title="Liq range low cross", message="Liq range low cross")
+alertcondition(crossover(high, rangeEQPrice) or crossunder(low, rangeEQPrice), title="Liq range EQ cross", message="Liq range EQ cross")
+
+
+labelDayOffset = 2
+timelocOffset = time+(86400000 * labelDayOffset)
+
+var eqLabelText = ""
+var pdhLabelText = ""
+var pdlLabelText = ""
+var rangeHighLabelText = ""
+var rangeLowLabelText = ""
+
+
+line rangeHighLine = na
+label rangeHighLabel = na
+
+line rangeLowLine = na
+label rangeLowLabel = na
+
+line PDHLHighLine = na
+label PDHLHighLabel = na
+
+line PDHLLowLine = na
+label PDHLLowLabel = na
+
+line eqLine = na
+label eqLabel = na
+
+if isCurrentDay
+    rangeHighLine := line.new(x1=rangeStartTime, y1=rangeHighPrice, x2=timelocOffset, y2=rangeHighPrice, extend=extend.right, color=color.black, xloc=xloc.bar_time)
+    line.delete(rangeHighLine[1])
+    
+    rangeLowLine := line.new(x1=rangeStartTime, y1=rangeLowPrice, x2=timelocOffset, y2=rangeLowPrice, extend=extend.right, color=color.black, xloc=xloc.bar_time)
+    line.delete(rangeLowLine[1])
+
+    if isRangeLabelShown
+        if isRangePriceShown
+            rangeHighLabelText := tostring(rangeHighPrice)
+            rangeLowLabelText := tostring(rangeLowPrice)
+
+        if isRangeLabelDescriptorShown
+            rangeHighLabelText := "Liq Range High" + (rangeHighLabelText == "" ? "" : " (" + rangeHighLabelText + ")") 
+            rangeLowLabelText := "Liq Range Low" + (rangeLowLabelText == "" ? "" : " (" + rangeLowLabelText + ")") 
+
+        rangeHighLabel := label.new(rangeStartTime, rangeHighPrice, text=rangeHighLabelText, style=label.style_none, xloc=xloc.bar_time)
+        label.delete(rangeHighLabel[1])
+
+        rangeLowLabel := label.new(rangeStartTime, rangeLowPrice, text=rangeLowLabelText, style=label.style_none, xloc=xloc.bar_time)
+        label.delete(rangeLowLabel[1])
+
+    if isPDHLShown
+        PDHLHighLine := line.new(x1=tdot, y1=pdh, x2=timelocOffset, y2=pdh, extend=extend.right, color=color.black, style=line.style_dotted, width=1, xloc=xloc.bar_time)
+        line.delete(PDHLHighLine[1])
+
+        PDHLLowLine := line.new(x1=tdot, y1=pdl, x2=timelocOffset, y2=pdl, extend=extend.right, color=color.black, style=line.style_dotted, width=1, xloc=xloc.bar_time)
+        line.delete(PDHLLowLine[1])
+
+        if isPDHLLabelShown
+            if isPDHLPriceShown
+                pdhLabelText := tostring(pdh)
+                pdlLabelText := tostring(pdl)
+
+            if isPDHLLabelDescriptorShown
+                pdhLabelText := "PDH" + (pdhLabelText == "" ? "" : " (" + pdhLabelText + ")") 
+                pdlLabelText := "PDL" + (pdlLabelText == "" ? "" : " (" + pdlLabelText + ")") 
+
+            if isPDHLLabelShown
+                PDHLHighLabel := label.new(timelocOffset, pdh, text=pdhLabelText, style=label.style_none,xloc=xloc.bar_time)
+                label.delete(PDHLHighLabel[1])
+
+                PDHLLowLabel := label.new(timelocOffset, pdl, text=pdlLabelText, style=label.style_none, xloc=xloc.bar_time)
+                label.delete(PDHLLowLabel[1])
+
+    if isNumbersShown and timeframe.period == "D"
+        var counter = 0
+        for i=0 to period+periodOffset()
+            if i>0
+                barTime = time[i]
+                if dayofweek(barTime) == dayofweek.sunday and isSundayIgnored
+                    label.new(bar_index-i, high[i], "Sun", color=color.black, yloc=yloc.abovebar, textcolor=color.white)
+                else
+                    counter := counter + 1
+                    label.new(bar_index-i, high[i], tostring(counter), color=color.black, yloc=yloc.abovebar, textcolor=color.white)
+
+    if isEQShown
+        eqLine := line.new(x1=rangeStartTime, y1=rangeEQPrice, x2=timelocOffset, y2=rangeEQPrice, extend=extend.right, color=color.blue, width=1, xloc=xloc.bar_time)
+        line.delete(eqLine[1])
+
+        if isEQLabelShown
+            if isEQPriceShown
+                eqLabelText := tostring(rangeEQPrice)
+
+            if isEQLabelDescriptorShown
+                eqLabelText := "Liq Range EQ" + (eqLabelText == "" ? "" : " (" + eqLabelText + ")") 
+
+            eqLabel := label.new(rangeStartTime, rangeEQPrice, text=eqLabelText, style=label.style_none, color=color.blue, textcolor=color.blue, xloc=xloc.bar_time)
+            label.delete(eqLabel[1])
+ 

@@ -1,0 +1,251 @@
+//@version=5
+strategy("4.Strategy_Buy_Sell_without_QQE_CTI_LB",max_bars_back = 500,overlay = true)
+
+// Regular _ X_TREND
+Lowest_Low = ta.lowest(low, 3)
+MA_Low = ta.ema(low, 3)
+Highest_High = ta.highest(high, 2)
+MA_High = ta.sma(high, 2)
+ATR_Half = ta.atr(100) / 2
+Next_Trend = 0
+Next_Trend := nz(Next_Trend[1], Next_Trend)
+Low_Max = low[1]
+Low_Max := nz(Low_Max[1], Low_Max)
+High_Min = high[1]
+High_Min := nz(High_Min[1], High_Min)
+
+if Next_Trend == 0
+    High_Min := math.min(High_Min, Highest_High)
+    if MA_Low > High_Min and close > high[1]
+        Next_Trend := 1
+        Low_Max := Lowest_Low
+
+if Next_Trend == 1
+    Low_Max := math.max(Low_Max, Lowest_Low)
+    if MA_High < Low_Max and close < low[1]
+        Next_Trend := 0
+        High_Min := Highest_High
+
+
+
+
+// Calculating Hk ashi XTrend
+H_ticker = ticker.heikinashi(syminfo.tickerid)
+[H_open, H_high, H_low, H_close] = request.security(H_ticker, timeframe.period, [open, high, low, close])
+
+H_Lowest_Low = ta.lowest(H_low, 3)
+H_MA_Low = ta.ema(H_low, 3)
+H_Highest_High = ta.highest(H_high, 2)
+H_MA_High = ta.sma(H_high, 2)
+H_Next_Trend = 0
+H_Next_Trend := nz(H_Next_Trend[1], H_Next_Trend)
+H_Low_Max = H_low[1]
+H_Low_Max := nz(H_Low_Max[1], H_Low_Max)
+H_High_Min = H_high[1]
+H_High_Min := nz(H_High_Min[1], H_High_Min)
+
+
+if H_Next_Trend == 0
+    H_High_Min := math.min(H_High_Min, H_Highest_High)
+    if H_MA_Low > H_High_Min and H_close > H_high[1]
+        H_Next_Trend := 1
+        H_Low_Max := H_Lowest_Low
+
+// plot(Lowest_Low,color = color.black)
+if H_Next_Trend == 1
+    H_Low_Max := math.max(H_Low_Max, H_Lowest_Low)
+    if H_MA_High < H_Low_Max and H_close < H_low[1]
+        H_Next_Trend := 0
+        H_High_Min := H_Highest_High
+
+
+
+// CTI _ LB _ Regular
+src=close
+sm =input(12, title="Smoothing Period")
+cd = input(0.4, title="Constant D")
+ebc=input(false, title="Color Bars")
+ribm=input(false, title="Ribbon Mode")
+di = (sm - 1.0) / 2.0 + 1.0
+c1 = 2 / (di + 1.0)
+c2 = 1 - c1
+c3 = 3.0 * (cd * cd + cd * cd * cd)
+c4 = -3.0 * (2.0 * cd * cd + cd + cd * cd * cd)
+c5 = 3.0 * cd + 1.0 + cd * cd * cd + 3.0 * cd * cd
+
+var float i1 = na
+var float i2 = na
+var float i3 = na
+var float i4 = na
+var float i5 = na
+var float i6 = na
+
+i1 := c1*src + c2*nz(i1[1])
+i2 := c1*i1 + c2*nz(i2[1])
+i3 := c1*i2 + c2*nz(i3[1])
+i4 := c1*i3 + c2*nz(i4[1])
+i5 := c1*i4 + c2*nz(i5[1])
+i6 := c1*i5 + c2*nz(i6[1])
+
+bfr = -cd*cd*cd*i6 + c3*(i5) + c4*(i4) + c5*(i3)
+
+cti_trend = bfr > nz(bfr[1]) ? 1 : bfr < nz(bfr[1]) ? 0 : 2
+
+
+// CTI _ LB _ Heikin Ashi
+H_src = H_close
+H_sm =input(12, title="H Smoothing Period")
+H_cd = input(0.4, title="H Constant D")
+H_di = (H_sm - 1.0) / 2.0 + 1.0
+H_c1 = 2 / (H_di + 1.0)
+H_c2 = 1 - H_c1
+H_c3 = 3.0 * (H_cd * H_cd + H_cd * H_cd * H_cd)
+H_c4 = -3.0 * (2.0 * H_cd * H_cd + H_cd + H_cd * H_cd * H_cd)
+H_c5 = 3.0 * H_cd + 1.0 + H_cd * H_cd * H_cd + 3.0 * H_cd * H_cd
+
+var float H_i1 = na
+var float H_i2 = na
+var float H_i3 = na
+var float H_i4 = na
+var float H_i5 = na
+var float H_i6 = na
+
+H_i1 := H_c1 * H_src + H_c2 * nz(H_i1[1])
+H_i2 := H_c1*H_i1 + H_c2 *     nz(H_i2[1])
+H_i3 := H_c1*H_i2 + H_c2 *     nz(H_i3[1])
+H_i4 := H_c1*H_i3 + H_c2 *     nz(H_i4[1])
+H_i5 := H_c1*H_i4 + H_c2 *     nz(H_i5[1])
+H_i6 := H_c1*H_i5 + H_c2 *     nz(H_i6[1])
+
+H_bfr = -H_cd*H_cd*H_cd*H_i6 + H_c3*(H_i5) + H_c4*(H_i4) + H_c5*(H_i3)
+H_cti_trend = H_bfr > nz(H_bfr[1]) ? 1 : H_bfr < nz(H_bfr[1]) ? 0 : 2
+
+
+R_vwap = ta.vwap(hlc3)
+H_hlc3 = ((high+low+close) / 3)
+H_vwap = ta.vwap(H_hlc3)
+
+
+
+// Volume Indicator Regular
+RSI_Period = input(3, title='RSI Length')
+SF = input(5, title='RSI Smoothing')
+Rsi = ta.rsi(close, RSI_Period)
+RsiMa = ta.ema(Rsi, SF)
+
+
+
+// Volume Indicator HeikinAshi
+H_RSI_Period = input(3, title='H RSI Length')
+H_SF = input(5, title='H RSI Smoothing')
+H_Rsi = ta.rsi(H_close, H_RSI_Period)
+H_RsiMa = ta.ema(H_Rsi, H_SF)
+
+
+
+
+takeProfit = input.float(2,title = "TakeProfit")
+stopLoss = input.float(1,title = "StopLoss")
+
+initialBalance = input.float(1000,title = "Initial Balance")
+var balance = 1000.00000
+
+var bool longTradeTaken = 0
+var bool shortTradeTaken = 0
+
+var bool hasOpenTrade = strategy.position_size > 0
+
+var totalNumberOfTrades = 0
+var winningTrades = 0
+var loosingTrades = 0
+
+if (Next_Trend == 1 and H_Next_Trend == 1 and open > R_vwap and H_open > H_vwap ) and longTradeTaken == 0 and not hasOpenTrade
+    if(strategy.position_size < 0)
+        if(close <= strategy.position_avg_price)
+            winningTrades := winningTrades + 1
+
+        else if(close >= strategy.position_avg_price)
+            loosingTrades := loosingTrades + 1
+        strategy.close_all("Closing all Trades")
+
+
+    quantity = balance / close[0]
+    strategy.entry("Long", strategy.long, qty=quantity)
+    totalNumberOfTrades := totalNumberOfTrades + 1
+    longTradeTaken := 1
+    shortTradeTaken := 0
+
+
+if(Next_Trend == 0 and H_Next_Trend == 0 and close < R_vwap and H_close < H_vwap ) and shortTradeTaken == 0 and not hasOpenTrade
+    //Short
+    if(strategy.position_size > 0)
+
+        if(close >= strategy.position_avg_price)
+            winningTrades := winningTrades + 1
+        else if (close <= strategy.position_avg_price)
+            loosingTrades := loosingTrades + 1
+        strategy.close_all("Closing all Trades")
+
+
+    quantity = balance / close
+    totalNumberOfTrades := totalNumberOfTrades + 1
+    strategy.entry("Short", strategy.short, qty=quantity)
+    shortTradeTaken := 1
+    longTradeTaken := 0
+
+ 
+
+
+
+
+Ltp = strategy.position_avg_price * (1 + (takeProfit/100))
+Lsl = strategy.position_avg_price * (1 - (stopLoss/100))
+
+if(longTradeTaken == 1 and strategy.position_size >0)
+    if(Ltp <= close)
+        strategy.exit("LONG TP",profit = 0)
+        balance := balance + (balance * (takeProfit/100))
+        winningTrades := winningTrades + 1
+        // strategy.initial_capital := balance
+
+    else if(low <= Lsl or close <= Lsl)
+        balance := balance - (balance * (stopLoss/100))
+        strategy.exit("LONG SL",loss = 0)
+        loosingTrades := loosingTrades + 1
+
+Stp = strategy.position_avg_price * (1 - (takeProfit/100))
+Ssl = strategy.position_avg_price * (1 + (stopLoss/100))
+
+if(shortTradeTaken == 1 and strategy.position_size < 0)    
+    if(Stp >= close)
+        strategy.exit("SHORT TP",profit =  0)
+        balance := balance + (balance * (takeProfit/100))
+        winningTrades := winningTrades + 1
+
+
+    else if(high >= Ssl or close >= Ssl)
+        balance := balance - (balance * (stopLoss/100))
+        strategy.exit("SHORT SL",loss = 0)
+        loosingTrades := loosingTrades + 1
+
+
+// // Displaying the Data
+// var tbl = table.new(position.top_right, 2, 5)
+// table.cell(tbl, 0, 0, "Some Text")
+// table.cell(tbl, 0, 0, "Balance: ",  bgcolor = #e0e0e0, width = 7, height = 4)
+// table.cell(tbl, 1, 0, "$"+str.tostring(math.round(balance,2)), bgcolor = #89f5a1, width = 7, height = 4)
+// table.cell(tbl, 0, 1, "Total Trades: ", bgcolor = #89f5a1, width = 7, height = 4)
+// table.cell(tbl, 1, 1, str.tostring(totalNumberOfTrades),  bgcolor = #e0e0e0, width = 7, height = 4)
+// table.cell(tbl, 0, 2, "WinningTrades: ",  bgcolor = #e0e0e0, width = 7, height = 4)
+// table.cell(tbl, 1, 2, str.tostring(strategy.wintrades), bgcolor = #89f5a1, width = 7, height = 4)
+// table.cell(tbl, 0, 3, "LoosingTrades: ",  bgcolor = #89f5a1, width = 7, height = 4)
+// table.cell(tbl, 1, 3, str.tostring(strategy.losstrades), bgcolor = #e0e0e0,  width = 7, height = 4)
+
+// table.cell(tbl, 0, 4, "Winning % ", bgcolor = #e0e0e0, width = 7, height = 4)
+// table.cell(tbl, 1, 4, str.tostring(math.round(((strategy.wintrades/totalNumberOfTrades)*100),2)), bgcolor = #89f5a1,  width = 7, height = 4)
+
+
+
+
+
+// table.cell(tbl, 0, 3, "Loosing Trades: ", bgcolor = #89f5a1, width = 7, height = 4)

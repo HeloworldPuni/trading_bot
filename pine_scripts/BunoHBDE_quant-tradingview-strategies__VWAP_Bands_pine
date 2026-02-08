@@ -1,0 +1,52 @@
+//@version=5
+indicator("VWAP Bands", overlay=true)
+
+startSession = input.session("0930-1600", title="Sessão VWAP")
+multBase = input.float(1.0, title="Multiplicador Base (Desvio Padrão)", minval=0.1)
+
+// VWAP central
+vwapValue = request.security(syminfo.tickerid, "1", ta.vwap, lookahead=barmerge.lookahead_on)
+
+// Cálculo de desvio padrão
+var float sumPrice = 0
+var float sumSqPrice = 0
+var int count = 0
+
+isNewSession = ta.change(time("D"))
+if isNewSession
+    sumPrice := 0
+    sumSqPrice := 0
+    count := 0
+
+inSession = time(timeframe.period, startSession)
+price = hlc3
+
+if inSession
+    sumPrice += price
+    sumSqPrice += price * price
+    count += 1
+
+mean = sumPrice / count
+variance = (sumSqPrice / count) - (mean * mean)
+stdDev = math.sqrt(variance)
+
+// VWAP plot
+plot(vwapValue, color=color.white, title="VWAP", linewidth=2)
+
+// Banda 1
+b1_up = vwapValue + stdDev * 2
+b1_dn = vwapValue - stdDev * 2
+plot(b1_up, title="Banda +1", color=color.new(color.red, 10), linewidth = 1)
+plot(b1_dn, title="Banda -1", color=color.new(color.red, 10), linewidth = 1)
+
+// Banda 2
+b2_up = vwapValue + stdDev * 3.5
+b2_dn = vwapValue - stdDev * 3.5
+plot(b2_up, title="Banda +2", color=color.new(color.red, 20), linewidth = 2)
+plot(b2_dn, title="Banda -2", color=color.new(color.red, 20), linewidth = 2)
+
+// Banda 3
+b3_up = vwapValue + stdDev * 5
+b3_dn = vwapValue - stdDev * 5
+plot(b3_up, title="Banda +3", color=color.new(color.red, 50), linewidth = 3)
+plot(b3_dn, title="Banda -3", color=color.new(color.red, 50), linewidth = 3)

@@ -1,0 +1,104 @@
+//@version=5
+// Step 1. Script settings
+indicator(title="Average True Range", shorttitle="ATR", overlay=false)
+
+// ATR input options
+atrType = input.string("Regular", title="ATR Type",
+     options=["Regular", "Percentage", "Ticks", "Currency"])
+
+atrLen    = input.int(14, title="ATR Length")
+atrSmooth = input.string("RMA", title="Smoothing Type",
+     options=["EMA", "RMA", "SMA", "WMA"])
+
+posSize = input.int(1, title="Position Size (For Currency ATR)")
+
+// To disable the ATR's moving average, set its length to 1
+maLength = input.int(21, title="MA Length", minval=1)
+colourMA = input.bool(true, title="Colour MA Line?")
+
+highlight = input.bool(false, title="Highlight ATR Signals?")
+
+// Step 2. Calculate indicator values
+// Custom function that calculates the Average True Range
+// based on the smoothing type set by the input option
+AvgTrueRange() =>
+    if atrSmooth == "EMA"
+        ta.ema(ta.tr, atrLen)
+    else if atrSmooth == "RMA"
+        ta.rma(ta.tr, atrLen)
+    else if atrSmooth == "SMA"
+        ta.sma(ta.tr, atrLen)
+    else
+        ta.wma(ta.tr, atrLen)
+
+// Calculate the Average True Range value
+// based on the 'ATR Type' input option
+atrValue = if atrType == "Regular"
+    AvgTrueRange()
+else if atrType == "Percentage"
+    (AvgTrueRange() / close) * 100
+else if atrType == "Ticks"
+    AvgTrueRange() / syminfo.mintick
+else
+    // Calculate ATR currency with two decimals
+    math.round(AvgTrueRange() * syminfo.pointvalue * posSize * 100) / 100
+
+// Calculate ATR moving average, provided input length is > 1
+atrMA  = maLength > 1 ? ta.ema(atrValue, maLength) : na
+
+// Step 3. Determine indicator signals
+risingMA  = atrMA > atrMA[1] and atrMA[1] > atrMA[2]
+fallingMA = atrMA < atrMA[1] and atrMA[1] < atrMA[2]
+
+atrCrossover  = ta.crossover(atrValue, atrMA)
+atrCrossunder = ta.crossunder(atrValue, atrMA)
+
+highAtr = atrValue > ta.highest(atrValue, 20)[1]
+lowAtr  = atrValue < ta.lowest(atrValue, 20)[1]
+
+// Step 4. Output indicator data
+plot(atrValue, color=color.orange, title="ATR")
+
+// Show ATR moving average
+maColour = not colourMA ? color.teal :
+     risingMA ? color.green :
+     fallingMA ? color.red :
+     color.teal
+
+plot(atrMA, color=maColour, title="ATR EMA")
+
+// Highlight ATR signals
+bgColour = (atrCrossover or atrCrossunder) ? color.new(color.orange, 80) :
+     highAtr ? color.new(color.red, 80) :
+     lowAtr ? color.new(color.green, 80) :
+     na
+
+bgcolor(highlight ? bgColour : na)
+
+// Step 5. Create indicator alerts
+// Alerts based on the ATR's EMA
+alertcondition(condition=risingMA,
+     title="Rising ATR",
+     message="The Average True Range's average increased 2 bars in a row")
+
+alertcondition(condition=fallingMA,
+     title="Declining ATR",
+     message="The Average True Range's average decreased 2 bars in a row")
+
+// Alerts for when the ATR crosses its average
+alertcondition(condition=atrCrossover,
+     title="ATR Crossover",
+     message="The Average True Range crossed above its EMA")
+
+alertcondition(condition=atrCrossunder,
+     title="ATR Crossunder",
+     message="The Average True Range crossed under its EMA")
+
+// Alerts for when the ATR reaches a recent high or low
+alertcondition(condition=highAtr,
+     title="ATR New High",
+     message="The Average True Range crossed its 20-bar high")
+
+alertcondition(condition=lowAtr,
+     title="ATR New Low",
+     message="The Average True Range crossed its 20-bar low")

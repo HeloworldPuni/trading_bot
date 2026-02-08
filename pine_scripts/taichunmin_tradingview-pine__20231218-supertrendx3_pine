@@ -1,0 +1,65 @@
+//@version=5
+
+strategy("Supertrend x3 20231218",
+  calc_on_every_tick=true,
+  commission_value=0.1,
+  currency=currency.USDT,
+  default_qty_type=strategy.percent_of_equity,
+  default_qty_value=100,
+  format=format.percent,
+  initial_capital=100,
+  margin_long=100,
+  margin_short=100,
+  pyramiding=0,
+  slippage=10,
+  overlay=true)
+
+atrPeriod1 = input(8, "1) ATR Length", group = "Supertrend 1")
+factor1 = input(2.0, "1) Factor", group = "Supertrend 1")
+qty1 = input(10, "1) Percent of Qty", group = "Supertrend 1")
+
+atrPeriod2 = input(9, "2) ATR Length", group = "Supertrend 2")
+factor2 = input(2.5, "2) Factor", group = "Supertrend 2")
+qty2 = input(30, "2) Percent of Qty", group = "Supertrend 2")
+
+atrPeriod3 = input(10, "3) ATR Length", group = "Supertrend 3")
+factor3 = input(3.0, "3) Factor", group = "Supertrend 3")
+qty3 = input(60, "3) Percent of Qty", group = "Supertrend 3")
+
+qtySum = qty1 + qty2 + qty3
+
+fnSupertrend(atrPeriod, factor) =>
+    [trend, dir] = ta.supertrend(factor, atrPeriod)
+    isEntry = ta.crossunder(dir, 0)
+    lowest = ta.lowest(atrPeriod)
+    var float longStop = lowest
+    longStop := math.max(isEntry ? lowest : longStop, trend)
+    [isEntry, longStop]
+
+fnIsOpened(entryId) =>
+    bool isOpened = false
+    for i = 0 to strategy.opentrades - 1
+        if strategy.opentrades.entry_id(i) == entryId
+            isOpened := true
+    isOpened
+
+[isEntry1, longStop1] = fnSupertrend(atrPeriod1, factor1)
+plot(fnIsOpened("Supertrend 1") ? longStop1 : na, color = color.rgb(255, 255, 255, 20), style = plot.style_linebr)
+if not fnIsOpened("Supertrend 1") and isEntry1 // and false
+    strategy.order("Supertrend 1", strategy.long, qty = qty1 * strategy.default_entry_qty(close) / qtySum)
+if fnIsOpened("Supertrend 1")
+    strategy.exit("exit 1", "Supertrend 1", stop = longStop1)
+
+[isEntry2, longStop2] = fnSupertrend(atrPeriod2, factor2)
+plot(fnIsOpened("Supertrend 2") ? longStop2 : na, color = color.rgb(255, 255, 255, 40), style = plot.style_linebr)
+if not fnIsOpened("Supertrend 2") and isEntry2 // and false
+    strategy.order("Supertrend 2", strategy.long, qty = qty2 * strategy.default_entry_qty(close) / qtySum)
+if fnIsOpened("Supertrend 2")
+    strategy.exit("exit 2", "Supertrend 2", stop = longStop2)
+
+[isEntry3, longStop3] = fnSupertrend(atrPeriod3, factor3)
+plot(fnIsOpened("Supertrend 3") ? longStop3 : na, color = color.rgb(255, 255, 255, 60), style = plot.style_linebr)
+if not fnIsOpened("Supertrend 3") and isEntry3 // and false
+    strategy.order("Supertrend 3", strategy.long, qty = qty3 * strategy.default_entry_qty(close) / qtySum)
+if fnIsOpened("Supertrend 3")
+    strategy.exit("exit 3", "Supertrend 3", stop = longStop3)

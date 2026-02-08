@@ -1,0 +1,135 @@
+//@version=5
+strategy("Double Star Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// 交易方向设置
+tradeDirection = input.string("both", "交易方向", options=["long", "short", "both"], tooltip="选择策略的交易方向：做多、做空或双向交易")
+
+// 用户可配置的参数
+var float maxLossPercent = input.float(2.0, "最大损失比例", minval=0.1, maxval=10.0, step=0.1, tooltip="每次交易最多损失本金的百分比")
+
+// ATR 参数设置
+var int atrPeriod = input.int(14, "ATR周期", minval=1)
+var float atrMultiplier = input.float(1.0, "ATR倍数", minval=0.1, maxval=5.0, step=0.1)
+atr = ta.atr(atrPeriod)
+
+// 交易时间设置
+var bool useTimeFilter = input.bool(false, "启用交易时间限制", tooltip="开启后只在指定时间段内交易")
+var string sessionTime = input.session("0930-1600", "交易时段", tooltip="仅在启用交易时间限制时生效")
+inTradeTime = useTimeFilter ? (time(timeframe.period, sessionTime) != 0) : true
+
+// 定义时间框架
+timeframe = "5"
+
+// 布林带参数
+length = input.int(20, "布林带周期", minval=1)
+mult = input.float(2.0, "布林带标准差倍数", minval=0.1, maxval=5.0, step=0.1)
+basis = ta.sma(close, length)
+dev = mult * ta.stdev(close, length)
+upper = basis + dev
+lower = basis - dev
+
+// MACD 参数
+fast_length = input.int(12, "MACD快线", minval=1)
+slow_length = input.int(26, "MACD慢线", minval=1)
+signal_length = input.int(9, "MACD信号线", minval=1)
+[macdLine, signalLine, _] = ta.macd(close, fast_length, slow_length, signal_length)
+
+// 判断K线实体占比
+bodyPercentageThreshold = input.float(2, "K线实体占比阈值", minval=1, maxval=100, step=1)
+bodyPercentage = math.abs(close - open) / math.abs(high - low) * 100
+isSmallBody = bodyPercentage < bodyPercentageThreshold
+
+// 交易信号
+isAboveBollinger = high > upper
+isBelowBollinger = low < lower
+isAboveMacdZero = macdLine > 0
+isBelowMacdZero = macdLine < 0
+
+// 价格趋势确认
+isCloseLowerThanPrev = close < close[1]  // 当前K线收盘价低于前一K线
+isCloseHigherThanPrev = close > close[1]  // 当前K线收盘价高于前一K线
+
+// 记录潜在的入场信号
+var bool potentialShortEntry = false
+var bool potentialLongEntry = false
+
+// 根据配置确定交易条件
+bool shortCondition = false
+bool longCondition = false
+
+// 做空条件检查
+if (tradeDirection == "both" or tradeDirection == "short")
+    if (isAboveBollinger and isSmallBody and isAboveMacdZero)  // 发现黄昏之星形态
+        potentialShortEntry := true
+    else if (potentialShortEntry and isCloseLowerThanPrev)  // 在发现形态后，检查是否满足收盘价条件
+        shortCondition := true
+        potentialShortEntry := false
+    else
+        potentialShortEntry := false
+
+// 做多条件检查（可以根据需要添加类似的收盘价条件）
+if (tradeDirection == "both" or tradeDirection == "long")
+    longCondition := isBelowBollinger and isSmallBody and isBelowMacdZero and inTradeTime
+
+// 计算止损价格和仓位大小
+float longStopPrice = na
+float shortStopPrice = na
+float positionSize = na
+
+// 跟踪止损价格计算
+var float longTrailPrice = na
+var float shortTrailPrice = na
+var float prevPositionSize = na
+
+// 检测仓位变化
+if (strategy.position_size != prevPositionSize)
+    if (strategy.position_size == 0)  // 仓位关闭
+        longTrailPrice := na
+        shortTrailPrice := na
+    prevPositionSize := strategy.position_size
+
+if (longCondition)
+    longStopPrice := low - (atr * atrMultiplier)  // 做多初始止损位置
+    longTrailPrice := low - (atr * atrMultiplier)  // 做多初始跟踪止损价格
+    
+    // 计算做多仓位
+    riskPerTrade = strategy.equity * (maxLossPercent/100)
+    riskPerUnit = math.abs(longStopPrice - close)
+    positionSize := riskPerTrade / riskPerUnit
+
+if (shortCondition)
+    shortStopPrice := high + (atr * atrMultiplier)  // 做空初始止损位置
+    shortTrailPrice := high + (atr * atrMultiplier)  // 做空初始跟踪止损价格
+    
+    // 计算做空仓位
+    riskPerTrade = strategy.equity * (maxLossPercent/100)
+    riskPerUnit = math.abs(shortStopPrice - close)
+    positionSize := riskPerTrade / riskPerUnit
+
+// 更新跟踪止损价格
+if (strategy.position_size > 0)  // 如果有多仓
+    longTrailPrice := math.max(nz(longTrailPrice[1], low - (atr * atrMultiplier)), low - (atr * atrMultiplier))  // 更新做多跟踪止损价格
+if (strategy.position_size < 0)  // 如果有空仓
+    shortTrailPrice := math.min(nz(shortTrailPrice[1], high + (atr * atrMultiplier)), high + (atr * atrMultiplier))  // 更新做空跟踪止损价格
+
+// 执行策略
+if (longCondition)
+    strategy.entry("Long", strategy.long, qty=positionSize)
+if (shortCondition)
+    strategy.entry("Short", strategy.short, qty=positionSize)
+
+// 检查是否触发止损
+if (strategy.position_size > 0 and low <= longTrailPrice)  // 多仓止损
+    strategy.close("Long")
+    longTrailPrice := na
+if (strategy.position_size < 0 and high >= shortTrailPrice)  // 空仓止损
+    strategy.close("Short")
+    shortTrailPrice := na
+
+// 在图表上标记交易信号
+plotshape(longCondition, "Long Signal", shape.triangleup, location.belowbar, color=color.green, size=size.small)
+plotshape(shortCondition, "Short Signal", shape.triangledown, location.abovebar, color=color.red, size=size.small)
+
+// 绘制跟踪止损线（仅在有仓位时）
+plot(strategy.position_size > 0 ? longTrailPrice : na, "Long Trail", color=color.green, style=plot.style_line)
+plot(strategy.position_size < 0 ? shortTrailPrice : na, "Short Trail", color=color.red, style=plot.style_line)

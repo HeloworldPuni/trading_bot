@@ -1,0 +1,53 @@
+//@version=5
+indicator("Premium Price Action Strategy with Confirmations (Mehdi Hesami)", shorttitle = "Price Action Strategy", overlay=true)
+
+// --- تنظیمات تاییدیه‌ها
+group_confirmations = "Confirmations"
+useATR = input.bool(true, title="Use ATR for Volatility Filter", group=group_confirmations)
+useStochRSI = input.bool(true, title="Use Stochastic RSI for Overbought/Oversold", group=group_confirmations)
+useCandlestickPatterns = input.bool(true, title="Use Candlestick Patterns Confirmation", group=group_confirmations)
+useBreakoutRetest = input.bool(true, title="Use Breakout & Retest Confirmation", group=group_confirmations)
+
+// --- تنظیمات ATR
+group_atr = "ATR Settings"
+atrLength = input.int(14, title="ATR Length", group=group_atr)
+atrMultiplier = input.float(1.5, title="ATR Multiplier", group=group_atr)
+atrValue = ta.atr(atrLength)
+
+// --- تنظیمات Stochastic RSI
+group_stochRSI = "Stochastic RSI Settings"
+stochRsiLength = input.int(14, title="Stochastic RSI Length", group=group_stochRSI)
+stochRsiOverbought = input.int(80, title="Stochastic RSI Overbought", group=group_stochRSI)
+stochRsiOversold = input.int(20, title="Stochastic RSI Oversold", group=group_stochRSI)
+k = ta.sma(ta.stoch(close, high, low, stochRsiLength), 3)
+
+// --- الگوهای کندلی (پین بار)
+bullishPinBar = low < ta.lowest(low, 5) and close > open
+bearishPinBar = high > ta.highest(high, 5) and close < open
+
+// --- شناسایی شکست و تست مجدد
+support = ta.lowest(close, 50)
+resistance = ta.highest(close, 50)
+breakout = (close > resistance or close < support)
+
+// --- بررسی تاییدیه‌ها
+atrCondition = useATR ? close > atrValue * atrMultiplier : true
+stochRsiConditionLong = useStochRSI ? k < stochRsiOversold : true
+stochRsiConditionShort = useStochRSI ? k > stochRsiOverbought : true
+candlestickPatternConditionLong = useCandlestickPatterns ? bullishPinBar : true
+candlestickPatternConditionShort = useCandlestickPatterns ? bearishPinBar : true
+breakoutCondition = useBreakoutRetest ? breakout : true
+
+// --- قوانین ورود به معامله (Long)
+longCondition = breakoutCondition and atrCondition and stochRsiConditionLong and candlestickPatternConditionLong
+
+// --- قوانین ورود به معامله (Short)
+shortCondition = breakoutCondition and atrCondition and stochRsiConditionShort and candlestickPatternConditionShort
+
+// --- رسم سیگنال‌ها
+plotshape(longCondition, title="Long Signal", location=location.belowbar, color=color.green, textcolor = color.white, style=shape.labelup, text="BUY", force_overlay = true)
+plotshape(shortCondition, title="Short Signal", location=location.abovebar, color=color.red, textcolor = color.white, style=shape.labeldown, text="SELL", force_overlay = true)
+
+// --- اطلاعات بصری
+bgcolor(longCondition ? #4caf501a : na, title="Long Background")
+bgcolor(shortCondition ? #ff52521a : na, title="Short Background")

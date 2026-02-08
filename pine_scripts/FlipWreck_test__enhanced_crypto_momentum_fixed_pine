@@ -1,0 +1,1195 @@
+//@version=6
+indicator("🔥 Enhanced AI Crypto Trading System", shorttitle="AI-ENHANCED-TRADING", overlay=true, max_labels_count=50, max_lines_count=50)
+
+// ════════════════════════════════════════════════════════════════��[...]
+// 🚀 ENHANCED SENSITIVE AI CRYPTO TRADING SYSTEM - FIXED ENTRY LOGIC
+// ════════════════════════════════════════════════════════════════��[...]
+
+// 🧠 AI STRATEGY SELECTOR SETTINGS
+var g_ai = "🤖 AI STRATEGY SELECTOR"
+enableAISelector = input.bool(true, "🤖 Enable AI Strategy Selector", group=g_ai)
+adaptationSpeed = input.string("Fast", "Adaptation Speed", options=["Slow", "Medium", "Fast", "Instant"], group=g_ai)
+marketAnalysisDepth = input.string("Deep", "Market Analysis Depth", options=["Basic", "Standard", "Deep", "Ultra"], group=g_ai)
+aiConfidenceThreshold = input.int(50, "AI Confidence Threshold %", minval=40, maxval=95, group=g_ai)  // LOWERED for more signals
+enableStrategyLearning = input.bool(true, "📚 Enable Strategy Learning", group=g_ai)
+enableRiskAdaptation = input.bool(true, "🛡️ Enable Risk Adaptation", group=g_ai)
+enablePerformanceTracking = input.bool(true, "📊 Enable Performance Tracking", group=g_ai)
+enableAggressiveMode = input.bool(true, "🔥 Enable Aggressive Signal Mode", group=g_ai)
+
+// 🎯 STRATEGY AVAILABILITY
+var g_strategies = "📈 AVAILABLE STRATEGIES"
+enableScalping = input.bool(true, "⚡ Scalping Strategy", group=g_strategies)
+enableBreakout = input.bool(true, "🚀 Breakout Strategy", group=g_strategies)
+enableMomentum = input.bool(true, "📈 Momentum Strategy", group=g_strategies)
+enableReversal = input.bool(true, "🔄 Reversal Strategy", group=g_strategies)
+enableMACrossover = input.bool(true, "📊 MA Crossover Strategy", group=g_strategies)
+enableRSIStrategy = input.bool(true, "📉 RSI Strategy", group=g_strategies)
+enableNewsTrading = input.bool(true, "📰 News Trading Strategy", group=g_strategies)
+
+// 📊 MARKET CONDITION DETECTION SETTINGS
+var g_market = "🌊 MARKET CONDITIONS"
+volatilityPeriod = input.int(14, "Volatility Analysis Period", minval=10, maxval=50, group=g_market)
+volumeAnalysisPeriod = input.int(14, "Volume Analysis Period", minval=10, maxval=50, group=g_market)
+trendAnalysisPeriod = input.int(30, "Trend Analysis Period", minval=20, maxval=100, group=g_market)
+whaleDetectionSensitivity = input.float(3.0, "Whale Detection Sensitivity", minval=2.0, maxval=10.0, step=0.5, group=g_market)
+newsEventSensitivity = input.float(4.0, "News Event Sensitivity", minval=3.0, maxval=15.0, step=0.5, group=g_market)  // INCREASED sensitivity
+dipDetectionDepth = input.float(1.5, "Dip Detection Depth %", minval=1.0, maxval=10.0, step=0.5, group=g_market)  // REDUCED
+
+// 📊 TRADING EXECUTION
+var g_trade = "💰 TRADING EXECUTION"
+accountBalance = input.float(1100.0, "Account Balance ($)", minval=10.0, maxval=1000000.0, step=100.0, group=g_trade)
+baseRiskPerTrade = input.float(1.2, "Base Risk Per Trade (%)", minval=0.5, maxval=5.0, step=0.1, group=g_trade)  // REDUCED for more frequent trades
+maxLeverage = input.int(100, "Max Leverage", minval=1, maxval=100, group=g_trade)
+useAutoLeverage = input.bool(true, "🎯 Auto Leverage Calculator", group=g_trade)
+
+// 🎨 VISUAL SETTINGS
+var g_visual = "🎨 VISUAL SETTINGS"
+showAIDecisions = input.bool(true, "Show AI Strategy Decisions", group=g_visual)
+showMarketConditions = input.bool(true, "Show Market Condition Analysis", group=g_visual)
+showPerformanceMetrics = input.bool(true, "Show Performance Metrics", group=g_visual)
+showStrategyConfidence = input.bool(true, "Show Strategy Confidence", group=g_visual)
+showRiskAnalysis = input.bool(true, "Show Risk Analysis", group=g_visual)
+
+// 📈 TECHNICAL INDICATORS - Enhanced for sensitivity
+atr = ta.atr(14)
+rsi = ta.rsi(close, 14)
+rsi_fast = ta.rsi(close, 7)
+rsi_smooth = ta.sma(rsi, 3)
+[macdLine, signalLine, histogramLine] = ta.macd(close, 12, 26, 9)
+ema_fast = ta.ema(close, 8)
+ema_medium = ta.ema(close, 18)
+ema_slow = ta.ema(close, 45)
+ema_trend = ta.ema(close, 150)
+
+// Enhanced Volume Analysis
+avgVolume = ta.sma(volume, volumeAnalysisPeriod)
+avgVolume7 = ta.sma(volume, 7)
+avgVolume3 = ta.sma(volume, 3)
+relativeVolume = volume / avgVolume
+volumeSpike = volume > avgVolume * 1.8  // REDUCED threshold
+megaVolumeSpike = volume > avgVolume * 3.0  // REDUCED
+extremeVolumeSpike = volume > avgVolume * 5.0  // REDUCED
+microVolumeSpike = volume > avgVolume * 1.2  // MICRO spikes
+
+// Enhanced Volatility Analysis
+volatility = (high - low) / close * 100
+avgVolatility = ta.sma(volatility, volatilityPeriod)
+volRatio = volatility / avgVolatility
+highVolatility = volRatio > 1.2  // REDUCED
+lowVolatility = volRatio < 0.8  
+extremeVolatility = volRatio > 1.6  // REDUCED
+microVolatility = volRatio > 1.05  // MICRO volatility
+
+// Price Action
+bodySize = math.abs(close - open)
+spread = high - low
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+
+// Enhanced Trend Analysis
+trend = ema_fast > ema_medium ? 1 : -1
+longTermTrend = close > ema_trend ? 1 : -1
+trendStrength = math.abs(ema_fast - ema_medium) / atr
+microTrend = close > close[2] ? 1 : -1  // MICRO trend
+
+// ════════════════════════════════════════════════════════════════�[...]
+// 🌊 ENHANCED MARKET CONDITION ANALYSIS
+// ════════════════════════════════════════════════════════════════�[...]
+
+// Enhanced News Event Detection
+newsEventDetection() =>
+    newsVolumeSpike = volume > avgVolume * newsEventSensitivity
+    newsVolatilitySpike = volatility > avgVolatility * 1.8  // REDUCED
+    newsPriceGap = math.abs(open - close[1]) > atr * 1.0  // REDUCED
+    microNewsEvent = volume > avgVolume * (newsEventSensitivity * 0.5) and volRatio > 1.1  // MICRO news
+    
+    newsEvent = newsVolumeSpike and (newsVolatilitySpike or newsPriceGap) or microNewsEvent
+    
+    majorNews = newsEvent and volume > avgVolume * (newsEventSensitivity * 1.1)  // REDUCED
+    breakingNews = newsEvent and volume > avgVolume * (newsEventSensitivity * 1.3)  // REDUCED
+    
+    newsImpact = breakingNews ? 3 : majorNews ? 2 : newsEvent ? 1 : 0
+    newsDirection = newsEvent ? (close > open ? 1 : -1) : 0
+    
+    [newsEvent, newsImpact, newsDirection, majorNews, breakingNews]
+
+// Enhanced Market Dip Detection
+marketDipDetection() =>
+    flashDip = close < close[1] * (1 - dipDetectionDepth/100) and volume > avgVolume * 1.5  // REDUCED
+    gradualDip = close < ta.lowest(close, 6) and close < ema_medium * 0.98  // ENHANCED
+    structuralDip = close < ema_trend and longTermTrend == -1
+    microDip = close < close[1] * 0.998 and volume > avgVolume * 1.1  // MICRO dip
+    
+    dipRecovery = (flashDip[1] or microDip[1]) and close > close[1] * 1.003 and volume > avgVolume * 1.2  // ENHANCED
+    bottomFormation = rsi < 40 and rsi > rsi[1] and volume > avgVolume * 0.7  // ENHANCED
+    
+    dipSeverity = structuralDip ? 3 : gradualDip ? 2 : flashDip ? 1 : microDip ? 1 : 0
+    dipOpportunity = (flashDip or gradualDip or microDip) and not structuralDip
+    
+    [flashDip, gradualDip, structuralDip, dipRecovery, bottomFormation, dipSeverity, dipOpportunity, microDip]
+
+// Enhanced Whale Activity Detection
+whaleActivityDetection() =>
+    whaleAccumulation = volume > avgVolume * whaleDetectionSensitivity and spread < atr * 1.1
+    whaleDistribution = volume > avgVolume * whaleDetectionSensitivity and spread > atr * 0.9
+    stealthWhale = volume > avgVolume * (whaleDetectionSensitivity * 0.4) and bodySize < spread * 0.6
+    whaleMomentum = volume > avgVolume * (whaleDetectionSensitivity * 0.7) and bodySize > spread * 0.5
+    microWhale = volume > avgVolume * 1.8 and spread < atr * 0.7  // MICRO whale
+    
+    whaleActivity = whaleAccumulation or whaleDistribution or stealthWhale or whaleMomentum or microWhale
+    whaleDirection = whaleActivity ? (whaleAccumulation or microWhale or (whaleMomentum and close > open) ? 1 : -1) : 0
+    whaleStrength = whaleMomentum ? 3 : whaleAccumulation ? 2 : whaleDistribution ? 2 : microWhale ? 1 : stealthWhale ? 1 : 0
+    
+    [whaleActivity, whaleDirection, whaleStrength, whaleAccumulation, whaleDistribution, stealthWhale, whaleMomentum, microWhale]
+
+// Enhanced Price Fluctuation Analysis
+priceFluctuationAnalysis() =>
+    priceRange = ta.highest(high, 12) - ta.lowest(low, 12)  // REDUCED period
+    avgRange = ta.sma(priceRange, 6)  // REDUCED
+    
+    choppyMarket = priceRange < avgRange * 0.95 and volRatio < 1.2
+    trendingMarket = priceRange > avgRange * 1.15 and trendStrength > 1.0  // ENHANCED
+    volatileMarket = volRatio > 1.4 and not trendingMarket
+    
+    shortTermMomentum = (close - close[2]) / close[2] * 100  // REDUCED period
+    mediumTermMomentum = (close - close[10]) / close[10] * 100  // REDUCED
+    
+    momentumStrength = math.abs(shortTermMomentum) > 1.0 ? 2 : math.abs(shortTermMomentum) > 0.5 ? 1 : 0  // ENHANCED
+    momentumDirection = shortTermMomentum > 0 ? 1 : -1
+    
+    [choppyMarket, trendingMarket, volatileMarket, momentumStrength, momentumDirection, shortTermMomentum, mediumTermMomentum]
+
+// Enhanced Market Session Analysis
+sessionAnalysis() =>
+    currentHour = hour(time, "UTC")
+    
+    asianSession = currentHour >= 0 and currentHour < 8
+    europeanSession = currentHour >= 8 and currentHour < 16
+    usSession = currentHour >= 16 and currentHour < 24
+    
+    highLiquiditySession = europeanSession or usSession
+    lowLiquiditySession = asianSession
+    
+    dayOfWeek = dayofweek(time)
+    isMonday = dayOfWeek == dayofweek.monday
+    isFriday = dayOfWeek == dayofweek.friday
+    isWeekend = dayOfWeek == dayofweek.saturday or dayOfWeek == dayofweek.sunday
+    
+    sessionScore = highLiquiditySession ? 2 : lowLiquiditySession ? 1 : 0
+    dayScore = isMonday ? 1 : isFriday ? -1 : isWeekend ? -2 : 0
+    
+    [asianSession, europeanSession, usSession, highLiquiditySession, sessionScore, dayScore, isMonday, isFriday, isWeekend]
+
+// Execute enhanced market analysis
+[newsEvent, newsImpact, newsDirection, majorNews, breakingNews] = newsEventDetection()
+[flashDip, gradualDip, structuralDip, dipRecovery, bottomFormation, dipSeverity, dipOpportunity, microDip] = marketDipDetection()
+[whaleActivity, whaleDirection, whaleStrength, whaleAccumulation, whaleDistribution, stealthWhale, whaleMomentum, microWhale] = whaleActivityDetection()
+[choppyMarket, trendingMarket, volatileMarket, momentumStrength, momentumDirection, shortTermMomentum, mediumTermMomentum] = priceFluctuationAnalysis()
+[asianSession, europeanSession, usSession, highLiquiditySession, sessionScore, dayScore, isMonday, isFriday, isWeekend] = sessionAnalysis()
+
+// ════════════════════════════════════════════════════════════════[...]
+// 🔥 ENHANCED AI STRATEGY SCORING ENGINE (SUPER SENSITIVE)
+// ════════════════════════════════════════════════════════════════[...]
+
+scalpingScore() =>
+    float score = 0.0
+    
+    // Base conditions - SUPER sensitive
+    if highLiquiditySession
+        score += 20
+    if lowVolatility or choppyMarket
+        score += 25
+    if not trendingMarket
+        score += 20
+    if relativeVolume > 1.05 and relativeVolume < 5.0  // WIDENED range
+        score += 25
+    if rsi > 20 and rsi < 80  // SUPER WIDENED range
+        score += 20
+    
+    // Enhanced conditions
+    if microVolumeSpike and not extremeVolatility
+        score += 30
+    if microTrend == trend
+        score += 15
+    if rsi_smooth > 35 and rsi_smooth < 65  // Sweet spot
+        score += 25
+    if microVolatility and not extremeVolatility
+        score += 20
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.5  // INCREASED
+    
+    // Reduced penalties
+    if extremeVolatility or breakingNews
+        score -= 15  // REDUCED
+    if trendingMarket and trendStrength > 2.5
+        score -= 10  // REDUCED
+    if structuralDip
+        score -= 15  // REDUCED
+    
+    math.max(0, score)
+
+breakoutScore() =>
+    float score = 0.0
+    
+    // Enhanced breakout detection - SUPER sensitive
+    if volumeSpike or megaVolumeSpike or microVolumeSpike
+        score += 30
+    if highVolatility or extremeVolatility or microVolatility
+        score += 25
+    if newsEvent
+        score += 35
+    if not choppyMarket
+        score += 20
+    if momentumStrength >= 1  
+        score += 25
+    
+    // New breakout conditions
+    if close > ta.highest(high[1], 6) and (volumeSpike or microVolumeSpike)  // REDUCED period
+        score += 40
+    if close < ta.lowest(low[1], 6) and (volumeSpike or microVolumeSpike)
+        score += 40
+    if microVolatility and microVolumeSpike
+        score += 20
+    
+    // Consolidation breakout setup
+    if lowVolatility[1] and (highVolatility or microVolatility)
+        score += 30
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.6  // INCREASED
+    
+    // Reduced penalties
+    if choppyMarket and not microVolumeSpike
+        score -= 10  // REDUCED
+    if lowVolatility and not volumeSpike and not microVolumeSpike
+        score -= 10  // REDUCED
+    
+    math.max(0, score)
+
+momentumScore() =>
+    float score = 0.0
+    
+    // Enhanced momentum detection - SUPER sensitive
+    if trendingMarket
+        score += 30
+    if momentumStrength >= 1
+        score += 25
+    if whaleMomentum or microWhale
+        score += 25
+    if relativeVolume > 1.1  // REDUCED
+        score += 20
+    if trendStrength > 0.8  // REDUCED
+        score += 20
+    if math.abs(shortTermMomentum) > 1.5  // REDUCED
+        score += 20
+    
+    // New momentum conditions
+    if microTrend == trend and microTrend == longTermTrend
+        score += 30
+    if ta.crossover(ema_fast, ema_medium) or ta.crossunder(ema_fast, ema_medium)
+        score += 25
+    if rsi_fast > 52 and trend == 1
+        score += 15
+    if rsi_fast < 48 and trend == -1
+        score += 15
+    
+    // Multi-timeframe alignment
+    if trend == longTermTrend
+        score += 20
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.4  // INCREASED
+    
+    // Reduced penalties
+    if choppyMarket and not microVolumeSpike
+        score -= 15  // REDUCED
+    if dipSeverity >= 3
+        score -= 10  // REDUCED
+    if lowVolatility and not microVolatility
+        score -= 8   // REDUCED
+    
+    math.max(0, score)
+
+reversalScore() =>
+    float score = 0.0
+    
+    // Enhanced reversal detection - SUPER sensitive
+    if rsi < 40 or rsi > 60  // SUPER WIDENED
+        score += 25
+    if dipRecovery or bottomFormation
+        score += 30
+    if whaleAccumulation or microWhale
+        score += 25
+    if dipOpportunity or microDip
+        score += 25
+    if extremeVolatility and newsEvent
+        score += 25
+    
+    // New reversal conditions
+    if rsi < 50 and close > close[2] and microVolumeSpike  // SUPER ENHANCED
+        score += 30
+    if rsi > 50 and close < close[2] and microVolumeSpike
+        score += 30
+    if ta.crossover(rsi, 25) or ta.crossunder(rsi, 75)  // WIDENED
+        score += 25
+    if microDip and rsi < 45
+        score += 20
+    
+    // Divergence signals - enhanced
+    if rsi < 50 and close > close[3]  // SUPER WIDENED
+        score += 20
+    if rsi > 50 and close < close[3]  // SUPER WIDENED
+        score += 20
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.5  // INCREASED
+    
+    // Reduced penalties
+    if trendingMarket and momentumStrength >= 2 and not microDip
+        score -= 10  // REDUCED
+    if not (dipSeverity >= 1 or rsi < 45 or rsi > 55)  // SUPER WIDENED
+        score -= 5   // REDUCED
+    
+    math.max(0, score)
+
+maCrossoverScore() =>
+    float score = 0.0
+    
+    // Enhanced crossover detection - SUPER sensitive
+    crossoverDetected = ta.crossover(ema_fast, ema_medium) or ta.crossunder(ema_fast, ema_medium)
+    nearCrossover = math.abs(ema_fast - ema_medium) / atr < 0.5  // WIDENED
+    
+    if crossoverDetected
+        score += 35
+    if nearCrossover and not crossoverDetected
+        score += 20  // INCREASED
+    
+    if volRatio > 0.8 and volRatio < 3.0  // SUPER WIDENED range
+        score += 20
+    if relativeVolume > 0.8 and relativeVolume < 6.0  // SUPER WIDENED
+        score += 15
+    if not choppyMarket and not extremeVolatility
+        score += 20
+    
+    // Enhanced trend change detection
+    if trend != trend[2]  // REDUCED period
+        score += 25
+    if microTrend != microTrend[1]
+        score += 15
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.4  // INCREASED
+    
+    // Reduced penalties
+    if choppyMarket and not nearCrossover
+        score -= 10  // REDUCED
+    if extremeVolatility and not crossoverDetected
+        score -= 10  // REDUCED
+    if newsEvent and extremeVolumeSpike and not crossoverDetected
+        score -= 5   // REDUCED
+    
+    math.max(0, score)
+
+rsiStrategyScore() =>
+    float score = 0.0
+    
+    // Enhanced RSI strategy - SUPER sensitive
+    if rsi < 40  // SUPER WIDENED
+        score += 30
+    if rsi > 60  // SUPER WIDENED
+        score += 30
+    if rsi > 40 and rsi < 60 and (rsi < 48 or rsi > 52)  // SUPER WIDENED
+        score += 20
+    
+    // Enhanced RSI momentum
+    if rsi > 48 and rsi[1] <= 48  // SUPER WIDENED
+        score += 25
+    if rsi < 52 and rsi[1] >= 52  // SUPER WIDENED
+        score += 25
+    
+    // New RSI conditions
+    if ta.crossover(rsi_smooth, 40) or ta.crossunder(rsi_smooth, 60)  // WIDENED
+        score += 30
+    if rsi_fast < 30 or rsi_fast > 70
+        score += 20
+    if math.abs(rsi - rsi_smooth) < 5  // Stable RSI
+        score += 15
+    
+    // Volume confirmation - enhanced
+    if microVolumeSpike and (rsi < 45 or rsi > 55)  // SUPER WIDENED
+        score += 25
+    if volumeSpike and (rsi < 35 or rsi > 65)
+        score += 30
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.6  // INCREASED
+    
+    // Reduced penalties
+    if rsi > 40 and rsi < 60 and not microVolumeSpike  // SUPER WIDENED neutral zone
+        score -= 5   // REDUCED
+    if extremeVolatility and not (rsi < 20 or rsi > 80)
+        score -= 5   // REDUCED
+    
+    math.max(0, score)
+
+newsTradingScore() =>
+    float score = 0.0
+    
+    // Enhanced news trading - SUPER sensitive
+    if newsEvent
+        score += 40
+    if majorNews
+        score += 55
+    if breakingNews
+        score += 70
+    if extremeVolumeSpike
+        score += 35
+    if extremeVolatility
+        score += 30
+    
+    // New micro news detection
+    if microVolumeSpike and microVolatility
+        score += 25
+    if volume > avgVolume3 * 2.0  // REDUCED threshold
+        score += 20
+    
+    // Post-news continuation - enhanced
+    if newsEvent[1] and relativeVolume > 1.3  // REDUCED
+        score += 25
+    if newsEvent[2] and relativeVolume > 1.2
+        score += 15  // Extended news effect
+    
+    // News reversal opportunity - enhanced
+    if newsEvent[1] and relativeVolume < 1.1 and volRatio < 1.05  // SUPER ENHANCED
+        score += 30
+    
+    // Aggressive mode bonus
+    if enableAggressiveMode
+        score *= 1.7  // INCREASED
+    
+    // Reduced penalties
+    if not newsEvent and not extremeVolumeSpike and not microVolumeSpike
+        score -= 20  // REDUCED
+    if lowVolatility and relativeVolume < 1.1  // SUPER ENHANCED
+        score -= 15  // REDUCED
+    
+    math.max(0, score)
+
+// Calculate all strategy scores with SUPER enhanced sensitivity
+scalpingStrategyScore = enableScalping ? scalpingScore() : 0
+breakoutStrategyScore = enableBreakout ? breakoutScore() : 0
+momentumStrategyScore = enableMomentum ? momentumScore() : 0
+reversalStrategyScore = enableReversal ? reversalScore() : 0
+maCrossoverStrategyScore = enableMACrossover ? maCrossoverScore() : 0
+rsiStrategyStrategyScore = enableRSIStrategy ? rsiStrategyScore() : 0
+newsTradingStrategyScore = enableNewsTrading ? newsTradingScore() : 0
+
+// ════════════════════════════════════════════════════════════════[...]
+// 🧠 ENHANCED AI STRATEGY SELECTION ENGINE
+// ════════════════════════════════════════════════════════════════[...]
+
+getBestStrategy() =>
+    string bestStrategy = "None"
+    float bestScore = 0.0
+    
+    if scalpingStrategyScore > bestScore
+        bestStrategy := "Scalping"
+        bestScore := scalpingStrategyScore
+    
+    if breakoutStrategyScore > bestScore
+        bestStrategy := "Breakout"
+        bestScore := breakoutStrategyScore
+    
+    if momentumStrategyScore > bestScore
+        bestStrategy := "Momentum"
+        bestScore := momentumStrategyScore
+    
+    if reversalStrategyScore > bestScore
+        bestStrategy := "Reversal"
+        bestScore := reversalStrategyScore
+    
+    if maCrossoverStrategyScore > bestScore
+        bestStrategy := "MA-Crossover"
+        bestScore := maCrossoverStrategyScore
+    
+    if rsiStrategyStrategyScore > bestScore
+        bestStrategy := "RSI-Strategy"
+        bestScore := rsiStrategyStrategyScore
+    
+    if newsTradingStrategyScore > bestScore
+        bestStrategy := "News-Trading"
+        bestScore := newsTradingStrategyScore
+    
+    [bestStrategy, bestScore]
+
+getSecondaryStrategy(excludeStrategy) =>
+    string secondStrategy = "None"
+    float secondScore = 0.0
+    
+    if scalpingStrategyScore > secondScore and "Scalping" != excludeStrategy
+        secondStrategy := "Scalping"
+        secondScore := scalpingStrategyScore
+    
+    if breakoutStrategyScore > secondScore and "Breakout" != excludeStrategy
+        secondStrategy := "Breakout"
+        secondScore := breakoutStrategyScore
+    
+    if momentumStrategyScore > secondScore and "Momentum" != excludeStrategy
+        secondStrategy := "Momentum"
+        secondScore := momentumStrategyScore
+    
+    if reversalStrategyScore > secondScore and "Reversal" != excludeStrategy
+        secondStrategy := "Reversal"
+        secondScore := reversalStrategyScore
+    
+    if maCrossoverStrategyScore > secondScore and "MA-Crossover" != excludeStrategy
+        secondStrategy := "MA-Crossover"
+        secondScore := maCrossoverStrategyScore
+    
+    if rsiStrategyStrategyScore > secondScore and "RSI-Strategy" != excludeStrategy
+        secondStrategy := "RSI-Strategy"
+        secondScore := rsiStrategyStrategyScore
+    
+    if newsTradingStrategyScore > secondScore and "News-Trading" != excludeStrategy
+        secondStrategy := "News-Trading"
+        secondScore := newsTradingStrategyScore
+    
+    [secondStrategy, secondScore]
+
+[aiSelectedStrategy, aiStrategyScore] = getBestStrategy()
+[aiSecondaryStrategy, aiSecondaryScore] = getSecondaryStrategy(aiSelectedStrategy)
+
+// Enhanced AI Confidence calculation
+baseConfidence = math.min(100, aiStrategyScore)
+confidenceBoost = enableAggressiveMode ? 20 : 0  // INCREASED boost
+adjustedConfidence = math.min(100, baseConfidence + confidenceBoost)
+aiConfidence = adjustedConfidence
+useAIStrategy = enableAISelector and aiConfidence >= aiConfidenceThreshold
+
+// Strategy adaptation based on speed setting - SUPER enhanced
+adaptationBars = adaptationSpeed == "Instant" ? 1 : adaptationSpeed == "Fast" ? 1 : adaptationSpeed == "Medium" ? 2 : 4  // SUPER FASTER adaptation
+var string currentStrategy = "Multi-Strategy"
+var int strategyChangeBar = 0
+
+if useAIStrategy and (bar_index - strategyChangeBar) >= adaptationBars
+    if aiSelectedStrategy != currentStrategy and aiConfidence >= aiConfidenceThreshold
+        currentStrategy := aiSelectedStrategy
+        strategyChangeBar := bar_index
+
+finalStrategy = useAIStrategy ? currentStrategy : "Multi-Strategy"
+
+// ════════════════════════════════════════════════════════════════[...]
+// 📊 ENHANCED MARKET CONDITION SUMMARY
+// ════════════════════════════════════════════════════════════════[...]
+
+getMarketCondition() =>
+    string condition = ""
+    
+    if newsEvent
+        condition := breakingNews ? "🚨 BREAKING NEWS" : majorNews ? "📰 MAJOR NEWS" : "📰 NEWS EVENT"
+    else if extremeVolatility and extremeVolumeSpike
+        condition := "🌪️ EXTREME VOLATILITY"
+    else if microVolumeSpike and microVolatility
+        condition := "⚡ MICRO BREAKOUT"
+    else if structuralDip
+        condition := "📉 STRUCTURAL DIP"
+    else if dipRecovery
+        condition := "📈 DIP RECOVERY"
+    else if microDip
+        condition := "💧 MICRO DIP"
+    else if whaleMomentum
+        condition := "🐋 WHALE MOMENTUM"
+    else if whaleAccumulation or microWhale
+        condition := "🐋 WHALE ACCUMULATION"
+    else if trendingMarket
+        condition := "📈 TRENDING MARKET"
+    else if choppyMarket
+        condition := "🌊 CHOPPY MARKET"
+    else if volatileMarket
+        condition := "⚡ VOLATILE MARKET"
+    else
+        condition := "📊 NORMAL MARKET"
+    
+    condition
+
+currentMarketCondition = getMarketCondition()
+
+getRiskMultiplier() =>
+    float multiplier = 1.0
+    
+    if newsEvent
+        multiplier := breakingNews ? 0.5 : majorNews ? 0.7 : 0.85  // LESS aggressive risk reduction
+    else if extremeVolatility
+        multiplier := 0.6  // LESS aggressive
+    else if structuralDip
+        multiplier := 0.75  // LESS aggressive
+    else if choppyMarket
+        multiplier := 1.05  // LESS aggressive
+    else if dipOpportunity or microDip
+        multiplier := 1.15  // LESS aggressive
+    else if whaleAccumulation or microWhale
+        multiplier := 1.05
+    else if microVolumeSpike and microVolatility
+        multiplier := 0.95  // Slight reduction for micro events
+    
+    multiplier
+
+dynamicRiskMultiplier = enableRiskAdaptation ? getRiskMultiplier() : 1.0
+adjustedRiskPerTrade = baseRiskPerTrade * dynamicRiskMultiplier
+
+// ════════════════════════════════════════════════════════════════[...]
+// 🎯 SUPER ENHANCED STRATEGY-SPECIFIC SIGNAL GENERATION
+// ════════════════════════════════════════════════════════════════[...]
+
+generateSignals() =>
+    bool longSignal = false
+    bool shortSignal = false
+    
+    if finalStrategy == "Scalping"
+        // SUPER enhanced scalping signals
+        longSignal := (rsi < 45 and rsi > rsi[1] and close > ema_fast and relativeVolume > 1.05) or
+                      (rsi_smooth < 50 and microVolumeSpike and close > ema_fast) or
+                      (ta.crossover(rsi, 40) and microTrend == 1) or
+                      (microVolatility and close > ema_fast and relativeVolume > 1.1)
+        
+        shortSignal := (rsi > 55 and rsi < rsi[1] and close < ema_fast and relativeVolume > 1.05) or
+                       (rsi_smooth > 50 and microVolumeSpike and close < ema_fast) or
+                       (ta.crossunder(rsi, 60) and microTrend == -1) or
+                       (microVolatility and close < ema_fast and relativeVolume > 1.1)
+    
+    else if finalStrategy == "Breakout"
+        // SUPER enhanced breakout signals
+        resistance = ta.highest(high, 10)  // REDUCED period
+        support = ta.lowest(low, 10)
+        nearResistance = close > resistance * 0.9995  // ENHANCED
+        nearSupport = close < support * 1.0005  // ENHANCED
+        
+        longSignal := (close > resistance and (volumeSpike or microVolumeSpike)) or
+                      (nearResistance and microVolumeSpike and microTrend == 1) or
+                      (close > ta.highest(high[1], 5) and microVolatility) or
+                      (close > close[1] * 1.002 and microVolumeSpike)
+        
+        shortSignal := (close < support and (volumeSpike or microVolumeSpike)) or
+                       (nearSupport and microVolumeSpike and microTrend == -1) or
+                       (close < ta.lowest(low[1], 5) and microVolatility) or
+                       (close < close[1] * 0.998 and microVolumeSpike)
+    
+    else if finalStrategy == "Momentum"
+        // SUPER enhanced momentum signals
+        longSignal := (ta.crossover(ema_fast, ema_medium) and relativeVolume > 1.1 and trend == 1) or
+                      (trend == 1 and microTrend == 1 and trendStrength > 0.6 and microVolumeSpike) or
+                      (rsi > 52 and rsi[1] <= 52 and trend == 1 and relativeVolume > 1.05) or
+                      (close > ema_fast and ema_fast > ema_medium and microVolatility)
+        
+        shortSignal := (ta.crossunder(ema_fast, ema_medium) and relativeVolume > 1.1 and trend == -1) or
+                       (trend == -1 and microTrend == -1 and trendStrength > 0.6 and microVolumeSpike) or
+                       (rsi < 48 and rsi[1] >= 48 and trend == -1 and relativeVolume > 1.05) or
+                       (close < ema_fast and ema_fast < ema_medium and microVolatility)
+    
+    else if finalStrategy == "Reversal"
+        // SUPER enhanced reversal signals
+        longSignal := ((rsi < 40 or dipRecovery or whaleAccumulation or microDip) and close > close[1]) or
+                      (ta.crossover(rsi, 35) and microVolumeSpike) or
+                      (microWhale and rsi < 45 and close > close[1]) or
+                      (bottomFormation and microTrend == 1) or
+                      (rsi < 50 and close > close[1] * 1.001 and microVolumeSpike)
+        
+        shortSignal := ((rsi > 60 or (close > ta.highest(high, 6) and relativeVolume < 1.0)) and close < close[1]) or
+                       (ta.crossunder(rsi, 65) and microVolumeSpike) or
+                       (rsi > 70 and microVolatility and close < close[1]) or
+                       (rsi > 50 and close < close[1] * 0.999 and microVolumeSpike)
+    
+    else if finalStrategy == "MA-Crossover"
+        // SUPER enhanced MA crossover signals
+        longSignal := (ta.crossover(ema_fast, ema_medium) and relativeVolume > 0.8) or
+                      (math.abs(ema_fast - ema_medium) / atr < 0.4 and trend == 1 and microVolumeSpike) or
+                      (close > ema_fast and ema_fast > ema_medium and microTrend == 1 and relativeVolume > 1.05) or
+                      (ema_fast > ema_fast[1] and trend == 1 and microVolatility)
+        
+        shortSignal := (ta.crossunder(ema_fast, ema_medium) and relativeVolume > 0.8) or
+                       (math.abs(ema_fast - ema_medium) / atr < 0.4 and trend == -1 and microVolumeSpike) or
+                       (close < ema_fast and ema_fast < ema_medium and microTrend == -1 and relativeVolume > 1.05) or
+                       (ema_fast < ema_fast[1] and trend == -1 and microVolatility)
+    
+    else if finalStrategy == "RSI-Strategy"
+        // SUPER enhanced RSI strategy signals
+        longSignal := (rsi < 40 and rsi > rsi[1]) or 
+                      (ta.crossover(rsi, 48) and trend == 1) or
+                      (ta.crossover(rsi_smooth, 40) and microVolumeSpike) or
+                      (rsi_fast < 30 and microTrend == 1) or
+                      (rsi < 50 and rsi > rsi[1] and microVolumeSpike)
+        
+        shortSignal := (rsi > 60 and rsi < rsi[1]) or 
+                       (ta.crossunder(rsi, 52) and trend == -1) or
+                       (ta.crossunder(rsi_smooth, 60) and microVolumeSpike) or
+                       (rsi_fast > 70 and microTrend == -1) or
+                       (rsi > 50 and rsi < rsi[1] and microVolumeSpike)
+    
+    else if finalStrategy == "News-Trading"
+        // SUPER enhanced news trading signals
+        longSignal := (newsEvent and newsDirection == 1 and (extremeVolumeSpike or megaVolumeSpike)) or
+                      (microVolumeSpike and microVolatility and close > open and relativeVolume > 1.5) or
+                      (newsEvent[1] and trend == 1 and volumeSpike) or
+                      (volume > avgVolume3 * 2.0 and close > open and volRatio > 1.1)
+        
+        shortSignal := (newsEvent and newsDirection == -1 and (extremeVolumeSpike or megaVolumeSpike)) or
+                       (microVolumeSpike and microVolatility and close < open and relativeVolume > 1.5) or
+                       (newsEvent[1] and trend == -1 and volumeSpike) or
+                       (volume > avgVolume3 * 2.0 and close < open and volRatio > 1.1)
+    
+    else  // SUPER Enhanced Multi-Strategy
+        // SUPER sensitive multi-strategy approach
+        scalpLong = (rsi < 50 and close > ema_fast and relativeVolume > 1.02) or (rsi_smooth < 45 and microVolumeSpike) or (microVolatility and close > ema_fast)
+        breakoutLong = (close > ta.highest(high[1], 6) and (volumeSpike or microVolumeSpike)) or (close > close[1] * 1.001 and microVolatility)
+        momentumLong = (trend == 1 and trendStrength > 0.6 and relativeVolume > 1.1) or (microTrend == 1 and trend == 1 and microVolumeSpike)
+        reversalLong = (rsi < 45 or dipRecovery or whaleAccumulation or microDip or microWhale) or (ta.crossover(rsi, 40))
+        
+        scalpShort = (rsi > 50 and close < ema_fast and relativeVolume > 1.02) or (rsi_smooth > 55 and microVolumeSpike) or (microVolatility and close < ema_fast)
+        breakoutShort = (close < ta.lowest(low[1], 6) and (volumeSpike or microVolumeSpike)) or (close < close[1] * 0.999 and microVolatility)
+        momentumShort = (trend == -1 and trendStrength > 0.6 and relativeVolume > 1.1) or (microTrend == -1 and trend == -1 and microVolumeSpike)
+        reversalShort = (rsi > 55 or (close > ta.highest(high, 10) and relativeVolume < 1.0)) or (ta.crossunder(rsi, 60))
+        
+        longSignal := scalpLong or breakoutLong or momentumLong or reversalLong
+        shortSignal := scalpShort or breakoutShort or momentumShort or reversalShort
+    
+    [longSignal, shortSignal]
+
+[aiLongSignal, aiShortSignal] = generateSignals()
+
+// ════════════════════════════════════════════════════════════════[...]
+// 💰 ENHANCED POSITION CALCULATION FUNCTIONS - FIXED
+// ════════════════════════════════════════════════════════════════[...]
+
+calculateStopLoss(direction, entryPrice) =>
+    atrStop = direction == 1 ? entryPrice - (atr * 1.5) : entryPrice + (atr * 1.5)  // More reasonable stops
+    structuralStop = direction == 1 ? ta.lowest(low, 6) * 0.9985 : ta.highest(high, 6) * 1.0015  // ENHANCED
+    
+    // Strategy-specific stops - more reasonable
+    scalpStop = direction == 1 ? entryPrice - (atr * 0.8) : entryPrice + (atr * 0.8)  // Tighter for scalping
+    breakoutStop = direction == 1 ? ta.lowest(low, 3) * 0.998 : ta.highest(high, 3) * 1.002  // ENHANCED
+    
+    // Use appropriate stop based on strategy
+    preliminaryStop = (finalStrategy == "Scalping") ? scalpStop : 
+                     (finalStrategy == "Breakout") ? breakoutStop : atrStop
+    
+    // Ensure minimum stop distance (0.15% for reasonable trades)
+    minStopDistance = entryPrice * 0.0015  // More reasonable minimum
+    finalStop = direction == 1 ? math.min(preliminaryStop, entryPrice - minStopDistance) : math.max(preliminaryStop, entryPrice + minStopDistance)
+    
+    finalStop
+
+calculateTakeProfits(direction, entryPrice, stopPrice) =>
+    stopDistance = math.abs(entryPrice - stopPrice)
+    
+    // Strategy-specific take profits - more reasonable ratios
+    float calcTP1 = na
+    float calcTP2 = na
+    float calcTP3 = na
+    
+    if finalStrategy == "Scalping"
+        calcTP1 := direction == 1 ? entryPrice + (stopDistance * 1.2) : entryPrice - (stopDistance * 1.2)  // Quick profits
+        calcTP2 := direction == 1 ? entryPrice + (stopDistance * 2.0) : entryPrice - (stopDistance * 2.0)
+        calcTP3 := direction == 1 ? entryPrice + (stopDistance * 3.5) : entryPrice - (stopDistance * 3.5)
+    else if finalStrategy == "News-Trading"
+        calcTP1 := direction == 1 ? entryPrice + (stopDistance * 2.0) : entryPrice - (stopDistance * 2.0)
+        calcTP2 := direction == 1 ? entryPrice + (stopDistance * 4.0) : entryPrice - (stopDistance * 4.0)
+        calcTP3 := direction == 1 ? entryPrice + (stopDistance * 7.0) : entryPrice - (stopDistance * 7.0)
+    else
+        calcTP1 := direction == 1 ? entryPrice + (stopDistance * 1.5) : entryPrice - (stopDistance * 1.5)
+        calcTP2 := direction == 1 ? entryPrice + (stopDistance * 3.0) : entryPrice - (stopDistance * 3.0)
+        calcTP3 := direction == 1 ? entryPrice + (stopDistance * 5.0) : entryPrice - (stopDistance * 5.0)
+    
+    [calcTP1, calcTP2, calcTP3]
+
+calculatePositionSize(direction, entryPrice, stopPrice) =>
+    riskAmount = accountBalance * (adjustedRiskPerTrade / 100)
+    stopDistance = math.abs(entryPrice - stopPrice)
+    stopPercentage = stopDistance / entryPrice
+    
+    // Strategy-specific risk multipliers - enhanced
+    strategyRiskMultiplier = finalStrategy == "Scalping" ? 0.8 : finalStrategy == "News-Trading" ? 0.6 :  finalStrategy == "Breakout" ? 1.1 :  finalStrategy == "Reversal" ? 0.9 : 1.0
+    
+    adjustedRiskAmount = riskAmount * strategyRiskMultiplier
+    
+    // Enhanced smart leverage calculation
+    leverage = 1.0
+    if useAutoLeverage and stopPercentage > 0
+        baseLeverage = math.min(50, math.max(1, 0.005 / stopPercentage))  // More reasonable base calculation
+        
+        // Enhanced AI confidence factor
+        confidenceFactor = aiConfidence > 80 ? 1.3 : aiConfidence > 65 ? 1.2 : aiConfidence > 50 ? 1.0 : 0.8
+        
+        // Enhanced volatility factor
+        volatilityFactor = extremeVolatility ? 0.7 : highVolatility ? 0.85 : microVolatility ? 1.1 : lowVolatility ? 1.3 : 1.0
+        
+        // Enhanced strategy factor
+        strategyFactor = finalStrategy == "Scalping" ? 1.5 : finalStrategy == "News-Trading" ? 0.9 : finalStrategy == "Momentum" ? 1.2 : finalStrategy == "Breakout" ? 1.1 : 1.0
+        
+        // Aggressive mode factor
+        aggressiveFactor = enableAggressiveMode ? 1.2 : 1.0
+        
+        leverage := math.min(maxLeverage, math.max(1, math.round(baseLeverage * confidenceFactor * volatilityFactor * strategyFactor * aggressiveFactor)))
+    
+    positionValue = adjustedRiskAmount / stopPercentage * leverage
+    adjustedPositionSize = math.min(positionValue, accountBalance * 0.95)  // More conservative
+    
+    [adjustedPositionSize, leverage, adjustedRiskAmount, stopDistance]
+
+// ════════════════════════════════════════════════════════════════
+// 💰 ENHANCED POSITION MANAGEMENT SYSTEM
+// ════════════════════════════════════════════════════════════════
+
+// Position state variables
+var float plannedEntryPrice = na
+var int setupBarIndex = na
+var bool entryActive = false
+var int entryDirection = na
+var float tradeEntryPrice = na
+var float plannedStopLoss = na
+var float plannedTP1 = na
+var float plannedTP2 = na
+var float plannedTP3 = na
+var string plannedSignalType = na
+var float currentEntryPrice = na
+var float currentStopLoss = na
+var float currentTP1 = na
+var float currentTP2 = na
+var float currentTP3 = na
+var float currentPositionSize = na
+var float currentLeverage = na
+var float currentRiskAmount = na
+var int currentDirection = na
+var string activeSignalType = na
+
+entryTimeoutBars = input.int(5, "Entry Expiry Bars", minval=2, maxval=20)
+useImmediateEntry = input.bool(true, "Use Immediate Entry", tooltip="Execute trades immediately instead of waiting for price levels")
+
+// Enhanced setup detection with proper conditions
+setupSignal = aiLongSignal or aiShortSignal
+plannedLong  = aiLongSignal and na(plannedEntryPrice) and not entryActive
+plannedShort = aiShortSignal and na(plannedEntryPrice) and not entryActive
+
+if plannedLong or plannedShort
+    entryDirection := plannedLong ? 1 : -1
+    
+    // FIXED: Better entry price logic
+    entryBuffer = atr * 0.05
+    
+    if useImmediateEntry
+        plannedEntryPrice := close  // Immediate entry at current price
+    else
+        // Set entry levels that are more likely to be hit
+        plannedEntryPrice := entryDirection == 1 ? 
+                             close + entryBuffer :  // Long: slightly above current
+                             close - entryBuffer   // Short: slightly below current
+    
+    setupBarIndex := bar_index
+    entryActive := false
+    tradeEntryPrice := na
+    plannedStopLoss := calculateStopLoss(entryDirection, plannedEntryPrice)
+    [plannedTP1, plannedTP2, plannedTP3] = calculateTakeProfits(entryDirection, plannedEntryPrice, plannedStopLoss)
+    plannedSignalType := finalStrategy
+
+// Enhanced entry triggering logic
+entryTriggered = false
+if not entryActive and not na(plannedEntryPrice)
+    if useImmediateEntry
+        // Immediate entry mode
+        entryTriggered := true
+        tradeEntryPrice := close
+    else
+        // Wait for price to reach planned entry
+        if entryDirection == 1
+            entryTriggered := high >= plannedEntryPrice
+            tradeEntryPrice := plannedEntryPrice
+        else
+            entryTriggered := low <= plannedEntryPrice
+            tradeEntryPrice := plannedEntryPrice
+        
+    if entryTriggered
+        entryActive := true
+        currentEntryPrice := tradeEntryPrice
+        currentDirection := entryDirection
+        // Recalculate levels based on actual entry price
+        currentStopLoss := calculateStopLoss(currentDirection, currentEntryPrice)
+        [currentTP1, currentTP2, currentTP3] = calculateTakeProfits(currentDirection, currentEntryPrice, currentStopLoss)
+        [currentPositionSize, currentLeverage, currentRiskAmount, _] = calculatePositionSize(currentDirection, currentEntryPrice, currentStopLoss)
+        activeSignalType := plannedSignalType
+
+// Setup expiry logic
+if not entryActive and not na(setupBarIndex) and (bar_index - setupBarIndex) > entryTimeoutBars and not useImmediateEntry
+    plannedEntryPrice := na
+    setupBarIndex := na
+    entryDirection := na
+    plannedStopLoss := na
+    plannedTP1 := na
+    plannedTP2 := na
+    plannedTP3 := na
+    plannedSignalType := na
+
+// Enhanced exit conditions
+exitCondition = false
+exitReason = ""
+
+if entryActive
+    // Stop loss hit
+    stopHit = currentDirection == 1 ? low <= currentStopLoss : high >= currentStopLoss
+    
+    // Take profit hit (any TP level)
+    tpHit = false
+    if currentDirection == 1
+        tpHit := high >= currentTP1 or high >= currentTP2 or high >= currentTP3
+    else
+        tpHit := low <= currentTP1 or low <= currentTP2 or low <= currentTP3
+    
+    // Emergency exits
+    emergencyLongExit = rsi < 15 or (close < ema_trend * 0.95 and longTermTrend == -1)
+    emergencyShortExit = rsi > 85 or (close > ema_trend * 1.05 and longTermTrend == 1)
+    emergencyExit = (currentDirection == 1 and emergencyLongExit) or (currentDirection == -1 and emergencyShortExit)
+    
+    // Time-based exit
+    maxHoldBars = input.int(50, "Max Hold Bars", minval=10, maxval=200)
+    timeExit = (bar_index - setupBarIndex) > maxHoldBars
+    
+    // Determine exit condition and reason
+    if stopHit
+        exitCondition := true
+        exitReason := "Stop Loss Hit"
+    else if tpHit
+        exitCondition := true
+        exitReason := "Take Profit Hit"
+    else if emergencyExit
+        exitCondition := true
+        exitReason := "Emergency Exit"
+    else if timeExit
+        exitCondition := true
+        exitReason := "Time Exit"
+
+// Reset all variables on exit
+if exitCondition
+    plannedEntryPrice := na
+    setupBarIndex := na
+    entryDirection := na
+    plannedStopLoss := na
+    plannedTP1 := na
+    plannedTP2 := na
+    plannedTP3 := na
+    plannedSignalType := na
+    entryActive := false
+    tradeEntryPrice := na
+    currentEntryPrice := na
+    currentStopLoss := na
+    currentTP1 := na
+    currentTP2 := na
+    currentTP3 := na
+    currentPositionSize := na
+    currentLeverage := na
+    currentRiskAmount := na
+    currentDirection := na
+    activeSignalType := na
+
+// ════════════════════════════════════════════════════════════════
+// 📊 ENHANCED VISUAL PLOTTING
+// ════════════════════════════════════════════════════════════════
+
+// Plot planned setup (yellow/orange for pending)
+plot(not na(plannedEntryPrice) and not entryActive ? plannedEntryPrice : na, 
+     color=color.new(color.yellow, 0), style=plot.style_line, linewidth=2, title="Planned Entry")
+plot(not na(plannedStopLoss) and not entryActive ? plannedStopLoss : na, 
+     color=color.new(color.red, 30), style=plot.style_line, linewidth=1, title="Planned Stop Loss")
+plot(not na(plannedTP1) and not entryActive ? plannedTP1 : na, 
+     color=color.new(color.green, 30), style=plot.style_circles, linewidth=1, title="Planned TP1")
+plot(not na(plannedTP2) and not entryActive ? plannedTP2 : na, 
+     color=color.new(color.green, 50), style=plot.style_circles, linewidth=1, title="Planned TP2")
+plot(not na(plannedTP3) and not entryActive ? plannedTP3 : na, 
+     color=color.new(color.green, 70), style=plot.style_circles, linewidth=1, title="Planned TP3")
+
+// Plot active trade (bright colors for live positions)
+plot(entryActive ? currentEntryPrice : na, 
+     color=color.new(color.blue, 0), style=plot.style_line, linewidth=3, title="Active Entry")
+plot(entryActive ? currentStopLoss : na, 
+     color=color.new(color.red, 0), style=plot.style_line, linewidth=2, title="Active Stop Loss")
+plot(entryActive ? currentTP1 : na, 
+     color=color.new(color.lime, 0), style=plot.style_line, linewidth=2, title="Active TP1")
+plot(entryActive ? currentTP2 : na, 
+     color=color.new(color.lime, 20), style=plot.style_line, linewidth=2, title="Active TP2")
+plot(entryActive ? currentTP3 : na, 
+     color=color.new(color.lime, 40), style=plot.style_line, linewidth=2, title="Active TP3")
+
+// Enhanced signal arrows
+plotshape(aiLongSignal and not entryActive, style=shape.triangleup, location=location.belowbar, 
+          color=color.new(color.lime, 0), size=size.normal, title="AI Long Signal")
+plotshape(aiShortSignal and not entryActive, style=shape.triangledown, location=location.abovebar, 
+          color=color.new(color.red, 0), size=size.normal, title="AI Short Signal")
+
+// Entry/Exit confirmation markers
+plotshape(entryTriggered and currentDirection == 1, style=shape.circle, location=location.belowbar, 
+          color=color.new(color.green, 0), size=size.small, title="Long Entry Triggered")
+plotshape(entryTriggered and currentDirection == -1, style=shape.circle, location=location.abovebar, 
+          color=color.new(color.maroon, 0), size=size.small, title="Short Entry Triggered")
+plotshape(exitCondition, style=shape.xcross, location=location.absolute, 
+          color=color.new(color.orange, 0), size=size.normal, title="Position Exit")
+
+// ════════════════════════════════════════════════════════════════
+// 📋 ENHANCED TRADING DASHBOARD
+// ════════════════════════════════════════════════════════════════
+
+if showAIDecisions and barstate.islast
+    var table tradingInterface = table.new(position.top_right, 2, 50, bgcolor=color.new(color.black, 85), border_width=1)
+    
+    // Header section
+    table.cell(tradingInterface, 0, 0, "🔥 AI TRADING SYSTEM", text_color=color.white, bgcolor=color.new(color.purple, 50))
+    table.cell(tradingInterface, 1, 0, syminfo.ticker + " ENHANCED", text_color=color.white, bgcolor=color.new(color.purple, 50))
+    
+    // Position status
+    table.cell(tradingInterface, 0, 1, "📊 Position Status", text_color=color.white)
+    positionStatus = entryActive ? (currentDirection == 1 ? "🚀 LONG ACTIVE" : "🔻 SHORT ACTIVE") : 
+                     not na(plannedEntryPrice) ? "⏳ SETUP PENDING" : "⚪ NO POSITION"
+    positionColor = entryActive ? (currentDirection == 1 ? color.lime : color.red) : not na(plannedEntryPrice) ? color.yellow : color.gray
+    table.cell(tradingInterface, 1, 1, positionStatus, text_color=positionColor)
+    
+    // AI Strategy information
+    table.cell(tradingInterface, 0, 2, "🎯 Strategy", text_color=color.white)
+    strategyColor = aiConfidence >= 80 ? color.lime : aiConfidence >= 65 ? color.yellow : color.orange
+    table.cell(tradingInterface, 1, 2, finalStrategy, text_color=strategyColor)
+    
+    table.cell(tradingInterface, 0, 3, "🧠 Confidence", text_color=color.white)
+    confidenceText = str.tostring(aiConfidence, "#") + "%" + (enableAggressiveMode ? " 🔥" : "")
+    confidenceColor = aiConfidence >= 80 ? color.lime : aiConfidence >= 65 ? color.yellow : 
+                      aiConfidence >= 50 ? color.orange : color.red
+    table.cell(tradingInterface, 1, 3, confidenceText, text_color=confidenceColor)
+    
+    table.cell(tradingInterface, 0, 4, "🌊 Market", text_color=color.white)
+    table.cell(tradingInterface, 1, 4, currentMarketCondition, text_color=color.navy)
+    
+    // Current signals
+    table.cell(tradingInterface, 0, 5, "📶 Signal", text_color=color.white)
+    currentSignal = aiLongSignal ? "🟢 LONG" : aiShortSignal ? "🔴 SHORT" : "⚪ NONE"
+    signalColor = aiLongSignal ? color.lime : aiShortSignal ? color.red : color.gray
+    table.cell(tradingInterface, 1, 5, currentSignal, text_color=signalColor)
+    
+    // Planned setup details (if pending)
+    if not na(plannedEntryPrice) and not entryActive
+        table.cell(tradingInterface, 0, 6, "⏳ PLANNED SETUP", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(tradingInterface, 1, 6, "WAITING FOR ENTRY", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        
+        table.cell(tradingInterface, 0, 7, "📍 Entry", text_color=color.white)
+        table.cell(tradingInterface, 1, 7, "$" + str.tostring(plannedEntryPrice, "#.####"), text_color=color.yellow)
+        
+        table.cell(tradingInterface, 0, 8, "🛑 Stop", text_color=color.white)
+        table.cell(tradingInterface, 1, 8, "$" + str.tostring(plannedStopLoss, "#.####"), text_color=color.red)
+        
+        table.cell(tradingInterface, 0, 9, "🎯 TP1", text_color=color.white)
+        table.cell(tradingInterface, 1, 9, "$" + str.tostring(plannedTP1, "#.####"), text_color=color.green)
+        
+        table.cell(tradingInterface, 0, 10, "🎯 TP2", text_color=color.white)
+        table.cell(tradingInterface, 1, 10, "$" + str.tostring(plannedTP2, "#.####"), text_color=color.green)
+        
+        table.cell(tradingInterface, 0, 11, "🎯 TP3", text_color=color.white)
+        table.cell(tradingInterface, 1, 11, "$" + str.tostring(plannedTP3, "#.####"), text_color=color.green)
+        
+        // Distance to entry
+        distanceToEntry = math.abs(close - plannedEntryPrice) / close * 100
+        table.cell(tradingInterface, 0, 12, "📏 Distance", text_color=color.white)
+        table.cell(tradingInterface, 1, 12, str.tostring(distanceToEntry, "#.##") + "%", text_color=color.orange)
+    
+    // Active position details
+    if entryActive
+        table.cell(tradingInterface, 0, 6, "💰 ACTIVE POSITION", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(tradingInterface, 1, 6, "LIVE TRADING", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        
+        table.cell(tradingInterface, 0, 7, "📈 Entry", text_color=color.white)
+        table.cell(tradingInterface, 1, 7, "$" + str.tostring(currentEntryPrice, "#.####"), text_color=color.blue)
+        
+        table.cell(tradingInterface, 0, 8, "💹 Current", text_color=color.white)
+        pnlPercent = currentDirection == 1 ? (close - currentEntryPrice) / currentEntryPrice * 100 : 
+                     (currentEntryPrice - close) / currentEntryPrice * 100
+        currentPriceText = "$" + str.tostring(close, "#.####") + " (" + 
+                          (pnlPercent > 0 ? "+" : "") + str.tostring(pnlPercent, "#.##") + "%)"
+        pnlColor = pnlPercent > 0 ? color.lime : pnlPercent < 0 ? color.red : color.yellow
+        table.cell(tradingInterface, 1, 8, currentPriceText, text_color=pnlColor)
+        
+        table.cell(tradingInterface, 0, 9, "🛑 Stop", text_color=color.white)
+        stopDistance = math.abs(close - currentStopLoss) / close * 100
+        stopText = "$" + str.tostring(currentStopLoss, "#.####") + " (" + str.tostring(stopDistance, "#.##") + "%)"
+        table.cell(tradingInterface, 1, 9, stopText, text_color=color.red)
+        
+        table.cell(tradingInterface, 0, 10, "🎯 TP1", text_color=color.white)
+        tp1Distance = math.abs(currentTP1 - close) / close * 100
+        tp1Text = "$" + str.tostring(currentTP1, "#.####") + " (" + str.tostring(tp1Distance, "#.##") + "%)"
+        table.cell(tradingInterface, 1, 10, tp1Text, text_color=color.lime)
+        
+        table.cell(tradingInterface, 0, 11, "🎯 TP2", text_color=color.white)
+        tp2Distance = math.abs(currentTP2 - close) / close * 100
+        tp2Text = "$" + str.tostring(currentTP2, "#.####") + " (" + str.tostring(tp2Distance, "#.##") + "%)"
+        table.cell(tradingInterface, 1, 11, tp2Text, text_color=color.lime)
+        
+        table.cell(tradingInterface, 0, 12, "🎯 TP3", text_color=color.white)
+        tp3Distance = math.abs(currentTP3 - close) / close * 100
+        tp3Text = "$" + str.tostring(currentTP3, "#.####") + " (" + str.tostring(tp3Distance, "#.##") + "%)"
+        table.cell(tradingInterface, 1, 12, tp3Text, text_color=color.lime)
+        
+        table.cell(tradingInterface, 0, 13, "💼 Size", text_color=color.white)
+        table.cell(tradingInterface, 1, 13, "$" + str.tostring(currentPositionSize, "#.##"), text_color=color.yellow)
+        
+        table.cell(tradingInterface, 0, 14, "⚡ Leverage", text_color=color.white)
+        leverageText = str.tostring(currentLeverage, "#") + "x"
+        leverageColor = currentLeverage > 10 ? color.red : currentLeverage > 5 ? color.orange : color.lime
+        table.cell(tradingInterface, 1, 14, leverageText, text_color=leverageColor)
+        
+        table.cell(tradingInterface, 0, 15, "💸 Risk", text_color=color.white)
+        table.cell(tradingInterface, 1, 15, "$" + str.tostring(currentRiskAmount, "#.##"), text_color=color.orange)
+
+// ════════════════════════════════════════════════════════════════
+// 🔔 ENHANCED ALERT SYSTEM
+// ════════════════════════════════════════════════════════════════
+
+alertcondition(aiLongSignal, title="🚀 AI Long Signal", message="AI Long Signal Detected")
+alertcondition(aiShortSignal, title="🔻 AI Short Signal", message="AI Short Signal Detected")
+alertcondition(entryTriggered, title="✅ Entry Triggered", message="Entry Price Reached")
+alertcondition(exitCondition, title="🚪 Position Exit", message="Position Closed")
+alertcondition(newsEvent, title="📰 News Event", message="News Event Detected")
+alertcondition(whaleActivity, title="🐋 Whale Activity", message="Whale Activity Detected")
+
+// ════════════════════════════════════════════════════════════════
+// 📝 ENHANCED LABELS FOR KEY EVENTS
+// ════════════════════════════════════════════════════════════════
+
+if newsEvent and barstate.isconfirmed
+    label.new(bar_index, high, "📰", style=label.style_label_down, color=color.new(color.blue, 20), 
+              textcolor=color.white, size=size.small)
+
+if whaleActivity and barstate.isconfirmed
+    whaleText = whaleAccumulation ? "🐋↗" : whaleMomentum ? "🐋⚡" : "🐋↘"
+    label.new(bar_index, high, whaleText, style=label.style_label_down, color=color.new(color.purple, 30), 
+              textcolor=color.white, size=size.small)
+
+if dipRecovery and barstate.isconfirmed
+    label.new(bar_index, low, "📈", style=label.style_label_up, color=color.new(color.green, 30), 
+              textcolor=color.white, size=size.small)
+
+// ════════════════════════════════════════════════════════════════
+// 🎨 BACKGROUND AND STYLING
+// ════════════════════════════════════════════════════════════════
+
+// Background coloring for market conditions
+bgColor = newsEvent ? color.new(color.blue, 95) :
+          extremeVolatility ? color.new(color.red, 98) :
+          whaleActivity ? color.new(color.purple, 97) :
+          dipRecovery ? color.new(color.green, 97) :
+          microVolumeSpike and microVolatility ? color.new(color.yellow, 98) : na
+
+bgcolor(bgColor, title="Market Condition Background")
+
+// Plot key moving averages
+plot(ema_fast, color=color.new(color.blue, 0), linewidth=2, title="EMA Fast (8)")
+plot(ema_medium, color=color.new(color.orange, 0), linewidth=2, title="EMA Medium (18)")
+plot(ema_slow, color=color.new(color.gray, 20), linewidth=1, title="EMA Slow (45)")
+plot(ema_trend, color=color.new(color.white, 40), linewidth=3, title="EMA Trend (150)")

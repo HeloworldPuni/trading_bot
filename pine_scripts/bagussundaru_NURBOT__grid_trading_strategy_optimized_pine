@@ -1,0 +1,284 @@
+//@version=5
+strategy("Grid Trading Strategy - Auto Alert Format", 
+         overlay=true, 
+         margin_long=100, 
+         margin_short=100,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=20,
+         pyramiding=5,
+         calc_on_order_fills=true,
+         calc_on_every_tick=true,
+         commission_type=strategy.commission.percent,
+         commission_value=0.04)
+
+// ============================================================================
+// WEBHOOK CONFIGURATION - OTOMATIS SESUAI BOT
+// ============================================================================
+
+// Webhook Settings (User hanya perlu atur ini)
+webhook_secret = input.string("clurut_webhook_2025", "Webhook Secret", tooltip="Secret untuk autentikasi bot")
+exchange_name = input.string("BINANCE", "Exchange", options=["BINANCE", "BYBIT"], tooltip="Nama exchange")
+user_name = input.string("Clurut", "User Name", tooltip="Nama user untuk tracking")
+timeframe_suffix = input.string("5M", "Timeframe", options=["1M", "5M", "15M", "1H"], tooltip="Timeframe untuk alert")
+
+// ============================================================================
+// GRID TRADING PARAMETERS
+// ============================================================================
+
+// Grid Configuration
+grid_levels = input.int(3, "Grid Levels", minval=3, maxval=5, tooltip="Number of grid levels (max 5 for bot compatibility)")
+grid_spacing = input.float(0.8, "Grid Spacing %", minval=0.3, maxval=2.0, step=0.1, tooltip="Distance between grid levels")
+base_amount = input.float(25.0, "Base Amount USDT", minval=10.0, maxval=100.0, tooltip="Base position size per grid level")
+
+// Risk Management
+max_drawdown = input.float(10.0, "Max Drawdown %", minval=5.0, maxval=20.0, tooltip="Maximum allowed drawdown")
+stop_loss_pct = input.float(2.0, "Stop Loss %", minval=1.0, maxval=5.0, tooltip="Stop loss percentage per position")
+take_profit_pct = input.float(1.5, "Take Profit %", minval=0.5, maxval=3.0, tooltip="Take profit percentage per position")
+
+// Market Condition Detection
+use_trend_filter = input.bool(true, "Use Trend Filter", tooltip="Only trade in trending markets")
+ema_period = input.int(50, "EMA Period", minval=20, maxval=100, tooltip="EMA for trend detection")
+volatility_threshold = input.float(1.5, "Volatility Threshold", minval=0.5, maxval=3.0, tooltip="Minimum volatility for grid activation")
+
+// ============================================================================
+// TECHNICAL INDICATORS
+// ============================================================================
+
+// Price and Volume
+hl2_price = hl2
+ema_trend = ta.ema(close, ema_period)
+volatility = ta.atr(14) / close * 100
+
+// Market Structure
+higher_high = ta.highest(high, 20)
+lower_low = ta.lowest(low, 20)
+mid_range = (higher_high + lower_low) / 2
+
+// Trend Detection
+trend_up = close > ema_trend and ema_trend > ema_trend[1]
+trend_down = close < ema_trend and ema_trend < ema_trend[1]
+trend_sideways = not trend_up and not trend_down
+
+// ============================================================================
+// GRID CALCULATION
+// ============================================================================
+
+// Dynamic Grid Spacing based on volatility
+dynamic_spacing = grid_spacing * (1 + volatility / 100)
+
+// Grid Levels Calculation
+grid_center = hl2_price
+grid_step = grid_center * dynamic_spacing / 100
+
+// Long Grid Levels (Buy Levels)
+long_level_1 = grid_center - grid_step
+long_level_2 = grid_center - (grid_step * 2)
+long_level_3 = grid_center - (grid_step * 3)
+
+// Short Grid Levels (Sell Levels)
+short_level_1 = grid_center + grid_step
+short_level_2 = grid_center + (grid_step * 2)
+short_level_3 = grid_center + (grid_step * 3)
+
+// Take Profit Levels
+long_tp_1 = long_level_1 * (1 + take_profit_pct / 100)
+long_tp_2 = long_level_2 * (1 + take_profit_pct / 100)
+long_tp_3 = long_level_3 * (1 + take_profit_pct / 100)
+
+short_tp_1 = short_level_1 * (1 - take_profit_pct / 100)
+short_tp_2 = short_level_2 * (1 - take_profit_pct / 100)
+short_tp_3 = short_level_3 * (1 - take_profit_pct / 100)
+
+// ============================================================================
+// ALERT MESSAGE FUNCTIONS - FORMAT OTOMATIS
+// ============================================================================
+
+// Function untuk membuat alert message dengan format yang benar
+// Format: ACTION_EXCHANGE_PAIR_USER_TIMEFRAME_SECRET
+get_alert_message(action, level) =>
+    symbol_clean = str.replace(syminfo.ticker, ":", "")
+    action + "_" + exchange_name + "_" + symbol_clean + "_" + user_name + "_" + timeframe_suffix + "_" + webhook_secret
+
+// ============================================================================
+// GRID TRADING LOGIC DENGAN ALERT OTOMATIS
+// ============================================================================
+
+// Market Condition Check
+market_suitable = volatility >= volatility_threshold
+trend_ok = not use_trend_filter or trend_sideways or (trend_up and close < grid_center) or (trend_down and close > grid_center)
+
+// Grid Trading Conditions
+grid_active = market_suitable and trend_ok
+
+// Long Grid Entries dengan Alert Otomatis
+if grid_active and strategy.position_size >= 0
+    // Long Level 1
+    if close <= long_level_1 and strategy.opentrades < grid_levels
+        strategy.entry("LONG_1", strategy.long, qty=base_amount/close, comment="ENTER-LONG")
+        alert(get_alert_message("ENTER-LONG", 1), alert.freq_once_per_bar)
+    
+    // Long Level 2
+    if close <= long_level_2 and strategy.opentrades < grid_levels
+        strategy.entry("LONG_2", strategy.long, qty=base_amount/close, comment="ENTER-LONG")
+        alert(get_alert_message("ENTER-LONG", 2), alert.freq_once_per_bar)
+    
+    // Long Level 3
+    if close <= long_level_3 and strategy.opentrades < grid_levels
+        strategy.entry("LONG_3", strategy.long, qty=base_amount/close, comment="ENTER-LONG")
+        alert(get_alert_message("ENTER-LONG", 3), alert.freq_once_per_bar)
+
+// Short Grid Entries dengan Alert Otomatis
+if grid_active and strategy.position_size <= 0
+    // Short Level 1
+    if close >= short_level_1 and strategy.opentrades < grid_levels
+        strategy.entry("SHORT_1", strategy.short, qty=base_amount/close, comment="ENTER-SHORT")
+        alert(get_alert_message("ENTER-SHORT", 1), alert.freq_once_per_bar)
+    
+    // Short Level 2
+    if close >= short_level_2 and strategy.opentrades < grid_levels
+        strategy.entry("SHORT_2", strategy.short, qty=base_amount/close, comment="ENTER-SHORT")
+        alert(get_alert_message("ENTER-SHORT", 2), alert.freq_once_per_bar)
+    
+    // Short Level 3
+    if close >= short_level_3 and strategy.opentrades < grid_levels
+        strategy.entry("SHORT_3", strategy.short, qty=base_amount/close, comment="ENTER-SHORT")
+        alert(get_alert_message("ENTER-SHORT", 3), alert.freq_once_per_bar)
+
+// ============================================================================
+// EXIT LOGIC DENGAN ALERT OTOMATIS
+// ============================================================================
+
+// Take Profit Exits
+if strategy.position_size > 0
+    strategy.exit("TP_LONG_1", "LONG_1", limit=long_tp_1, stop=long_level_1 * (1 - stop_loss_pct / 100))
+    strategy.exit("TP_LONG_2", "LONG_2", limit=long_tp_2, stop=long_level_2 * (1 - stop_loss_pct / 100))
+    strategy.exit("TP_LONG_3", "LONG_3", limit=long_tp_3, stop=long_level_3 * (1 - stop_loss_pct / 100))
+
+if strategy.position_size < 0
+    strategy.exit("TP_SHORT_1", "SHORT_1", limit=short_tp_1, stop=short_level_1 * (1 + stop_loss_pct / 100))
+    strategy.exit("TP_SHORT_2", "SHORT_2", limit=short_tp_2, stop=short_level_2 * (1 + stop_loss_pct / 100))
+    strategy.exit("TP_SHORT_3", "SHORT_3", limit=short_tp_3, stop=short_level_3 * (1 + stop_loss_pct / 100))
+
+// Emergency Exit dengan Alert
+if strategy.openprofit / strategy.initial_capital * 100 < -max_drawdown
+    strategy.close_all(comment="EMERGENCY_EXIT")
+    alert(get_alert_message("EXIT-ALL", 0), alert.freq_once_per_bar)
+
+// Market Condition Change Exit dengan Alert
+if not market_suitable
+    strategy.close_all(comment="MARKET_UNSUITABLE")
+    alert(get_alert_message("EXIT-ALL", 0), alert.freq_once_per_bar)
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Plot Grid Levels
+plot(grid_center, "Grid Center", color=color.yellow, linewidth=2)
+plot(long_level_1, "Long Level 1", color=color.green, linewidth=1)
+plot(long_level_2, "Long Level 2", color=color.green, linewidth=1)
+plot(long_level_3, "Long Level 3", color=color.green, linewidth=1)
+plot(short_level_1, "Short Level 1", color=color.red, linewidth=1)
+plot(short_level_2, "Short Level 2", color=color.red, linewidth=1)
+plot(short_level_3, "Short Level 3", color=color.red, linewidth=1)
+
+// Plot EMA Trend
+plot(ema_trend, "EMA Trend", color=trend_up ? color.lime : trend_down ? color.red : color.gray, linewidth=2)
+
+// Background Color for Market Conditions
+bgcolor(grid_active ? color.new(color.green, 95) : color.new(color.red, 95), title="Grid Active")
+
+// ============================================================================
+// INFORMATION TABLE DENGAN WEBHOOK INFO
+// ============================================================================
+
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 10, bgcolor=color.white, border_width=1)
+    table.cell(info_table, 0, 0, "Grid Status", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, grid_active ? "ACTIVE" : "INACTIVE", text_color=grid_active ? color.green : color.red)
+    table.cell(info_table, 0, 1, "Webhook Format", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 1, "UNDERSCORE", text_color=color.blue)
+    table.cell(info_table, 0, 2, "Exchange", text_color=color.black)
+    table.cell(info_table, 1, 2, exchange_name, text_color=color.black)
+    table.cell(info_table, 0, 3, "Secret", text_color=color.black)
+    table.cell(info_table, 1, 3, webhook_secret, text_color=color.black)
+    table.cell(info_table, 0, 4, "Volatility", text_color=color.black)
+    table.cell(info_table, 1, 4, str.tostring(volatility, "#.##") + "%", text_color=color.black)
+    table.cell(info_table, 0, 5, "Grid Spacing", text_color=color.black)
+    table.cell(info_table, 1, 5, str.tostring(dynamic_spacing, "#.##") + "%", text_color=color.black)
+    table.cell(info_table, 0, 6, "Open Trades", text_color=color.black)
+    table.cell(info_table, 1, 6, str.tostring(strategy.opentrades), text_color=color.black)
+    table.cell(info_table, 0, 7, "Position Size", text_color=color.black)
+    table.cell(info_table, 1, 7, str.tostring(strategy.position_size, "#.####"), text_color=color.black)
+    table.cell(info_table, 0, 8, "Unrealized PnL", text_color=color.black)
+    table.cell(info_table, 1, 8, str.tostring(strategy.openprofit, "#.##"), text_color=strategy.openprofit > 0 ? color.green : color.red)
+    table.cell(info_table, 0, 9, "Total PnL", text_color=color.black)
+    table.cell(info_table, 1, 9, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit > 0 ? color.green : color.red)
+
+// ============================================================================
+// ALERT CONDITIONS DENGAN FORMAT OTOMATIS
+// ============================================================================
+
+// Grid Level Alert Conditions dengan format yang benar
+// Note: alertcondition tidak mendukung dynamic message, jadi kita gunakan alert() di dalam strategy logic
+
+// Additional Alert Triggers untuk manual setup
+long_grid_1_trigger = close <= long_level_1 and grid_active
+long_grid_2_trigger = close <= long_level_2 and grid_active  
+long_grid_3_trigger = close <= long_level_3 and grid_active
+short_grid_1_trigger = close >= short_level_1 and grid_active
+short_grid_2_trigger = close >= short_level_2 and grid_active
+short_grid_3_trigger = close >= short_level_3 and grid_active
+emergency_exit_trigger = strategy.openprofit / strategy.initial_capital * 100 < -max_drawdown
+market_unsuitable_trigger = not market_suitable and market_suitable[1]
+
+// Static alertconditions (untuk TradingView alert setup)
+alertcondition(long_grid_1_trigger, "Long Grid Level 1", "ENTER-LONG_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(long_grid_2_trigger, "Long Grid Level 2", "ENTER-LONG_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(long_grid_3_trigger, "Long Grid Level 3", "ENTER-LONG_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(short_grid_1_trigger, "Short Grid Level 1", "ENTER-SHORT_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(short_grid_2_trigger, "Short Grid Level 2", "ENTER-SHORT_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(short_grid_3_trigger, "Short Grid Level 3", "ENTER-SHORT_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(emergency_exit_trigger, "Emergency Exit", "EXIT-ALL_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+alertcondition(market_unsuitable_trigger, "Market Unsuitable", "EXIT-ALL_{{exchange}}_{{ticker}}_Clurut_5M_clurut_webhook_2025")
+
+// Dynamic Alert Messages (akan ter-trigger otomatis saat kondisi terpenuhi)
+if long_grid_1_trigger
+    alert(get_alert_message("ENTER-LONG", 1), alert.freq_once_per_bar)
+if long_grid_2_trigger
+    alert(get_alert_message("ENTER-LONG", 2), alert.freq_once_per_bar)
+if long_grid_3_trigger
+    alert(get_alert_message("ENTER-LONG", 3), alert.freq_once_per_bar)
+if short_grid_1_trigger
+    alert(get_alert_message("ENTER-SHORT", 1), alert.freq_once_per_bar)
+if short_grid_2_trigger
+    alert(get_alert_message("ENTER-SHORT", 2), alert.freq_once_per_bar)
+if short_grid_3_trigger
+    alert(get_alert_message("ENTER-SHORT", 3), alert.freq_once_per_bar)
+if emergency_exit_trigger
+    alert(get_alert_message("EXIT-ALL", 0), alert.freq_once_per_bar)
+if market_unsuitable_trigger
+    alert(get_alert_message("EXIT-ALL", 0), alert.freq_once_per_bar)
+
+// ============================================================================
+// CONTOH ALERT MESSAGE YANG AKAN DIKIRIM
+// ============================================================================
+
+// Contoh format yang akan dikirim ke webhook:
+// ENTER-LONG_BINANCE_ETHUSDT_Clurut_5M_clurut_webhook_2025
+// ENTER-SHORT_BINANCE_BTCUSDT_Clurut_5M_clurut_webhook_2025
+// EXIT-ALL_BINANCE_ETHUSDT_Clurut_5M_clurut_webhook_2025
+
+// ============================================================================
+// INSTRUKSI SETUP ALERT DI TRADINGVIEW
+// ============================================================================
+
+// 1. Tambahkan script ini ke chart
+// 2. Atur parameter webhook (secret, exchange, user, timeframe)
+// 3. Buat alert dengan condition yang diinginkan
+// 4. Pada Alert Actions, centang "Webhook URL"
+// 5. Masukkan webhook URL: http://YOUR_SERVER_IP/webhook
+// 6. Message akan otomatis ter-generate dengan format yang benar
+// 7. Save alert dan test!
+
+// TIDAK PERLU MENGETIK FORMAT MANUAL LAGI!

@@ -1,0 +1,2409 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © polypokrbinc
+//@version=5
+
+strategy("boss/baboss [korol]",shorttitle="korol", overlay=true,pyramiding=20,default_qty_type=strategy.percent_of_equity,default_qty_value=5,initial_capital=10000,commission_type=strategy.commission.percent,commission_value=0.1,calc_on_order_fills=true,calc_on_every_tick=false,max_labels_count=500, max_lines_count=500,max_bars_back=5000,process_orders_on_close=true, fill_orders_on_standard_ohlc = true)
+              
+// ===============================
+// BASIC TRADING SETTINGS
+// ===============================
+basic_group = "═══════════ Basic Trading Settings ═══════════"
+use_long_trades = input.bool(false, "Use Long Trades", group=basic_group)
+use_short_trades = input.bool(false, "Use Short Trades", group=basic_group)
+input_allow_entry_without_indicators = input.bool(false, "Allow Entry if NO Indicators Active?", group=basic_group)
+entry_cooldown_bars = input.int(5, "Min Bars Between Entries", minval=0, maxval=100, group=basic_group)
+
+
+// ===============================
+// SIGNAL MEMORY VARIABLES (В НАЧАЛЕ КОДА!)
+// ===============================
+// Константы
+CANDLE_MEMORY_LENGTH = 99
+RSI_CROSS_MEMORY_LENGTH = 14
+
+// Memory переменные  
+var int candle_pattern_memory = 0
+var bool candle_signal_stored = false
+var int rsi_cross_memory = 0
+var bool rsi_cross_stored = false
+var float trailing_stop_level = na
+var bool breakeven_activated = false
+// ===============================
+// HELPER FUNCTIONS
+// ===============================
+// Enhanced Moving Average Function
+ma_function(src, length, ma_type) =>
+    result = 0.0
+    if ma_type == "SMA"
+        result := ta.sma(src, length)
+    else if ma_type == "EMA"
+        result := ta.ema(src, length)
+    else if ma_type == "RMA"
+        result := ta.rma(src, length)
+    else if ma_type == "WMA"
+        result := ta.wma(src, length)
+    else if ma_type == "HMA"
+        result := ta.hma(src, length)
+    else if ma_type == "VWMA"
+        result := ta.vwma(src, length)
+    else if ma_type == "TEMA"
+        ema1 = ta.ema(src, length)
+        ema2 = ta.ema(ema1, length)
+        ema3 = ta.ema(ema2, length)
+        result := 3 * (ema1 - ema2) + ema3
+    else if ma_type == "DEMA"
+        ema1 = ta.ema(src, length)
+        ema2 = ta.ema(ema1, length)
+        result := 2 * ema1 - ema2
+    else
+        result := ta.ema(src, length)
+    result
+
+// ===============================
+// VISUALIZATION SETTINGS
+// ===============================
+viz_group = "═══════════ Visualization ═══════════"
+show_tp_sl = input.bool(true, "Display Visualisation for TP/SL ?", group=viz_group)
+show_entry_signals_indiv = input.bool(true, "Show Individual Entry Signals ?", group=viz_group)
+show_last_signal_lines = input.bool(false, "Show Last Signal Lines ?", group=viz_group)
+visualize_trailing_activation = input.bool(false, "Visualise Trailing Activation Price ?", group=viz_group)
+
+// ===============================
+// PERIOD AND DAYS SETTINGS
+// ===============================
+period_group = "═══════════ Period Settings ═══════════"
+start_year = input.int(2022, "Start Year", minval=2000, maxval=2100, group=period_group)
+stop_year = input.int(2025, "Stop Year", minval=2000, maxval=2100, group=period_group)
+
+days_group = "═══════════ Days To Block ═══════════"
+block_sunday = input.bool(false, "Su", group=days_group, inline="days1")
+block_monday = input.bool(false, "Mo", group=days_group, inline="days1") 
+block_tuesday = input.bool(false, "Tu", group=days_group, inline="days1")
+block_wednesday = input.bool(false, "We", group=days_group, inline="days1")
+block_thursday = input.bool(false, "Th", group=days_group, inline="days2")
+block_friday = input.bool(false, "Fr", group=days_group, inline="days2")
+block_saturday = input.bool(false, "Sa", group=days_group, inline="days2")
+
+// ===============================
+// DCA GRID SETTINGS
+// ===============================
+dca_group = "═══════════ DCA Grid Settings ═══════════"
+use_dca_grid_main = input.bool(false, "Activate DCA Grid ?", group=dca_group)
+dca_grid_direction = input.string("Long", "Long or Short Grid ?", options=["Long", "Short", "Длинная", "Короткая"], group=dca_group)
+deposit_for_bot = input.float(50, "Deposit for Bot (for the entire grid) ($)", minval=1, group=dca_group)
+leverage_input = input.int(20, "Leverage (1x-20x)", minval=1, maxval=20, group=dca_group)
+grid_size_percent = input.float(2.9, "Grid Size (%)", minval=0.1, maxval=50.0, step=0.1, group=dca_group)
+number_of_orders = input.int(4, "Number of orders in the grid (3-15)", minval=3, maxval=15, group=dca_group)
+martingale_multiplier = input.float(1.05, "Orders Value Martingale (1.0-1.8)", minval=1.0, maxval=1.8, step=0.01, group=dca_group)
+logarithmic_steps = input.float(0.9, "Logarithmic Orders Steps (0.8-1.4)", minval=0.8, maxval=1.4, step=0.1, group=dca_group)
+close_on_big_drawdown = input.bool(false, "Close All Orders on Big Drawdown ?", group=dca_group)
+drawdown_to_close = input.float(-95, "Drawdown to close (-$)", group=dca_group)
+change_take_profit = input.bool(false, "Change Take Profit if Many Orders ?", group=dca_group)
+new_take_profit_percent = input.float(1.25, "Set Take Profit to X%", minval=0.1, maxval=5.0, step=0.01, group=dca_group)
+if_orders_more_than = input.int(3, "If Orders more than N", minval=2, maxval=15, group=dca_group)
+
+// ===============================
+// TP/SL SETTINGS
+// ===============================
+tpsl_group = "═══════════ TP/SL Settings ═══════════"
+take_profit_percent = input.float(2.1, "Take Profit (%)", minval=0.1, maxval=20.0, step=0.1, group=tpsl_group)
+stop_loss_percent = input.float(1.4, "Stop Loss (%)", minval=0.1, maxval=50.0, step=0.1, group=tpsl_group)
+sl_equals_tp = input.bool(false, "SL=TP ? (for optimization)", group=tpsl_group)
+close_only_profit = input.bool(false, "Close only in Profit", group=tpsl_group)
+min_profit_percent = input.float(0.1, "Min Profit % for Close", minval=0.01, maxval=2.0, step=0.01, group=tpsl_group)
+
+// Reverse Orders
+use_reverse_order_on_sl = input.bool(false, "Reverse order on SL", group=tpsl_group)
+use_reverse_order_on_be = input.bool(false, "Reverse order on BE", group=tpsl_group)
+reverse_qty_percent = input.int(100, "Reverse Order Size (%)", minval=10, maxval=200, group=tpsl_group)
+
+// ===============================
+// BREAKEVEN SETTINGS
+// ===============================
+be_group = "═══════════ Breakeven ═══════════"
+use_breakeven = input.bool(false, "Activate Breakeven ?", group=be_group)
+breakeven_activation = input.float(0.9, "(%) to Activate Breakeven", minval=0.1, maxval=10.0, step=0.01, group=be_group)
+breakeven_level = input.float(0.01, "New Breakeven SL (%)", minval=0.0, maxval=5.0, step=0.01, group=be_group)
+
+// ===============================
+// MULTI TAKE PROFITS
+// ===============================
+mtp_group = "═══════════ Multi Take Profits ═══════════"
+use_multi_tp = input.bool(false, "Use Multiple Take Profits ?", group=mtp_group)
+tp1_percent = input.float(0.6, "Profit Percent for 1 TP (%)", minval=0.1, maxval=10.0, step=0.1, group=mtp_group)
+tp1_qty = input.int(15, "Value of 1 TP (%)", minval=10, maxval=90, group=mtp_group)
+tp2_percent = input.float(0.8, "Profit Percent for 2 TP (%)", minval=0.1, maxval=15.0, step=0.1, group=mtp_group)
+tp2_qty = input.int(15, "Value of 2 TP (%)", minval=10, maxval=90, group=mtp_group)
+tp3_percent = input.float(1.0, "Profit Percent for 3 TP (%)", minval=0.1, maxval=20.0, step=0.1, group=mtp_group)
+tp3_qty = input.int(15, "Value of 3 TP (%)", minval=10, maxval=90, group=mtp_group)
+tp4_percent = input.float(1.4, "Profit Percent for 4 TP (%)", minval=0.1, maxval=30.0, step=0.1, group=mtp_group)
+
+// ===============================
+// PYRAMIDING SETTINGS
+// ===============================
+pyr_group = "═══════════ Pyramiding ═══════════"
+use_pyramiding = input.bool(false, "Use Averaging ? (Pyramiding)", group=pyr_group)
+pyramid_min_move = input.float(0.5, "Min price move for averaging (%)", minval=0.1, maxval=5.0, step=0.1, group=pyr_group)
+
+// ===============================
+// TRAILING STOP
+// ===============================
+trail_group = "═══════════ Trailing Stop ═══════════"
+use_trailing_stop = input.bool(false, "Use Trailing Stop ?", group=trail_group)
+trailing_activation = input.float(1.5, "Activate Trailing Stop at %", minval=0.1, maxval=10.0, step=0.1, group=trail_group)
+trailing_distance = input.float(0.5, "Distance from price to Trailing Stop (%)", minval=0.1, maxval=5.0, step=0.1, group=trail_group)
+
+// ===============================
+// ORDER INDENT
+// ===============================
+indent_group = "═══════════ Order Indent ═══════════"
+use_order_indent = input.bool(false, "Use Indent Order ?", group=indent_group)
+indent_percent = input.float(0.1, "Indent in % (0.1)", minval=-2.0, maxval=2.0, step=0.01, group=indent_group)
+indent_cancel_bars = input.int(15, "Cancel Indent Order (if not executed) After X Bars", minval=1, maxval=50, group=indent_group)
+
+// ===============================
+// ATR STOP LOSS AND TAKE PROFIT
+// ===============================
+atr_group = "═══════════ ATR SL/TP ═══════════"
+use_atr_stop_loss = input.bool(false, "Use ATR Stop Loss", group=atr_group)
+atr_sl_length = input.int(14, "ATR SL Length", minval=1, maxval=50, group=atr_group)
+atr_sl_multiplier = input.float(2.0, "ATR SL Multiplier", minval=0.5, maxval=10.0, step=0.1, group=atr_group)
+
+use_atr_take_profit = input.bool(false, "Use ATR Take Profit", group=atr_group)
+atr_tp_length = input.int(14, "ATR TP Length", minval=1, maxval=50, group=atr_group)
+atr_tp_multiplier = input.float(2.0, "ATR TP Multiplier", minval=0.5, maxval=10.0, step=0.1, group=atr_group)
+
+// ===============================
+// BTCUSDT SOURCE DATA
+// ===============================
+btc_group = "═══════════ BTCUSDT Data ═══════════"
+btc_symbol = input.symbol("BINANCE:BTCUSDT", "BTC Symbol", group=btc_group)
+btc_close = request.security(btc_symbol, timeframe.period, close)
+btc_high = request.security(btc_symbol, timeframe.period, high)
+btc_low = request.security(btc_symbol, timeframe.period, low)
+btc_open = request.security(btc_symbol, timeframe.period, open)
+
+// ===============================
+// RSI SETTINGS (3 instances)
+// ===============================
+rsi_group = "═══════════ RSI Instances ═══════════"
+
+// RSI 1
+use_rsi1 = input.bool(true, "Use RSI #1", group=rsi_group)
+rsi1_length = input.int(14, "RSI #1 Length", minval=2, maxval=100, group=rsi_group)
+rsi1_oversold = input.float(30, "RSI #1 Oversold", minval=10, maxval=50, group=rsi_group)
+rsi1_overbought = input.float(70, "RSI #1 Overbought", minval=50, maxval=90, group=rsi_group)
+rsi1_condition = input.string("Oversold", "RSI #1 Long Condition", options=["Oversold", "Above 50", "Custom Range", "Cross Level Up", "Cross Level Down", "Rising/Falling"], group=rsi_group)
+rsi1_custom_min = input.float(30, "RSI #1 Custom Min", minval=0, maxval=100, group=rsi_group)
+rsi1_custom_max = input.float(70, "RSI #1 Custom Max", minval=0, maxval=100, group=rsi_group)
+rsi1_use_btc_source = input.bool(false, "RSI #1 Use BTCUSDT Source", group=rsi_group)
+rsi1_tf = input.timeframe("", "RSI #1 Timeframe", group=rsi_group)
+
+// RSI 2
+use_rsi2 = input.bool(false, "Use RSI #2", group=rsi_group)
+rsi2_length = input.int(21, "RSI #2 Length", minval=2, maxval=100, group=rsi_group)
+rsi2_oversold = input.float(25, "RSI #2 Oversold", minval=10, maxval=50, group=rsi_group)
+rsi2_overbought = input.float(75, "RSI #2 Overbought", minval=50, maxval=90, group=rsi_group)
+rsi2_condition = input.string("Oversold", "RSI #2 Long Condition", options=["Oversold", "Above 50", "Custom Range", "Cross Level Up", "Cross Level Down", "Rising/Falling"], group=rsi_group)
+rsi2_custom_min = input.float(25, "RSI #2 Custom Min", minval=0, maxval=100, group=rsi_group)
+rsi2_custom_max = input.float(75, "RSI #2 Custom Max", minval=0, maxval=100, group=rsi_group)
+rsi2_use_btc_source = input.bool(false, "RSI #2 Use BTCUSDT Source", group=rsi_group)
+rsi2_tf = input.timeframe("", "RSI #2 Timeframe", group=rsi_group)
+
+// RSI 3
+use_rsi3 = input.bool(false, "Use RSI #3", group=rsi_group)
+rsi3_length = input.int(7, "RSI #3 Length", minval=2, maxval=100, group=rsi_group)
+rsi3_oversold = input.float(20, "RSI #3 Oversold", minval=10, maxval=50, group=rsi_group)
+rsi3_overbought = input.float(80, "RSI #3 Overbought", minval=50, maxval=90, group=rsi_group)
+rsi3_condition = input.string("Oversold", "RSI #3 Long Condition", options=["Oversold", "Above 50", "Custom Range", "Cross Level Up", "Cross Level Down", "Rising/Falling"], group=rsi_group)
+rsi3_custom_min = input.float(20, "RSI #3 Custom Min", minval=0, maxval=100, group=rsi_group)
+rsi3_custom_max = input.float(80, "RSI #3 Custom Max", minval=0, maxval=100, group=rsi_group)
+rsi3_use_btc_source = input.bool(false, "RSI #3 Use BTCUSDT Source", group=rsi_group)
+rsi3_tf = input.timeframe("", "RSI #3 Timeframe", group=rsi_group)
+
+// ===============================
+// SUPERTREND SETTINGS (4 instances)
+// ===============================
+st_group = "═══════════ SuperTrend Instances ═══════════"
+
+// Legacy SuperTrend
+use_supertrend_legacy = input.bool(false, "Use SuperTrend Legacy", group=st_group)
+supertrend_period = input.int(10, "SuperTrend Period", minval=1, maxval=50, group=st_group)
+supertrend_factor = input.float(3.0, "SuperTrend Factor", minval=0.5, maxval=10.0, step=0.1, group=st_group)
+supertrend_signal_type = input.string("Trend Filter", "SuperTrend Signal Type", options=["Trend Change", "Trend Filter"], group=st_group)
+
+// ST 1
+use_st1 = input.bool(false, "Use SuperTrend #1", group=st_group)
+st1_period = input.int(10, "ST #1 Period", minval=1, maxval=50, group=st_group)
+st1_factor = input.float(3.0, "ST #1 Factor", minval=0.5, maxval=10.0, step=0.1, group=st_group)
+st1_use_btc_source = input.bool(false, "ST #1 Use BTCUSDT Source", group=st_group)
+st1_signal_type = input.string("Trend Filter", "ST #1 Signal Type", options=["Trend Change", "Trend Filter"], group=st_group)
+st1_tf = input.timeframe("", "ST #1 Timeframe", group=st_group)
+
+// ST 2
+use_st2 = input.bool(false, "Use SuperTrend #2", group=st_group)
+st2_period = input.int(14, "ST #2 Period", minval=1, maxval=50, group=st_group)
+st2_factor = input.float(2.5, "ST #2 Factor", minval=0.5, maxval=10.0, step=0.1, group=st_group)
+st2_use_btc_source = input.bool(false, "ST #2 Use BTCUSDT Source", group=st_group)
+st2_signal_type = input.string("Trend Filter", "ST #2 Signal Type", options=["Trend Change", "Trend Filter"], group=st_group)
+st2_tf = input.timeframe("", "ST #2 Timeframe", group=st_group)
+
+// ST 3
+use_st3 = input.bool(false, "Use SuperTrend #3", group=st_group)
+st3_period = input.int(21, "ST #3 Period", minval=1, maxval=50, group=st_group)
+st3_factor = input.float(2.0, "ST #3 Factor", minval=0.5, maxval=10.0, step=0.1, group=st_group)
+st3_use_btc_source = input.bool(false, "ST #3 Use BTCUSDT Source", group=st_group)
+st3_signal_type = input.string("Trend Filter", "ST #3 Signal Type", options=["Trend Change", "Trend Filter"], group=st_group)
+st3_tf = input.timeframe("", "ST #3 Timeframe", group=st_group)
+
+// ===============================
+// MOVING AVERAGES
+// ===============================
+ma_group = "═══════════ Moving Averages ═══════════"
+use_ma = input.bool(false, "Use Moving Averages", group=ma_group)
+ma_fast_length = input.int(10, "Fast MA Length", minval=2, maxval=200, group=ma_group)
+ma_slow_length = input.int(30, "Slow MA Length", minval=2, maxval=200, group=ma_group)
+ma_fast_type = input.string("EMA", "Fast MA Type", options=["SMA", "EMA", "RMA", "WMA", "HMA", "VWMA", "TEMA", "DEMA"], group=ma_group)
+ma_slow_type = input.string("EMA", "Slow MA Type", options=["SMA", "EMA", "RMA", "WMA", "HMA", "VWMA", "TEMA", "DEMA"], group=ma_group)
+ma_signal_type = input.string("Cross", "MA Signal Type", options=["Cross", "Direction", "Both Direction Same"], group=ma_group)
+ma_tf = input.timeframe("", "MA Timeframe", group=ma_group)
+
+// ===============================
+// CHANNELS (BB/KC)
+// ===============================
+channel_group = "═══════════ Channels ═══════════"
+use_channels = input.bool(false, "Use Channels", group=channel_group)
+channel_type = input.string("Bollinger Bands", "Channel Type", options=["Bollinger Bands", "Keltner Channel"], group=channel_group)
+channel_length = input.int(20, "Channel Length", minval=5, maxval=100, group=channel_group)
+channel_multiplier = input.float(2.0, "Channel Multiplier", minval=0.5, maxval=5.0, step=0.1, group=channel_group)
+channel_signal_type = input.string("Touch", "Channel Signal", options=["Touch", "Close Outside", "Breakout"], group=channel_group)
+channel_tf = input.timeframe("", "Channel Timeframe", group=channel_group)
+
+// ===============================
+// STOCHASTIC SETTINGS
+// ===============================
+stoch_group = "═══════════ Stochastic ═══════════"
+use_stochastic = input.bool(false, "Use Stochastic", group=stoch_group)
+stoch_k_length = input.int(14, "Stochastic %K Length", minval=1, maxval=100, group=stoch_group)
+stoch_k_smooth = input.int(1, "Stochastic %K Smoothing", minval=1, maxval=10, group=stoch_group)
+stoch_d_smooth = input.int(3, "Stochastic %D Smoothing", minval=1, maxval=10, group=stoch_group)
+stoch_overbought = input.float(80, "Stochastic Overbought", minval=50, maxval=100, group=stoch_group)
+stoch_oversold = input.float(20, "Stochastic Oversold", minval=0, maxval=50, group=stoch_group)
+stoch_signal_type = input.string("Oversold Cross", "Stochastic Signal Type", options=["Oversold Cross", "Overbought Cross", "K-D Cross", "Level Filter"], group=stoch_group)
+
+// ===============================
+// MFI SETTINGS
+// ===============================
+mfi_group = "═══════════ MFI ═══════════"
+use_mfi = input.bool(false, "Use MFI", group=mfi_group)
+mfi_length = input.int(14, "MFI Length", minval=2, maxval=100, group=mfi_group)
+mfi_overbought = input.float(80, "MFI Overbought", minval=50, maxval=90, group=mfi_group)
+mfi_oversold = input.float(20, "MFI Oversold", minval=10, maxval=50, group=mfi_group)
+mfi_condition = input.string("Oversold", "MFI Long Condition", options=["Oversold", "Overbought", "Cross Level Up", "Cross Level Down", "Custom Range"], group=mfi_group)
+mfi_custom_min = input.float(30, "MFI Custom Min", minval=0, maxval=100, group=mfi_group)
+mfi_custom_max = input.float(70, "MFI Custom Max", minval=0, maxval=100, group=mfi_group)
+
+// ===============================
+// CCI SETTINGS
+// ===============================
+cci_group = "═══════════ CCI ═══════════"
+use_cci = input.bool(false, "Use CCI", group=cci_group)
+cci_length = input.int(20, "CCI Length", minval=5, maxval=200, group=cci_group)
+cci_overbought = input.float(100, "CCI Overbought", minval=50, maxval=200, group=cci_group)
+cci_oversold = input.float(-100, "CCI Oversold", minval=-200, maxval=-50, group=cci_group)
+cci_condition = input.string("Oversold", "CCI Long Condition", options=["Oversold", "Overbought", "Cross Level Up", "Cross Level Down", "Zero Cross"], group=cci_group)
+
+// ===============================
+// MOMENTUM SETTINGS
+// ===============================
+momentum_group = "═══════════ Momentum ═══════════"
+use_momentum = input.bool(false, "Use Momentum", group=momentum_group)
+momentum_length = input.int(10, "Momentum Length", minval=2, maxval=100, group=momentum_group)
+momentum_threshold = input.float(0, "Momentum Threshold", minval=-5.0, maxval=5.0, step=0.1, group=momentum_group)
+momentum_condition = input.string("Above Zero", "Momentum Condition", options=["Above Zero", "Below Zero", "Above Threshold", "Below Threshold"], group=momentum_group)
+
+// ===============================
+// RVI SETTINGS
+// ===============================
+rvi_group = "═══════════ RVI ═══════════"
+use_rvi = input.bool(false, "Use RVI", group=rvi_group)
+rvi_length = input.int(10, "RVI Length", minval=2, maxval=100, group=rvi_group)
+rvi_signal_length = input.int(4, "RVI Signal Length", minval=1, maxval=20, group=rvi_group)
+rvi_condition = input.string("Cross Up", "RVI Condition", options=["Cross Up", "Cross Down", "Above Signal", "Below Signal"], group=rvi_group)
+
+// ===============================
+// SMI ERGODIC SETTINGS
+// ===============================
+smi_group = "═══════════ SMI Ergodic ═══════════"
+use_smi = input.bool(false, "Use SMI Ergodic", group=smi_group)
+smi_short_length = input.int(5, "SMI Short Length", minval=2, maxval=50, group=smi_group)
+smi_long_length = input.int(20, "SMI Long Length", minval=5, maxval=100, group=smi_group)
+smi_signal_length = input.int(5, "SMI Signal Length", minval=2, maxval=50, group=smi_group)
+smi_condition = input.string("Cross Signal Up", "SMI Condition", options=["Cross Signal Up", "Cross Signal Down", "Above Zero", "Below Zero"], group=smi_group)
+
+// ===============================
+// DMI SETTINGS
+// ===============================
+dmi_group = "═══════════ DMI ═══════════"
+use_dmi = input.bool(false, "Use DMI", group=dmi_group)
+dmi_length = input.int(14, "DMI Length", minval=5, maxval=50, group=dmi_group)
+dmi_adx_threshold = input.float(25, "ADX Threshold", minval=10, maxval=50, group=dmi_group)
+dmi_condition = input.string("DI Cross", "DMI Signal", options=["DI Cross", "ADX Level", "Both"], group=dmi_group)
+
+// ===============================
+// CHAIKIN MONEY FLOW
+// ===============================
+cmf_group = "═══════════ Chaikin MF ═══════════"
+use_cmf = input.bool(false, "Use Chaikin Money Flow", group=cmf_group)
+cmf_length = input.int(20, "Chaikin Length", minval=5, maxval=100, group=cmf_group)
+cmf_condition = input.string("Above Zero", "CMF Condition", options=["Above Zero", "Below Zero", "Rising", "Falling"], group=cmf_group)
+
+// ===============================
+// BALANCE OF POWER
+// ===============================
+bop_group = "═══════════ Balance of Power ═══════════"
+use_bop = input.bool(false, "Use Balance of Power", group=bop_group)
+bop_smooth_length = input.int(14, "BOP Smoothing Length", minval=1, maxval=50, group=bop_group)
+bop_condition = input.string("Above Zero", "BOP Condition", options=["Above Zero", "Below Zero", "Rising", "Falling"], group=bop_group)
+
+// ===============================
+// MACD SETTINGS
+// ===============================
+macd_group = "═══════════ MACD ═══════════"
+use_macd = input.bool(false, "Use MACD", group=macd_group)
+macd_fast_length = input.int(12, "Fast Length", minval=2, maxval=50, group=macd_group)
+macd_slow_length = input.int(26, "Slow Length", minval=5, maxval=100, group=macd_group)
+macd_signal_length = input.int(9, "Signal Length", minval=2, maxval=50, group=macd_group)
+macd_condition = input.string("Signal Cross", "MACD Signal", options=["Signal Cross", "Zero Cross", "Both"], group=macd_group)
+
+// ===============================
+// QQE SETTINGS
+// ===============================
+qqe_group = "═══════════ QQE ═══════════"
+use_qqe = input.bool(false, "Use QQE Signals", group=qqe_group)
+qqe_rsi_length = input.int(14, "RSI Length", minval=2, maxval=100, group=qqe_group)
+qqe_smoothing = input.int(5, "Smoothing", minval=1, maxval=50, group=qqe_group)
+qqe_factor = input.float(4.236, "QQE Factor", minval=1.0, maxval=10.0, step=0.1, group=qqe_group)
+
+// ===============================
+// DYNAMIC RSI/MFI
+// ===============================
+dynamic_group = "═══════════ Dynamic RSI/MFI ═══════════"
+use_dynamic_rsi = input.bool(false, "Use Dynamic RSI", group=dynamic_group)
+dynamic_rsi_length = input.int(14, "Dynamic RSI Length", minval=2, maxval=100, group=dynamic_group)
+dynamic_band_length = input.int(20, "Band Length", minval=5, maxval=100, group=dynamic_group)
+dynamic_band_mult = input.float(2.0, "Band Multiplier", minval=1.0, maxval=5.0, step=0.1, group=dynamic_group)
+
+use_dynamic_mfi = input.bool(false, "Use Dynamic MFI", group=dynamic_group)
+dynamic_mfi_length = input.int(14, "Dynamic MFI Length", minval=2, maxval=100, group=dynamic_group)
+
+// ===============================
+// LEVELS (SUPPORT/RESISTANCE)
+// ===============================
+levels_group = "═══════════ Levels ═══════════"
+use_levels = input.bool(false, "Use Levels", group=levels_group)
+levels_lookback = input.int(50, "Lookback Period", minval=10, maxval=200, group=levels_group)
+levels_proximity = input.float(0.5, "Proximity to Level %", minval=0.1, maxval=2.0, step=0.1, group=levels_group)
+
+// ===============================
+// DIVERGENCES
+// ===============================
+div_group = "═══════════ Divergences ═══════════"
+use_divergences = input.bool(false, "Use Divergences", group=div_group)
+div_rsi_enable = input.bool(true, "RSI Divergence", group=div_group)
+div_macd_enable = input.bool(true, "MACD Divergence", group=div_group)
+div_mfi_enable = input.bool(true, "MFI Divergence", group=div_group)
+div_lookback = input.int(5, "Pivot Lookback", minval=2, maxval=15, group=div_group)
+
+// ===============================
+// CANDLESTICK PATTERNS
+// ===============================
+candle_group = "═══════════ Candle Patterns ═══════════"
+use_candle_patterns = input.bool(false, "Use Candle Patterns", group=candle_group)
+cp_hammer = input.bool(true, "Hammer/Hanging Man", group=candle_group)
+cp_engulfing = input.bool(true, "Engulfing", group=candle_group)
+cp_doji = input.bool(true, "Doji", group=candle_group)
+cp_tf = input.timeframe("", "Candle Pattern Timeframe", group=candle_group)
+
+// ===============================
+// LINEAR REGRESSION CHANNEL
+// ===============================
+lrc_group = "═══════════ Linear Regression ═══════════"
+use_lrc = input.bool(false, "Use Linear Regression Channel", group=lrc_group)
+lrc_length = input.int(100, "LRC Length", minval=20, maxval=500, group=lrc_group)
+lrc_deviation = input.float(2.0, "Deviation", minval=0.5, maxval=5.0, step=0.1, group=lrc_group)
+
+// ===============================
+// EXTERNAL INDICATORS (2 instances)
+// ===============================
+ext_group = "═══════════ External Indicators ═══════════"
+use_external1 = input.bool(false, "Use External #1", group=ext_group)
+external1_source = input.source(close, "External #1 Source", group=ext_group)
+external1_condition = input.string("Above", "External #1 Condition", options=["Above", "Below", "Cross Up", "Cross Down"], group=ext_group)
+external1_level = input.float(0, "External #1 Level", group=ext_group)
+
+use_external2 = input.bool(false, "Use External #2", group=ext_group)
+external2_source = input.source(close, "External #2 Source", group=ext_group)
+external2_condition = input.string("Above", "External #2 Condition", options=["Above", "Below", "Cross Up", "Cross Down"], group=ext_group)
+external2_level = input.float(0, "External #2 Level", group=ext_group)
+
+// ===============================
+// FILTERS
+// ===============================
+filters_group = "═══════════ Filters ═══════════"
+
+// Volume Filter
+use_volume_filter = input.bool(false, "Use Volume Filter", group=filters_group)
+volume_length = input.int(20, "Volume Length", minval=5, maxval=100, group=filters_group)
+volume_multiplier = input.float(1.5, "Volume Multiplier", minval=0.5, maxval=5.0, step=0.1, group=filters_group)
+volume_condition = input.string("Above Average", "Volume Condition", options=["Above Average", "Below Average"], group=filters_group)
+
+// Volatility Filter
+use_volatility_filter = input.bool(false, "Use Volatility Filter", group=filters_group)
+volatility_length = input.int(20, "Volatility Length", minval=5, maxval=100, group=filters_group)
+volatility_threshold = input.float(1.0, "Volatility Threshold", minval=0.1, maxval=10.0, step=0.1, group=filters_group)
+volatility_condition = input.string("Above", "Volatility Condition", options=["Above", "Below"], group=filters_group)
+
+// High/Low Filter
+use_highlow_filter = input.bool(false, "Use Highest/Lowest Filter", group=filters_group)
+highlow_period = input.int(20, "Period for High/Low", minval=5, maxval=200, group=filters_group)
+highlow_min_change = input.float(2.0, "Min Change % for Signal", minval=0.1, maxval=10.0, step=0.1, group=filters_group)
+
+// ATR Change Filter
+use_atr_change_filter = input.bool(false, "Use ATR Change Filter", group=filters_group)
+atr_change_period = input.int(20, "ATR Period for Comparison", minval=5, maxval=100, group=filters_group)
+atr_change_threshold = input.float(10.0, "Min ATR Change %", minval=1.0, maxval=50.0, step=1.0, group=filters_group)
+
+// Block if Worse Than
+use_block_worse = input.bool(false, "Block if Worse Than", group=filters_group)
+block_worse_percent = input.float(0.5, "Block if price moved X% in our direction", minval=0.1, maxval=5.0, step=0.1, group=filters_group)
+
+// Consolidation Filter
+use_consolidation = input.bool(false, "Use Consolidation Zones", group=filters_group)
+consolidation_length = input.int(20, "Consolidation Length", minval=5, maxval=100, group=filters_group)
+consolidation_range = input.float(1.0, "Max Range % for Consolidation", minval=0.1, maxval=5.0, step=0.1, group=filters_group)
+
+// ===============================
+// CLOSE CONDITIONS
+// ===============================
+close_group = "═══════════ Close Signals ═══════════"
+close_parabolic_sar = input.bool(false, "Use Parabolic SAR Close", group=close_group)
+close_lrc_signal = input.bool(false, "Use LRC Close Signal", group=close_group)
+close_bb_kc = input.bool(false, "Use Channel Close Signal", group=close_group)
+close_qqe_signal = input.bool(false, "Use QQE Close Signal", group=close_group)
+close_rsi_signal = input.bool(false, "Use RSI Close Signal", group=close_group)
+close_ma_cross = input.bool(false, "Use MA Cross Close Signal", group=close_group)
+close_stoch_signal = input.bool(false, "Use Stochastic Close Signal", group=close_group)
+
+// Parabolic SAR settings
+sar_start = input.float(0.02, "SAR Start", minval=0.01, maxval=0.1, step=0.01, group=close_group)
+sar_increment = input.float(0.02, "SAR Increment", minval=0.01, maxval=0.1, step=0.01, group=close_group)
+sar_maximum = input.float(0.2, "SAR Maximum", minval=0.1, maxval=1.0, step=0.1, group=close_group)
+
+// ===============================
+// CORE CALCULATION FUNCTIONS
+// ===============================
+
+// FIXED SuperTrend Function - returns [line, direction] without modifying global vars
+calculate_supertrend(src_high, src_low, src_close, factor, period, prev_direction, prev_supertrend) =>
+    src_hl2 = (src_high + src_low) / 2
+    atr_val = ta.atr(period)
+    upperBand = src_hl2 + factor * atr_val
+    lowerBand = src_hl2 - factor * atr_val
+    
+    prevLowerBand = nz(lowerBand[1])
+    prevUpperBand = nz(upperBand[1])
+    
+    lb = lowerBand > prevLowerBand or src_close[1] < prevLowerBand ? lowerBand : prevLowerBand
+    ub = upperBand < prevUpperBand or src_close[1] > prevUpperBand ? upperBand : prevUpperBand
+    
+    direction = 1
+    superTrend = 0.0
+    
+    if na(prev_supertrend)
+        direction := 1
+        superTrend := lb
+    else
+        if prev_supertrend == prevUpperBand
+            direction := src_close <= ub ? -1 : 1
+        else
+            direction := src_close >= lb ? 1 : -1
+        
+        superTrend := direction == -1 ? ub : lb
+    
+    [superTrend, direction]
+
+// Global SuperTrend state variables for each instance
+var float st_legacy_line = na
+var int st_legacy_direction = 1
+var float st1_saved_line = na
+var int st1_saved_direction = 1
+var float st2_saved_line = na
+var int st2_saved_direction = 1
+var float st3_saved_line = na
+var int st3_saved_direction = 1
+
+// QQE Calculation with proper state management
+var float qqe_longband = 0.0
+var float qqe_shortband = 0.0
+var int qqe_trend_state = 0
+
+calculate_qqe(src, length, smoothing, factor, prev_longband, prev_shortband, prev_trend) =>
+    rsi_val = ta.rsi(src, length)
+    rsi_ma = ta.ema(rsi_val, smoothing)
+    
+    atr_rsi = ta.ema(math.abs(rsi_ma[1] - rsi_ma), smoothing)
+    dar = ta.ema(atr_rsi, smoothing) * factor
+    
+    newlongband = rsi_ma - dar
+    newshortband = rsi_ma + dar
+    
+    longband_result = rsi_ma[1] > prev_longband and rsi_ma > prev_longband ? math.max(prev_longband, newlongband) : newlongband
+    shortband_result = rsi_ma[1] < prev_shortband and rsi_ma < prev_shortband ? math.min(prev_shortband, newshortband) : newshortband
+    
+    cross_1 = ta.cross(longband_result, rsi_ma)
+    cross_2 = ta.cross(rsi_ma, shortband_result)
+    
+    trend_result = cross_2 ? 1 : cross_1 ? -1 : prev_trend
+    
+    [rsi_ma, longband_result, shortband_result, trend_result]
+
+// Bollinger Bands
+bollinger_bands(src, length, mult) =>
+    basis = ta.sma(src, length)
+    dev = mult * ta.stdev(src, length)
+    [basis + dev, basis, basis - dev]
+
+// Keltner Channel
+keltner_channel(src, length, mult) =>
+    basis = ta.ema(src, length)
+    range_val = ta.atr(length)
+    [basis + range_val * mult, basis, basis - range_val * mult]
+
+// RVI Calculation
+calculate_rvi(length) =>
+    numerator = ta.sma(close - open, length)
+    denominator = ta.sma(high - low, length)
+    rvi_val = denominator == 0 ? 0 : numerator / denominator
+    signal = ta.sma(rvi_val, 4)
+    [rvi_val, signal]
+
+// SMI Ergodic Oscillator
+smi_ergodic(shortLength, longLength, signalLength) =>
+    price = close
+    highestHigh = ta.highest(high, longLength)
+    lowestLow = ta.lowest(low, longLength)
+    
+    priceChangeEMA = ta.ema(ta.ema(price - 0.5 * (highestHigh + lowestLow), shortLength), shortLength)
+    rangeEMA = ta.ema(ta.ema(0.5 * (highestHigh - lowestLow), shortLength), shortLength)
+    
+    smi_val = rangeEMA != 0 ? priceChangeEMA / rangeEMA : 0
+    signal = ta.ema(smi_val, signalLength)
+    
+    [smi_val, signal]
+
+// Balance of Power
+calculate_bop() =>
+    bop_raw = high - low == 0 ? 0 : (close - open) / (high - low)
+    ta.sma(bop_raw, bop_smooth_length)
+
+// Chaikin Money Flow
+calculate_cmf(length) =>
+    mfv = ((close - low) - (high - close)) / (high - low) * volume
+    ta.sma(mfv, length) / ta.sma(volume, length)
+
+// Simple Divergence Detection
+detect_divergence(price_series, indicator_series, lookback) =>
+    ph = ta.pivothigh(price_series, lookback, lookback)
+    pl = ta.pivotlow(price_series, lookback, lookback)
+    ih = ta.pivothigh(indicator_series, lookback, lookback)
+    il = ta.pivotlow(indicator_series, lookback, lookback)
+    
+    bull_div = not na(pl) and not na(il) and pl < pl[lookback] and il > il[lookback]
+    bear_div = not na(ph) and not na(ih) and ph > ph[lookback] and ih < ih[lookback]
+    
+    [bull_div, bear_div]
+
+// Candle Pattern Functions
+f_isHammer() =>
+    body = math.abs(close - open)
+    lower_shadow = open > close ? close - low : open - low
+    upper_shadow = open > close ? high - open : high - close
+    lower_shadow >= body * 2 and upper_shadow <= body * 0.5
+
+f_isEngulfingBull() =>
+    close[1] < open[1] and close > open and open <= close[1] and close >= open[1]
+
+f_isEngulfingBear() =>
+    close[1] > open[1] and close < open and open >= close[1] and close <= open[1]
+
+f_isDoji() =>
+    body = math.abs(close - open)
+    avg_body = ta.sma(math.abs(close - open), 20)
+    body <= avg_body * 0.1
+
+// ===============================
+// INDICATOR CALCULATIONS
+// ===============================
+
+// Time filters
+date_filter = year >= start_year and year <= stop_year
+day_blocked = (block_sunday and dayofweek == dayofweek.sunday) or 
+              (block_monday and dayofweek == dayofweek.monday) or 
+              (block_tuesday and dayofweek == dayofweek.tuesday) or 
+              (block_wednesday and dayofweek == dayofweek.wednesday) or 
+              (block_thursday and dayofweek == dayofweek.thursday) or 
+              (block_friday and dayofweek == dayofweek.friday) or 
+              (block_saturday and dayofweek == dayofweek.saturday)
+time_trade_allowed = date_filter and not day_blocked
+
+// RSI calculations with multi-timeframe support
+rsi1_source_calc = rsi1_use_btc_source ? btc_close : close
+rsi1_value_calc = rsi1_tf == "" ? ta.rsi(rsi1_source_calc, rsi1_length) : request.security(syminfo.tickerid, rsi1_tf, ta.rsi(rsi1_source_calc, rsi1_length))
+
+rsi2_source_calc = rsi2_use_btc_source ? btc_close : close
+rsi2_value_calc = rsi2_tf == "" ? ta.rsi(rsi2_source_calc, rsi2_length) : request.security(syminfo.tickerid, rsi2_tf, ta.rsi(rsi2_source_calc, rsi2_length))
+
+rsi3_source_calc = rsi3_use_btc_source ? btc_close : close
+rsi3_value_calc = rsi3_tf == "" ? ta.rsi(rsi3_source_calc, rsi3_length) : request.security(syminfo.tickerid, rsi3_tf, ta.rsi(rsi3_source_calc, rsi3_length))
+
+// FIXED SuperTrend calculations with proper if/else blocks
+// Legacy SuperTrend
+[st_legacy_new_line, st_legacy_new_dir] = calculate_supertrend(high, low, close, supertrend_factor, supertrend_period, st_legacy_direction, st_legacy_line)
+st_legacy_line := st_legacy_new_line
+st_legacy_direction := st_legacy_new_dir
+
+// ST1 with multi-timeframe - FIXED
+get_st1_data_content() => 
+    st1_high_src_local = st1_use_btc_source ? btc_high : high
+    st1_low_src_local  = st1_use_btc_source ? btc_low  : low  
+    st1_close_src_local= st1_use_btc_source ? btc_close: close
+    [st1_high_src_local, st1_low_src_local, st1_close_src_local]
+
+// Declare calculation variables for ST1 BEFORE use
+float st1_high_calc = na 
+float st1_low_calc = na
+float st1_close_calc = na
+
+st1_target_tf_resolved = st1_tf == "" ? timeframe.period : st1_tf
+[st1_h_requested, st1_l_requested, st1_c_requested] = request.security(syminfo.tickerid, st1_target_tf_resolved, get_st1_data_content())
+
+if st1_tf == "" or st1_tf == timeframe.period // Corrected condition to use current data if timeframe matches
+    st1_high_calc  := st1_h_requested 
+    st1_low_calc   := st1_l_requested
+    st1_close_calc := st1_c_requested
+else
+    st1_high_calc  := st1_h_requested 
+    st1_low_calc   := st1_l_requested
+    st1_close_calc := st1_c_requested
+
+// Assuming st1_saved_direction and st1_saved_line are global var states for ST1
+[st1_new_line, st1_new_dir] = calculate_supertrend(st1_high_calc, st1_low_calc, st1_close_calc, st1_factor, st1_period, st1_saved_direction, st1_saved_line)
+st1_saved_line := st1_new_line
+st1_saved_direction := st1_new_dir
+
+// ST2 with multi-timeframe - FIXED
+get_st2_data_content() => 
+    st2_high_src_local = st2_use_btc_source ? btc_high : high
+    st2_low_src_local  = st2_use_btc_source ? btc_low  : low
+    st2_close_src_local= st2_use_btc_source ? btc_close: close
+    [st2_high_src_local, st2_low_src_local, st2_close_src_local]
+
+// Declare calculation variables for ST2 BEFORE use
+float st2_high_calc = na 
+float st2_low_calc = na
+float st2_close_calc = na
+
+st2_target_tf_resolved = st2_tf == "" ? timeframe.period : st2_tf
+[st2_h_requested, st2_l_requested, st2_c_requested] = request.security(syminfo.tickerid, st2_target_tf_resolved, get_st2_data_content())
+
+if st2_tf == "" or st2_tf == timeframe.period // Corrected condition
+    st2_high_calc  := st2_h_requested
+    st2_low_calc   := st2_l_requested
+    st2_close_calc := st2_c_requested
+else
+    st2_high_calc  := st2_h_requested
+    st2_low_calc   := st2_l_requested
+    st2_close_calc := st2_c_requested
+
+// Assuming st2_saved_direction and st2_saved_line are global var states for ST2
+[st2_new_line, st2_new_dir] = calculate_supertrend(st2_high_calc, st2_low_calc, st2_close_calc, st2_factor, st2_period, st2_saved_direction, st2_saved_line)
+st2_saved_line := st2_new_line
+st2_saved_direction := st2_new_dir
+
+// ST3 with multi-timeframe - FIXED
+get_st3_data_content() => 
+    st3_high_src_local = st3_use_btc_source ? btc_high : high
+    st3_low_src_local  = st3_use_btc_source ? btc_low  : low
+    st3_close_src_local= st3_use_btc_source ? btc_close: close
+    [st3_high_src_local, st3_low_src_local, st3_close_src_local]
+
+// Declare calculation variables for ST3 BEFORE use
+float st3_high_calc = na 
+float st3_low_calc = na
+float st3_close_calc = na
+
+st3_target_tf_resolved = st3_tf == "" ? timeframe.period : st3_tf
+[st3_h_requested, st3_l_requested, st3_c_requested] = request.security(syminfo.tickerid, st3_target_tf_resolved, get_st3_data_content())
+
+if st3_tf == "" or st3_tf == timeframe.period // Corrected condition
+    st3_high_calc  := st3_h_requested
+    st3_low_calc   := st3_l_requested
+    st3_close_calc := st3_c_requested
+else
+    st3_high_calc  := st3_h_requested
+    st3_low_calc   := st3_l_requested
+    st3_close_calc := st3_c_requested
+
+// Assuming st3_saved_direction and st3_saved_line are global var states for ST3
+[st3_new_line, st3_new_dir] = calculate_supertrend(st3_high_calc, st3_low_calc, st3_close_calc, st3_factor, st3_period, st3_saved_direction, st3_saved_line)
+st3_saved_line := st3_new_line
+st3_saved_direction := st3_new_dir
+
+// Moving Averages with multi-timeframe - FIXED
+
+get_ma_data_for_current_context() =>
+    ma_fast_local = ma_function(close, ma_fast_length, ma_fast_type) 
+    ma_slow_local = ma_function(close, ma_slow_length, ma_slow_type) 
+    [ma_fast_local, ma_slow_local]
+
+
+float ma_fast_value_calc = na
+float ma_slow_value_calc = na
+
+
+ma_target_tf_for_request = ma_tf == "" ? timeframe.period : ma_tf
+[ma_fast_from_security, ma_slow_from_security] = request.security(syminfo.tickerid, ma_target_tf_for_request, get_ma_data_for_current_context())
+
+
+if ma_tf == "" or ma_tf == timeframe.period 
+    ma_fast_value_calc := ma_fast_from_security 
+    ma_slow_value_calc := ma_slow_from_security
+else 
+    ma_fast_value_calc := ma_fast_from_security
+    ma_slow_value_calc := ma_slow_from_security
+
+// Pre-calculate cross signals for MA close (ВЫНЕСИ ИЗ БЛОКА else!)
+ma_cross_down_for_long_close = use_ma ? ta.crossunder(ma_fast_value_calc, ma_slow_value_calc) : false
+ma_cross_up_for_short_close = use_ma ? ta.crossover(ma_fast_value_calc, ma_slow_value_calc) : false
+
+// Channels with multi-timeframe - FIXED
+
+get_channel_data_for_current_context() =>
+    // Declare local variables for this function's scope, initialize to na
+    float func_up_local = na
+    float func_basis_local = na
+    float func_low_local = na
+
+    if channel_type == "Bollinger Bands"
+        
+        [up_temp, basis_temp, low_temp] = bollinger_bands(close, channel_length, channel_multiplier)
+        
+        func_up_local := up_temp
+        func_basis_local := basis_temp
+        func_low_local := low_temp
+    else 
+        [up_temp, basis_temp, low_temp] = keltner_channel(close, channel_length, channel_multiplier)
+        func_up_local := up_temp
+        func_basis_local := basis_temp
+        func_low_local := low_temp
+        
+    [func_up_local, func_basis_local, func_low_local]
+
+
+float channel_upper_calc = na
+float channel_basis_calc = na
+float channel_lower_calc = na
+
+channel_target_tf_for_request = channel_tf == "" ? timeframe.period : channel_tf
+
+[ch_up_from_security, ch_basis_from_security, ch_low_from_security] = request.security(syminfo.tickerid, channel_target_tf_for_request, get_channel_data_for_current_context())
+
+
+channel_upper_calc := ch_up_from_security
+channel_basis_calc := ch_basis_from_security
+channel_lower_calc := ch_low_from_security
+
+// Stochastic
+stoch_k_raw = ta.stoch(close, high, low, stoch_k_length)
+stoch_k_calc = ta.sma(stoch_k_raw, stoch_k_smooth)
+stoch_d_calc = ta.sma(stoch_k_calc, stoch_d_smooth)
+
+// MFI
+mfi_value_calc = ta.mfi(hlc3, mfi_length)
+
+// CCI
+cci_value_calc = ta.cci(hlc3, cci_length)
+
+// Momentum
+momentum_value_calc = ta.mom(close, momentum_length)
+
+// RVI
+[rvi_value_calc, rvi_signal_calc] = calculate_rvi(rvi_length)
+
+// SMI Ergodic
+[smi_value_calc, smi_signal_calc] = smi_ergodic(smi_short_length, smi_long_length, smi_signal_length)
+
+// DMI
+[diplus_calc, diminus_calc, adx_calc] = ta.dmi(dmi_length, dmi_length)
+
+// Chaikin Money Flow
+cmf_value_calc = calculate_cmf(cmf_length)
+
+// Balance of Power
+bop_value_calc = calculate_bop()
+
+// MACD
+[macd_line_calc, macd_signal_line_calc, macd_hist_calc] = ta.macd(close, macd_fast_length, macd_slow_length, macd_signal_length)
+
+// QQE calculation with proper var assignment
+[qqe_rsi_calc, new_qqe_long, new_qqe_short, new_qqe_trend] = calculate_qqe(close, qqe_rsi_length, qqe_smoothing, qqe_factor, qqe_longband, qqe_shortband, qqe_trend_state)
+qqe_longband := new_qqe_long
+qqe_shortband := new_qqe_short
+qqe_trend_state := new_qqe_trend
+
+// Dynamic RSI/MFI
+dynamic_rsi_calc = ta.rsi(close, dynamic_rsi_length)
+rsi_basis = ta.sma(dynamic_rsi_calc, dynamic_band_length)
+rsi_dev = ta.stdev(dynamic_rsi_calc, dynamic_band_length)
+dynamic_rsi_upper_calc = rsi_basis + dynamic_band_mult * rsi_dev
+dynamic_rsi_lower_calc = rsi_basis - dynamic_band_mult * rsi_dev
+
+dynamic_mfi_calc = ta.mfi(hlc3, dynamic_mfi_length)
+mfi_basis = ta.sma(dynamic_mfi_calc, dynamic_band_length)
+mfi_dev = ta.stdev(dynamic_mfi_calc, dynamic_band_length)
+dynamic_mfi_upper_calc = mfi_basis + dynamic_band_mult * mfi_dev
+dynamic_mfi_lower_calc = mfi_basis - dynamic_band_mult * mfi_dev
+
+// Linear Regression Channel
+lrc_basis_calc = ta.linreg(close, lrc_length, 0)
+lrc_dev_calc = ta.stdev(close, lrc_length)
+lrc_upper_calc = lrc_basis_calc + lrc_deviation * lrc_dev_calc
+lrc_lower_calc = lrc_basis_calc - lrc_deviation * lrc_dev_calc
+
+// External indicators
+external1_cross_up_calc = ta.crossover(external1_source, external1_level)
+external1_cross_down_calc = ta.crossunder(external1_source, external1_level)
+external2_cross_up_calc = ta.crossover(external2_source, external2_level)
+external2_cross_down_calc = ta.crossunder(external2_source, external2_level)
+
+// Parabolic SAR
+sar_value_calc = ta.sar(sar_start, sar_increment, sar_maximum)
+sar_cross_for_long_close = close < sar_value_calc
+sar_cross_for_short_close = close > sar_value_calc
+
+// Volume and Volatility
+volume_avg_calc = ta.sma(volume, volume_length)
+volatility_calc = ta.stdev(close, volatility_length) / ta.sma(close, volatility_length) * 100
+
+// ATR
+atr_current_calc = ta.atr(14)
+atr_past_calc = ta.sma(ta.atr(14), atr_change_period)
+
+// Candle Patterns with MTF - FIXED
+
+get_candle_data_for_current_context() =>
+    hammer_local = f_isHammer()
+    engulfing_bull_local = f_isEngulfingBull()
+    engulfing_bear_local = f_isEngulfingBear()
+    doji_local = f_isDoji()
+    [hammer_local, engulfing_bull_local, engulfing_bear_local, doji_local]
+
+
+bool hammer_calc = false 
+bool engulfing_bull_calc = false
+bool engulfing_bear_calc = false
+bool doji_calc = false
+
+
+cp_target_tf_for_request = cp_tf == "" ? timeframe.period : cp_tf
+[cp_hammer_from_security, cp_engulfing_bull_from_security, cp_engulfing_bear_from_security, cp_doji_from_security] = request.security(syminfo.tickerid, cp_target_tf_for_request, get_candle_data_for_current_context())
+
+
+hammer_calc := cp_hammer_from_security
+engulfing_bull_calc := cp_engulfing_bull_from_security
+engulfing_bear_calc := cp_engulfing_bear_from_security
+doji_calc := cp_doji_from_security
+
+// ===============================
+// NEW SIGNAL ARCHITECTURE - COUNTING SYSTEM
+// ===============================
+
+// Initialize counters for active and met conditions
+active_entry_conditions_long = 0
+met_entry_conditions_long = 0
+active_entry_conditions_short = 0
+met_entry_conditions_short = 0
+
+// RSI 1 - Calculate clean signals and add to counters
+if use_rsi1
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    rsi1_cross_up_calc = ta.crossover(rsi1_value_calc, rsi1_oversold)
+    rsi1_cross_down_calc = ta.crossunder(rsi1_value_calc, rsi1_overbought)
+    
+    rsi1_long_signal_calc = false
+    if rsi1_condition == "Oversold"
+        rsi1_long_signal_calc := rsi1_value_calc <= rsi1_oversold
+    else if rsi1_condition == "Above 50"
+        rsi1_long_signal_calc := rsi1_value_calc > 50
+    else if rsi1_condition == "Custom Range"
+        rsi1_long_signal_calc := rsi1_value_calc >= rsi1_custom_min and rsi1_value_calc <= rsi1_custom_max
+    else if rsi1_condition == "Cross Level Up"
+        rsi1_long_signal_calc := rsi1_cross_up_calc
+    else if rsi1_condition == "Cross Level Down"
+        rsi1_long_signal_calc := rsi1_cross_down_calc
+    else if rsi1_condition == "Rising/Falling"
+        rsi1_long_signal_calc := rsi1_value_calc > rsi1_value_calc[1]
+    
+    rsi1_short_signal_calc = false
+    if rsi1_condition == "Oversold"
+        rsi1_short_signal_calc := rsi1_value_calc >= rsi1_overbought
+    else if rsi1_condition == "Above 50"
+        rsi1_short_signal_calc := rsi1_value_calc < 50
+    else if rsi1_condition == "Custom Range"
+        rsi1_short_signal_calc := rsi1_value_calc <= rsi1_custom_min or rsi1_value_calc >= rsi1_custom_max
+    else if rsi1_condition == "Cross Level Up"
+        rsi1_short_signal_calc := rsi1_cross_down_calc
+    else if rsi1_condition == "Cross Level Down"
+        rsi1_short_signal_calc := rsi1_cross_up_calc
+    else if rsi1_condition == "Rising/Falling"
+        rsi1_short_signal_calc := rsi1_value_calc < rsi1_value_calc[1]
+    
+    if rsi1_long_signal_calc
+        met_entry_conditions_long += 1
+    if rsi1_short_signal_calc
+        met_entry_conditions_short += 1
+
+// RSI 2
+if use_rsi2
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    rsi2_cross_up_calc = ta.crossover(rsi2_value_calc, rsi2_oversold)
+    rsi2_cross_down_calc = ta.crossunder(rsi2_value_calc, rsi2_overbought)
+    
+    rsi2_long_signal_calc = false
+    if rsi2_condition == "Oversold"
+        rsi2_long_signal_calc := rsi2_value_calc <= rsi2_oversold
+    else if rsi2_condition == "Above 50"
+        rsi2_long_signal_calc := rsi2_value_calc > 50
+    else if rsi2_condition == "Custom Range"
+        rsi2_long_signal_calc := rsi2_value_calc >= rsi2_custom_min and rsi2_value_calc <= rsi2_custom_max
+    else if rsi2_condition == "Cross Level Up"
+        rsi2_long_signal_calc := rsi2_cross_up_calc
+    else if rsi2_condition == "Cross Level Down"
+        rsi2_long_signal_calc := rsi2_cross_down_calc
+    else if rsi2_condition == "Rising/Falling"
+        rsi2_long_signal_calc := rsi2_value_calc > rsi2_value_calc[1]
+    
+    rsi2_short_signal_calc = false
+    if rsi2_condition == "Oversold"
+        rsi2_short_signal_calc := rsi2_value_calc >= rsi2_overbought
+    else if rsi2_condition == "Above 50"
+        rsi2_short_signal_calc := rsi2_value_calc < 50
+    else if rsi2_condition == "Custom Range"
+        rsi2_short_signal_calc := rsi2_value_calc <= rsi2_custom_min or rsi2_value_calc >= rsi2_custom_max
+    else if rsi2_condition == "Cross Level Up"
+        rsi2_short_signal_calc := rsi2_cross_down_calc
+    else if rsi2_condition == "Cross Level Down"
+        rsi2_short_signal_calc := rsi2_cross_up_calc
+    else if rsi2_condition == "Rising/Falling"
+        rsi2_short_signal_calc := rsi2_value_calc < rsi2_value_calc[1]
+    
+    if rsi2_long_signal_calc
+        met_entry_conditions_long += 1
+    if rsi2_short_signal_calc
+        met_entry_conditions_short += 1
+
+// RSI 3
+if use_rsi3
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    rsi3_cross_up_calc = ta.crossover(rsi3_value_calc, rsi3_oversold)
+    rsi3_cross_down_calc = ta.crossunder(rsi3_value_calc, rsi3_overbought)
+    
+    rsi3_long_signal_calc = false
+    if rsi3_condition == "Oversold"
+        rsi3_long_signal_calc := rsi3_value_calc <= rsi3_oversold
+    else if rsi3_condition == "Above 50"
+        rsi3_long_signal_calc := rsi3_value_calc > 50
+    else if rsi3_condition == "Custom Range"
+        rsi3_long_signal_calc := rsi3_value_calc >= rsi3_custom_min and rsi3_value_calc <= rsi3_custom_max
+    else if rsi3_condition == "Cross Level Up"
+        rsi3_long_signal_calc := rsi3_cross_up_calc
+    else if rsi3_condition == "Cross Level Down"
+        rsi3_long_signal_calc := rsi3_cross_down_calc
+    else if rsi3_condition == "Rising/Falling"
+        rsi3_long_signal_calc := rsi3_value_calc > rsi3_value_calc[1]
+    
+    rsi3_short_signal_calc = false
+    if rsi3_condition == "Oversold"
+        rsi3_short_signal_calc := rsi3_value_calc >= rsi3_overbought
+    else if rsi3_condition == "Above 50"
+        rsi3_short_signal_calc := rsi3_value_calc < 50
+    else if rsi3_condition == "Custom Range"
+        rsi3_short_signal_calc := rsi3_value_calc <= rsi3_custom_min or rsi3_value_calc >= rsi3_custom_max
+    else if rsi3_condition == "Cross Level Up"
+        rsi3_short_signal_calc := rsi3_cross_down_calc
+    else if rsi3_condition == "Cross Level Down"
+        rsi3_short_signal_calc := rsi3_cross_up_calc
+    else if rsi3_condition == "Rising/Falling"
+        rsi3_short_signal_calc := rsi3_value_calc < rsi3_value_calc[1]
+    
+    if rsi3_long_signal_calc
+        met_entry_conditions_long += 1
+    if rsi3_short_signal_calc
+        met_entry_conditions_short += 1
+
+// SuperTrend Legacy
+if use_supertrend_legacy
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    st_legacy_trend_up_calc = st_legacy_direction == 1
+    st_legacy_trend_down_calc = st_legacy_direction == -1
+    st_legacy_trend_change_up_calc = st_legacy_trend_up_calc and st_legacy_direction[1] == -1
+    st_legacy_trend_change_down_calc = st_legacy_trend_down_calc and st_legacy_direction[1] == 1
+    
+    st_legacy_long_signal_calc = false
+    if supertrend_signal_type == "Trend Change"
+        st_legacy_long_signal_calc := st_legacy_trend_change_up_calc
+    else if supertrend_signal_type == "Trend Filter"
+        st_legacy_long_signal_calc := st_legacy_trend_up_calc
+    
+    st_legacy_short_signal_calc = false
+    if supertrend_signal_type == "Trend Change"
+        st_legacy_short_signal_calc := st_legacy_trend_change_down_calc
+    else if supertrend_signal_type == "Trend Filter"
+        st_legacy_short_signal_calc := st_legacy_trend_down_calc
+    
+    if st_legacy_long_signal_calc
+        met_entry_conditions_long += 1
+    if st_legacy_short_signal_calc
+        met_entry_conditions_short += 1
+
+// SuperTrend 1
+if use_st1
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    st1_trend_up_calc = st1_saved_direction == 1
+    st1_trend_down_calc = st1_saved_direction == -1
+    st1_trend_change_up_calc = st1_trend_up_calc and st1_saved_direction[1] == -1
+    st1_trend_change_down_calc = st1_trend_down_calc and st1_saved_direction[1] == 1
+    
+    st1_long_signal_calc = false
+    if st1_signal_type == "Trend Change"
+        st1_long_signal_calc := st1_trend_change_up_calc
+    else if st1_signal_type == "Trend Filter"
+        st1_long_signal_calc := st1_trend_up_calc
+    
+    st1_short_signal_calc = false
+    if st1_signal_type == "Trend Change"
+        st1_short_signal_calc := st1_trend_change_down_calc
+    else if st1_signal_type == "Trend Filter"
+        st1_short_signal_calc := st1_trend_down_calc
+    
+    if st1_long_signal_calc
+        met_entry_conditions_long += 1
+    if st1_short_signal_calc
+        met_entry_conditions_short += 1
+
+// SuperTrend 2
+if use_st2
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    st2_trend_up_calc = st2_saved_direction == 1
+    st2_trend_down_calc = st2_saved_direction == -1
+    st2_trend_change_up_calc = st2_trend_up_calc and st2_saved_direction[1] == -1
+    st2_trend_change_down_calc = st2_trend_down_calc and st2_saved_direction[1] == 1
+    
+    st2_long_signal_calc = false
+    if st2_signal_type == "Trend Change"
+        st2_long_signal_calc := st2_trend_change_up_calc
+    else if st2_signal_type == "Trend Filter"
+        st2_long_signal_calc := st2_trend_up_calc
+    
+    st2_short_signal_calc = false
+    if st2_signal_type == "Trend Change"
+        st2_short_signal_calc := st2_trend_change_down_calc
+    else if st2_signal_type == "Trend Filter"
+        st2_short_signal_calc := st2_trend_down_calc
+    
+    if st2_long_signal_calc
+        met_entry_conditions_long += 1
+    if st2_short_signal_calc
+        met_entry_conditions_short += 1
+
+// SuperTrend 3
+if use_st3
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    st3_trend_up_calc = st3_saved_direction == 1
+    st3_trend_down_calc = st3_saved_direction == -1
+    st3_trend_change_up_calc = st3_trend_up_calc and st3_saved_direction[1] == -1
+    st3_trend_change_down_calc = st3_trend_down_calc and st3_saved_direction[1] == 1
+    
+    st3_long_signal_calc = false
+    if st3_signal_type == "Trend Change"
+        st3_long_signal_calc := st3_trend_change_up_calc
+    else if st3_signal_type == "Trend Filter"
+        st3_long_signal_calc := st3_trend_up_calc
+    
+    st3_short_signal_calc = false
+    if st3_signal_type == "Trend Change"
+        st3_short_signal_calc := st3_trend_change_down_calc
+    else if st3_signal_type == "Trend Filter"
+        st3_short_signal_calc := st3_trend_down_calc
+    
+    if st3_long_signal_calc
+        met_entry_conditions_long += 1
+    if st3_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Moving Averages - FIXED
+if use_ma
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross and direction signals for consistency
+    ma_cross_up_calc = ta.crossover(ma_fast_value_calc, ma_slow_value_calc)
+    ma_cross_down_calc = ta.crossunder(ma_fast_value_calc, ma_slow_value_calc)
+    ma_fast_rising_calc = ma_fast_value_calc > ma_fast_value_calc[1]
+    ma_slow_rising_calc = ma_slow_value_calc > ma_slow_value_calc[1]
+    ma_fast_falling_calc = ma_fast_value_calc < ma_fast_value_calc[1]
+    ma_slow_falling_calc = ma_slow_value_calc < ma_slow_value_calc[1]
+    ma_fast_above_slow_calc = ma_fast_value_calc > ma_slow_value_calc
+    ma_fast_below_slow_calc = ma_fast_value_calc < ma_slow_value_calc
+    
+    ma_long_signal_calc = false
+    if ma_signal_type == "Cross"
+        ma_long_signal_calc := ma_cross_up_calc
+    else if ma_signal_type == "Direction"
+        ma_long_signal_calc := ma_fast_rising_calc and ma_slow_rising_calc
+    else if ma_signal_type == "Both Direction Same"
+        ma_long_signal_calc := ma_fast_above_slow_calc and ma_fast_rising_calc and ma_slow_rising_calc
+    
+    ma_short_signal_calc = false
+    if ma_signal_type == "Cross"
+        ma_short_signal_calc := ma_cross_down_calc
+    else if ma_signal_type == "Direction"
+        ma_short_signal_calc := ma_fast_falling_calc and ma_slow_falling_calc
+    else if ma_signal_type == "Both Direction Same"
+        ma_short_signal_calc := ma_fast_below_slow_calc and ma_fast_falling_calc and ma_slow_falling_calc
+    
+    if ma_long_signal_calc
+        met_entry_conditions_long += 1
+    if ma_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Channels - FIXED
+if use_channels
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    channel_touch_lower_calc = low <= channel_lower_calc and close > channel_lower_calc
+    channel_touch_upper_calc = high >= channel_upper_calc and close < channel_upper_calc
+    channel_close_outside_lower_calc = close[1] < channel_lower_calc and close > channel_lower_calc
+    channel_close_outside_upper_calc = close[1] > channel_upper_calc and close < channel_upper_calc
+    channel_breakout_upper_calc = close > channel_upper_calc
+    channel_breakout_lower_calc = close < channel_lower_calc
+    
+    channel_long_signal_calc = false
+    if channel_signal_type == "Touch"
+        channel_long_signal_calc := channel_touch_lower_calc
+    else if channel_signal_type == "Close Outside"
+        channel_long_signal_calc := channel_close_outside_lower_calc
+    else if channel_signal_type == "Breakout"
+        channel_long_signal_calc := channel_breakout_upper_calc
+    
+    channel_short_signal_calc = false
+    if channel_signal_type == "Touch"
+        channel_short_signal_calc := channel_touch_upper_calc
+    else if channel_signal_type == "Close Outside"
+        channel_short_signal_calc := channel_close_outside_upper_calc
+    else if channel_signal_type == "Breakout"
+        channel_short_signal_calc := channel_breakout_lower_calc
+    
+    if channel_long_signal_calc
+        met_entry_conditions_long += 1
+    if channel_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Stochastic
+if use_stochastic
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    stoch_oversold_cross_up_calc = ta.crossover(stoch_k_calc, stoch_oversold)
+    stoch_overbought_cross_down_calc = ta.crossunder(stoch_k_calc, stoch_overbought)
+    stoch_kd_cross_up_calc = ta.crossover(stoch_k_calc, stoch_d_calc)
+    stoch_kd_cross_down_calc = ta.crossunder(stoch_k_calc, stoch_d_calc)
+    stoch_below_oversold_calc = stoch_k_calc < stoch_oversold
+    stoch_above_overbought_calc = stoch_k_calc > stoch_overbought
+    
+    stoch_long_signal_calc = false
+    if stoch_signal_type == "Oversold Cross"
+        stoch_long_signal_calc := stoch_oversold_cross_up_calc
+    else if stoch_signal_type == "Overbought Cross"
+        stoch_long_signal_calc := stoch_overbought_cross_down_calc
+    else if stoch_signal_type == "K-D Cross"
+        stoch_long_signal_calc := stoch_kd_cross_up_calc
+    else if stoch_signal_type == "Level Filter"
+        stoch_long_signal_calc := stoch_below_oversold_calc
+    
+    stoch_short_signal_calc = false
+    if stoch_signal_type == "Oversold Cross"
+        stoch_short_signal_calc := stoch_overbought_cross_down_calc
+    else if stoch_signal_type == "Overbought Cross"
+        stoch_short_signal_calc := stoch_oversold_cross_up_calc
+    else if stoch_signal_type == "K-D Cross"
+        stoch_short_signal_calc := stoch_kd_cross_down_calc
+    else if stoch_signal_type == "Level Filter"
+        stoch_short_signal_calc := stoch_above_overbought_calc
+    
+    if stoch_long_signal_calc
+        met_entry_conditions_long += 1
+    if stoch_short_signal_calc
+        met_entry_conditions_short += 1
+
+// MFI
+if use_mfi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    mfi_cross_up_calc = ta.crossover(mfi_value_calc, mfi_oversold)
+    mfi_cross_down_calc = ta.crossunder(mfi_value_calc, mfi_overbought)
+    
+    mfi_long_signal_calc = false
+    if mfi_condition == "Oversold"
+        mfi_long_signal_calc := mfi_value_calc <= mfi_oversold
+    else if mfi_condition == "Overbought"
+        mfi_long_signal_calc := mfi_value_calc >= mfi_overbought
+    else if mfi_condition == "Cross Level Up"
+        mfi_long_signal_calc := mfi_cross_up_calc
+    else if mfi_condition == "Cross Level Down"
+        mfi_long_signal_calc := mfi_cross_down_calc
+    else if mfi_condition == "Custom Range"
+        mfi_long_signal_calc := mfi_value_calc >= mfi_custom_min and mfi_value_calc <= mfi_custom_max
+    
+    mfi_short_signal_calc = false
+    if mfi_condition == "Oversold"
+        mfi_short_signal_calc := mfi_value_calc >= mfi_overbought
+    else if mfi_condition == "Overbought"
+        mfi_short_signal_calc := mfi_value_calc <= mfi_oversold
+    else if mfi_condition == "Cross Level Up"
+        mfi_short_signal_calc := mfi_cross_down_calc
+    else if mfi_condition == "Cross Level Down"
+        mfi_short_signal_calc := mfi_cross_up_calc
+    else if mfi_condition == "Custom Range"
+        mfi_short_signal_calc := mfi_value_calc <= mfi_custom_min or mfi_value_calc >= mfi_custom_max
+    
+    if mfi_long_signal_calc
+        met_entry_conditions_long += 1
+    if mfi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// CCI
+if use_cci
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    cci_cross_up_calc = ta.crossover(cci_value_calc, cci_oversold)
+    cci_cross_down_calc = ta.crossunder(cci_value_calc, cci_overbought)
+    cci_zero_cross_up_calc = ta.crossover(cci_value_calc, 0)
+    cci_zero_cross_down_calc = ta.crossunder(cci_value_calc, 0)
+    
+    cci_long_signal_calc = false
+    if cci_condition == "Oversold"
+        cci_long_signal_calc := cci_value_calc <= cci_oversold
+    else if cci_condition == "Overbought"
+        cci_long_signal_calc := cci_value_calc >= cci_overbought
+    else if cci_condition == "Cross Level Up"
+        cci_long_signal_calc := cci_cross_up_calc
+    else if cci_condition == "Cross Level Down"
+        cci_long_signal_calc := cci_cross_down_calc
+    else if cci_condition == "Zero Cross"
+        cci_long_signal_calc := cci_zero_cross_up_calc
+    
+    cci_short_signal_calc = false
+    if cci_condition == "Oversold"
+        cci_short_signal_calc := cci_value_calc >= cci_overbought
+    else if cci_condition == "Overbought"
+        cci_short_signal_calc := cci_value_calc <= cci_oversold
+    else if cci_condition == "Cross Level Up"
+        cci_short_signal_calc := cci_cross_down_calc
+    else if cci_condition == "Cross Level Down"
+        cci_short_signal_calc := cci_cross_up_calc
+    else if cci_condition == "Zero Cross"
+        cci_short_signal_calc := cci_zero_cross_down_calc
+    
+    if cci_long_signal_calc
+        met_entry_conditions_long += 1
+    if cci_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Momentum
+if use_momentum
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    momentum_long_signal_calc = false
+    if momentum_condition == "Above Zero"
+        momentum_long_signal_calc := momentum_value_calc > 0
+    else if momentum_condition == "Below Zero"
+        momentum_long_signal_calc := momentum_value_calc < 0
+    else if momentum_condition == "Above Threshold"
+        momentum_long_signal_calc := momentum_value_calc > momentum_threshold
+    else if momentum_condition == "Below Threshold"
+        momentum_long_signal_calc := momentum_value_calc < momentum_threshold
+    
+    momentum_short_signal_calc = false
+    if momentum_condition == "Above Zero"
+        momentum_short_signal_calc := momentum_value_calc < 0
+    else if momentum_condition == "Below Zero"
+        momentum_short_signal_calc := momentum_value_calc > 0
+    else if momentum_condition == "Above Threshold"
+        momentum_short_signal_calc := momentum_value_calc < momentum_threshold
+    else if momentum_condition == "Below Threshold"
+        momentum_short_signal_calc := momentum_value_calc > momentum_threshold
+    
+    if momentum_long_signal_calc
+        met_entry_conditions_long += 1
+    if momentum_short_signal_calc
+        met_entry_conditions_short += 1
+
+// RVI
+if use_rvi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    rvi_cross_up_calc = ta.crossover(rvi_value_calc, rvi_signal_calc)
+    rvi_cross_down_calc = ta.crossunder(rvi_value_calc, rvi_signal_calc)
+    
+    rvi_long_signal_calc = false
+    if rvi_condition == "Cross Up"
+        rvi_long_signal_calc := rvi_cross_up_calc
+    else if rvi_condition == "Cross Down"
+        rvi_long_signal_calc := rvi_cross_down_calc
+    else if rvi_condition == "Above Signal"
+        rvi_long_signal_calc := rvi_value_calc > rvi_signal_calc
+    else if rvi_condition == "Below Signal"
+        rvi_long_signal_calc := rvi_value_calc < rvi_signal_calc
+    
+    rvi_short_signal_calc = false
+    if rvi_condition == "Cross Up"
+        rvi_short_signal_calc := rvi_cross_down_calc
+    else if rvi_condition == "Cross Down"
+        rvi_short_signal_calc := rvi_cross_up_calc
+    else if rvi_condition == "Above Signal"
+        rvi_short_signal_calc := rvi_value_calc < rvi_signal_calc
+    else if rvi_condition == "Below Signal"
+        rvi_short_signal_calc := rvi_value_calc > rvi_signal_calc
+    
+    if rvi_long_signal_calc
+        met_entry_conditions_long += 1
+    if rvi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// SMI Ergodic
+if use_smi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    smi_cross_signal_up_calc = ta.crossover(smi_value_calc, smi_signal_calc)
+    smi_cross_signal_down_calc = ta.crossunder(smi_value_calc, smi_signal_calc)
+    
+    smi_long_signal_calc = false
+    if smi_condition == "Cross Signal Up"
+        smi_long_signal_calc := smi_cross_signal_up_calc
+    else if smi_condition == "Cross Signal Down"
+        smi_long_signal_calc := smi_cross_signal_down_calc
+    else if smi_condition == "Above Zero"
+        smi_long_signal_calc := smi_value_calc > 0
+    else if smi_condition == "Below Zero"
+        smi_long_signal_calc := smi_value_calc < 0
+    
+    smi_short_signal_calc = false
+    if smi_condition == "Cross Signal Up"
+        smi_short_signal_calc := smi_cross_signal_down_calc
+    else if smi_condition == "Cross Signal Down"
+        smi_short_signal_calc := smi_cross_signal_up_calc
+    else if smi_condition == "Above Zero"
+        smi_short_signal_calc := smi_value_calc < 0
+    else if smi_condition == "Below Zero"
+        smi_short_signal_calc := smi_value_calc > 0
+    
+    if smi_long_signal_calc
+        met_entry_conditions_long += 1
+    if smi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// DMI
+if use_dmi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Pre-calculate cross signals for consistency
+    dmi_di_cross_up_calc = ta.crossover(diplus_calc, diminus_calc)
+    dmi_di_cross_down_calc = ta.crossunder(diplus_calc, diminus_calc)
+    dmi_adx_strong_calc = adx_calc > dmi_adx_threshold
+    
+    dmi_long_signal_calc = false
+    if dmi_condition == "DI Cross"
+        dmi_long_signal_calc := dmi_di_cross_up_calc
+    else if dmi_condition == "ADX Level"
+        dmi_long_signal_calc := dmi_adx_strong_calc and diplus_calc > diminus_calc
+    else if dmi_condition == "Both"
+        dmi_long_signal_calc := dmi_di_cross_up_calc and dmi_adx_strong_calc
+    
+    dmi_short_signal_calc = false
+    if dmi_condition == "DI Cross"
+        dmi_short_signal_calc := dmi_di_cross_down_calc
+    else if dmi_condition == "ADX Level"
+        dmi_short_signal_calc := dmi_adx_strong_calc and diminus_calc > diplus_calc
+    else if dmi_condition == "Both"
+        dmi_short_signal_calc := dmi_di_cross_down_calc and dmi_adx_strong_calc
+    
+    if dmi_long_signal_calc
+        met_entry_conditions_long += 1
+    if dmi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Chaikin Money Flow
+if use_cmf
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    cmf_long_signal_calc = false
+    if cmf_condition == "Above Zero"
+        cmf_long_signal_calc := cmf_value_calc > 0
+    else if cmf_condition == "Below Zero"
+        cmf_long_signal_calc := cmf_value_calc < 0
+    else if cmf_condition == "Rising"
+        cmf_long_signal_calc := cmf_value_calc > cmf_value_calc[1]
+    else if cmf_condition == "Falling"
+        cmf_long_signal_calc := cmf_value_calc < cmf_value_calc[1]
+    
+    cmf_short_signal_calc = false
+    if cmf_condition == "Above Zero"
+        cmf_short_signal_calc := cmf_value_calc < 0
+    else if cmf_condition == "Below Zero"
+        cmf_short_signal_calc := cmf_value_calc > 0
+    else if cmf_condition == "Rising"
+        cmf_short_signal_calc := cmf_value_calc < cmf_value_calc[1]
+    else if cmf_condition == "Falling"
+        cmf_short_signal_calc := cmf_value_calc > cmf_value_calc[1]
+    
+    if cmf_long_signal_calc
+        met_entry_conditions_long += 1
+    if cmf_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Balance of Power
+if use_bop
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    bop_long_signal_calc = false
+    if bop_condition == "Above Zero"
+        bop_long_signal_calc := bop_value_calc > 0
+    else if bop_condition == "Below Zero"
+        bop_long_signal_calc := bop_value_calc < 0
+    else if bop_condition == "Rising"
+        bop_long_signal_calc := bop_value_calc > bop_value_calc[1]
+    else if bop_condition == "Falling"
+        bop_long_signal_calc := bop_value_calc < bop_value_calc[1]
+    
+    bop_short_signal_calc = false
+    if bop_condition == "Above Zero"
+        bop_short_signal_calc := bop_value_calc < 0
+    else if bop_condition == "Below Zero"
+        bop_short_signal_calc := bop_value_calc > 0
+    else if bop_condition == "Rising"
+        bop_short_signal_calc := bop_value_calc < bop_value_calc[1]
+    else if bop_condition == "Falling"
+        bop_short_signal_calc := bop_value_calc > bop_value_calc[1]
+    
+    if bop_long_signal_calc
+        met_entry_conditions_long += 1
+    if bop_short_signal_calc
+        met_entry_conditions_short += 1
+
+// MACD
+if use_macd
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    macd_signal_cross_up_calc = ta.crossover(macd_line_calc, macd_signal_line_calc)
+    macd_signal_cross_down_calc = ta.crossunder(macd_line_calc, macd_signal_line_calc)
+    macd_zero_cross_up_calc = ta.crossover(macd_line_calc, 0)
+    macd_zero_cross_down_calc = ta.crossunder(macd_line_calc, 0)
+    
+    macd_long_signal_calc = false
+    if macd_condition == "Signal Cross"
+        macd_long_signal_calc := macd_signal_cross_up_calc
+    else if macd_condition == "Zero Cross"
+        macd_long_signal_calc := macd_zero_cross_up_calc
+    else if macd_condition == "Both"
+        macd_long_signal_calc := macd_signal_cross_up_calc or macd_zero_cross_up_calc
+    
+    macd_short_signal_calc = false
+    if macd_condition == "Signal Cross"
+        macd_short_signal_calc := macd_signal_cross_down_calc
+    else if macd_condition == "Zero Cross"
+        macd_short_signal_calc := macd_zero_cross_down_calc
+    else if macd_condition == "Both"
+        macd_short_signal_calc := macd_signal_cross_down_calc or macd_zero_cross_down_calc
+    
+    if macd_long_signal_calc
+        met_entry_conditions_long += 1
+    if macd_short_signal_calc
+        met_entry_conditions_short += 1
+
+// QQE
+if use_qqe
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    qqe_long_signal_calc = new_qqe_trend == 1 and qqe_trend_state[1] != 1
+    qqe_short_signal_calc = new_qqe_trend == -1 and qqe_trend_state[1] != -1
+    
+    if qqe_long_signal_calc
+        met_entry_conditions_long += 1
+    if qqe_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Dynamic RSI
+if use_dynamic_rsi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    dynamic_rsi_long_signal_calc = dynamic_rsi_calc < dynamic_rsi_lower_calc
+    dynamic_rsi_short_signal_calc = dynamic_rsi_calc > dynamic_rsi_upper_calc
+    
+    if dynamic_rsi_long_signal_calc
+        met_entry_conditions_long += 1
+    if dynamic_rsi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Dynamic MFI
+if use_dynamic_mfi
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    dynamic_mfi_long_signal_calc = dynamic_mfi_calc < dynamic_mfi_lower_calc
+    dynamic_mfi_short_signal_calc = dynamic_mfi_calc > dynamic_mfi_upper_calc
+    
+    if dynamic_mfi_long_signal_calc
+        met_entry_conditions_long += 1
+    if dynamic_mfi_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Levels (Support/Resistance)
+if use_levels
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    highest_calc = ta.highest(high, levels_lookback)
+    lowest_calc = ta.lowest(low, levels_lookback)
+    near_support_calc = math.abs(close - lowest_calc) / close * 100 <= levels_proximity
+    near_resistance_calc = math.abs(close - highest_calc) / close * 100 <= levels_proximity
+    
+    levels_long_signal_calc = near_support_calc
+    levels_short_signal_calc = near_resistance_calc
+    
+    if levels_long_signal_calc
+        met_entry_conditions_long += 1
+    if levels_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Divergences (Simplified)
+if use_divergences
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    div_long_signal_calc = false
+    div_short_signal_calc = false
+    
+    if div_rsi_enable and use_rsi1
+        [rsi_bull_div, rsi_bear_div] = detect_divergence(close, rsi1_value_calc, div_lookback)
+        div_long_signal_calc := div_long_signal_calc or rsi_bull_div
+        div_short_signal_calc := div_short_signal_calc or rsi_bear_div
+    
+    if div_macd_enable and use_macd
+        [macd_bull_div, macd_bear_div] = detect_divergence(close, macd_line_calc, div_lookback)
+        div_long_signal_calc := div_long_signal_calc or macd_bull_div
+        div_short_signal_calc := div_short_signal_calc or macd_bear_div
+    
+    if div_mfi_enable and use_mfi
+        [mfi_bull_div, mfi_bear_div] = detect_divergence(close, mfi_value_calc, div_lookback)
+        div_long_signal_calc := div_long_signal_calc or mfi_bull_div
+        div_short_signal_calc := div_short_signal_calc or mfi_bear_div
+    
+    if div_long_signal_calc
+        met_entry_conditions_long += 1
+    if div_short_signal_calc
+        met_entry_conditions_short += 1
+
+// Candlestick Patterns - WITH SIGNAL MEMORY (как у автора)
+if use_candle_patterns
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    // Проверяем новые сигналы
+    candle_long_signal_current = false
+    candle_short_signal_current = false
+    
+    if cp_hammer
+        candle_long_signal_current := candle_long_signal_current or (hammer_calc and close > open)
+        candle_short_signal_current := candle_short_signal_current or (hammer_calc and close < open)
+    
+    if cp_engulfing
+        candle_long_signal_current := candle_long_signal_current or engulfing_bull_calc
+        candle_short_signal_current := candle_short_signal_current or engulfing_bear_calc
+    
+    if cp_doji
+        candle_long_signal_current := candle_long_signal_current or (doji_calc and close > ta.sma(close, 20))
+        candle_short_signal_current := candle_short_signal_current or (doji_calc and close < ta.sma(close, 20))
+    
+    // ✅ SIGNAL MEMORY LOGIC (как у автора Dimkud)
+    // Если новый сигнал - запоминаем на 99 свечей
+    if candle_long_signal_current and not candle_signal_stored
+        candle_pattern_memory := CANDLE_MEMORY_LENGTH
+        candle_signal_stored := true
+    
+    // Уменьшаем счетчик Memory
+    if candle_pattern_memory > 0
+        candle_pattern_memory -= 1
+    else
+        candle_signal_stored := false
+    
+    // Финальный сигнал = текущий ИЛИ запомненный
+    candle_long_signal_final = candle_long_signal_current or candle_signal_stored
+    candle_short_signal_final = candle_short_signal_current or candle_signal_stored
+    
+    if candle_long_signal_final
+        met_entry_conditions_long += 1
+    if candle_short_signal_final
+        met_entry_conditions_short += 1
+
+// Linear Regression Channel
+if use_lrc
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    lrc_long_signal_calc = close < lrc_lower_calc
+    lrc_short_signal_calc = close > lrc_upper_calc
+    
+    if lrc_long_signal_calc
+        met_entry_conditions_long += 1
+    if lrc_short_signal_calc
+        met_entry_conditions_short += 1
+
+// External Indicators
+if use_external1
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    external1_long_signal_calc = false
+    if external1_condition == "Above"
+        external1_long_signal_calc := external1_source > external1_level
+    else if external1_condition == "Below"
+        external1_long_signal_calc := external1_source < external1_level
+    else if external1_condition == "Cross Up"
+        external1_long_signal_calc := external1_cross_up_calc
+    else if external1_condition == "Cross Down"
+        external1_long_signal_calc := external1_cross_down_calc
+    
+    external1_short_signal_calc = false
+    if external1_condition == "Above"
+        external1_short_signal_calc := external1_source < external1_level
+    else if external1_condition == "Below"
+        external1_short_signal_calc := external1_source > external1_level
+    else if external1_condition == "Cross Up"
+        external1_short_signal_calc := external1_cross_down_calc
+    else if external1_condition == "Cross Down"
+        external1_short_signal_calc := external1_cross_up_calc
+    
+    if external1_long_signal_calc
+        met_entry_conditions_long += 1
+    if external1_short_signal_calc
+        met_entry_conditions_short += 1
+
+if use_external2
+    active_entry_conditions_long += 1
+    active_entry_conditions_short += 1
+    
+    external2_long_signal_calc = false
+    if external2_condition == "Above"
+        external2_long_signal_calc := external2_source > external2_level
+    else if external2_condition == "Below"
+        external2_long_signal_calc := external2_source < external2_level
+    else if external2_condition == "Cross Up"
+        external2_long_signal_calc := external2_cross_up_calc
+    else if external2_condition == "Cross Down"
+        external2_long_signal_calc := external2_cross_down_calc
+    
+    external2_short_signal_calc = false
+    if external2_condition == "Above"
+        external2_short_signal_calc := external2_source < external2_level
+    else if external2_condition == "Below"
+        external2_short_signal_calc := external2_source > external2_level
+    else if external2_condition == "Cross Up"
+        external2_short_signal_calc := external2_cross_down_calc
+    else if external2_condition == "Cross Down"
+        external2_short_signal_calc := external2_cross_up_calc
+    
+    if external2_long_signal_calc
+        met_entry_conditions_long += 1
+    if external2_short_signal_calc
+        met_entry_conditions_short += 1
+
+// FILTERS - Filters apply to both long and short equally, so they don't add separate counters
+
+// Volume Filter
+volume_filter_result = true
+if use_volume_filter
+    if volume_condition == "Above Average"
+        volume_filter_result := volume > volume_avg_calc * volume_multiplier
+    else if volume_condition == "Below Average"
+        volume_filter_result := volume < volume_avg_calc / volume_multiplier
+
+// Volatility Filter
+volatility_filter_result = true
+if use_volatility_filter
+    if volatility_condition == "Above"
+        volatility_filter_result := volatility_calc > volatility_threshold
+    else if volatility_condition == "Below"
+        volatility_filter_result := volatility_calc < volatility_threshold
+
+// High/Low Filter
+highlow_filter_result = true
+if use_highlow_filter
+    highest_price = ta.highest(high, highlow_period)
+    lowest_price = ta.lowest(low, highlow_period)
+    price_change_from_low = (close - lowest_price) / lowest_price * 100
+    price_change_from_high = (highest_price - close) / highest_price * 100
+    highlow_filter_result := price_change_from_low >= highlow_min_change or price_change_from_high >= highlow_min_change
+
+// ATR Change Filter
+atr_change_filter_result = true
+if use_atr_change_filter
+    atr_change_percent = (atr_current_calc - atr_past_calc) / atr_past_calc * 100
+    atr_change_filter_result := atr_change_percent >= atr_change_threshold
+
+// Block if Worse Than Filter
+block_worse_filter_result = true
+if use_block_worse
+    price_move_1 = (close - close[1]) / close[1] * 100
+    price_move_2 = (close[1] - close[2]) / close[2] * 100
+    price_move_3 = (close[2] - close[3]) / close[3] * 100
+    max_positive_move = math.max(price_move_1, math.max(price_move_2, price_move_3))
+    max_negative_move = math.min(price_move_1, math.min(price_move_2, price_move_3))
+    block_worse_filter_result := not (max_positive_move > block_worse_percent) and not (max_negative_move < -block_worse_percent)
+
+// Consolidation Filter
+consolidation_filter_result = true
+if use_consolidation
+    highest_cons = ta.highest(high, consolidation_length)
+    lowest_cons = ta.lowest(low, consolidation_length)
+    range_percent = (highest_cons - lowest_cons) / lowest_cons * 100
+    consolidation_filter_result := range_percent <= consolidation_range
+
+// Combine all filters
+all_filters_result = volume_filter_result and volatility_filter_result and highlow_filter_result and atr_change_filter_result and block_worse_filter_result and consolidation_filter_result
+
+// Separate conditions for DCA and regular trading
+dca_entry_allowed = use_dca_grid_main and time_trade_allowed and all_filters_result and strategy.position_size == 0 and barstate.isconfirmed
+
+// ✅ DCA запускается только при 100% совпадении ВСЕХ активных индикаторов
+dca_signal_ready_long = (active_entry_conditions_long > 0 and met_entry_conditions_long == active_entry_conditions_long) or (active_entry_conditions_long == 0 and input_allow_entry_without_indicators)
+dca_signal_ready_short = (active_entry_conditions_short > 0 and met_entry_conditions_short == active_entry_conditions_short) or (active_entry_conditions_short == 0 and input_allow_entry_without_indicators)
+
+dca_long_ready = dca_entry_allowed and (dca_grid_direction == "Long" or dca_grid_direction == "Длинная") and dca_signal_ready_long
+dca_short_ready = dca_entry_allowed and (dca_grid_direction == "Short" or dca_grid_direction == "Короткая") and dca_signal_ready_short
+
+// Regular trading conditions (when DCA is disabled)
+regular_can_trigger_long = (active_entry_conditions_long > 0 and met_entry_conditions_long == active_entry_conditions_long) or (active_entry_conditions_long == 0 and input_allow_entry_without_indicators)
+regular_can_trigger_short = (active_entry_conditions_short > 0 and met_entry_conditions_short == active_entry_conditions_short) or (active_entry_conditions_short == 0 and input_allow_entry_without_indicators)
+
+regular_long_ready = not use_dca_grid_main and use_long_trades and time_trade_allowed and regular_can_trigger_long and all_filters_result and strategy.position_size == 0 and barstate.isconfirmed
+regular_short_ready = not use_dca_grid_main and use_short_trades and time_trade_allowed and regular_can_trigger_short and all_filters_result and strategy.position_size == 0 and barstate.isconfirmed
+
+// Final conditions - DCA OR regular trading
+final_long_condition = use_dca_grid_main ? dca_long_ready : regular_long_ready
+final_short_condition = use_dca_grid_main ? dca_short_ready : regular_short_ready
+
+// ===============================
+// DCA GRID VARIABLES
+// ===============================
+var float entry_price_dca = na
+var int dca_order_count = 0
+var array<float> dca_levels = array.new<float>()
+var array<bool> dca_order_placed = array.new<bool>()
+var float total_position_size = 0.0
+var float weighted_avg_price = 0.0
+// Защита от частых входов
+var int last_entry_bar_index = 0
+var int last_dca_entry_bar = 0
+var int dca_min_bars_between_entries = timeframe.period == "1M" ? 2880 : timeframe.period == "5M" ? 576 : timeframe.period == "15M" ? 192 : timeframe.period == "1h" ? 48 : timeframe.period == "2h" ? 24 : timeframe.period == "4h" ? 12 : timeframe.period == "1D" ? 2 : timeframe.period == "1W" ? 1 : 48
+
+// Order Indent Variables
+var float indent_target_price_state = na
+var int indent_bar_counter_state = 0
+
+// DCA Functions
+reset_dca_tracking() =>
+    array.clear(dca_order_placed)
+    for i = 0 to number_of_orders - 1
+        array.push(dca_order_placed, false)
+
+get_position_size_dca(order_index) =>
+    base_size = deposit_for_bot / number_of_orders
+    martingale_size = base_size * math.pow(martingale_multiplier, order_index - 1)
+    martingale_size * leverage_input
+
+// ===============================
+// STRATEGY EXECUTION
+// ===============================
+
+// Order Indent Logic
+if use_order_indent and (final_long_condition or final_short_condition) and strategy.position_size == 0
+    indent_direction = final_long_condition ? -1 : 1
+    indent_target_price_state := close * (1 + indent_direction * indent_percent / 100)
+    indent_bar_counter_state := 0
+
+if not na(indent_target_price_state)
+    indent_bar_counter_state += 1
+    if indent_bar_counter_state > indent_cancel_bars
+        indent_target_price_state := na
+        indent_bar_counter_state := 0
+
+// DCA Entry Logic
+can_enter_due_to_cooldown = bar_index - last_entry_bar_index >= entry_cooldown_bars
+
+long_dca_entry = false
+short_dca_entry = false
+
+if use_dca_grid_main
+    long_dca_entry := dca_long_ready and na(entry_price_dca) and (bar_index - last_dca_entry_bar) > dca_min_bars_between_entries and can_enter_due_to_cooldown
+    short_dca_entry := dca_short_ready and na(entry_price_dca) and (bar_index - last_dca_entry_bar) > dca_min_bars_between_entries and can_enter_due_to_cooldown
+    
+// Execute DCA Orders
+if long_dca_entry
+    entry_price_dca := close
+    dca_order_count := 1
+    grid_step = entry_price_dca * grid_size_percent / 100
+    
+    array.clear(dca_levels)
+    array.push(dca_levels, entry_price_dca)
+    
+    reset_dca_tracking()
+    array.set(dca_order_placed, 0, true)
+    
+    for i = 1 to number_of_orders - 1
+        step_multiplier = math.pow(logarithmic_steps, i - 1)
+        level_distance = grid_step * step_multiplier * i
+        level = entry_price_dca - level_distance
+        array.push(dca_levels, level)
+    
+    qty = get_position_size_dca(1) / close
+    strategy.entry("DCA_L1", strategy.long, qty=qty)
+    last_entry_bar_index := bar_index
+    total_position_size := qty
+    weighted_avg_price := close
+    last_dca_entry_bar := bar_index
+
+if short_dca_entry
+    entry_price_dca := close
+    dca_order_count := 1
+    grid_step = entry_price_dca * grid_size_percent / 100
+    
+    array.clear(dca_levels)
+    array.push(dca_levels, entry_price_dca)
+    
+    reset_dca_tracking()
+    array.set(dca_order_placed, 0, true)
+    
+    for i = 1 to number_of_orders - 1
+        step_multiplier = math.pow(logarithmic_steps, i - 1)
+        level_distance = grid_step * step_multiplier * i
+        level = entry_price_dca + level_distance
+        array.push(dca_levels, level)
+    
+    qty = get_position_size_dca(1) / close
+    strategy.entry("DCA_S1", strategy.short, qty=qty)
+    last_entry_bar_index := bar_index
+    total_position_size := qty
+    weighted_avg_price := close
+    last_dca_entry_bar := bar_index
+
+// DCA Additional Orders
+if not na(entry_price_dca) and dca_order_count < number_of_orders
+    if (dca_grid_direction == "Long" or dca_grid_direction == "Длинная") and strategy.position_size > 0
+        for i = dca_order_count to number_of_orders - 1
+            if not array.get(dca_order_placed, i)
+                next_level = array.get(dca_levels, i)
+                if close <= next_level
+                    dca_order_count += 1
+                    order_qty = get_position_size_dca(dca_order_count) / close
+                    strategy.entry("DCA_L" + str.tostring(dca_order_count), strategy.long, qty=order_qty)
+                    array.set(dca_order_placed, i, true)
+                    
+                    total_position_size := total_position_size + order_qty
+                    weighted_avg_price := (weighted_avg_price * (total_position_size - order_qty) + close * order_qty) / total_position_size
+                    break
+    
+    if (dca_grid_direction == "Short" or dca_grid_direction == "Короткая") and strategy.position_size < 0
+        for i = dca_order_count to number_of_orders - 1
+            if not array.get(dca_order_placed, i)
+                next_level = array.get(dca_levels, i)
+                if close >= next_level
+                    dca_order_count += 1
+                    order_qty = get_position_size_dca(dca_order_count) / close
+                    strategy.entry("DCA_S" + str.tostring(dca_order_count), strategy.short, qty=order_qty)
+                    array.set(dca_order_placed, i, true)
+                    
+                    total_position_size := total_position_size + order_qty
+                    weighted_avg_price := (weighted_avg_price * (total_position_size - order_qty) + close * order_qty) / total_position_size
+                    break
+
+else
+    // Regular Trading (non-DCA)
+    if final_long_condition and strategy.position_size == 0 and can_enter_due_to_cooldown
+        if use_order_indent
+            indent_target_price_state := close * (1 - indent_percent / 100)
+            indent_bar_counter_state := 0
+        else
+            strategy.entry("Long", strategy.long)
+            last_entry_bar_index := bar_index
+    
+    if final_short_condition and strategy.position_size == 0 and can_enter_due_to_cooldown
+        if use_order_indent
+            indent_target_price_state := close * (1 + indent_percent / 100)
+            indent_bar_counter_state := 0
+        else
+            strategy.entry("Short", strategy.short)
+            last_entry_bar_index := bar_index
+    
+    // Execute indent orders for regular trading
+    if not use_dca_grid_main and not na(indent_target_price_state) and strategy.position_size == 0
+        if final_long_condition and close <= indent_target_price_state
+            strategy.entry("Long", strategy.long)
+            last_entry_bar_index := bar_index
+            indent_target_price_state := na
+            indent_bar_counter_state := 0
+        
+        if final_short_condition and close >= indent_target_price_state
+            strategy.entry("Short", strategy.short)
+            last_entry_bar_index := bar_index
+            indent_target_price_state := na
+            indent_bar_counter_state := 0
+    
+// ===============================
+// EXIT MANAGEMENT
+// ===============================
+
+// Calculate average price
+avg_price = use_dca_grid_main and not na(weighted_avg_price) ? weighted_avg_price : strategy.position_avg_price
+
+// Dynamic TP percentage
+tp_percent_current = change_take_profit and dca_order_count >= if_orders_more_than ? new_take_profit_percent : take_profit_percent
+sl_percent_current = sl_equals_tp ? tp_percent_current : stop_loss_percent
+
+// ATR values
+atr_sl_val = ta.atr(atr_sl_length)
+atr_tp_val = ta.atr(atr_tp_length)
+
+// Breakeven Logic
+if use_breakeven and strategy.position_size != 0 and not breakeven_activated
+    profit_percent = 0.0
+    if strategy.position_size > 0
+        profit_percent := (close - avg_price) / avg_price * 100
+    else
+        profit_percent := (avg_price - close) / avg_price * 100
+    
+    if profit_percent >= breakeven_activation
+        breakeven_activated := true
+
+// Trailing Stop Logic
+if use_trailing_stop and strategy.position_size != 0
+    profit_percent = 0.0
+    if strategy.position_size > 0
+        profit_percent := (close - avg_price) / avg_price * 100
+    else
+        profit_percent := (avg_price - close) / avg_price * 100
+    
+    if profit_percent >= trailing_activation
+        if strategy.position_size > 0
+            new_trailing_level = close * (1 - trailing_distance / 100)
+            trailing_stop_level := na(trailing_stop_level) ? new_trailing_level : math.max(trailing_stop_level, new_trailing_level)
+        else
+            new_trailing_level = close * (1 + trailing_distance / 100)
+            trailing_stop_level := na(trailing_stop_level) ? new_trailing_level : math.min(trailing_stop_level, new_trailing_level)
+
+// TP/SL Execution
+if strategy.position_size != 0
+    base_tp_level = 0.0
+    base_sl_level = 0.0
+    
+    if strategy.position_size > 0
+        // Long position
+        base_tp_level := use_atr_take_profit ? avg_price + atr_tp_val * atr_tp_multiplier : avg_price * (1 + tp_percent_current / 100)
+        base_sl_level := use_atr_stop_loss ? avg_price - atr_sl_val * atr_sl_multiplier : avg_price * (1 - sl_percent_current / 100)
+        
+        // Apply breakeven
+        if use_breakeven and breakeven_activated
+            breakeven_sl_level = avg_price * (1 + breakeven_level / 100)
+            base_sl_level := math.max(base_sl_level, breakeven_sl_level)
+        
+        // Apply trailing stop
+        if use_trailing_stop and not na(trailing_stop_level)
+            base_sl_level := math.max(base_sl_level, trailing_stop_level)
+        
+        // Multi TP or regular exit
+        if use_multi_tp
+            total_qty = math.abs(strategy.position_size)
+            tp1_price = avg_price * (1 + tp1_percent / 100)
+            tp2_price = avg_price * (1 + tp2_percent / 100)
+            tp3_price = avg_price * (1 + tp3_percent / 100)
+            tp4_price = avg_price * (1 + tp4_percent / 100)
+            
+            tp1_qty_calc = total_qty * tp1_qty / 100
+            tp2_qty_calc = total_qty * tp2_qty / 100
+            tp3_qty_calc = total_qty * tp3_qty / 100
+            remaining_qty = total_qty - tp1_qty_calc - tp2_qty_calc - tp3_qty_calc
+            
+            strategy.order("TP1_L", strategy.short, qty=tp1_qty_calc, limit=tp1_price)
+            strategy.order("TP2_L", strategy.short, qty=tp2_qty_calc, limit=tp2_price)
+            strategy.order("TP3_L", strategy.short, qty=tp3_qty_calc, limit=tp3_price)
+            strategy.order("TP4_L", strategy.short, qty=remaining_qty, limit=tp4_price)
+            strategy.order("SL_L", strategy.short, qty=total_qty, stop=base_sl_level)
+        else
+            strategy.exit("Exit L", limit=base_tp_level, stop=base_sl_level)
+    
+    else
+        // Short position
+        base_tp_level := use_atr_take_profit ? avg_price - atr_tp_val * atr_tp_multiplier : avg_price * (1 - tp_percent_current / 100)
+        base_sl_level := use_atr_stop_loss ? avg_price + atr_sl_val * atr_sl_multiplier : avg_price * (1 + sl_percent_current / 100)
+        
+        // Apply breakeven
+        if use_breakeven and breakeven_activated
+            breakeven_sl_level = avg_price * (1 - breakeven_level / 100)
+            base_sl_level := math.min(base_sl_level, breakeven_sl_level)
+        
+        // Apply trailing stop
+        if use_trailing_stop and not na(trailing_stop_level)
+            base_sl_level := math.min(base_sl_level, trailing_stop_level)
+        
+        // Multi TP or regular exit
+        if use_multi_tp
+            total_qty = math.abs(strategy.position_size)
+            tp1_price = avg_price * (1 - tp1_percent / 100)
+            tp2_price = avg_price * (1 - tp2_percent / 100)
+            tp3_price = avg_price * (1 - tp3_percent / 100)
+            tp4_price = avg_price * (1 - tp4_percent / 100)
+            
+            tp1_qty_calc = total_qty * tp1_qty / 100
+            tp2_qty_calc = total_qty * tp2_qty / 100
+            tp3_qty_calc = total_qty * tp3_qty / 100
+            remaining_qty = total_qty - tp1_qty_calc - tp2_qty_calc - tp3_qty_calc
+            
+            strategy.order("TP1_S", strategy.long, qty=tp1_qty_calc, limit=tp1_price)
+            strategy.order("TP2_S", strategy.long, qty=tp2_qty_calc, limit=tp2_price)
+            strategy.order("TP3_S", strategy.long, qty=tp3_qty_calc, limit=tp3_price)
+            strategy.order("TP4_S", strategy.long, qty=remaining_qty, limit=tp4_price)
+            strategy.order("SL_S", strategy.long, qty=total_qty, stop=base_sl_level)
+        else
+            strategy.exit("Exit S", limit=base_tp_level, stop=base_sl_level)
+
+// ===============================
+// CLOSE SIGNALS
+// ===============================
+
+// Check profit condition for close signals
+profit_check_passed = true
+if close_only_profit
+    profit_check_passed := strategy.openprofit >= strategy.position_avg_price * min_profit_percent / 100
+
+// Parabolic SAR Close
+if close_parabolic_sar and strategy.position_size != 0 and profit_check_passed
+    sar_close = (strategy.position_size > 0 and sar_cross_for_long_close) or (strategy.position_size < 0 and sar_cross_for_short_close)
+    if sar_close
+        strategy.close_all(comment="SAR Close")
+// LRC Close
+if close_lrc_signal and strategy.position_size != 0 and use_lrc and profit_check_passed
+    lrc_close = (strategy.position_size > 0 and close > lrc_upper_calc) or (strategy.position_size < 0 and close < lrc_lower_calc)
+    if lrc_close
+        strategy.close_all(comment="LRC Close")
+
+// Channel Close
+if close_bb_kc and strategy.position_size != 0 and use_channels and profit_check_passed
+    channel_close = (strategy.position_size > 0 and close > channel_upper_calc) or (strategy.position_size < 0 and close < channel_lower_calc)
+    if channel_close
+        strategy.close_all(comment="Channel Close")
+
+// QQE Close
+if close_qqe_signal and strategy.position_size != 0 and use_qqe and profit_check_passed
+    qqe_close = (strategy.position_size > 0 and new_qqe_trend == -1) or (strategy.position_size < 0 and new_qqe_trend == 1)
+    if qqe_close
+        strategy.close_all(comment="QQE Close")
+
+// RSI Close
+if close_rsi_signal and strategy.position_size != 0 and profit_check_passed
+    rsi_close_val = use_rsi1 ? rsi1_value_calc : use_rsi2 ? rsi2_value_calc : use_rsi3 ? rsi3_value_calc : 50
+    rsi_ob = use_rsi1 ? rsi1_overbought : use_rsi2 ? rsi2_overbought : use_rsi3 ? rsi3_overbought : 70
+    rsi_os = use_rsi1 ? rsi1_oversold : use_rsi2 ? rsi2_oversold : use_rsi3 ? rsi3_oversold : 30
+    
+    rsi_close = (strategy.position_size > 0 and rsi_close_val > rsi_ob) or (strategy.position_size < 0 and rsi_close_val < rsi_os)
+    if rsi_close
+        strategy.close_all(comment="RSI Close")
+
+// Stochastic Close
+if close_stoch_signal and strategy.position_size != 0 and use_stochastic and profit_check_passed
+    stoch_close = (strategy.position_size > 0 and stoch_k_calc > stoch_overbought) or (strategy.position_size < 0 and stoch_k_calc < stoch_oversold)
+    if stoch_close
+        strategy.close_all(comment="Stoch Close")
+
+// MA Cross Close
+if close_ma_cross and strategy.position_size != 0 and use_ma and profit_check_passed
+    ma_close = (strategy.position_size > 0 and ma_cross_down_for_long_close) or (strategy.position_size < 0 and ma_cross_up_for_short_close)
+    if ma_close
+        strategy.close_all(comment="MA Close")
+
+// Pyramiding Logic
+if use_pyramiding and strategy.position_size != 0
+    price_move = 0.0
+    if strategy.position_size > 0
+        price_move := (close - avg_price) / avg_price * 100
+    else
+        price_move := (avg_price - close) / avg_price * 100
+    
+    if price_move >= pyramid_min_move
+        if strategy.position_size > 0 and final_long_condition
+            strategy.entry("Pyramid L", strategy.long)
+        if strategy.position_size < 0 and final_short_condition
+            strategy.entry("Pyramid S", strategy.short)
+
+// Reverse Orders Logic
+if use_reverse_order_on_sl and strategy.closedtrades > 0
+    last_trade = strategy.closedtrades - 1
+    last_profit = strategy.closedtrades.profit(last_trade)
+    
+    if last_profit < 0 and barstate.isconfirmed and strategy.position_size == 0
+        last_size = strategy.closedtrades.size(last_trade)
+        reverse_qty = math.abs(last_size) * reverse_qty_percent / 100
+        
+        if last_size > 0
+            strategy.entry("Rev S", strategy.short, qty=reverse_qty)
+        else
+            strategy.entry("Rev L", strategy.long, qty=reverse_qty)
+        
+        // Reset state variables
+        entry_price_dca := na
+        dca_order_count := 0
+        total_position_size := 0.0
+        weighted_avg_price := 0.0
+        trailing_stop_level := na
+        breakeven_activated := false
+
+if use_reverse_order_on_be and strategy.closedtrades > 0 and breakeven_activated
+    last_trade = strategy.closedtrades - 1
+    last_profit = strategy.closedtrades.profit(last_trade)
+    
+    if last_profit >= 0 and last_profit <= avg_price * breakeven_level / 100 and barstate.isconfirmed and strategy.position_size == 0
+        last_size = strategy.closedtrades.size(last_trade)
+        reverse_qty = math.abs(last_size) * reverse_qty_percent / 100
+        
+        if last_size > 0
+            strategy.entry("Rev BE S", strategy.short, qty=reverse_qty)
+        else
+            strategy.entry("Rev BE L", strategy.long, qty=reverse_qty)
+        
+        // Reset state variables
+        entry_price_dca := na
+        dca_order_count := 0
+        total_position_size := 0.0
+        weighted_avg_price := 0.0
+        trailing_stop_level := na
+        breakeven_activated := false
+
+// Reset variables when position closes
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    entry_price_dca := na
+    dca_order_count := 0
+    total_position_size := 0.0
+    weighted_avg_price := 0.0
+    trailing_stop_level := na
+    breakeven_activated := false
+
+// ===============================
+// VISUALIZATION AND PLOTS
+// ===============================
+
+// Plot MAs
+plot(use_ma ? ma_fast_value_calc : na, "Fast MA", color=color.blue, linewidth=1)
+plot(use_ma ? ma_slow_value_calc : na, "Slow MA", color=color.red, linewidth=1)
+
+// Plot Channels
+plot(use_channels ? channel_upper_calc : na, "Channel Upper", color=color.purple)
+plot(use_channels ? channel_basis_calc : na, "Channel Basis", color=color.gray)
+plot(use_channels ? channel_lower_calc : na, "Channel Lower", color=color.purple)
+
+// Plot SuperTrend instances
+plot(use_supertrend_legacy ? st_legacy_line : na, "SuperTrend Legacy", color=st_legacy_direction == 1 ? color.green : color.red, linewidth=2)
+plot(use_st1 ? st1_saved_line : na, "ST1", color=st1_saved_direction == 1 ? color.lime : color.maroon, linewidth=1)
+plot(use_st2 ? st2_saved_line : na, "ST2", color=st2_saved_direction == 1 ? color.aqua : color.orange, linewidth=1)
+plot(use_st3 ? st3_saved_line : na, "ST3", color=st3_saved_direction == 1 ? color.blue : color.red, linewidth=1)
+
+// Plot LRC
+plot(use_lrc ? lrc_upper_calc : na, "LRC Upper", color=color.green)
+plot(use_lrc ? lrc_basis_calc : na, "LRC Basis", color=color.yellow)
+plot(use_lrc ? lrc_lower_calc : na, "LRC Lower", color=color.red)
+
+// Plot SAR
+plotshape(close_parabolic_sar ? sar_value_calc : na, style=shape.circle, location=location.absolute, color=close > sar_value_calc ? color.green : color.red, size=size.tiny)
+
+// Signal visualization
+if show_entry_signals_indiv
+    if final_long_condition
+        label.new(bar_index, low - ta.atr(14), "LONG\n" + str.tostring(met_entry_conditions_long) + "/" + str.tostring(active_entry_conditions_long), 
+                  color=color.green, style=label.style_label_up, textcolor=color.white, size=size.normal)
+    
+    if final_short_condition
+        label.new(bar_index, high + ta.atr(14), "SHORT\n" + str.tostring(met_entry_conditions_short) + "/" + str.tostring(active_entry_conditions_short), 
+                  color=color.red, style=label.style_label_down, textcolor=color.white, size=size.normal)
+
+// ===============================
+// INFORMATION TABLES
+// ===============================
+
+// Signal Status Table
+if barstate.islast
+    var table signal_table = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 90), border_width=1)
+    
+    table.cell(signal_table, 0, 0, "Signal Status", bgcolor=color.blue, text_color=color.white)
+    table.cell(signal_table, 1, 0, "Long", bgcolor=color.blue, text_color=color.white)
+    table.cell(signal_table, 2, 0, "Short", bgcolor=color.blue, text_color=color.white)
+    
+    table.cell(signal_table, 0, 1, "Active Conditions:", text_color=color.white)
+    table.cell(signal_table, 1, 1, str.tostring(active_entry_conditions_long), text_color=color.white)
+    table.cell(signal_table, 2, 1, str.tostring(active_entry_conditions_short), text_color=color.white)
+    
+    table.cell(signal_table, 0, 2, "Met Conditions:", text_color=color.white)
+    table.cell(signal_table, 1, 2, str.tostring(met_entry_conditions_long), text_color=color.white)
+    table.cell(signal_table, 2, 2, str.tostring(met_entry_conditions_short), text_color=color.white)
+    
+    table.cell(signal_table, 0, 3, "Filters:", text_color=color.white)
+    table.cell(signal_table, 1, 3, all_filters_result ? "✓" : "✗", text_color=all_filters_result ? color.green : color.red)
+    table.cell(signal_table, 2, 3, all_filters_result ? "✓" : "✗", text_color=all_filters_result ? color.green : color.red)
+    
+    table.cell(signal_table, 0, 4, "Final Signal:", text_color=color.white)
+    table.cell(signal_table, 1, 4, final_long_condition ? "BUY" : "-", text_color=final_long_condition ? color.green : color.gray)
+    table.cell(signal_table, 2, 4, final_short_condition ? "SELL" : "-", text_color=final_short_condition ? color.red : color.gray)
+    
+    table.cell(signal_table, 0, 5, "DCA Grid:", text_color=color.white)
+    table.cell(signal_table, 1, 5, str.tostring(use_dca_grid_main), text_color=use_dca_grid_main ? color.green : color.red)
+    table.cell(signal_table, 2, 5, dca_grid_direction, text_color=color.white)
+    
+    table.cell(signal_table, 0, 6, "Position:", text_color=color.white)
+    table.cell(signal_table, 1, 6, str.tostring(strategy.position_size), text_color=strategy.position_size == 0 ? color.green : color.yellow)
+    table.cell(signal_table, 2, 6, "", text_color=color.white)
+
+// DCA Info Table
+if use_dca_grid_main and barstate.islast
+    var table dca_table = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 90), border_width=1)
+    
+    table.cell(dca_table, 0, 0, "DCA Status", bgcolor=color.blue, text_color=color.white)
+    table.cell(dca_table, 1, 0, "", bgcolor=color.blue)
+    
+    table.cell(dca_table, 0, 1, "Direction:", text_color=color.white)
+    table.cell(dca_table, 1, 1, dca_grid_direction, text_color=color.white)
+    
+    table.cell(dca_table, 0, 2, "Orders:", text_color=color.white)
+    table.cell(dca_table, 1, 2, str.tostring(dca_order_count) + "/" + str.tostring(number_of_orders), text_color=color.white)
+    
+    table.cell(dca_table, 0, 3, "Entry Price:", text_color=color.white)
+    table.cell(dca_table, 1, 3, na(entry_price_dca) ? "N/A" : str.tostring(entry_price_dca, "#.####"), text_color=color.white)
+    
+    table.cell(dca_table, 0, 4, "Avg Price:", text_color=color.white)
+    table.cell(dca_table, 1, 4, na(avg_price) ? "N/A" : str.tostring(avg_price, "#.####"), text_color=color.white)
+    
+    table.cell(dca_table, 0, 5, "Position:", text_color=color.white)
+    table.cell(dca_table, 1, 5, str.tostring(strategy.position_size, "#.####"), text_color=color.white)
+    
+    table.cell(dca_table, 0, 6, "P&L:", text_color=color.white)
+    table.cell(dca_table, 1, 6, str.tostring(strategy.openprofit, "#.##") + "$", 
+              text_color=strategy.openprofit >= 0 ? color.green : color.red)
+    
+    table.cell(dca_table, 0, 7, "Breakeven:", text_color=color.white)
+    table.cell(dca_table, 1, 7, breakeven_activated ? "Active" : "Inactive", 
+              text_color=breakeven_activated ? color.green : color.gray)
+
+// ===============================
+// ALERTS
+// ===============================
+if final_long_condition
+    alert_msg = '{"action": "LONG", "symbol": "' + syminfo.ticker + '", "price": ' + str.tostring(close) + ', "conditions": ' + str.tostring(met_entry_conditions_long) + '/' + str.tostring(active_entry_conditions_long) + '}'
+    alert(alert_msg, alert.freq_once_per_bar)
+
+if final_short_condition
+    alert_msg = '{"action": "SHORT", "symbol": "' + syminfo.ticker + '", "price": ' + str.tostring(close) + ', "conditions": ' + str.tostring(met_entry_conditions_short) + '/' + str.tostring(active_entry_conditions_short) + '}'
+    alert(alert_msg, alert.freq_once_per_bar)
+
+if strategy.position_size[1] != 0 and strategy.position_size == 0
+    alert_msg = '{"action": "CLOSE", "symbol": "' + syminfo.ticker + '", "price": ' + str.tostring(close) + '}'
+    alert(alert_msg, alert.freq_once_per_bar)
+
+
+// ===============================
+// DEBUG ТАБЛИЦА
+// ===============================
+
+
+if barstate.islast
+    var table simple_debug = table.new(position.bottom_left, 2, 10, bgcolor=color.new(color.black, 90), border_width=1)
+    
+    table.cell(simple_debug, 0, 0, "SIMPLE DEBUG", bgcolor=color.blue, text_color=color.white)
+    table.cell(simple_debug, 1, 0, "", bgcolor=color.blue)
+    
+    table.cell(simple_debug, 0, 1, "DCA Grid:", text_color=color.white)
+    table.cell(simple_debug, 1, 1, str.tostring(use_dca_grid_main), text_color=use_dca_grid_main ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 2, "Direction:", text_color=color.white) 
+    table.cell(simple_debug, 1, 2, dca_grid_direction, text_color=color.white)
+    
+    table.cell(simple_debug, 0, 3, "Year OK:", text_color=color.white)
+    table.cell(simple_debug, 1, 3, str.tostring(year >= start_year and year <= stop_year), text_color=(year >= start_year and year <= stop_year) ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 4, "Position:", text_color=color.white)
+    table.cell(simple_debug, 1, 4, str.tostring(strategy.position_size), text_color=strategy.position_size == 0 ? color.green : color.yellow)
+    
+    table.cell(simple_debug, 0, 5, "Allow No Ind:", text_color=color.white)
+    table.cell(simple_debug, 1, 5, str.tostring(input_allow_entry_without_indicators), text_color=input_allow_entry_without_indicators ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 6, "Filters:", text_color=color.white)
+    table.cell(simple_debug, 1, 6, str.tostring(all_filters_result), text_color=all_filters_result ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 7, "Final Long:", text_color=color.white)
+    table.cell(simple_debug, 1, 7, str.tostring(final_long_condition), text_color=final_long_condition ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 8, "Final Short:", text_color=color.white)
+    table.cell(simple_debug, 1, 8, str.tostring(final_short_condition), text_color=final_short_condition ? color.green : color.red)
+    
+    table.cell(simple_debug, 0, 9, "Current Time:", text_color=color.white)
+    table.cell(simple_debug, 1, 9, str.tostring(year) + "/" + str.tostring(month), text_color=color.white)

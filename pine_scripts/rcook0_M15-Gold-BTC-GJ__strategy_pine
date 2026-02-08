@@ -1,0 +1,242 @@
+//@version=6
+strategy("M15 Gold/BTC/GJ Strategy v1.5 (Pine v6)",
+     overlay=true,
+     initial_capital=10000,
+     pyramiding=0,
+     process_orders_on_close=true,
+     calc_on_order_fills=true,
+     calc_on_every_tick=false,
+     commission_type=strategy.commission.percent,
+     commission_value=0.02,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10)
+
+// ===============================
+// Inputs — General (single-line)
+// ===============================
+symChoice = input.string("Any", "Symbol filter", ["Any", "Gold (XAU)", "Bitcoin (BTC)", "GBPJPY (GJ)"])
+accuracy  = input.float(0.70, "Signal accuracy (0..1)", 0.30, 1.00, 0.05)
+relax     = 1.0 - accuracy
+riskPct   = input.float(10.0, "Position size % of equity", 0.1, 100.0)
+strategy.risk.allow_entry_in(strategy.direction.long)
+strategy.risk.allow_entry_in(strategy.direction.short)
+
+// =======================================
+// Session filters (London / New York)
+// =======================================
+useSessions = input.bool(true,  "Enable session filters")
+lonEnable   = input.bool(true,  "London session")
+lonSess     = input.session("0700-1200", "London session hours")
+nyEnable    = input.bool(true,  "New York session")
+nySess      = input.session("1330-1730", "New York session hours")
+// Use chart/exchange timezone implicitly
+inLondon    = not na(time(timeframe.period, lonSess))
+inNewYork   = not na(time(timeframe.period, nySess))
+passSession = useSessions ? ((lonEnable and inLondon) or (nyEnable and inNewYork)) : true
+
+// =======================================
+// Manual news blackout windows (const-safe)
+// =======================================
+useNewsBlk  = input.bool(true, "Enable manual news blackout windows")
+// Defaults (UTC): 2024-01-01 00:00–01:00 → 1704067200000 .. 1704070800000
+blk1_on    = input.bool(false, "News window #1 on?")
+blk1_start = input.time(1704067200000, "Start UTC #1")
+blk1_end   = input.time(1704070800000, "End UTC #1")
+
+blk2_on    = input.bool(false, "News window #2 on?")
+blk2_start = input.time(1704067200000, "Start UTC #2")
+blk2_end   = input.time(1704070800000, "End UTC #2")
+
+blk3_on    = input.bool(false, "News window #3 on?")
+blk3_start = input.time(1704067200000, "Start UTC #3")
+blk3_end   = input.time(1704070800000, "End UTC #3")
+
+blk4_on    = input.bool(false, "News window #4 on?")
+blk4_start = input.time(1704067200000, "Start UTC #4")
+blk4_end   = input.time(1704070800000, "End UTC #4")
+
+blk5_on    = input.bool(false, "News window #5 on?")
+blk5_start = input.time(1704067200000, "Start UTC #5")
+blk5_end   = input.time(1704070800000, "End UTC #5")
+
+inBlk1 = blk1_on and time >= blk1_start and time <= blk1_end
+inBlk2 = blk2_on and time >= blk2_start and time <= blk2_end
+inBlk3 = blk3_on and time >= blk3_start and time <= blk3_end
+inBlk4 = blk4_on and time >= blk4_start and time <= blk4_end
+inBlk5 = blk5_on and time >= blk5_start and time <= blk5_end
+blockNow = useNewsBlk and (inBlk1 or inBlk2 or inBlk3 or inBlk4 or inBlk5)
+
+// ===============================
+// Symbol filter helper
+// ===============================
+string t    = syminfo.ticker
+string root = str.upper(syminfo.root)
+hasXAU = str.contains(str.upper(t), "XAU") or str.contains(root, "XAU")
+hasBTC = str.contains(str.upper(t), "BTC") or str.contains(root, "BTC")
+hasGJ  = str.contains(str.upper(t), "GBPJPY") or str.contains(str.upper(t), "GJ")
+
+symPass = switch symChoice
+    "Any"           => true
+    "Gold (XAU)"    => hasXAU
+    "Bitcoin (BTC)" => hasBTC
+    "GBPJPY (GJ)"   => hasGJ
+    => true
+
+// ===============================
+// Core indicators (M15)
+// ===============================
+lenEMAfast = input.int(21,  "EMA fast (M15)")
+lenEMAslow = input.int(200, "EMA slow (M15)")
+emaFast = ta.ema(close, lenEMAfast)
+emaSlow = ta.ema(close, lenEMAslow)
+vwap    = ta.vwap(hlc3)
+
+// Stochastic (correct order + smoothing)
+kLen   = input.int(14, "Stoch K length")
+dLen   = input.int(3,  "Stoch D length")
+smooth = input.int(3,  "Stoch smoothing")
+kRaw = ta.stoch(high, low, close, kLen)
+k    = ta.sma(kRaw, smooth)
+d    = ta.sma(k, dLen)
+
+obase = 80.0, obMin = 60.0
+osbase = 20.0, osMax = 40.0
+ob = obase - (obase - obMin) * relax
+os = osbase + (osMax - osbase) * relax
+
+// ATR (M15)
+atrLen = input.int(14, "ATR length (M15)")
+atr    = ta.atr(atrLen)
+
+// ===============================
+// MTF H1 confirmation (no repaint)
+// ===============================
+useMTF   = input.bool(true, "Use H1 confirmation")
+h1LenEMA = input.int(200, "EMA length (H1)")
+h1Close  = request.security(syminfo.tickerid, "60", close, lookahead=barmerge.lookahead_off)
+h1EMA    = request.security(syminfo.tickerid, "60", ta.ema(close, h1LenEMA), lookahead=barmerge.lookahead_off)
+h1Slope  = ta.linreg(h1EMA, 5, 0) - ta.linreg(h1EMA[1], 5, 0)
+
+slopeMinBase = 0.0, slopeMinTight = 0.05
+slopeMin = slopeMinBase - (slopeMinBase - slopeMinTight) * relax
+trendUpH1   = h1Close > h1EMA and h1Slope >= slopeMin
+trendDownH1 = h1Close < h1EMA and h1Slope <= -slopeMin
+
+// ===============================
+// Entry logic
+// ===============================
+nearTolBase = 0.0, nearTolMax = 5.0
+nearTol = nearTolBase + (nearTolMax - nearTolBase) * relax
+
+stochCrossUp   = ta.crossover(k, d) and k < os + nearTol
+stochCrossDown = ta.crossunder(k, d) and k > ob - nearTol
+
+bullStructure = close > vwap and emaFast > emaSlow
+bearStructure = close < vwap and emaFast < emaSlow
+
+longCond  = bullStructure  and stochCrossUp   and symPass and passSession and not blockNow and (useMTF ? trendUpH1   : true)
+shortCond = bearStructure  and stochCrossDown and symPass and passSession and not blockNow and (useMTF ? trendDownH1 : true)
+
+// ===============================
+// %ATR Stops/Targets
+// ===============================
+atrPctSL = input.float(1.0, "%ATR for Stop (1.0 = 100% ATR)", 0.1, 100.0, 0.05)
+atrPctTP = input.float(2.0, "%ATR for Target (2.0 = 200% ATR)", 0.2, 100.0, 0.05)
+
+longSL  = close - atr * atrPctSL
+longTP  = close + atr * atrPctTP
+shortSL = close + atr * atrPctSL
+shortTP = close - atr * atrPctTP
+
+// ===============================
+// Break-even & Trailing Stop
+// ===============================
+useBE    = input.bool(true,  "Enable break-even")
+beRR     = input.float(1.0,  "Move to BE at R multiple", 0.0, 100.0, 0.1)
+beOff    = input.float(0.1,  "BE offset in ATR (>=0)",   0.0, 100.0, 0.05)
+
+useTrail = input.bool(true,  "Enable ATR trailing stop")
+trailATR = input.float(1.5,  "ATR multiple for trail",   0.5, 100.0, 0.1)
+
+// Track entry prices
+var float longEntry  = na
+var float shortEntry = na
+longRisk  = na(longEntry)  ? na : (atr * atrPctSL)  // current-ATR proxy
+shortRisk = na(shortEntry) ? na : (atr * atrPctSL)
+
+beLongPrice  = na(longEntry)  ? na : longEntry + beOff * atr
+beShortPrice = na(shortEntry) ? na : shortEntry - beOff * atr
+trailLong    = close - trailATR * atr
+trailShort   = close + trailATR * atr
+
+// ===============================
+// Orders
+// ===============================
+if longCond and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long, qty=riskPct)
+    longEntry  := close
+    shortEntry := na
+
+if shortCond and strategy.position_size >= 0
+    strategy.entry("Short", strategy.short, qty=riskPct)
+    shortEntry := close
+    longEntry  := na
+
+if strategy.position_size > 0
+    sl = longSL
+    tp = longTP
+    if useBE and not na(longEntry)
+        reachedBE = high >= longEntry + beRR * longRisk
+        sl := reachedBE ? math.max(sl, beLongPrice) : sl
+    if useTrail
+        sl := math.max(sl, trailLong)
+    strategy.exit("Long-Exit", from_entry="Long", stop=sl, limit=tp)
+
+if strategy.position_size < 0
+    sl = shortSL
+    tp = shortTP
+    if useBE and not na(shortEntry)
+        reachedBE = low <= shortEntry - beRR * shortRisk
+        sl := reachedBE ? math.min(sl, beShortPrice) : sl
+    if useTrail
+        sl := math.min(sl, trailShort)
+    strategy.exit("Short-Exit", from_entry="Short", stop=sl, limit=tp)
+
+// ===============================
+// Alerts
+// ===============================
+alertcondition(longCond,  title="Long Signal (Entry)",  message="M15 Strategy: LONG on {{ticker}} @ {{close}}")
+alertcondition(shortCond, title="Short Signal (Entry)", message="M15 Strategy: SHORT on {{ticker}} @ {{close}}")
+closedLong  = ta.change(strategy.position_size) < 0
+closedShort = ta.change(strategy.position_size) > 0
+alertcondition(closedLong,  title="Long Exit",  message="M15 Strategy: LONG EXIT on {{ticker}} @ {{close}}")
+alertcondition(closedShort, title="Short Exit", message="M15 Strategy: SHORT EXIT on {{ticker}} @ {{close}}")
+
+// ===============================
+// Visuals
+// ===============================
+plot(emaFast, "EMA Fast (M15)")
+plot(emaSlow, "EMA Slow (M15)")
+plot(vwap,    "VWAP")
+plotshape(longCond,  title="Long ^",  style=shape.triangleup,   location=location.belowbar, size=size.tiny, text="L")
+plotshape(shortCond, title="Short v", style=shape.triangledown, location=location.abovebar, size=size.tiny, text="S")
+bgcolor(useSessions and inLondon ? color.new(color.green, 92) : na)
+bgcolor(useSessions and inNewYork ? color.new(color.blue,  92) : na)
+bgcolor(blockNow ? color.new(color.red, 88) : na)
+
+// Info label
+var label info = na
+if barstate.islast
+    label.delete(info)
+    txt = "M15 Gold/BTC/GJ Strategy (v6)\n" +
+          "Accuracy=" + str.tostring(accuracy, format.percent) +
+          " | H1 filter=" + str.tostring(useMTF) +
+          " | Trail xATR=" + str.tostring(trailATR) +
+          "\nSL %ATR=" + str.tostring(atrPctSL) + " | TP %ATR=" + str.tostring(atrPctTP) +
+          "\nSessions=" + (useSessions ? "ON" : "OFF") + " | NewsBlk=" + (useNewsBlk ? "ON" : "OFF")
+    info := label.new(bar_index, high, txt, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 0))
+
+// Notes:
+// - Inputs are const-safe; blackout windows use literal epoch ms (UTC).
+// - Sessions use chart exchange TZ; adjust lonSess/nySess strings if needed.
+// - Risk sizing: percent-of-equity via qty when entering.

@@ -1,0 +1,999 @@
+//@version=6
+indicator("Whale Belly 10", overlay=false, max_bars_back = 5000)  // Now in separate pane
+
+// Detect if the asset is an option
+isOption = syminfo.type == "option"
+
+// Extract expiration from the ticker dynamically
+tickerLen = str.length(syminfo.ticker)
+underlyingSymbol = isOption ? str.substring(syminfo.ticker, 0, tickerLen - 0) : syminfo.ticker
+
+// Initialize 0 DTE check variable
+var bool isZeroDTE = false
+var bool isOneDTE = false
+var bool isTwoDTE = false
+
+// Get today's date
+currentYear = year % 100  // Get last two digits of the year (e.g., 2025 → 25)
+currentMonth = month
+currentDay = dayofmonth
+
+// **Current Market Time (Exchange Time)**
+currentHour = hour(time)
+currentMinute = minute(time)
+
+// Detect market close based on exchange session times
+marketCloseHour = 16  // Adjust for your market (e.g., US stock market closes at 4 PM)
+marketCloseMinute = 0
+
+// **Check if Within Last 15 Minutes of Market Close**
+isLast15Minutes = (currentHour == marketCloseHour and currentMinute >= marketCloseMinute - 15)
+isLast30Minutes = (currentHour == marketCloseHour and currentMinute >= marketCloseMinute - 30)
+is15MinutesAfterClose = (currentHour == marketCloseHour and currentMinute < marketCloseMinute + 15)
+
+// Get today option string
+todayString = str.tostring(currentYear) + str.tostring(currentMonth, "00") + str.tostring(currentDay, "00")
+
+// Generate 1DTE and 2DTE dates
+oneDTE = timestamp(year, month, dayofmonth + 1)  // Tomorrow
+twoDTE = timestamp(year, month, dayofmonth + 2)  // Two days out
+
+// Convert to YYMMDD format
+oneDTE_YY = year(oneDTE) % 100
+oneDTE_MM = month(oneDTE)
+oneDTE_DD = dayofmonth(oneDTE)
+oneDTEString = str.tostring(oneDTE_YY) + str.tostring(oneDTE_MM, "00") + str.tostring(oneDTE_DD, "00")
+
+twoDTE_YY = year(twoDTE) % 100
+twoDTE_MM = month(twoDTE)
+twoDTE_DD = dayofmonth(twoDTE)
+twoDTEString = str.tostring(twoDTE_YY) + str.tostring(twoDTE_MM, "00") + str.tostring(twoDTE_DD, "00")
+
+// Scan through the ticker using a sliding window to find today’s expiration
+if isOption
+    for i = 0 to tickerLen - 6  // Ensure valid substring bounds
+        subStr = str.substring(syminfo.ticker, i, i + 6)  // Extract 6-character substring
+
+        if subStr == todayString
+            isZeroDTE := true  // Found today's date in the ticker
+        else if subStr == oneDTEString
+            isOneDTE := true  // Found tomorrow's date in the ticker
+        else if subStr == twoDTEString
+            isTwoDTE := true  // Found two days out in the ticker
+
+// Define playable DTE logic (true if 0DTE, 1DTE, or 2DTE)
+isPlayableDTE = isZeroDTE or isOneDTE or isTwoDTE
+
+// Inputs: Signal Settings
+showDotChainCounts = input.bool(true, title="Dot Chain Counts", group="Signals")
+showMagnetPrices = input.bool(true, title="Magnet Detection", group="Signals")
+showLightning = input.bool(true, title="Ideal Entry Detection", group="Signals")
+showCalculation = input.bool(true, title="Price Calculation", group="Signals")
+ 
+// Inputs: Line Formations
+showWhales = input.bool(true, title="Whale Detection", group="Formations")
+showTails = input.bool(true, title="Whale Tail Events", group="Formations")
+ 
+// Inputs: General Settings
+filterBellySetup = input.bool(false, title="Enable Gap Filtering", group="Filtering")
+filterSignatures = input.bool(false, title="Enable Signature Filtering", group="Filtering")
+filterMACD = input.bool(false, title="Enable MACD Filtering", group="Filtering")
+filterBellies = input.bool(false, title="Enable Belly Filtering", group="Filtering")
+filterEODSignals = input.bool(true, title="Enable End of Day Filtering", group="Filtering")
+filterFalseSignals = input.bool(true, title="Enable False Signal Filtering", group="Filtering")
+
+// Inputs: Profit Table
+showProfitTargetTable = input.bool(true, title="Profit Target Table", group="Profit Taking")
+showMultiplier = input.bool(true, title="Multiplier Column", group="Profit Taking")
+showPercentage = input.bool(false, title="Percentage Column", group="Profit Taking")
+
+// Inputs: Configure
+showPriceDeviationLine = input.bool(false, title="Show Deviation Line", group="Configuration")
+dotsForRedLight = input.int(10, title="Dots for Red Light", group="Configuration")
+dotsForGreenLight = input.int(30, title="Dots for Green Light", group="Configuration")
+
+// Set Opacity: 0 for visible, 100 for transparent
+opacityLevel = 70 
+
+// MACD-Style Histogram Colors
+col_grow_above = input(#26A69A, "Above   Grow", group="Histogram", inline="Above")
+col_fall_above = input(#B2DFDB, "Fall", group="Histogram", inline="Above")
+col_grow_below = input(#FFCDD2, "Below Grow", group="Histogram", inline="Below")
+col_fall_below = input(#FF5252, "Fall", group="Histogram", inline="Below")
+
+// Fixed MACD Settings (Non-Configurable)
+macdFast = 12
+macdSlow = 26
+macdSignal = 9
+histogramLength = 9
+
+// Stochastic RSI Calculation (Matches Chart Timeframe)
+stochLength = 14
+kLength = 3
+dLength = 3
+rsiSource = close
+
+rsiValue = ta.rsi(rsiSource, stochLength)  
+stochK = ta.stoch(rsiValue, ta.lowest(rsiValue, stochLength), ta.highest(rsiValue, stochLength), stochLength)
+stochRSI_K = request.security(syminfo.tickerid, timeframe.period, ta.sma(stochK, kLength))
+
+// Calculate EMAs
+ema3 = ta.ema(close, 3)
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+ema100 = ta.ema(close, 100)
+ema200 = ta.ema(close, 200)
+emaGap = ema200 - ema50
+emaGapAvg = ta.sma(emaGap, 20)  
+emaGapRatio = (ema200 - ema50) / high
+minGapRequired = emaGapAvg * 0.9  
+
+// Standard Deviation Calculation
+stdevRecent = ta.stdev(close, 20)       
+stdevPrevious = ta.stdev(close[20], 20) 
+
+// Compute Price Deviation from EMAs (Purple Line)
+priceDeviation = (close - ema50) - (ema50 - ema200)
+prevDeviation = nz(priceDeviation[1])  // Previous bar value
+changePercent = (priceDeviation - prevDeviation) / math.abs(prevDeviation) * 100
+
+// Compute Signal Line (Orange) - EMA of Price Deviation
+signalLine = ta.ema(priceDeviation, histogramLength)
+
+// Compute Traditional MACD for Confirmation
+macdLine = ta.ema(close, macdFast) - ta.ema(close, macdSlow)
+macdSignalLine = ta.ema(macdLine, macdSignal)
+
+// Compute SuperTrend Line
+superTrendLine = signalLine + ta.ema(signalLine, macdSignal)
+superTrendLineInverted = superTrendLine * -1
+
+// PSAR
+psarValue = ta.sar(0.02, 0.02, 0.2)
+psarAbove = psarValue > close
+psarEMA = ta.ema(psarValue, 14)
+
+// Calculate VWAP Upper and Lower Bounds
+vwapValue = ta.vwap(close)
+vwapUpper = (vwapValue*100) + ta.stdev(close, 20) * 2
+vwapLower = (vwapValue*100) - ta.stdev(close, 20) * 2
+vwapSpreadRatio = (vwapUpper - vwapLower) / close
+
+// Slopes
+macdSlope = macdSignalLine - macdSignalLine[1]
+priceDeviationSlope = priceDeviation - priceDeviation[1]
+superTrendLineSlope = superTrendLine - superTrendLine[1]
+signalLineSlope = signalLine - signalLine[1]
+superTrendSlope = superTrendLine - superTrendLine[1]  
+ema50Slope = (ema50 - ema50[5]) / 5  
+ema200Slope = (ema200 - ema200[5]) / 5  
+
+// Validate the Whale Belly Setup
+validBellySetup = emaGap > minGapRequired
+
+// Detect Fake Reversals (SuperTrend rising, but no real momentum)
+fakeReversal = superTrendSlope > 0 and priceDeviationSlope <= 0 and signalLineSlope <= 0
+
+// Confirm True Momentum Shift (All three rising together)
+realMomentumShift = superTrendSlope > 0 and priceDeviationSlope > 0 and signalLineSlope > 0
+
+// Check if all three are converging toward zero
+zeroDrift = math.abs(superTrendLineSlope) < 0.02 and math.abs(priceDeviationSlope) < 0.02 and math.abs(signalLineSlope) < 0.02
+
+// Check for Terminal Decay (Flatlining)
+atrFalling = ta.sma(ta.atr(14), 5) < ta.sma(ta.atr(14), 20)  // ATR is decreasing
+lowVolatility = atrFalling and stdevRecent < stdevPrevious  // Price movement is shrinking
+
+// Define VWAP-Based Buy Filter
+vwapFilter = vwapSpreadRatio >= 3
+
+// Modifications
+kijun15m = request.security(syminfo.tickerid, "15", ta.sma(ta.highest(high, 26) + ta.lowest(low, 26), 2))
+signalLineInverted = ((signalLine) * -1)
+holdSignal = ( ema50 > ema200 and fakeReversal )
+
+emdSpecial = ta.ema(close, 13)
+macdNormalized = macdSignal * (ta.stdev(macdLine + macdSlope, 20) / ta.stdev(macdSignal, 20))
+superTrendLineWeird = ta.ema((superTrendLine - emdSpecial) * -0.5, 3)
+shiftBars = 120  // Shift forward by 120 bars
+whiteLineShifted = nz(superTrendLine[shiftBars])  // Use `nz()` to avoid errors
+
+// Plot Shifted White Line
+offsetWeird = ta.sma(superTrendLineWeird, 200)
+deviationWeird = ta.sma(math.abs(superTrendLineWeird - signalLine), 50)  // Average absolute deviation over 50 bars
+adjustmentFactor = deviationWeird * 0.8  // Scale down extreme values but keep responsiveness
+superTrendLineWeirdNormalized = superTrendLineWeird - adjustmentFactor + 1 
+avgBely = math.avg(superTrendLineWeird, superTrendLineWeird)
+deviationFactor = ta.sma(math.abs(avgBely - signalLine), 50)  // Average deviation over 50 bars
+avgBelyNormalized = avgBely - deviationFactor + signalLine + 0
+
+// Crossover Conditions
+bullishCrossover = ta.crossover(whiteLineShifted, signalLine)  // White Line crosses above Orange Line
+bearishCrossover = ta.crossunder(whiteLineShifted, signalLine)  // White Line crosses below Orange Line
+
+localhigh = ta.highest(avgBelyNormalized, 20)
+localLow = ta.lowest(avgBelyNormalized, 20)
+
+//
+ema150Low = ta.ema(low, 150)
+//falseSignalFilter = ema150Low - (math.abs(signalLine) + math.abs(avgBelyNormalized)) > 0 and isZeroDTE
+
+// **Initialize Counter (Persistent)**
+var int falseSignalCount = 0
+
+// Prevent Buy Signals if Signal Line Sloped Downward for Past 5 Bars
+threshold = 0.01
+noBuyCondition = ((low - math.abs(macdSignalLine)) >= threshold and close < ema50)
+
+buyCondition1 = (math.abs(changePercent) < 5 and macdSignalLine > -0.2)
+buyCondition2 = (priceDeviation < 0 and signalLine < 0 and math.abs(priceDeviation - signalLine) / math.abs(signalLine) < 0.02)
+buyCondition3 = (priceDeviation > 0 and close < priceDeviation)
+
+allBuyConditionsMet = ((buyCondition1 or buyCondition2 or (buyCondition3 and priceDeviation > 0)) and noBuyCondition and (ema200 >= 1 or superTrendLine >= 1)) and not (ema50 < 0.3) and (filterBellySetup ? validBellySetup : true)
+falseSignalFilter = isZeroDTE and (avgBelyNormalized - signalLine) / emaGap < -2 and allBuyConditionsMet
+
+// **Increment Counter When Condition is Met**
+falseSignalCount := falseSignalCount + (falseSignalFilter ? 1 : 0)
+
+// Final Buy Signal (Including Old and New Conditions)
+buySignal = not (falseSignalFilter and filterFalseSignals) and allBuyConditionsMet
+
+// Various Types of Buy Signals
+prepareToBuySignal = buySignal and stochRSI_K > 150
+goldenBuySignal = buySignal and close <= (signalLine * 0.5)
+goldenBuyLookback = timeframe.period == "1" ? 180 : timeframe.period == "2" ? 90 : timeframe.period == "3" ? 60 : timeframe.period == "5" ? 36 : 0
+goldenBuyRecent = ta.barssince(goldenBuySignal) <= goldenBuyLookback
+squeezeSignal = (priceDeviation <= superTrendLine * 1.15) and (superTrendLine < priceDeviation) and (high > nz(high[1]))
+addToWinners = (priceDeviation <= prevDeviation * 0.5) and high < ema200 and high < ema50 and goldenBuyRecent
+
+// Concept Indicator Filtering Logic
+baseLookback = 5
+sensMultiplier = 6.0
+atrMultiplier = 1.0
+
+meanClose = ta.sma(close, baseLookback)
+float variance = 0.0
+for i = 0 to baseLookback - 1
+    variance += math.pow(close[i] - meanClose, 2)
+variance /= baseLookback
+
+dynamicThreshold = ta.sma(variance, baseLookback) * (sensMultiplier / 10)
+lowVariance = variance < dynamicThreshold
+atrLookback = ta.atr(baseLookback)
+validBarSize = (high - low) > ta.sma(high - low, baseLookback) and (high - low) < (atrLookback * 3)
+
+highest = ta.highest(close[1], baseLookback - 1)
+bullSignal = lowVariance and validBarSize and close > highest
+
+buySignalFiltered = buySignal and (close + (signalLine*100)) > 0
+
+// Sell Conditions
+superTrendLineSlopeUp = superTrendLine > nz(superTrendLine[1])
+priceDrop5Percent = priceDeviation < nz(priceDeviation[1]) * 0.95
+
+sellCondition1 = priceDeviation > (signalLine * 3) and signalLine >= 0.5 and close > ema50 and close > ema200
+sellCondition2 = priceDeviation > 0.75 and priceDeviation > (prevDeviation * 2)
+sellCondition3 = close >= ema200 * 2 or high >= ema200 * 2
+sellCondition4 = ta.lowest(priceDeviation - signalLine, 5) < 0 and priceDeviation >= signalLine and close > ema50 and ema50 > ema200
+
+sinceBuySignal = ta.barssince(buySignal)
+timeSinceBuyReq = timeframe.period == "1" ? 10 : timeframe.period == "2" ? 5 : timeframe.period == "3" ? 3 : timeframe.period == "5" ? 2 : 0
+
+//sellSignal = (sellCondition1 or sellCondition2 or sellCondition3 or sellCondition4) and (not superTrendLineSlopeUp or priceDrop5Percent) and not (sinceBuySignal < timeSinceBuyReq)
+//sellSignal = sellCondition1 or sellCondition2 or sellCondition3 or sellCondition4
+sellSignal = (sellCondition1 or sellCondition2 or sellCondition3 or sellCondition4) and (not priceDrop5Percent)
+
+// Histogram (Price Deviation - Signal Line)
+histogram = priceDeviation - signalLine
+histColor = histogram >= 0 ? (histogram > histogram[1] ? color.new(col_grow_above, opacityLevel) : color.new(col_fall_above, opacityLevel)) : (histogram < histogram[1] ? color.new(col_fall_below, opacityLevel) : color.new(col_grow_below, opacityLevel))
+//plot(histogram, title="Histogram", color=histColor, style=plot.style_columns, linewidth=2, display=display.pane)
+
+
+var float lastMagnetBar = na
+var float lastMagnetPrice = na
+float recentHigh50 = ta.highest(high, 50) 
+float recentLow50 = ta.lowest(low, 50)
+
+if bullishCrossover and showMagnetPrices and not (high == low) and (na(lastMagnetBar) or bar_index - lastMagnetBar > 5)
+    
+    float priceRange = recentHigh50 - recentLow50  // Last 50 bars range
+    float scaledOffset = priceRange * 0.10        // Adjust for asset volatility
+    float labelOffset = math.max(scaledOffset, 0.2)
+
+    float avgLine = (avgBelyNormalized + signalLine) / 2  // Midpoint between blue & orange
+    bool isAboveZero = avgLine > 0  // Determine overall direction
+
+    // **Detect special case where Bely is deeply negative & Signal is deeply positive**
+    bool isDiverging = avgBelyNormalized < -priceRange * 0.2 and signalLine > priceRange * 0.2
+    bool isNearZero = math.abs(avgLine) < priceRange * 0.05  // When they average near zero
+
+    float labelY = isAboveZero ? math.max(avgBelyNormalized, signalLine) + labelOffset
+                               : math.min(avgBelyNormalized, signalLine) - labelOffset
+
+    labelStyle = not isAboveZero ? label.style_label_up : label.style_label_down
+
+    // **Format price for better readability**
+    string formattedPrice = low > 1000 ? str.tostring(low, "#")  // No decimals above $1,000
+                         : low > 100  ? str.tostring(low, "#.#") // One decimal above $100
+                         : str.tostring(low, "#.##")             // Two decimals otherwise
+
+    if (avgBelyNormalized < 0 and signalLine > 0 and isDiverging)
+        labelStyle := label.style_label_down
+        labelY := avgBelyNormalized + labelOffset
+
+    label.new(bar_index, labelY, "🧲 " + formattedPrice, color=color.black, textcolor=color.white, size=size.large, style=labelStyle)
+
+    lastMagnetPrice := low 
+    lastMagnetBar := bar_index
+
+trendGap = (ema200 - ema50) * -1
+
+sessionOpen = timestamp(year, month, dayofmonth, 9, 30)
+barsSinceOpen = math.max(bar_index - ta.barssince(time >= sessionOpen), 1)
+sessionVolumeAvg = ta.sma(volume, barsSinceOpen)
+volumeDeviation = (volume - sessionVolumeAvg) / sessionVolumeAvg
+volumeWeightedTrendGap = trendGap * (1 + volumeDeviation)
+smoothedVolumeWeightedTrendGap = ta.ema(volumeWeightedTrendGap, 5)
+
+// Normalize the Smoothed Histogram to Fit the Signal Line Range
+minHist = ta.lowest(smoothedVolumeWeightedTrendGap, 50)  // Get min over last 50 bars
+maxHist = ta.highest(smoothedVolumeWeightedTrendGap, 50)  // Get max over last 50 bars
+minSignal = ta.lowest(signalLine, 50)  // Get min of Signal Line over 50 bars
+maxSignal = ta.highest(signalLine, 50)  // Get max of Signal Line over 50 bars
+
+// Apply Min-Max Scaling to Fit Histogram Within Signal Lines Range
+normalizedTrendGap = minSignal + ((smoothedVolumeWeightedTrendGap - minHist) / (maxHist - minHist)) * (maxSignal - minSignal)
+
+// Detect Individual Crosses
+firstDownCrossSignal = ta.crossunder(avgBelyNormalized, signalLine)  // Blue crosses below Orange
+firstDownCrossDeviation = ta.crossunder(avgBelyNormalized, priceDeviation)  // Blue crosses below Purple
+barsSinceFirstDownCross = ta.barssince(firstDownCrossSignal)
+barsSinceFirstDownDeviation = ta.barssince(firstDownCrossDeviation)
+secondDownCrossSignal = ta.crossunder(avgBelyNormalized, signalLine) and barsSinceFirstDownCross > 20
+secondDownCrossDeviation = ta.crossunder(avgBelyNormalized, priceDeviation) and barsSinceFirstDownDeviation > 5
+upCrossSignal = ta.crossover(avgBelyNormalized, signalLine)  // Blue crosses above Orange
+upCrossDeviation = ta.crossover(avgBelyNormalized, priceDeviation)  // Blue crosses above Purple
+
+// Confirm the 3-Step Pattern
+firstDownCross = firstDownCrossSignal   // First full downward cross
+secondDownCross = secondDownCrossSignal  // Second downward cross (TAIL)
+barsSinceSecondDownCross = ta.barssince(secondDownCross)
+barsSinceFirstDownCrossSignal = ta.barssince(firstDownCrossSignal)
+upCross = upCrossSignal  // First up cross after TAIL
+
+// **Detect Crossovers for Momentum Shifts**
+bullishShift = ta.crossover(avgBelyNormalized, signalLine)
+bearishShift = ta.crossunder(signalLine, avgBelyNormalized)
+
+// **Detect Momentum Peaks**
+bullishPeak = (avgBelyNormalized > signalLine) and (avgBelyNormalized[1] < avgBelyNormalized)
+bearishPeak = (avgBelyNormalized < signalLine) and (avgBelyNormalized[1] > avgBelyNormalized)
+
+// **Detect Divergences**
+priceUpBlueFlat = (close > close[5]) and (avgBelyNormalized < avgBelyNormalized[5])
+priceDownBlueFlat = (close < close[5]) and (avgBelyNormalized > avgBelyNormalized[5])
+
+divergenceWarning = priceUpBlueFlat or priceDownBlueFlat
+
+// **Detect Rapid Blue Spikes (Momentum Surges)**
+blueSpike = (avgBelyNormalized - avgBelyNormalized[3]) > ta.stdev(avgBelyNormalized, 5)  // Detects a sharp move
+
+// **Keep existing plots**
+//plot(avgBelyNormalized, title="Normalized SuperTrend Line", color=color.blue, linewidth=2)
+//plot(signalLine, title="Signal Line", color=color.orange, linewidth=2)
+
+// Calculate Signal Line Slope Over Last 5 Bars
+signalSlope = (signalLine - signalLine[5]) / 5  // Change per bar
+
+// Set a Maximum Slope Threshold to Avoid Sharp Uptrends
+maxSlopeThreshold = ta.stdev(signalLine, 20) * 0.1  // Adjust sensitivity as needed
+separationThreshold = ta.sma(signalLine - avgBelyNormalized, 20)  // Positive if signalLine was consistently higher
+maxSlopeThreshold50 = ta.stdev(ema50, 10) * 1  // EMA50 Sensitivity
+maxSlopeThreshold200 = ta.stdev(ema200, 10) * 0.2  // EMA200 Sensitivity
+minSlopeThreshold50 = -maxSlopeThreshold50  // Lower limit for ema50 (prevent excessive drops)
+minSlopeThreshold200 = -maxSlopeThreshold200  // Lower limit for ema200 (prevent excessive drops)
+durr = ta.stdev(signalLine, 20)
+
+// Plot Labels Without Deleting
+//if firstDownCross and showWhales and signalSlope < maxSlopeThreshold 
+    //label.new(bar_index, avgBelyNormalized - 0.01, "🐋", color=color.blue, textcolor=color.rgb(74, 54, 54), size=size.large, style=label.style_label_upper_right)
+
+whaleSignal = firstDownCross and showWhales //and signalSlope < maxSlopeThreshold
+plotchar(whaleSignal, location=location.bottom, char="🐋", color=color.blue, title="Whale Signal", offset=0, size=size.small, display=display.pane)
+
+macdHistogram = macdLine - macdSignalLine
+
+// **Check MACD Slope & Trend**
+macdIncreasing = macdHistogram > macdHistogram[1]  // MACD Histogram Rising
+macdDecreasing = macdHistogram < macdHistogram[1]  // MACD Histogram Falling
+
+// **Detect Tail Event with Improved Filtering**
+lookbackBars = input(10, "Lookback for Whale Belly Momentum")
+blueMomentum = avgBelyNormalized - avgBelyNormalized[lookbackBars]  // Change in Whale Belly over X bars
+priceDistanceEMA200 = ema200 - close
+
+// **Filtering Weak Signals**
+bullishSlopeThreshold = ta.sma(signalLineSlope, lookbackBars) - ta.stdev(signalLineSlope, lookbackBars) * 0.1
+bearishSlopeThreshold = ta.sma(signalLineSlope, lookbackBars) - ta.stdev(signalLineSlope, lookbackBars) * 0.5
+
+strongBullishShift = bullishShift and (signalLineSlope > bullishSlopeThreshold)
+strongBearishShift = bearishShift and (signalLineSlope < bearishSlopeThreshold)
+
+// **Predict Breakout Sustainability**
+bullishMomentumConfirmed = (upCross and blueMomentum > 0 and priceDistanceEMA200 > 0 and macdIncreasing) or blueSpike
+bearishMomentumConfirmed = strongBearishShift and macdDecreasing
+
+// **Calculate Tail Target**
+tailTarget = math.round(math.avg(ema200, ema9, ema50, close), 2)
+
+// **Adjust for options logic**
+if isOption
+    tailTarget := math.round(ema50 - math.abs(ema50 - ema200), 2)
+
+// **Format Tail Target for readability**
+string formattedTailTarget = tailTarget > 1000 ? str.tostring(tailTarget, "#") : tailTarget > 100  ? str.tostring(tailTarget, "#.#") : str.tostring(tailTarget, "#.##") 
+
+// **Track Bullish/Bearish Environment Since Last Tail Event**
+var int lastBullTailBar = na
+var int lastBearTailBar = na
+
+// **Track State of Bullish/Bearish Phase**
+var bool inBullPhase = false
+var bool inBearPhase = false
+
+// **Enhanced Tail Event Logic**
+if upCross and separationThreshold > durr * 0.5 and showTails // Ensure separation is meaningful
+    if bullishMomentumConfirmed
+        label.new(bar_index, avgBelyNormalized, "Bull: " + str.tostring(formattedTailTarget), color=color.green, textcolor=color.white, size=size.large, style=label.style_label_lower_right)
+        lastBullTailBar := bar_index
+        inBullPhase := true
+        inBearPhase := false  // Flip to bullish state
+    else if bearishMomentumConfirmed
+        label.new(bar_index, avgBelyNormalized, "Bear: " + str.tostring(formattedTailTarget), color=color.red, textcolor=color.white, size=size.large, style=label.style_label_upper_left)
+        lastBearTailBar := bar_index
+        inBearPhase := true
+        inBullPhase := false  // Flip to bearish state
+    else 
+        label.new(bar_index, avgBelyNormalized, "Neutral: " + str.tostring(formattedTailTarget), color=color.gray, textcolor=color.white, size=size.large, style=label.style_label_lower_right)  // Neutral Tail
+        lastBullTailBar := na    
+        lastBearTailBar := na
+        inBearPhase := false
+        inBullPhase := false  // Flip to bearish state
+
+// **Detect Doji Candles (Small Body, Large Wicks)**
+bodySize = math.abs(close - open)
+wicksSize = high - low
+isDoji = bodySize / wicksSize < 0.25  // Small body relative to total range
+
+// **Precompute Lowest & Highest Lows Over 5 Bars**
+lowestLow5 = ta.lowest(low, 5)
+highestHigh5 = ta.highest(high, 5)
+
+// Ensure the Phase Flips Properly and Enforce a Minimum Distance from Tail Event
+inBullPhase := not na(lastBullTailBar) and (na(lastBearTailBar) or lastBullTailBar > lastBearTailBar) and (bar_index - lastBullTailBar > 10) 
+inBearPhase := not na(lastBearTailBar) and (na(lastBullTailBar) or lastBearTailBar > lastBullTailBar) and (bar_index - lastBearTailBar > 10)
+
+// **RSI Settings**
+rsiLength = 14  // Standard RSI length
+
+// **RSI Thresholds for Phase Shift**
+rsiOverbought = 60  // Bullish phase should end around here
+rsiOversold = 40    // Bearish phase should end around here
+
+rsiSma14 = ta.sma(rsiValue, 14)
+
+// **Adjust Phase Based on RSI**
+inBullPhase := inBullPhase and not (rsiSma14 > rsiOversold)
+inBearPhase := inBearPhase and not (rsiSma14 < rsiOverbought)
+
+// **Apply Background Color for Active Phase**
+//bgcolor(inBullPhase ? color.new(color.green, 90) : inBearPhase ? color.new(color.red, 90) : na)
+
+// **Detect Session Reset (Last Candle of Day)**
+// Detect a new session when the day changes
+isNewSession = ta.change(dayofweek) != 0// Ensure reset only happens once per session
+var int lastSessionResetBar = na  
+lastSessionBar = ta.valuewhen(isNewSession, bar_index[1], 0)  // Stores the last bar index of the session
+isLastCandleOfDay = bar_index == lastSessionBar
+
+// **Detect Splash Event (Reversal Doji in Active Phase)**
+var int lastSplashBar = na  // Track last splash event bar index
+
+splashSpikeUp = isDoji and (low == lowestLow5) and inBullPhase and (na(lastSplashBar) or (lastSplashBar < lastBullTailBar and avgBelyNormalized > signalLine))
+splashSpikeDown = isDoji and (high == highestHigh5) and inBearPhase and (na(lastSplashBar) or (lastSplashBar < lastBearTailBar and avgBelyNormalized < signalLine))
+
+//plotshape(splashSpikeUp and not isLast30Minutes, location=location.top, color=color.green, style=shape.triangleup, size=size.small, title="UP Signal")
+//plotshape(splashSpikeDown and not isLast30Minutes, location=location.top, color=color.red, style=shape.triangledown, size=size.small, title="DOWN Signal")
+//plotshape(inBullPhase and not isLast30Minutes, location=location.top, color=color.green, style=shape.triangleup, size=size.small, title="UP Signal")
+//plotshape(inBearPhase and not isLast30Minutes, location=location.top, color=color.red, style=shape.triangledown, size=size.small, title="DOWN Signal")
+
+// Plot Key Lines
+plot(showPriceDeviationLine ? priceDeviation : na, title="Price Deviation", color=color.purple, linewidth=2)
+plot(signalLine, title="Signal Line", color=color.orange, linewidth=2)
+// **Plot Only If Enabled**
+
+// **Standardized Blue & Orange Lines (Like MACD)**
+normalizationFactor = ta.stdev(superTrendLine, 20) * 0.8  // Scale to expected range
+
+// **Blue Line (Belly) - Adjusted for Readability**
+normalizedBelly = (superTrendLine - ta.sma(superTrendLine, 20)) / normalizationFactor
+
+// **Orange Line (Signal) - More Predictive & Comparable**
+normalizedSignal = (signalLine - ta.sma(signalLine, 20)) / normalizationFactor
+
+// **MACD-Style Histogram for Belly-Signal Spread**
+bellySignalSpread = normalizedBelly - normalizedSignal
+bellySignalSpreadShifted = nz(superTrendLine[20])  // Use `nz()` to avoid errors
+
+//plot(bellySignalSpreadShifted, title="Belly-Signal Spread", color=bellySignalSpread > 0 ? color.rgb(93, 204, 255) : color.rgb(255, 93, 93), style=plot.style_line, linewidth=2)
+
+// Whale Belly
+plot(avgBelyNormalized, title="Normalized SuperTrend Line", color=color.rgb(93, 204, 255), linewidth=2)
+
+// Calculate Bottom Padding
+paddingBottom = math.min(ta.lowest(avgBelyNormalized, 15) - (ta.stdev(avgBelyNormalized, 15) * 2), 15)
+
+// Calculate Top Padding
+paddingTop = math.max(ta.highest(avgBelyNormalized, 10) + (ta.stdev(avgBelyNormalized, 15) * 2), -15)
+
+// Plot Padding Zones
+plot(paddingBottom, title="Bottom Padding", color=color.new(color.white, 100), display=display.pane)
+plot(paddingTop, title="Top Padding", color=color.new(color.white, 100), display=display.pane)
+
+// Detect when whiteLineShifted changes from 0 to a non-zero value
+prevWhiteLineShifted = ta.valuewhen(whiteLineShifted != 0, whiteLineShifted[1], 1)
+whiteLineShiftedChange = (prevWhiteLineShifted == 0) and (whiteLineShifted != 0)
+
+// Plot lightning bolt when whiteLineShifted changes from 0 to a non-zero value
+//if (whiteLineShiftedChange)
+    //label.new(bar_index, -0.10, "*", color=color.gray, textcolor=color.white, size=size.large, style=label.style_label_up)
+
+
+// Set a flag when whiteLineShiftedChange occurs
+var bool whiteLineShiftedChangeOccurred = false
+if (whiteLineShiftedChange)
+    whiteLineShiftedChangeOccurred := true
+
+// Check if priceDeviation and signalLine are within 1% of each other
+priceSignalClose = math.abs(priceDeviation - signalLine) / math.abs(signalLine) < 0.05
+
+// Track the bar index of the last lightning bolt label
+var int lastLightningBoltBarIndex = na
+
+// Longest Chain
+var int longestChain = 0
+
+// Longest Chain
+var float lowestChainPoint = high
+var float lowestAfterChain = high 
+
+// Initialize a counter for consecutive buy signals
+var int consecutiveBuyCount = 0
+var int lastConsecutiveBuyCount =0 
+
+// Store last valid buy count before reset
+var int lastBuyCount = 0
+
+// Store last buy signal's bar index
+var int lastBuyBarIndex = na
+
+// Store the lowest padding during the buy streak
+var float lowestPaddingDuringSequence = na  
+ 
+// Define the maximum allowed gap between signals
+maxGap = 3 
+
+// Determine bars since the last buy signal
+barsSinceLastBuy = ta.barssince(buySignalFiltered)
+
+// Check if a buy signal occurs
+buySignalOccurred = buySignalFiltered 
+
+// Variables to Track the Longest Chain's First Candle
+var int longestChainStartIndex = na
+var float longestChainFirstClose = na
+
+//
+barsSinceLongestChain = ta.barssince(not na(longestChainFirstClose))
+
+// Reset all buy chain & longest chain variables when session starts
+
+// Update the counter
+if barsSinceLongestChain > 3
+    consecutiveBuyCount := 0
+    lastConsecutiveBuyCount := 0 
+    lastBuyBarIndex := na
+    lastBuyCount := 0
+    lowestChainPoint := na
+    
+    longestChain := 0
+    longestChainStartIndex := na
+    longestChainFirstClose := na
+else if buySignalOccurred
+    consecutiveBuyCount := consecutiveBuyCount + 1
+    lastConsecutiveBuyCount := consecutiveBuyCount
+    lastBuyBarIndex := bar_index  // Store last buy signal's bar index
+    if consecutiveBuyCount == 1
+        longestChainFirstClose := close
+    if consecutiveBuyCount > longestChain
+        longestChain := consecutiveBuyCount
+        longestChainStartIndex := bar_index - (consecutiveBuyCount - 1)  // First candle in the chain
+        longestChainFirstClose := close[consecutiveBuyCount - 1]  // Closing price of that first candle
+        if consecutiveBuyCount > 2
+            longestChainFirstClose := close[consecutiveBuyCount - 1]  // Get first candle in the chain
+        else
+            longestChainFirstClose := na
+        if na(lowestChainPoint) or (low < lowestChainPoint)
+            lowestChainPoint := low
+else if barsSinceLastBuy >= maxGap
+    if (na(lowestChainPoint) or (low < lowestChainPoint)) and lastConsecutiveBuyCount >= longestChain
+        lowestChainPoint := low
+    if consecutiveBuyCount >= 10  // Only place label if count is 10 or more
+        lastBuyCount := consecutiveBuyCount  // Store the count before reset
+
+        // Place a label at the lowest point (padding)
+        if not na(lastBuyBarIndex) and showDotChainCounts
+            label.new(lastBuyBarIndex, signalLine - 0.2, 
+                      str.tostring(lastBuyCount) + " Dots", 
+                      color=color.black, textcolor=color.white, size=size.large, style=label.style_label_up)
+    
+    // Reset the counter and last buy bar index
+    consecutiveBuyCount := 0  
+    lastBuyBarIndex := na  
+
+// **Assume Invalid Until Proven Valid**
+var bool validDotSignature = false  
+
+// **Ensure Longest Chain Start Index is Valid**
+if not na(longestChainStartIndex) and longestChain > 0
+    validDotSignature := true  // Assume valid, prove it wrong
+
+    bool containsGreen = false
+    bool containsLightGreen = false
+
+    // **Initialize Dynamic Storage for the Full Buy Chain**
+    var pastBuySignals = array.new_int(0)  // Start empty, will grow dynamically
+    var pastPrepareSignals = array.new_int(0)
+    var pastSqueezeSignals = array.new_int(0)
+    var pastAddToWinners = array.new_int(0)
+    var pastHoldSignals = array.new_int(0)
+
+    // **When a Buy Signal Occurs, Store it in Buffers**
+    if buySignalOccurred
+        array.unshift(pastBuySignals, buySignalFiltered ? 1 : 0)  
+        array.unshift(pastPrepareSignals, prepareToBuySignal ? 1 : 0)
+        array.unshift(pastSqueezeSignals, squeezeSignal ? 1 : 0)
+        array.unshift(pastAddToWinners, addToWinners ? 1 : 0)
+        array.unshift(pastHoldSignals, holdSignal ? 1 : 0)
+
+    // **Loop Through the Entire Buy Chain to Validate It**
+    for i = 0 to longestChain - 1  
+        if i >= array.size(pastBuySignals)  // Prevent out-of-bounds errors
+            break
+
+        // **Retrieve Values from Stored Arrays**
+        hasSqueeze = array.get(pastSqueezeSignals, i) == 1
+        hasAddToWinners = array.get(pastAddToWinners, i) == 1
+        hasHold = array.get(pastHoldSignals, i) == 1
+
+        if hasSqueeze or hasAddToWinners or hasHold
+            validDotSignature := false
+            break  // Stop checking if invalid found
+
+        // **Check for Required Signals**
+        if array.get(pastBuySignals, i) == 1
+            containsGreen := true
+        if array.get(pastPrepareSignals, i) == 1
+            containsLightGreen := true
+
+    // **If No Green or No Light Green, Mark Invalid**
+    if not containsGreen or not containsLightGreen
+        validDotSignature := false
+
+// Ensure we have a valid magnet price and dot count
+validMagnetPrice = not na(lastMagnetPrice) and consecutiveBuyCount > 0
+
+// Calculate target entry price
+targetEntryPrice = validMagnetPrice ? math.floor(lastMagnetPrice / (consecutiveBuyCount / 10)) : na
+
+// Define volatility factor using ATR (7-period)
+volatilityFactor = ta.atr(14) * 0.125  // 1% of 7-candle ATR
+
+// Low Point
+lowPoint = (lowestAfterChain < lowestChainPoint) ? lowestAfterChain : lowestChainPoint 
+
+// Upside Multiple
+upsideMultiple = math.floor(longestChain / 10)
+upsideMultiplePercent = (upsideMultiple - 1) * 100
+
+// Longest Adjustment
+longestChainAdjustment = math.min(longestChain, 100)
+
+var float lastMagnetPriceToUse = na
+
+// **Compute Lowest Low**
+lowestLow = math.min(lastMagnetPrice, longestChainFirstClose, longestChainFirstClose * 0.5)
+
+// **Compute Highest High**
+highestHigh = math.max(lastMagnetPrice, longestChainFirstClose)
+
+// **Determine the Best Magnet Price to Use**
+if (lastMagnetPrice < longestChainFirstClose * 0.5)
+    lastMagnetPriceToUse := lastMagnetPrice
+else if isZeroDTE
+    lastMagnetPriceToUse := longestChainFirstClose
+else 
+    lastMagnetPriceToUse := lowestLow  // Ensures the safest entry
+    
+// Adjustments 
+
+// Entry Price
+entryPriceLowest = math.floor((lowestLow / (longestChainAdjustment / 10)) * 100) / 100
+entryPriceBestGuess = math.floor((lastMagnetPriceToUse / (longestChainAdjustment / 10)) * 100) / 100
+entryPriceHighest = math.floor((highestHigh / (longestChainAdjustment / 10)) * 100) / 100
+
+// 
+
+// Check for bogus prices 
+if (entryPriceLowest > ema200) 
+    entryPriceLowest := na
+
+// Check for bogus prices 
+if (entryPriceHighest > ema200) 
+    entryPriceHighest := na
+
+entryPrice = math.avg(entryPriceLowest, entryPriceHighest)
+
+// Compute entry price range (floored to nearest penny)
+entryPriceLow = math.floor((entryPriceLowest - volatilityFactor) * 100) / 100
+entryPriceHigh = math.floor((entryPriceHighest + volatilityFactor) * 100) / 100
+
+// Multiplier
+effectiveMultiplierZDTE = 1.0
+effectiveMultiplier1DTE = 0.5
+effectiveMultiplier2DTE = 0.35
+ 
+// **Define Multipliers for Different DTEs**
+effectiveMultiplier = isZeroDTE ? 1.0 : isOneDTE ? 0.5 : isTwoDTE ? 0.35 : 1.0  // Default to 1.0 if none match
+
+// **Compute Adjusted Profit Targets**
+profitTarget_2x = math.floor((lowPoint * (2 * effectiveMultiplier)) * 100) / 100  // 100% Gain Adjusted
+profitTarget_3x = math.floor((lowPoint * (3 * effectiveMultiplier)) * 100) / 100  // 200% Gain Adjusted
+profitTarget_4x = math.floor((lowPoint * (4 * effectiveMultiplier)) * 100) / 100  // 300% Gain Adjusted
+profitTarget_Xx = math.floor((lowPoint * (upsideMultiple * effectiveMultiplier)) * 100) / 100  // Custom Multiple Adjusted
+
+// **Adjust Multiplier Display Based on DTE**
+adjustedUpsideMultiple = (validDotSignature) ? upsideMultiple * effectiveMultiplier : 0
+adjustedUpsideMultiplePercent = (adjustedUpsideMultiple - 1) * 100
+daysToExpiration = (isZeroDTE) ? 0 : (isOneDTE) ? 1 : (isTwoDTE) ? 2 : na
+
+// No Holding Past EOD Hours
+filterEODHours = isZeroDTE and (isLast15Minutes or is15MinutesAfterClose)
+
+// 
+specialConditions = (isZeroDTE and not validDotSignature and filterSignatures) or (macdSignalLine < -0.30 and filterMACD) or (math.abs(avgBelyNormalized)/close > 15 and filterBellies) or (filterEODHours and filterEODSignals)
+
+isEqualDoji = bodySize / wicksSize < 0.50
+
+// Scan the Last 5 Candles for Doji
+recentDoji = ta.highest(isDoji or isEqualDoji ? 1 : 0, 3) > 0
+var bool lightningBoltSignal = false
+
+// Plot lightning bolt when whiteLineShifted changes from 0 to a non-zero value and priceDeviation and signalLine are within 1% of each other
+if (not falseSignalFilter and recentDoji and whiteLineShiftedChangeOccurred and priceSignalClose and low == low[1]) and (na(lastLightningBoltBarIndex) or (bar_index - lastLightningBoltBarIndex >= 5)) and high - low <0.05 and showLightning and validDotSignature and not (filterEODHours and filterEODSignals)
+    label.new(bar_index, -0.10, "⚡️", color=color.black, textcolor=color.white, size=size.large, style=label.style_label_up)
+    lastLightningBoltBarIndex := bar_index
+    lightningBoltSignal := true
+else 
+    lightningBoltSignal := false
+
+// Define Lightning Bolt Condition
+//lightningBoltSignal = recentDoji and whiteLineShiftedChangeOccurred and priceSignalClose and (low == low[1]) and (na(lastLightningBoltBarIndex) or (bar_index - lastLightningBoltBarIndex >= 5)) and (high - low < 0.05) and showLightning and validDotSignature and not (filterEODHours and filterEODSignals)
+
+// Plot Lightning Bolt Symbol
+//plotchar(lightningBoltSignal, location=location.bottom, char="⚡️", color=color.yellow, title="Lightning Bolt", size=size.small)
+
+// Store Last Lightning Bolt Index
+//if lightningBoltSignal
+    //lastLightningBoltBarIndex := bar_index
+
+// Plot Buy/Sell Signals with Filtering
+plotshape(series=buySignalFiltered and not specialConditions, location=location.bottom, color=color.green, style=shape.circle, title="Buy Signal", display=display.pane)
+plotshape(series=prepareToBuySignal and not specialConditions, location=location.bottom, color=color.rgb(187, 232, 188), style=shape.circle, title="Prepare to Buy Signal", display=display.pane)
+plotshape(series=goldenBuySignal and not specialConditions, location=location.bottom, color=color.yellow, style=shape.circle, title="Golden Buy Signal", display=display.pane)
+plotshape(series=squeezeSignal, location=location.bottom, color=color.rgb(255, 151, 71), style=shape.circle, title="Squeeze", display=display.pane)
+plotshape(series=addToWinners, location=location.bottom, color=color.gray, style=shape.circle, title="Add to Winners", display=display.pane)
+plotshape(series=holdSignal, location=location.bottom, color=color.gray, style=shape.circle, title="Fake Reversal", display=display.pane)
+plotshape(series=sellSignal, location=location.top, color=color.red, style=shape.circle, title="Sell Signal", display=display.pane)
+plotshape(series=falseSignalFilter and filterFalseSignals, location=location.bottom, color=color.red, style=shape.circle, title="False Signal", display=display.pane)
+
+//
+multipleLight = (validDotSignature) ? color.blue : color.gray
+signalLight = (longestChain >= dotsForGreenLight) ? color.green : color.black
+reasoning = ''
+
+isAfterClose = currentHour > marketCloseHour or (currentHour == marketCloseHour and currentMinute >= marketCloseMinute)
+
+entryRange = "$" + str.tostring(entryPriceLow) + " - $" + str.tostring(entryPriceHigh)
+weightedEntry = math.round((((entryPriceLow + entryPriceHigh)/2)+(entryPriceBestGuess))/3, 2)
+// (((0+.34)/2)+(.02))/3
+// MORE ACCURATE MULTIPLE? 54*5*(1-(.05*2) ... -5% FOR EACH GOLDEN? ... OR SUBTRACT PERCENTAGE OF GOLDEN VS GREEN
+
+riskLevel = "Unknown Risk"
+riskLight = color.gray
+
+
+// False Signal Detection
+if (isAfterClose and false)
+    if (low <= 0.01)
+        adjustedUpsideMultiple := 0
+        reasoning := "Expired Worthless" 
+        signalLight := color.red
+        riskLevel := "Cooked"
+        riskLight := color.red
+    else 
+        reasoning := "Expired In the Money" 
+        signalLight := color.green
+        riskLevel := "Assignment"
+        riskLight := color.black
+else if (falseSignalCount > dotsForRedLight)
+    signalLight := color.red
+    reasoning := "Change Strikes"
+    riskLevel := "Severe Risk"
+    riskLight := color.red    
+else if (not validDotSignature)
+    signalLight := color.red
+    reasoning := "Invalid Dots"
+    riskLevel := "Not Playable"
+    riskLight := color.red
+else if (math.round(entryPriceLowest*100) <= 2)
+    signalLight := color.red
+    reasoning := "Zero Bid Entry Point"
+    riskLevel := "Extreme Risk"
+    riskLight := color.red
+else if (math.round(entryPriceLowest*100) <= 10)
+    signalLight := color.black
+    reasoning := "Low Entry Near: $" + str.tostring(weightedEntry)
+    riskLevel := "High Risk"
+    riskLight := color.red
+else if (validDotSignature and lightningBoltSignal or true and not isLast30Minutes)
+    signalLight := color.green 
+    reasoning := "⚡⚡ Lightning: $" + str.tostring(close) + " ⚡⚡"
+    riskLevel := "Good Risk"
+    riskLight := color.green
+else if (validDotSignature and (longestChain >= dotsForGreenLight))
+    signalLight := color.green 
+    reasoning := "Entry Range: " + entryRange
+    riskLevel := "Acceptable Risk"
+    riskLight := color.green
+else 
+    signalLight := color.black
+    reasoning := "Undetermined"
+
+dteText = (isPlayableDTE) ? " " + str.tostring(daysToExpiration) + " DTE :" : ""
+
+// Display Tables or Not
+if isOption and isZeroDTE and showCalculation
+
+    string entryToShow = na
+
+    // Adjust Entry
+    if (na(entryPriceBestGuess))
+        entryToShow := "Unable to"
+    else 
+        entryToShow := "$" + str.tostring(entryPriceBestGuess)
+
+    // Initialize a table
+    var table buySignalTable = table.new(position.top_center, 5, 1, border_width=1, border_color=color.black)
+ 
+    // Update the table with the count of consecutive buy signals
+    //table.cell(buySignalTable, 1, 0, text="Entry: $" + str.tostring(entryPrice), text_size=size.normal, text_color=color.white, bgcolor=color.black)
+    //table.cell(buySignalTable, 1, 0, text="  $" + str.tostring(entryPriceLow) + " - $" + str.tostring(entryPriceHigh) + "  ", text_size=size.large, text_color=color.white, bgcolor=color.black)
+    table.cell(buySignalTable, 0, 0, text="  " + entryToShow + " Est. Entry  ", text_size=size.large, text_color=color.white, bgcolor=color.black)
+    table.cell(buySignalTable, 1, 0, text="  " + str.tostring(adjustedUpsideMultiple) + "x Multiple  ", text_size=size.large, text_color=color.white, bgcolor=multipleLight)
+    table.cell(buySignalTable, 2, 0, text="  " + str.tostring(longestChain) + " Dots  ", text_size=size.large, text_color=color.white, bgcolor=signalLight)
+    table.cell(buySignalTable, 3, 0, text="  " + riskLevel + " ", text_size=size.large, text_color=color.white, bgcolor=riskLight)
+    table.cell(buySignalTable, 4, 0, text="  " + reasoning + " ", text_size=size.large, text_color=color.white, bgcolor=color.black)
+
+    var table buySignalTableOption = table.new(position.bottom_left, 2, 1, border_width=1, border_color=color.black)
+    table.cell(buySignalTableOption, 0, 0, text="              ", text_size=size.normal, text_color=color.gray)
+    table.cell(buySignalTableOption, 1, 0, text=dteText + " " + underlyingSymbol + " ", text_size=size.normal, text_color=color.gray, bgcolor=color.black)
+
+    //table.cell(buySignalTable, 2, 0, text="  Low: " + str.tostring(lowPoint) + "  ", text_size=size.large, text_color=color.white, bgcolor=color.black)
+
+// **Determine Number of Active Columns**
+numColumns = (showMultiplier ? 1 : 0) + 1 + (showPercentage ? 1 : 0)  // Always at least 1 column for price
+
+// **Only Create Table If Enabled**
+if showProfitTargetTable and isOption and isPlayableDTE and not na(entryPrice)
+    var table profitTargetTable = table.new(position.bottom_right, numColumns, 5, border_width=1, border_color=color.black)
+
+    // **Headers**
+    colIndex = 0  // Track column positions dynamically
+    if showMultiplier
+        table.cell(profitTargetTable, colIndex, 0, text="Multiplier", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(50, 50, 50))
+        colIndex := colIndex + 1
+
+    table.cell(profitTargetTable, colIndex, 0, text="Price", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(50, 50, 50))
+    colIndex := colIndex + 1
+
+    if showPercentage
+        table.cell(profitTargetTable, colIndex, 0, text="%", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(50, 50, 50))
+        colIndex := colIndex + 1
+
+    // **Rows: Dynamically Adjust Based on Column Selection**
+    colIndex := 0
+    if showMultiplier
+        table.cell(profitTargetTable, colIndex, 1, text="2x", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(51, 51, 51))
+        colIndex := colIndex + 1
+
+    table.cell(profitTargetTable, colIndex, 1, text="$" + str.tostring(profitTarget_2x), text_size=size.normal, text_color=color.white, bgcolor=color.rgb(51, 51, 51))
+    colIndex := colIndex + 1
+
+    if showPercentage
+        table.cell(profitTargetTable, colIndex, 1, text="100%", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(51, 51, 51))
+        colIndex := colIndex + 1
+
+    // **3x Row**
+    colIndex := 0
+    if showMultiplier
+        table.cell(profitTargetTable, colIndex, 2, text="3x", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(41, 41, 41))
+        colIndex := colIndex + 1
+
+    table.cell(profitTargetTable, colIndex, 2, text="$" + str.tostring(profitTarget_3x), text_size=size.normal, text_color=color.white, bgcolor=color.rgb(41, 41, 41))
+    colIndex := colIndex + 1
+
+    if showPercentage
+        table.cell(profitTargetTable, colIndex, 2, text="200%", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(41, 41, 41))
+        colIndex := colIndex + 1
+
+    // **4x Row**
+    colIndex := 0
+    if showMultiplier
+        table.cell(profitTargetTable, colIndex, 3, text="4x", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(31, 31, 31))
+        colIndex := colIndex + 1
+
+    table.cell(profitTargetTable, colIndex, 3, text="$" + str.tostring(profitTarget_4x), text_size=size.normal, text_color=color.white, bgcolor=color.rgb(31, 31, 31))
+    colIndex := colIndex + 1
+
+    if showPercentage
+        table.cell(profitTargetTable, colIndex, 3, text="300%", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(31, 31, 31))
+        colIndex := colIndex + 1
+
+    // **Custom Multiplier Row**
+    colIndex := 0
+    if showMultiplier
+        table.cell(profitTargetTable, colIndex, 4, text=str.tostring(adjustedUpsideMultiple) + "x", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(20, 20, 20))
+        colIndex := colIndex + 1
+
+    table.cell(profitTargetTable, colIndex, 4, text="$" + str.tostring(profitTarget_Xx), text_size=size.normal, text_color=color.white, bgcolor=color.rgb(20, 20, 20))
+    colIndex := colIndex + 1
+
+    if showPercentage
+        table.cell(profitTargetTable, colIndex, 4, text=str.tostring(adjustedUpsideMultiplePercent) + "%", text_size=size.normal, text_color=color.white, bgcolor=color.rgb(20, 20, 20))
+
+// Debugging 
+if false 
+    // **Create Debug Table (Top Right)**
+    var table debugTable = table.new(position.top_right, 2, 5, border_width=1, border_color=color.black)
+
+    // **Headers**
+    table.cell(debugTable, 0, 0, text="Property", text_size=size.large, text_color=color.white, bgcolor=color.gray)
+    table.cell(debugTable, 1, 0, text="Value", text_size=size.large, text_color=color.white, bgcolor=color.gray)
+
+    // **Display Valid Magnet Price Status**
+    table.cell(debugTable, 0, 1, text="Valid Magnet?", text_size=size.large, text_color=color.white, bgcolor=color.blue)
+    table.cell(debugTable, 1, 1, text=validMagnetPrice ? "YES" : "NO", text_size=size.large, text_color=color.white, bgcolor=validMagnetPrice ? color.green : color.red)
+
+    // **Display Last Magnet Price**
+    table.cell(debugTable, 0, 2, text="Last Magnet Price", text_size=size.large, text_color=color.white, bgcolor=color.blue)
+    table.cell(debugTable, 1, 2, text=not na(lastMagnetPrice) ? "$" + str.tostring(lastMagnetPrice) : "N/A", text_size=size.large, text_color=color.white, bgcolor=color.black)
+
+    // **Display Consecutive Buy Count**
+    table.cell(debugTable, 0, 3, text="Last Magnet to Use", text_size=size.large, text_color=color.white, bgcolor=color.blue)
+    table.cell(debugTable, 1, 3, text=str.tostring(lastMagnetPriceToUse), text_size=size.large, text_color=color.white, bgcolor=color.black)
+
+    // **Display Target Entry Price**
+    table.cell(debugTable, 0, 4, text="Entry Price", text_size=size.large, text_color=color.white, bgcolor=color.blue)
+    table.cell(debugTable, 1, 4, text=not na(entryPrice) ? "$" + str.tostring(targetEntryPrice) : "N/A", text_size=size.large, text_color=color.white, bgcolor=color.black)

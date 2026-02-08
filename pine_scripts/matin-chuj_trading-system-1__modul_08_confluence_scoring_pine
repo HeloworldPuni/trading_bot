@@ -1,0 +1,59 @@
+// Module 8 - Confluence Scoring Engine in Pine Script
+
+//@version=5
+indicator("Confluence Scoring Engine", overlay=true)
+
+// Configurable weights for different scoring methods
+var float weightDivergences = 0.4  // Weight for divergences
+var float weightVSA = 0.3          // Weight for VSA
+var float weightMarketStructure = 0.3 // Weight for market structure
+
+// Thresholds for bull and bear scores
+var float bullThreshold = 70.0
+var float bearThreshold = 70.0
+
+// Bull and Bear Scores
+var float bullScore = 0.0
+var float bearScore = 0.0
+
+// Cooldown mechanism
+var int minBarsBetweenSetups = 5
+var int lastBullSetupBar = na
+var int lastBearSetupBar = na
+
+// Function to calculate divergences
+divergences() => {
+    // Implement divergence logic here  
+    return divergenceScore
+}
+
+// Function to calculate VSA signals
+vsa() => {
+    // Implement VSA scoring logic here  
+    return vsaScore
+}
+
+// Function to calculate Market Structure signals
+marketStructure() => {
+    // Implement market structure logic here  
+    return marketStructureScore
+}
+
+// Main score calculation logic
+bullScore := weightDivergences * divergences() + weightVSA * vsa() + weightMarketStructure * marketStructure()
+bearScore := weightDivergences * divergences() + weightVSA * vsa() + weightMarketStructure * marketStructure()
+
+// Generate setup flags based on scores
+bullSetup = (bullScore > bullThreshold) and (na(lastBullSetupBar) or (bar_index - lastBullSetupBar > minBarsBetweenSetups))
+bearSetup = (bearScore > bearThreshold) and (na(lastBearSetupBar) or (bar_index - lastBearSetupBar > minBarsBetweenSetups))
+
+if bullSetup
+    lastBullSetupBar := bar_index
+if bearSetup
+    lastBearSetupBar := bar_index
+
+plotshape(bullSetup, style=shape.labelup, location=location.belowbar, color=color.green, size=size.small, title="Bull Setup")
+plotshape(bearSetup, style=shape.labeldown, location=location.abovebar, color=color.red, size=size.small, title="Bear Setup")
+
+plot(bullScore, color=color.blue, title="Bull Score")
+plot(bearScore, color=color.red, title="Bear Score")

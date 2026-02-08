@@ -1,0 +1,87 @@
+//@version=6
+indicator("Rolling VWAPs - 7D, 30D, 90D, 365D", shorttitle="RVWAP", overlay=true)
+
+// Input option groups
+var g_visibility = "Visibility"
+var g_colors = "Colors"
+var g_appearance = "Appearance"
+var g_labels = "Labels"
+
+// Visibility toggles
+show7D = input.bool(true, title="Show 7D RVWAP", group=g_visibility)
+show30D = input.bool(true, title="Show 30D RVWAP", group=g_visibility)
+show90D = input.bool(true, title="Show 90D RVWAP", group=g_visibility)
+show365D = input.bool(true, title="Show 365D RVWAP", group=g_visibility)
+
+// Color settings
+color7D = input.color(color.new(color.blue, 0), title="7D RVWAP Color", group=g_colors)
+color30D = input.color(color.new(color.orange, 0), title="30D RVWAP Color", group=g_colors)
+color90D = input.color(color.new(color.green, 0), title="90D RVWAP Color", group=g_colors)
+color365D = input.color(color.new(color.red, 0), title="365D RVWAP Color", group=g_colors)
+
+// Appearance settings
+lineWidth = input.int(1, title="Line Width", minval=1, maxval=5, group=g_appearance)
+priceType = input.string("HLC3", title="Price Type", options=["HLC3", "OHLC4", "Close"], group=g_appearance)
+
+// Label settings
+showLabels = input.bool(true, title="Show RVWAP Labels", group=g_labels)
+labelSize = input.string("small", title="Label Size", options=["tiny", "small", "normal", "large"], group=g_labels)
+labelOffset = input.int(5, title="Label Offset (Bars)", minval=1, maxval=50, group=g_labels)
+
+// Price selection based on user choice
+price_value = switch priceType
+    "HLC3" => hlc3
+    "OHLC4" => ohlc4
+    "Close" => close
+    => hlc3  // default to HLC3
+
+// Time-based RVWAP calculation function
+get_rvwap(days, price_source) =>
+    var float cum_pv = na
+    var float cum_vol = na
+    var int start_time = na
+    current_time = time
+
+    // Define start time for rolling window
+    start_time := current_time - (days * 24 * 60 * 60 * 1000)
+
+    cum_pv := 0.0
+    cum_vol := 0.0
+
+    // Use `for` loop to sum pv and vol over time window
+    for i = 0 to 5000
+        bar_time = time[i]
+        if bar_time >= start_time
+            selected_price = price_source[i]
+            vol = volume[i]
+            cum_pv += selected_price * vol
+            cum_vol += vol
+        else
+            break
+
+    rvwap = cum_vol > 0 ? cum_pv / cum_vol : na
+    rvwap
+
+// Calculate RVWAPs
+rvwap_7 = get_rvwap(7, price_value)
+rvwap_30 = get_rvwap(30, price_value)
+rvwap_90 = get_rvwap(90, price_value)
+rvwap_365 = get_rvwap(365, price_value)
+
+// Plot RVWAPs conditionally
+plot7D = plot(show7D ? rvwap_7 : na, title="rVWAP 7D", color=color7D, linewidth=lineWidth)
+plot30D = plot(show30D ? rvwap_30 : na, title="rVWAP 30D", color=color30D, linewidth=lineWidth)
+plot90D = plot(show90D ? rvwap_90 : na, title="rVWAP 90D", color=color90D, linewidth=lineWidth)
+plot365D = plot(show365D ? rvwap_365 : na, title="rVWAP 365D", color=color365D, linewidth=lineWidth)
+
+// Add labels at the end of lines
+if showLabels and barstate.islast
+    offset = labelOffset
+    label.new(bar_index + offset, rvwap_7, "7D", color=color.new(color.white, 100), 
+              style=label.style_label_left, textcolor=color7D, size=labelSize)
+    label.new(bar_index + offset, rvwap_30, "30D", color=color.new(color.white, 100), 
+              style=label.style_label_left, textcolor=color30D, size=labelSize)
+    label.new(bar_index + offset, rvwap_90, "90D", color=color.new(color.white, 100), 
+              style=label.style_label_left, textcolor=color90D, size=labelSize)
+    label.new(bar_index + offset, rvwap_365, "365D", color=color.new(color.white, 100), 
+              style=label.style_label_left, textcolor=color365D, size=labelSize)

@@ -1,0 +1,127 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title     = "[Z] Neural Network Sub 22 - Momentum - MACD", 
+     shorttitle     = "N_MACD", 
+     overlay        = false, 
+     format         = format.inherit,
+     precision      = 2)
+
+//MACD Divergence
+fast_length12 = 12
+slow_length12 = 26
+src12 = close
+signal_length12 = 9
+sma_source12 = "EMA"
+sma_signal12 = "EMA"
+//Plot colors
+col_macd12 = #2962FF
+col_signal12 = #FF6D00
+col_grow_above12 = #26A69A
+col_fall_above12 = #B2DFDB
+col_grow_below12 = #FFCDD2
+col_fall_below12 = #FF5252
+//Calculating
+fast_ma12 = sma_source12 == "SMA" ? ta.sma(src12, fast_length12) : ta.ema(src12, fast_length12)
+slow_ma12 = sma_source12 == "SMA" ? ta.sma(src12, slow_length12) : ta.ema(src12, slow_length12)
+macd = fast_ma12 - slow_ma12
+signal = sma_signal12 == "SMA" ? ta.sma(macd, signal_length12) : ta.ema(macd, signal_length12)
+hist = macd - signal
+plot(hist, title="Histogram", style=plot.style_columns, color=(hist>=0 ? (hist[1] < hist ? col_grow_above12 : col_fall_above12) : (hist[1] < hist ? col_grow_below12 : col_fall_below12)))
+plot(macd, title="MACD", color=col_macd12)
+plot(signal, title="Signal", color=col_signal12)
+
+donttouchzero12 = true
+
+lbR12 = 2
+lbL12 = 6
+rangeUpper12 = 60
+rangeLower12 = 5
+plotBull12 = true
+plotHiddenBull12 = false
+plotBear12 = true
+plotHiddenBear12 = false
+bearColor12 = color.red
+bullColor12 = color.green
+hiddenBullColor12 = color.new(color.green, 80)
+hiddenBearColor12 = color.new(color.red, 80)
+textColor12 = color.white
+noneColor12 = color.new(color.white, 100)
+osc12 = macd
+
+plFound12 = na(ta.pivotlow(osc12, lbL12, lbR12)) ? false : true
+phFound12 = na(ta.pivothigh(osc12, lbL12, lbR12)) ? false : true
+_inRange12(cond) =>
+	bars12 = ta.barssince(cond == true)
+	rangeLower12 <= bars12 and bars12 <= rangeUpper12
+	
+//Regular Bullish Divergence
+
+//Osc: Higher Low
+oscHL12 = osc12[lbR12] > ta.valuewhen(plFound12, osc12[lbR12], 1) and _inRange12(plFound12[1]) and  osc12[lbR12] < 0
+// Price: Lower Low
+priceLL12 = low[lbR12] < ta.valuewhen(plFound12, low[lbR12], 1)
+priceHHZero12 =  ta.highest(osc12, lbL12+lbR12+5) 
+plot(priceHHZero12,title="priceHHZero",color=color.green)
+blowzero12 = donttouchzero12 ? priceHHZero12 < 0 : true
+
+bullCond12 = plotBull12 and priceLL12 and oscHL12 and plFound12 and blowzero12
+plot(plFound12 ? osc12[lbR12] : na, offset=-lbR12, title="Regular Bullish", linewidth=2, color=(bullCond12 ? bullColor12 : noneColor12))
+plotshape(bullCond12 ? osc12[lbR12] : na, offset=-lbR12, title="Regular Bullish Label", text=" Bull ", style=shape.labelup, location=location.absolute, color=bullColor12, textcolor=textColor12)
+	 
+//Hidden Bullish Divergence
+
+//Osc: Lower Low
+oscLL12 = osc12[lbR12] < ta.valuewhen(plFound12, osc12[lbR12], 1) and _inRange12(plFound12[1])
+//Price: Higher Low
+priceHL12 = low[lbR12] > ta.valuewhen(plFound12, low[lbR12], 1)
+
+hiddenBullCond12 = plotHiddenBull12 and priceHL12 and oscLL12 and plFound12
+//plot(plFound12 ? osc12[lbR12] : na, offset=-lbR12, title="Hidden Bullish", linewidth=2, color=(hiddenBullCond12 ? hiddenBullColor12 : noneColor12))
+//plotshape(hiddenBullCond12 ? osc12[lbR12] : na, offset=-lbR12, title="Hidden Bullish Label", text=" H Bull ", style=shape.labelup, location=location.absolute, color=bullColor12, textcolor=textColor12)
+	 
+//Regular Bearish Divergence
+
+//Osc: Lower High
+oscLH12 = osc12[lbR12] < ta.valuewhen(phFound12, osc12[lbR12], 1) and _inRange12(phFound12[1])  and osc12[lbR12] > 0
+priceLLZero12 =  ta.lowest(osc12, lbL12+lbR12+5) 
+plot(priceLLZero12,title="priceLLZero", color=color.red)
+bearzero12 = donttouchzero12 ? priceLLZero12 > 0 : true
+//Price: Higher High
+priceHH12 = high[lbR12] > ta.valuewhen(phFound12, high[lbR12], 1)
+
+bearCond12 = plotBear12 and priceHH12 and oscLH12 and phFound12 and bearzero12
+plot(phFound12 ? osc12[lbR12] : na, offset=-lbR12, title="Regular Bearish", linewidth=2, color=(bearCond12 ? bearColor12 : noneColor12))
+plotshape(bearCond12 ? osc12[lbR12] : na, offset=-lbR12, title="Regular Bearish Label", text=" Bear ", style=shape.labeldown, location=location.absolute, color=bearColor12, textcolor=textColor12)
+	 
+//Hidden Bearish Divergence
+
+//Osc: Higher High
+oscHH12 = osc12[lbR12] > ta.valuewhen(phFound12, osc12[lbR12], 1) and _inRange12(phFound12[1])
+//Price: Lower High
+priceLH12 = high[lbR12] < ta.valuewhen(phFound12, high[lbR12], 1)
+
+hiddenBearCond12 = plotHiddenBear12 and priceLH12 and oscHH12 and phFound12
+//plot(phFound12 ? osc12[lbR12] : na, offset=-lbR12, title="Hidden Bearish", linewidth=2, color=(hiddenBearCond12 ? hiddenBearColor12 : noneColor12))
+//plotshape(hiddenBearCond12 ? osc12[lbR12] : na, offset=-lbR12, title="Hidden Bearish Label", text=" H Bear ", style=shape.labeldown, location=location.absolute, color=bearColor12, textcolor=textColor12)
+	 
+
+//MACD Signals
+macddivWeight = input.int(defval=1, minval=0, maxval=100, title="MACD Divergence Weight")
+macddivup = bullCond12 or bullCond12[1] or bullCond12[2] ? macddivWeight : 0
+macddivupstatus = macddivup != 0 ? "Bullish MACD Divergence" : na
+macddivdown = bearCond12 or bearCond12[1] or bearCond12[2] ? macddivWeight : 0
+macddivdownstatus = macddivdown != 0 ? "Bearish MACD Divergence" : na
+
+histpivotWeight = input.int(defval=1, minval=0, maxval=100, title="MACD Histogram Pivot Weight")
+histpivotup = hist > hist[1] and hist[1] < hist[2] and hist < 0 ? histpivotWeight : 0
+histpivotupstatus = histpivotup != 0 ? "MACD Histogram Pivot Up" : na
+histpivotdown = hist < hist[1] and hist[1] > hist[2] and hist > 0 ? histpivotWeight : 0
+histpivotdownstatus = histpivotdown != 0 ? "MACD Histogram Pivot Down" : na
+
+macdcrosssignalWeight = input.int(defval=1, minval=0, maxval=100, title="MACD Cross Signal Weight")
+macdcrosssignalup = macd > signal and macd[1] < signal[1] and signal < 0 ? macdcrosssignalWeight : 0
+macdcrosssignalupstatus = macdcrosssignalup != 0 ? "MACD Crossed Signal Up" : na
+macdcrosssignaldown = macd < signal and macd[1] > signal[1] and signal > 0 ? macdcrosssignalWeight : 0
+macdcrosssignaldownstatus = macdcrosssignaldown != 0 ? "MACD Crossed Signal Down" : na

@@ -1,0 +1,348 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ayaxhector666 ><
+
+//@version=5
+strategy("TLC_STRATEGY_EMARSIADX for BTC",overlay=true) //
+
+//pyramiding=1,default_qty_type=strategy.percent_of_equity,  default_qty_value=20, initial_capital=10000, currency=currency.USD)
+
+offset = input.int(0, "Offset", minval = -500, maxval = 500)
+
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "Bollinger Bands" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+maTypeInput = input.string("SMA", title="MA Type", options=["SMA", "Bollinger Bands", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Settings")
+
+fromDate = input.time(timestamp('17 Jul 2010 00:00 UTC'), 'From Date')
+toDate = input.time(timestamp('31 Dec 2024 23:59 UTC'), 'To Date') 
+//riskCapital = input(title="Risk % of capital", defval=10, minval=1)
+//partialExit=input(true,title="Allow Partial exit / take profits")
+////Entry--
+////Echeck how many units can be purchased based on risk manage ment and stop loss
+//qty1 = (strategy.equity * riskCapital / 100 )/(close*stopLoss/100)  
+////check if cash is sufficient  to buy qty1  , if capital not available use the available capital only
+//qty1:= (qty1 * close >= strategy.equity ) ? (strategy.equity/close) : qty1
+
+
+SLTPistaken =input.bool(false,title = "Want SL/TP limits?",tooltip="if true, chose below for method")
+
+SLTPviaPerc =input.bool(false,title="is SL/TP given in Percentage?",tooltip="if true, select percentage limits")
+stopLoss=input.int(5,title="Stop Loss Percentage",minval=1) //5% stoplpss percentage
+takeProfit=input.int(100,title="Take Profit Percentage",minval=1) // take profit minimum 15% for paying fees
+SLTPviaATR =input.bool(false,title="is SL/TP given ATR Multiplier?",tooltip="if true, select multiplier factor")
+//if(SLTPviaATR==true)
+slMultiplier = input.float(1.0, title="SL Multiplier")
+tpMultiplier = input.float(5.0, title="TP Multiplier") //, type=input.float)
+
+
+emaLength = input(100)
+sslen = input.int(5, title="SSL Channel Length", minval=1)
+length = input( 14 )
+volumeLength = input(400, title="Volume MA Length") //, type=input.integer)     
+
+lbR =input(1)
+lbL =input(3)  //1
+rangeUpper =input(60) //60  
+rangeLower =input(3) //1
+
+fastLength = input(13) //(5) // 5,8,13,21, 10,20,50
+goldenLength = input(21)
+slowLength = input(48) //(8) // 8,13,21  10,20,50,100,200. //5,8  // 14,21 Delox Real trading club
+smoothK = input.int(3, "K", minval=1)
+smoothD = input.int(3, "D", minval=1)
+
+
+thresholdExtraHigh  = input.float(4.0, title="Extra High Volume Threshold") 
+thresholdHigh = input.float(2.5, title="High Volume Threshold")//, thresholdMedium = input.float(1, title="Medium Volume Threshold")
+
+// OTHER LENGHTS SAME AS LENGHT
+adxlen = input(14, title="ADX Smoothing")
+dilen = input(14, title="DI Length")
+
+overSold = input( 30 )
+overBought = input( 70 )
+price = close
+
+///. VOLUME
+//. Volume oscilator
+//. Volume heatmap
+//. 
+/////////// VOLUME OSCILLATOR. looking high low volume change //////////
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+shortlen = fastLength //input.int(5, minval=1, title = "Short Length") 
+longlen = goldenLength //input.int(10, minval=1, title = "Long Length") 
+short = ta.ema(volume, shortlen)
+long = ta.ema(volume, longlen)
+osc = 100 * (short - long) / long
+
+coVOS=ta.crossover(osc, 0)
+cuVOS=ta.crossunder(osc, 0)
+
+
+//////////// Calculate Heatmap Volume
+volumeMean = ta.sma(volume, volumeLength)
+volumeStd = ta.stdev(volume, volumeLength)
+stdBar = (volume - volumeMean) / volumeStd
+// Define Volume Filter
+volumeFilter = stdBar > thresholdMedium 
+//volumeFilter = stdBar > thresholdMedium and stdBar < thresholdHigh
+//volumeFilter = stdBar > thresholdMedium and stdBar < thresholdExtraHigh
+
+//////////  TENDENCY  ////   
+//. MOVING AVERAGE
+//. SSL CHANNEL
+//. vWAP
+/////////////////////////
+
+/////////// Moving Average (simple, exponential, etc)
+smafast = ta.sma(price, fastLength)
+smaslow = ta.sma(price, slowLength)
+smagold = ta.sma(price, goldenLength)
+sma100 = ta.sma(price, 100)
+sma200 = ta.sma(price, 200)
+
+emafast = ta.ema(price, fastLength)
+emaslow = ta.ema(price, slowLength)
+emagold = ta.ema(price, goldenLength)
+ema100=ta.ema(price,100)
+ema200=ta.ema(price,200)
+emaguide=ma(price,emaLength,maTypeInput)
+
+coma=ta.crossover(emafast, emaslow)
+cuma=ta.crossunder(emafast, emaslow)
+coold=ta.crossover(emafast,emagold)
+cuold=ta.crossunder(emafast,emagold)
+co200=ta.crossover(emafast,ema200)
+cu200=ta.crossunder(emafast,ema200)
+
+
+///// SSL CHANNEL ////
+smaHigh=ta.sma(high, sslen)
+smaLow=ta.sma(low, sslen)
+var float Hlv = na
+Hlv := price > smaHigh ? 1 : price < smaLow ? -1 : nz(Hlv[1])
+sslDown = Hlv < 0 ? smaHigh: smaLow
+sslUp   = Hlv < 0 ? smaLow : smaHigh
+
+cossl= ta.crossover(sslUp, sslDown)
+cussl= ta.crossunder(sslUp, sslDown)
+
+// Plot SSL Channel and 200 EMA
+plot(sslDown, linewidth=2, color=color.red)
+plot(sslUp, linewidth=2, color=color.lime)
+plot(ema200, title="200 EMA", color=color.white, linewidth=2)
+plot(ema100, title="100 EMA", color=color.yellow, linewidth=2)
+
+///// vWAP ////
+myVwap= ta.vwap(price,length)
+vwapRsi=ta.rsi(myVwap,length)
+covwaprsi = ta.crossover(vwapRsi, overSold)
+cuvwaprsi = ta.crossunder(vwapRsi, overBought)
+
+////////.  MOMENTUM.    ////
+//. RSI
+//. RSI DIVERGENCE 
+//. MFI
+//. STOCHRSI
+///////////////// RELATIVE STRENGHT INDEX RSI
+up = ta.rma(math.max(ta.change(price), 0), length)
+down = ta.rma(-math.min(ta.change(price), 0), length)
+rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+vrsi = ta.rsi(price, length)
+rsiMA = ma(vrsi, length, maTypeInput)
+co = ta.crossover(vrsi, overSold)
+cu = ta.crossunder(vrsi, overBought)
+co50 = ta.crossover(vrsi, 50)
+cu50 = ta.crossunder(vrsi, 50)
+
+
+// {DIVERGENCE INPUT
+plotBull = input(title='Plot Bullish', defval=true,group="Toggle Divergence Plotting")
+plotBear = input(title='Plot Bearish', defval=true)
+plotHiddenBull = input(title='Plot Hidden Bullish', defval=true) //false)
+plotHiddenBear = input(title='Plot Hidden Bearish', defval=true) //false)
+// } 
+oscrsi =vrsi
+plFound = na(ta.pivotlow(oscrsi, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(oscrsi, lbL, lbR)) ? false : true
+// {RSI TREND IDENTIFICATION 
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+oscHL = oscrsi > ta.valuewhen(plFound, oscrsi, 1) and _inRange(plFound[1]) and oscrsi <= 50
+oscLL = oscrsi < ta.valuewhen(plFound, oscrsi, 1) and _inRange(plFound[1]) and oscrsi <= 50
+oscHH = oscrsi > ta.valuewhen(phFound, oscrsi, 1) and _inRange(phFound[1]) and oscrsi >= 50
+oscLH = oscrsi < ta.valuewhen(phFound, oscrsi, 1) and _inRange(phFound[1]) and oscrsi >= 50
+// }
+// {PRICE TREND IDENTIFICATION
+
+priceLL = low < ta.valuewhen(plFound, low, 1) 
+priceHL = low > ta.valuewhen(plFound, low, 1)
+priceHH = high > ta.valuewhen(phFound, high, 1)
+priceLH = high < ta.valuewhen(phFound, high, 1)
+//}
+//{DIVERGENCE IDENTIFICATION
+bullCond = plotBull and priceLL and oscHL and plFound
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+bearCond = plotBear and priceHH and oscLH and phFound
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+// } 
+// { COLOR ASSIGNMENT 
+bearColor = color.red 
+bullColor = color.green 
+hiddenBullColor = color.new(color.yellow, 0)
+hiddenBearColor = color.new(color.purple, 0)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+//}
+
+//////////////////////// MONEY FLOW INDEX
+mfi =ta.mfi(hlc3,length)
+
+/////////////////////// STOCHASTIC RSI 
+
+rsi1 = ta.rsi(price, length)
+k = ta.sma(ta.stoch(rsi1, rsi1, rsi1, length), smoothK)
+d = ta.sma(k, smoothD)
+cokd = ta.crossover(k, d)
+cukd = ta.crossunder(k, d)
+
+///. VOLATILITY. 
+//. RVI
+//. ADX
+//. ATR
+
+/////////////////// RELATIVE VOLATILITY INDEX
+stddev = ta.stdev(price, length)
+upper = ta.ema(ta.change(price) <= 0 ? 0 : stddev, length)
+lower = ta.ema(ta.change(price) > 0 ? 0 : stddev, length)
+rvi = upper / (upper + lower) * 100
+corvi = ta.crossover(rvi, overSold)
+curvi = ta.crossunder(rvi, overBought)
+rviMA = ma(rvi, length, maTypeInput)
+
+//////////////// ADX (volat) //////////
+dirmov(len) =>
+    upadx = ta.change(high)
+    downadx = -ta.change(low)
+    plusDM = na(upadx) ? na : (upadx > downadx and upadx > 0 ? upadx : 0)
+    minusDM = na(downadx) ? na : (downadx > upadx and downadx > 0 ? downadx : 0)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+sig = adx(dilen, adxlen)
+
+////////////// Calculate ATR
+useATRFilter=input.bool(false)
+minATRLength=input.int(1,title="minATRlength",tooltip="Minimum lenght for ATR filter consideration")
+maxATRLength=input.int(10,title="maxATRlength",tooltip="Maximum lenght for ATR filter consideration")
+atr = ta.atr(length)
+recentAtr = ta.atr(minATRLength)
+historicalAtr = ta.atr(maxATRLength)
+//ATRFilter ? recentAtr > historicalAtr : true
+
+
+
+///////// Define BUY AND SELL conditions
+// Tendencia: EMAGUIDE, SSL (impulso)
+// Momento:  RSI,
+// Volatilidad: ADX, ATR 
+// Volumen: HEATVol
+//$bullishCross = cokd and vrsi<30 and mfi<20 and rvi<30 //1min 38.46%,13op,0.359fg//2h 50%,6op,0.417fg//5min 33.33%,3op,1.446fg//3min 84.62%,13op,11.848fg, 81.82%,11op,29.65fg ==>3min 84% $$$$$$ 5min 70%,24op 3.77fg PREMIUM
+//$bearishCross = cukd and vrsi>70 and mfi>80 and rvi>70 
+
+//bullishCross = cokd and vrsi<30 and mfi<30 and rvi<20 //1min. 40%,5op,0.382fg //2h 60%,5op,0.268fg //5min 100%,2op,NA//3min 80%,5op,8.417, 83.33%,6op,9.632fg ==>3min 80%-83%
+//bearishCross = cukd and vrsi>70 and mfi>70 and rvi>80 
+//bullishCross = cokd and vrsi<30 and mfi<30 and rvi<30 //1min 38.46%,13op,0.359fg//2h 66.67%,12op,2.085fg //5min 60%,5op,1.358fg//3min 80%,15op,5.99fg 75%,12op,11.93fg ==>3min 80%
+//bearishCross = cukd and vrsi>70 and mfi>70 and rvi>70 
+//bullishCross = cokd and vrsi<30 and mfi<30 and rvi<50 //1min 72.22%,54op,1.309fg //2h 63.64%,33op,0.604fg//5min 70.37%,27op,1.588fg //3min 66.67%,33op,0.75fg ==>5min 70.37% 1min 72.22% $$$$
+//bearishCross = cukd and vrsi>70 and mfi>70 and rvi>50 
+//bullishCross = k<overSold and cokd and vrsi<30 and mfi<30 and rvi<70 and sig>50 // 3min  85.51%,7op,15.44fg,0.73%vs0.21% //80%,5op,11.775g//83.33%,6op,14.,0.55%v0.13% _----- 3 MIN
+//bearishCross = k>overBought and cukd and vrsi>70 and mfi>70 and rvi>30 and sig>50
+//bullishCross = k<overSold and cokd and vrsi<30 and mfi<20 and rvi<70 and sig>50 //5 min  100%,7op,0.91vs0.14 ====::$$$$$$$$$$ $$$$$$$$$$$$$$$$$ 100% 7 op //5min 66%, 18 op,1.2g, PREMIUM 
+//bearishCross = k>overBought and cukd and vrsi>70 and mfi>80 and rvi>30 and sig>50  //////    5min 66%, 6 op,4.82g, PREMIUM
+bullishCross = cokd and vrsi<30 and mfi<20 and rvi<70 and sig>50 // 1min 37.5%8op,0.396fg //2h 60%,5op,5.58fg//5 min 75%,4op,53.93fg//3min 80%,5op,8.227   THE BEST
+bearishCross = cukd and vrsi>70 and mfi>80 and rvi>30 and sig>50//      5min 87.5%, 8 op, 9.5g, PREMIUM $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$  (PIRMIING 2 , 11op, 90%, 13g) THE BEST  
+
+//VOLUME FILTER 2
+//bullishCross = cossl and vrsi < 40 and price < emaguide and volumeFilter //1min 3op,66.67%,9.118fg //2h 3op,66.7%,0.286//3min 5op,80%,12.066fg// 5min 100%%, 5 op, NOTAVfg, ema100, vol 400 ssl 5 (noTpSl). =>$$$$$$$$$$$$ 5 y 3min
+//bearishCross = cussl and vrsi > 60 and price > emaguide and volumeFilter
+
+
+//bullishCross = cossl and vrsi < 40 and price < emaguide and sig>=50 //1 min 75%,8op,2.07fg,83.33%,6op,13.87fg //2h 80% 10 op 1.783 fg //5min 10op, 70%,1.177 //3min 9op,77.78%,4.74fg, 87.5%,8op,11.789fg  =>$$$$$$$$$$$$$ 2h y 1min, 3mins //5min 62.5%, 16 op,3.2g, PREMIUM
+//bearishCross = cussl and vrsi > 60 and price > emaguide and sig>=50 
+//bullishCross = cossl and vrsi < 50 and price < emaguide and sig>=50 //1 min 75%,8op,5.13fg //2h 57.14% 14 op 0.809 fg //5min 13op, 76.92%,1.536 //3min 10op,90%%,4.729fg,11op,72%,3.04g  =>$$$$$$$$$$$$$  3min  67%, 31 op,4g, PREMIUM
+//bearishCross = cussl and vrsi > 50 and price > emaguide and sig>=50
+//bullishCross = sig>=50 and vrsi <=20 //and price < emaguide//1 min 42.86%,7op,0.666fg //2h 54.55%,11op,4.058fg//5min 83.33%,6op,8.443fg //3min 40%,5op,1.108fg  =>$$$$$$$$$$$$$$.  5min 5min 68%, 16 op,2.32g, PREMIUM
+//bearishCross = sig>=50 and vrsi >=80 //and price > emaguide  
+//bullishCross =  vrsi < 50 and sig >50 and bullCond and volumeFilter //(1,3,3)// 1 min 75% 4 op 3.008fg //2h NODATA //5min 60%,5op,1.917fg//3min 100%,3op,NOTAVfg  ema100, vol 400 filter1 ssl 5 (noTpSl). =>$$$$$$$$$$$$ 5y 3min
+//bearishCross =  vrsi > 50 and sig >50 and bearCond and volumeFilter //(1,3,3)//
+
+
+buyCondition = bullishCross
+sellCondition = bearishCross
+// %%%%%%%%%%%%%%%%%%%%%%%
+// Set SL and TP levels
+// %%%%%%%%%%%%%%%%%%%%%%%
+
+//stoploss and takeprofit by percentage
+longStopLoss=price
+longTakeProfit=price
+shortStopLoss=price
+shortTakeProfit=price
+
+if(SLTPviaPerc==true)
+    longStopLoss := price*(1-(stopLoss*0.01))
+    longTakeProfit := price*(1+(takeProfit*0.01)) 
+    shortStopLoss := price*(1+(stopLoss*0.01))
+    shortTakeProfit := price*(1-(takeProfit*0.01))
+/////(strategy.position_avg_price * (1-(stopLoss*0.01) )) : 0.00
+else
+    longStopLoss := price - atr * slMultiplier
+    longTakeProfit := price + atr * tpMultiplier
+    shortStopLoss := price + atr * slMultiplier
+    shortTakeProfit := price - atr * tpMultiplier
+
+start=fromDate
+end=toDate
+
+if time>= start and time<= end 
+    if (buyCondition)
+        strategy.entry("BuySTR", strategy.long) //qty=qty1,alert_message="Long order opened" //, stop=longStopLoss, limit=longTakeProfit)
+        if (strategy.position_size > 0 and SLTPistaken)
+            strategy.exit('BuySTR', from_entry='BuySTR', stop=longStopLoss, limit=longTakeProfit, comment='Buy: TP/SL')
+    if (sellCondition)
+        strategy.entry("SellSTR", strategy.short) ////qty=qty1,alert_message="Short order opened" //, stop=shortStopLoss, limit=shortTakeProfit)
+        if (strategy.position_size < 0 and SLTPistaken)
+            strategy.exit('SellSTR', from_entry='SellSTR', stop=shortStopLoss, limit=shortTakeProfit, comment='Sell: TP/SL')
+    
+
+
+// TO UNCOMENT just for indicator plot mode
+//plotshape(sellCondition,title="Sell", style=shape.labeldown, location=location.abovebar, size=size.normal, text="Sell", color=color.new(color.red,0),textcolor = color.white)
+//plotshape(buyCondition, title="Buy", style=shape.labelup, location=location.belowbar, size=size.normal, text="Buy", color=color.new(color.green,0),textcolor = color.white) 
+
+//plot(vwapRsi, title="VWAP", color=color.rgb(8, 167, 225))
+//plot(sig, color=color.red, title="ADX") //ADXsignal
+//plot(vrsi,"RSI",color.purple,1,plot.style_stepline)
+//plot(rsiMA, "RSI-based MA", color=color.yellow)
+//plot(rvi, title="RVI", color=color.green, offset = offset)
+//plot(rviMA, "RVI-based MA", color=color.orange, offset = offset)
+//rsiUpperBand = hline(overBought, "RSI Upper Band", color=#787B86)
+//hline(50, "RSI Middle Band", color=color.new(#787B86, 50))
+//rsiLowerBand = hline(overSold, "RSI Lower Band", color=#787B86)
+//fill(rsiUpperBand, rsiLowerBand, color=color.rgb(126, 87, 194, 90), title="RSI Background Fill")

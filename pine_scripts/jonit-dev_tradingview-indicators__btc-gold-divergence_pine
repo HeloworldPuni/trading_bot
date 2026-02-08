@@ -1,0 +1,53 @@
+//@version=5
+indicator("BTC vs Gold Trend Comparison v2 with Market Top Detection", overlay=false)
+
+// Input options
+btcSymbol = input.symbol("BTCUSD", "Bitcoin Symbol")
+goldSymbol = input.symbol("XAUUSD", "Gold Symbol")
+smoothPeriod = input.int(14, "Smoothing Period", minval=1)
+rsiPeriod = input.int(14, "RSI Period", minval=1)
+rsiOverbought = input.int(70, "RSI Overbought Level", minval=50, maxval=100)
+macdFastLength = input.int(12, "MACD Fast Length", minval=1)
+macdSlowLength = input.int(26, "MACD Slow Length", minval=1)
+macdSignalLength = input.int(9, "MACD Signal Length", minval=1)
+
+// Fetch data
+btcClose = request.security(btcSymbol, timeframe.period, close)
+goldClose = request.security(goldSymbol, timeframe.period, close)
+
+// Calculate relative strength
+btcReturn = ta.roc(btcClose, 1)
+goldReturn = ta.roc(goldClose, 1)
+relativeStrength = btcReturn - goldReturn
+
+// Smooth the relative strength
+smoothedStrength = ta.ema(relativeStrength, smoothPeriod)
+
+// RSI
+btcRsi = ta.rsi(btcClose, rsiPeriod)
+
+// MACD
+[macdLine, signalLine, _] = ta.macd(btcClose, macdFastLength, macdSlowLength, macdSignalLength)
+
+// Bollinger Bands
+bbMultiplier = 2.0
+[bbMiddle, bbUpper, bbLower] = ta.bb(btcClose, 20, bbMultiplier)
+
+// Normalize smoothedStrength for color transition
+minStrength = -10
+maxStrength = 10
+normalizedStrength = math.min(math.max(smoothedStrength, minStrength), maxStrength)
+colorIntensity = (normalizedStrength - minStrength) / (maxStrength - minStrength)
+
+// Interpolate color between green and red
+smoothColor = color.rgb(255 * colorIntensity, 255 * (1 - colorIntensity), 0)
+
+// Plot relative strength with dynamic color and increased line width
+plot(smoothedStrength, "BTC vs Gold Strength", color=smoothColor, linewidth=2)
+
+// Plot horizontal bands for buy/sell zones with inverted colors
+hline(8, "Upper Band", color=color.red, linestyle=hline.style_dotted)
+hline(-2, "Lower Band", color=color.green, linestyle=hline.style_dotted)
+
+// Highlight buy/sell zones
+bgcolor(smoothedStrength > 8 ? color.new(color.red, 90) : smoothedStrength < -2 ? color.new(color.green, 90) : na)

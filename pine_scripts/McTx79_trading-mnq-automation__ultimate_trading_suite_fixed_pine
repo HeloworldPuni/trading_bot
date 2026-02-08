@@ -1,0 +1,159 @@
+//@version=5
+strategy("Ultimate Trading Suite Pro", overlay=true, pyramiding=2, calc_on_every_tick=true, max_boxes_count=500, max_lines_count=500)
+
+// === INPUTS ===
+adrLen      = input.int(5, "Période ADR (jours)", minval=1, maxval=100)
+minVol      = input.int(5000, "Volume minimum pour entrer")
+riskATR     = input.float(1.5, "Multiplicateur ATR pour SL", minval=0.5, step=0.1)
+maxTrades   = input.int(3, "Nb max trades par session")
+cooldownMin = input.int(30, "Cooldown après perte (minutes)")
+showStats   = input.bool(true, "Afficher dashboard stats")
+sessionStart= input.int(15, "Session Start (heure UTC+2)", minval=0, maxval=23)
+sessionEnd  = input.int(22, "Session End (heure UTC+2)", minval=0, maxval=23)
+
+// === VARIABLES GLOBALES ===
+var float vwap_cumul_price_vol = 0.0
+var float vwap_cumul_vol = 0.0
+var int trades_today = 0
+var int current_session_day = 0
+var float last_loss_timestamp = na
+var bool is_in_cooldown = false
+
+// === DETECTION NOUVEAU JOUR ===
+is_new_day = ta.change(dayofmonth) != 0
+
+if is_new_day
+    vwap_cumul_price_vol := hlc3 * volume
+    vwap_cumul_vol := volume
+    trades_today := 0
+    current_session_day := dayofmonth
+else
+    vwap_cumul_price_vol := vwap_cumul_price_vol + hlc3 * volume
+    vwap_cumul_vol := vwap_cumul_vol + volume
+
+// === CALCUL VWAP ===
+daily_vwap = vwap_cumul_vol > 0 ? vwap_cumul_price_vol / vwap_cumul_vol : hlc3
+
+// === CALCUL BANDES ===
+price_deviation = ta.stdev(close, 20)
+upper_band = daily_vwap + price_deviation * 2
+lower_band = daily_vwap - price_deviation * 2
+
+// === PLOTS ===
+plot(daily_vwap, "VWAP", color=color.blue, linewidth=2)
+plot(upper_band, "Bande Haute", color=color.yellow, linewidth=2)
+plot(lower_band, "Bande Basse", color=color.yellow, linewidth=2)
+
+// === SESSION TRADING ===
+current_hour_utc2 = hour(time, "UTC+2")
+is_trading_session = current_hour_utc2 >= sessionStart and current_hour_utc2 < sessionEnd
+
+// === INDICATEURS TECHNIQUES ===
+atr_value = ta.atr(14)
+atr_moyenne = ta.sma(atr_value, 10)
+volume_moyenne = ta.sma(volume, 10)
+rsi_value = ta.rsi(close, 14)
+
+// === CONDITIONS DE FILTRE ===
+atr_filter = atr_value > atr_moyenne * 0.8
+volume_filter = volume > minVol and volume > volume_moyenne * 1.2
+vwap_direction = ta.change(daily_vwap, 3)
+
+// === SIGNAUX D'ENTREE ===
+signal_long = close <= lower_band * 1.001 and volume_filter and rsi_value > 35 and rsi_value < 70 and atr_filter and is_trading_session and vwap_direction > 0
+signal_short = close >= upper_band * 0.999 and volume_filter and rsi_value < 65 and rsi_value > 30 and atr_filter and is_trading_session and vwap_direction < 0
+
+// === GESTION COOLDOWN ===
+if not na(last_loss_timestamp)
+    temps_ecoule_minutes = (time - last_loss_timestamp) / (60 * 1000)
+    is_in_cooldown := temps_ecoule_minutes < cooldownMin
+else
+    is_in_cooldown := false
+
+// === CONDITIONS DE TRADING ===
+peut_trader = trades_today < maxTrades and not is_in_cooldown
+peut_ouvrir_position = strategy.position_size == 0 and peut_trader
+
+// === CALCULS STOP LOSS ET TAKE PROFIT ===
+distance_sl = atr_value * riskATR
+distance_tp = distance_sl * 1.5
+
+// === ENTREES EN POSITION ===
+if signal_long and peut_ouvrir_position
+    trades_today := trades_today + 1
+    strategy.entry("LONG", strategy.long, comment="Entrée Long")
+    
+    prix_sl_long = close - distance_sl
+    prix_tp_long = close + distance_tp
+    
+    strategy.exit("Sortie Long", from_entry="LONG", limit=prix_tp_long, stop=prix_sl_long)
+
+if signal_short and peut_ouvrir_position
+    trades_today := trades_today + 1
+    strategy.entry("SHORT", strategy.short, comment="Entrée Short")
+    
+    prix_sl_short = close + distance_sl
+    prix_tp_short = close - distance_tp
+    
+    strategy.exit("Sortie Short", from_entry="SHORT", limit=prix_tp_short, stop=prix_sl_short)
+
+// === DETECTION PERTE POUR COOLDOWN ===
+position_fermee = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+if position_fermee and strategy.closedtrades > 0
+    dernier_resultat = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    if dernier_resultat < 0
+        last_loss_timestamp := time
+
+// === DASHBOARD STATISTIQUES ===
+if showStats and barstate.islast
+    var table tableau_stats = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1, frame_width=1)
+    
+    total_trades = strategy.closedtrades
+    trades_gagnants = strategy.wintrades
+    taux_reussite = total_trades > 0 ? (trades_gagnants / total_trades) * 100 : 0
+    
+    profit_brut = strategy.wintrades_profit
+    perte_brute = strategy.losstrades_profit
+    facteur_profit = perte_brute != 0 ? math.abs(profit_brut / perte_brute) : 0
+    
+    profit_net = strategy.netprofit
+    drawdown_max = strategy.max_drawdown
+    
+    // En-têtes
+    table.cell(tableau_stats, 0, 0, "STATISTIQUES", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    table.cell(tableau_stats, 1, 0, "VALEURS", bgcolor=color.gray, text_color=color.white, text_size=size.normal)
+    
+    // Données
+    table.cell(tableau_stats, 0, 1, "Trades Total", bgcolor=color.blue, text_color=color.white)
+    table.cell(tableau_stats, 1, 1, str.tostring(total_trades))
+    
+    table.cell(tableau_stats, 0, 2, "Trades Gagnants", bgcolor=color.green, text_color=color.white)
+    table.cell(tableau_stats, 1, 2, str.tostring(trades_gagnants))
+    
+    table.cell(tableau_stats, 0, 3, "Taux Réussite", bgcolor=color.lime, text_color=color.black)
+    table.cell(tableau_stats, 1, 3, str.tostring(taux_reussite, "#.##") + "%")
+    
+    table.cell(tableau_stats, 0, 4, "Facteur Profit", bgcolor=color.orange, text_color=color.white)
+    table.cell(tableau_stats, 1, 4, str.tostring(facteur_profit, "#.##"))
+    
+    table.cell(tableau_stats, 0, 5, "Profit Net", bgcolor=color.purple, text_color=color.white)
+    table.cell(tableau_stats, 1, 5, str.tostring(profit_net, "#.##"))
+    
+    table.cell(tableau_stats, 0, 6, "Drawdown Max", bgcolor=color.red, text_color=color.white)
+    table.cell(tableau_stats, 1, 6, str.tostring(drawdown_max, "#.##"))
+    
+    table.cell(tableau_stats, 0, 7, "Trades Aujourd'hui", bgcolor=color.navy, text_color=color.white)
+    table.cell(tableau_stats, 1, 7, str.tostring(trades_today))
+
+// === INDICATEURS VISUELS ===
+plotshape(signal_long and peut_ouvrir_position, "Signal Long", shape.triangleup, location.belowbar, color=color.lime, size=size.normal)
+plotshape(signal_short and peut_ouvrir_position, "Signal Short", shape.triangledown, location.abovebar, color=color.red, size=size.normal)
+
+// === BACKGROUND SESSION ===
+couleur_session = is_trading_session ? color.new(color.blue, 98) : na
+bgcolor(couleur_session, title="Session Active")
+
+// === ALERTES ===
+alertcondition(signal_long and peut_ouvrir_position, "Signal d'achat", "Signal LONG détecté")
+alertcondition(signal_short and peut_ouvrir_position, "Signal de vente", "Signal SHORT détecté")

@@ -1,0 +1,172 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Yavuz365
+// MTF Confluence Scanner - Multi-Timeframe RSI, MACD, Stochastic Divergence Detector
+
+//@version=5
+indicator("MTF Confluence Scanner [Multi-TF]", shorttitle="MTF Confluence", overlay=false, max_bars_back=500)
+
+import TimeFrameUtils as TF
+import CommonSignals as CS
+
+// ============================================================================
+// USER INPUTS
+// ============================================================================
+
+// Timeframe Settings
+group_mtf = "Multi-Timeframe Settings"
+tf1 = input.timeframe("15", "Timeframe 1", group=group_mtf)
+tf2 = input.timeframe("60", "Timeframe 2", group=group_mtf)
+tf3 = input.timeframe("240", "Timeframe 3", group=group_mtf)
+tf4 = input.timeframe("D", "Timeframe 4", group=group_mtf)
+
+// Indicator Settings
+group_ind = "Indicator Settings"
+rsi_length = input.int(14, "RSI Period", minval=1, maxval=50, group=group_ind)
+rsi_overbought = input.int(70, "RSI Overbought", minval=1, maxval=100, group=group_ind)
+rsi_oversold = input.int(30, "RSI Oversold", minval=1, maxval=100, group=group_ind)
+
+macd_fast = input.int(12, "MACD Fast", minval=1, maxval=50, group=group_ind)
+macd_slow = input.int(26, "MACD Slow", minval=1, maxval=50, group=group_ind)
+macd_signal_len = input.int(9, "MACD Signal", minval=1, maxval=50, group=group_ind)
+
+stoch_length = input.int(14, "Stoch Length", minval=1, maxval=50, group=group_ind)
+stoch_k_smooth = input.int(3, "Stoch K Smooth", minval=1, maxval=20, group=group_ind)
+stoch_d_smooth = input.int(3, "Stoch D Smooth", minval=1, maxval=20, group=group_ind)
+
+// Signal Settings
+group_signal = "Signal Settings"
+use_anti_repaint = input.bool(true, "Use Anti-Repaint (Confirmed Bars Only)", group=group_signal)
+confluence_buy_threshold = input.int(5, "Buy Confluence Threshold (0-12)", minval=0, maxval=12, group=group_signal)
+confluence_sell_threshold = input.int(-5, "Sell Confluence Threshold (-12-0)", maxval=0, minval=-12, group=group_signal)
+alert_enabled = input.bool(true, "Enable Alerts", group=group_signal)
+
+// Display Settings
+group_display = "Display Settings"
+show_dashboard = input.bool(true, "Show Dashboard Table", group=group_display)
+dashboard_position = input.string("top-right", "Dashboard Position", options=["top-left", "top-right", "middle-left", "middle-right"], group=group_display)
+
+// ============================================================================
+// CALCULATION FUNCTION
+// ============================================================================
+
+calculate_signals(string timeframe) =>
+    // Get RSI signal
+    rsi_val = TF.mtfRSI(close, rsi_length, timeframe, use_anti_repaint)
+    rsi_sig = CS.rsiSignal(rsi_val, rsi_overbought, rsi_oversold)
+
+    // Get MACD signal
+    [macd_line, macd_sig_line, macd_hist] = TF.mtfMACD(close, macd_fast, macd_slow, macd_signal_len, timeframe, use_anti_repaint)
+    macd_sig = CS.macdSignal(macd_line, macd_sig_line, macd_hist)
+
+    // Get Stochastic signal
+    [stoch_k, stoch_d] = TF.mtfStoch(stoch_length, stoch_k_smooth, stoch_d_smooth, timeframe, use_anti_repaint)
+    stoch_sig = CS.stochSignal(stoch_k, stoch_d, 80, 20)
+
+    // Return all signals and indicator values
+    [rsi_sig, macd_sig, stoch_sig, rsi_val, macd_line, stoch_k]
+
+// ============================================================================
+// MAIN CALCULATIONS
+// ============================================================================
+
+[rsi1, macd1, stoch1, rsi_val1, macd_line1, stoch_k1] = calculate_signals(tf1)
+[rsi2, macd2, stoch2, rsi_val2, macd_line2, stoch_k2] = calculate_signals(tf2)
+[rsi3, macd3, stoch3, rsi_val3, macd_line3, stoch_k3] = calculate_signals(tf3)
+[rsi4, macd4, stoch4, rsi_val4, macd_line4, stoch_k4] = calculate_signals(tf4)
+
+// Create signal arrays and calculate confluence
+signals_array = array.from(rsi1, rsi2, rsi3, rsi4, macd1, macd2, macd3, macd4, stoch1, stoch2, stoch3, stoch4)
+confluence_score = CS.confluenceScore(signals_array)
+final_signal = CS.consensusSignal(signals_array)
+signal_strength = CS.signalStrength(signals_array)
+
+// Check for alerts
+buy_alert = confluence_score >= confluence_buy_threshold and final_signal == 1
+sell_alert = confluence_score <= confluence_sell_threshold and final_signal == -1
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Plot confluence score as columns
+chart_color = final_signal == 1 ? color.new(color.green, 30) : final_signal == -1 ? color.new(color.red, 30) : color.new(color.gray, 60)
+plot(confluence_score, title="Confluence Score", style=plot.style_columns, color=chart_color, linewidth=2, editable=false)
+
+// Plot threshold lines
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed, linewidth=1)
+hline(confluence_buy_threshold, "Buy Threshold", color=color.new(color.green, 50), linestyle=hline.style_dotted, linewidth=1)
+hline(confluence_sell_threshold, "Sell Threshold", color=color.new(color.red, 50), linestyle=hline.style_dotted, linewidth=1)
+
+// ============================================================================
+// DASHBOARD TABLE
+// ============================================================================
+
+if show_dashboard
+    // Determine table position
+    pos = dashboard_position == "top-left" ? position.top_left : 
+          dashboard_position == "top-right" ? position.top_right :
+          dashboard_position == "middle-left" ? position.middle_left :
+          position.middle_right
+
+    // Create dashboard table (5 columns, 6 rows)
+    table_obj = table.new(pos, 5, 6, border_color=color.gray, border_width=1)
+
+    // Header row - Indicator names and timeframe columns
+    table.cell(table_obj, 0, 0, "Indicator", text_color=color.white, bgcolor=color.new(color.blue, 30), text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 1, 0, TF.tfDisplayName(tf1), text_color=color.white, bgcolor=color.new(color.blue, 30), text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 2, 0, TF.tfDisplayName(tf2), text_color=color.white, bgcolor=color.new(color.blue, 30), text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 3, 0, TF.tfDisplayName(tf3), text_color=color.white, bgcolor=color.new(color.blue, 30), text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 4, 0, TF.tfDisplayName(tf4), text_color=color.white, bgcolor=color.new(color.blue, 30), text_halign=text.align_center, text_size=size.small)
+
+    // RSI Row
+    table.cell(table_obj, 0, 1, "RSI", text_color=color.white, bgcolor=color.new(color.gray, 50), text_halign=text.align_center, text_size=size.small)
+    for i = 0 to 3
+        sig = i == 0 ? rsi1 : i == 1 ? rsi2 : i == 2 ? rsi3 : rsi4
+        sig_color = CS.signalColor(sig)
+        table.cell(table_obj, i+1, 1, sig == 1 ? "BUY" : sig == -1 ? "SELL" : "---", text_color=color.white, bgcolor=sig_color, text_halign=text.align_center, text_size=size.small)
+
+    // MACD Row
+    table.cell(table_obj, 0, 2, "MACD", text_color=color.white, bgcolor=color.new(color.gray, 50), text_halign=text.align_center, text_size=size.small)
+    for i = 0 to 3
+        sig = i == 0 ? macd1 : i == 1 ? macd2 : i == 2 ? macd3 : macd4
+        sig_color = CS.signalColor(sig)
+        table.cell(table_obj, i+1, 2, sig == 1 ? "BUY" : sig == -1 ? "SELL" : "---", text_color=color.white, bgcolor=sig_color, text_halign=text.align_center, text_size=size.small)
+
+    // Stochastic Row
+    table.cell(table_obj, 0, 3, "Stoch", text_color=color.white, bgcolor=color.new(color.gray, 50), text_halign=text.align_center, text_size=size.small)
+    for i = 0 to 3
+        sig = i == 0 ? stoch1 : i == 1 ? stoch2 : i == 2 ? stoch3 : stoch4
+        sig_color = CS.signalColor(sig)
+        table.cell(table_obj, i+1, 3, sig == 1 ? "BUY" : sig == -1 ? "SELL" : "---", text_color=color.white, bgcolor=sig_color, text_halign=text.align_center, text_size=size.small)
+
+    // Confluence Score Row
+    table.cell(table_obj, 0, 4, "Confluence", text_color=color.white, bgcolor=color.new(color.gray, 50), text_halign=text.align_center, text_size=size.small)
+    score_color = final_signal == 1 ? color.new(color.green, 30) : final_signal == -1 ? color.new(color.red, 30) : color.new(color.gray, 50)
+    table.cell(table_obj, 1, 4, str.tostring(confluence_score), text_color=color.white, bgcolor=score_color, text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 2, 4, str.tostring(math.round(signal_strength, 1)) + "%", text_color=color.white, bgcolor=score_color, text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 3, 4, "", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(table_obj, 4, 4, "", text_color=color.white, bgcolor=color.new(color.gray, 70))
+
+    // Final Signal Row
+    table.cell(table_obj, 0, 5, "SIGNAL", text_color=color.white, bgcolor=color.new(color.blue, 40), text_halign=text.align_center, text_size=size.small)
+    signal_text = final_signal == 1 ? "▲ BUY" : final_signal == -1 ? "▼ SELL" : "■ NEUTRAL"
+    signal_bg = final_signal == 1 ? color.new(color.green, 20) : final_signal == -1 ? color.new(color.red, 20) : color.new(color.gray, 50)
+    table.cell(table_obj, 1, 5, signal_text, text_color=color.white, bgcolor=signal_bg, text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 2, 5, str.tostring(array.size(signals_array)) + " Indicators", text_color=color.white, bgcolor=signal_bg, text_halign=text.align_center, text_size=size.small)
+    table.cell(table_obj, 3, 5, "", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(table_obj, 4, 5, "", text_color=color.white, bgcolor=color.new(color.gray, 70))
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+if alert_enabled
+    if buy_alert
+        alert(CS.alertMessage(1, syminfo.tickerid, timeframe.period), alert.freq_once_per_bar)
+
+    if sell_alert
+        alert(CS.alertMessage(-1, syminfo.tickerid, timeframe.period), alert.freq_once_per_bar)
+
+// Alert conditions for external alert services
+alertcondition(buy_alert, title="MTF Confluence BUY", message="🟢 [BUY] Multi-Timeframe Confluence Signal - " + syminfo.tickerid)
+alertcondition(sell_alert, title="MTF Confluence SELL", message="🔴 [SELL] Multi-Timeframe Confluence Signal - " + syminfo.tickerid)

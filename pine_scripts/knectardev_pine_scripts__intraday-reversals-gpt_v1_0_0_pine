@@ -1,0 +1,118 @@
+//@version=5
+// =============================================================================
+// INDICATOR: Intraday reversals (gpt)
+// FILENAME: intraday-reversals-gpt_v1.0.0.pine
+// Version: v1.0.0
+// DATE:     2026-01-09
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.0 - Initial version
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+strategy("Intraday Reversal Predictor (Order-Safe)", overlay=true, pyramiding=0, process_orders_on_close=true)
+
+// ───── Inputs ─────
+bandMult = input.float(1.5, "VWAP Band Multiplier (σ)", step=0.1)
+rsiLen = input.int(14, "RSI Length", minval=2)
+rsiOB = input.int(70, "RSI Overbought", minval=50, maxval=95)
+rsiOS = input.int(35, "RSI Oversold", minval=5, maxval=50)
+minScore = input.int(3, "Min Conditions to Trade (1-4)", minval=1, maxval=4)
+cooldownBars = input.int(10, "Cooldown Bars Between Entries", minval=0, maxval=200)
+useWicksForExtreme = input.bool(true, "Use Wicks for Band Touch")
+useRTH = input.bool(true, "Trade RTH Only (0930-1600 NY)")
+maxLabels = input.int(300, "Max Labels (safety cap)", minval=0, maxval=2000)
+
+// ───── Session filter (SPY / US equities) ─────
+inRTH = not na(time(timeframe.period, "0930-1600"))
+tradeOk = useRTH ? inRTH : true
+
+// ───── VWAP + session σ bands ─────
+var float cumTPV = 0.0
+var float cumVol = 0.0
+var float cumVar = 0.0
+newDay = ta.change(time("D"))
+if newDay
+    cumTPV := 0.0
+    cumVol := 0.0
+    cumVar := 0.0
+tp = (high + low + close) / 3.0
+cumTPV += tp * volume
+cumVol += volume
+vwap = cumVol > 0 ? cumTPV / cumVol : na
+if cumVol > 0 and not na(vwap)
+    cumVar += math.pow(tp - vwap, 2) * volume
+std = cumVol > 0 ? math.sqrt(cumVar / cumVol) : na
+upperBand = vwap + bandMult * std
+lowerBand = vwap - bandMult * std
+
+plot(vwap, "VWAP", color=color.yellow)
+plot(upperBand, "VWAP +σ", color=color.red)
+plot(lowerBand, "VWAP -σ", color=color.green)
+
+// ───── Indicators ─────
+rsi = ta.rsi(close, rsiLen)
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+
+// ───── Extremes ─────
+touchHigh = useWicksForExtreme ? high >= upperBand : close >= upperBand
+touchLow = useWicksForExtreme ? low <= lowerBand : close <= lowerBand
+
+// ───── Scores ─────
+shortScore = 0
+shortScore += (rsi > rsiOB) ? 1 : 0
+shortScore += touchHigh ? 1 : 0
+shortScore += (ta.crossunder(emaFast, emaSlow) or emaFast < emaSlow) ? 1 : 0
+shortScore += (close < open) ? 1 : 0
+
+longScore = 0
+longScore += (rsi < rsiOS) ? 1 : 0
+longScore += touchLow ? 1 : 0
+longScore += (ta.crossover(emaFast, emaSlow) or emaFast > emaSlow) ? 1 : 0
+longScore += (close > open) ? 1 : 0
+
+shortSignal = shortScore >= minScore
+longSignal = longScore >= minScore
+
+shortConf = shortScore * 25.0
+longConf = longScore * 25.0
+
+// ───── Cooldown (prevents rapid-fire orders) ─────
+var int lastEntryBar = na
+coolOk = na(lastEntryBar) ? true : (bar_index - lastEntryBar > cooldownBars)
+
+// ───── Label cap (prevents too many drawing objects) ─────
+var int labelCount = 0
+canLabel = labelCount < maxLabels
+
+// ───── Position state ─────
+pos = strategy.position_size
+flat = pos == 0
+longPos = pos > 0
+shortPos = pos < 0
+
+// ───── Entries + Reversals (order-safe) ─────
+// Only enter if: tradeOk AND cooldown ok AND signal
+// Reversal: close current position then enter new one (avoids stacking many exits)
+
+if tradeOk and coolOk and shortSignal and not shortPos
+    if longPos
+        strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", from_entry="Short", limit=vwap, stop=high * 1.002)
+    lastEntryBar := bar_index
+    if canLabel
+        label.new(bar_index, high, "SELL " + str.tostring(shortConf, "#0") + "%", style=label.style_label_down, color=color.red, textcolor=color.white)
+        labelCount += 1
+
+if tradeOk and coolOk and longSignal and not longPos
+    if shortPos
+        strategy.close("Short")
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", from_entry="Long", limit=vwap, stop=low * 0.998)
+    lastEntryBar := bar_index
+    if canLabel
+        label.new(bar_index, low, "BUY " + str.tostring(longConf, "#0") + "%", style=label.style_label_up, color=color.lime, textcolor=color.black)
+        labelCount += 1

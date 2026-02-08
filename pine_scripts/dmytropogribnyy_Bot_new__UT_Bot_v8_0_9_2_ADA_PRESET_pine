@@ -1,0 +1,259 @@
+//@version=6
+indicator(title="UT Bot v8.0.9.2 ADA PRESET", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// PRESET FOR: ADA/USDC (WATCH symbol)
+// ============================================================================
+// Settings: ADX boost L/S = 1.0/1.5, Body 18%, Cooldown +1, RangeGuard ON
+// Expected: 55-60% → 60-65% WR, spam 37% → <30%
+// ============================================================================
+
+// GRADUATED parameters (ASYMMETRIC)
+minAtrPctLong     = 0.36
+minAtrPctShort    = 0.38
+minEmaGapPct      = 0.036
+emaAlignToleranceLong  = 0.005
+emaAlignTolShort = 0.0025
+
+// Core inputs
+a  = input.int(1,  title="Key Value (sensitivity)")
+c  = input.int(10, title="ATR Period")
+h  = input.bool(false, title="Signals from Heikin Ashi Candles")
+useSoftFilter          = input.bool(true,  title="Enable Quality Filter")
+emaFastLen             = input.int(9,  title="EMA Fast")
+emaSlowLen             = input.int(21, title="EMA Slow")
+confirmClose           = input.bool(true, title="Confirm on bar close")
+filterModeLong         = input.string("OR", title="Filter mode (LONG)", options=["OR","AND"])
+filterModeShort        = input.string("AND", title="Filter mode (SHORT)", options=["OR","AND"])
+minBarsBetweenSignals  = input.int(3, title="Min bars between signals (bars)", minval=0)
+
+// WATCH MODE - ADA PRESET (pre-configured, can override)
+watchMode              = input.bool(true, "═══ WATCH MODE ═══ (ADA PRESET - ON)")
+adxWatchBoostLong      = input.float(1.0,  "ADX boost LONG (ADA: 1.0)", step=0.5, minval=0.0, maxval=5.0)
+adxWatchBoostShort     = input.float(1.5,  "ADX boost SHORT (ADA: 1.5)", step=0.5, minval=0.0, maxval=6.0)
+useDensityGuard        = input.bool(true,  "Density guard (ON)")
+densityLookbackBars    = input.int(288,    "Density window (24h)", minval=96, maxval=1440)
+maxSignalsInWindow     = input.int(22,     "Max signals per window", minval=8, maxval=60)
+densityAdxBoost        = input.float(1.5,  "Density ADX boost", step=0.5, minval=0.5, maxval=5.0)
+watchMinBodyFloorPct   = input.float(18.0, "Min body% (ADA: 18%)", step=1.0, minval=0.0, maxval=40.0)
+watchExtraCooldownBars = input.int(1,      "Extra cooldown (ADA: +1 bar)", minval=0, maxval=6)
+forceRangeGuardInWatch = input.bool(true,  "Force RangeGuard (ON)")
+forceShortAndMode      = input.bool(false, "Force SHORT=AND")
+
+useRangeGuard          = input.bool(false, "Enable RangeGuard base")
+rangeLen               = input.int(14, "Range lookback")
+minRangePct            = input.float(0.40, "Min range%", step=0.05)
+crossSmoothLen         = input.int(1, "Crossover EMA", minval=1, maxval=5)
+
+useShortGuardLite      = input.bool(true,  "ShortGuard LITE")
+minStopGapShortPct     = input.float(0.075, "LITE: Min stop gap%", step=0.01)
+minBearBodyShortPct    = input.float(37.0, "LITE: Min bear body%", step=1.0)
+requireShortStayBars   = input.int(1, "SHORT: min bars below stop", minval=0, maxval=3)
+minShortMomentumBars   = input.int(1, "SHORT: min red bars", minval=0, maxval=5)
+strongShortGapPct      = input.float(0.10,"SHORT bypass: stop gap%", step=0.01)
+strongBearBodyBypass   = input.float(55.0,"SHORT bypass: bear body%", step=1.0)
+
+minLongMomentumBars    = input.int(1,  "LONG: min green bars", minval=0, maxval=3)
+strongLongGapPct       = input.float(0.12,"LONG bypass: stop gap%", step=0.01)
+strongBullBodyBypass   = input.float(55.0,"LONG bypass: bull body%", step=1.0)
+
+requireEmaAlignmentLong  = input.bool(true, "LONG: EMA9 > EMA21 (0.5% tol)")
+requireEmaAlignmentShort = input.bool(true, "SHORT: EMA9 < EMA21 (0.25% tol)")
+
+useAdxFilter       = input.bool(true,  "ADX Filter")
+adxLength          = input.int(14,     "ADX Length", minval=7, maxval=21)
+adxThresholdLong   = input.float(20.0, "ADX LONG base", step=1.0, minval=15.0, maxval=25.0)
+adxThresholdShort  = input.float(21.0, "ADX SHORT base", step=1.0, minval=18.0, maxval=30.0)
+
+useSqueezeFilter = input.bool(true,  "Squeeze (SHORT)")
+squeezeBbLength  = input.int(20,     "Squeeze BB/KC Length", minval=10, maxval=30)
+squeezeBbMult    = input.float(2.0,  "Squeeze BB Mult", step=0.1, minval=1.5, maxval=2.5)
+squeezeKcMult    = input.float(1.5,  "Squeeze KC Mult", step=0.1, minval=1.0, maxval=2.0)
+
+useMacdFilter    = input.bool(false,  "MACD Histogram")
+macdFastLength   = input.int(12,     "MACD Fast", minval=8, maxval=15)
+macdSlowLength   = input.int(26,     "MACD Slow", minval=20, maxval=30)
+macdSignalLength = input.int(9,      "MACD Signal", minval=5, maxval=15)
+
+useVolumeFilter  = input.bool(false,  "Volume Filter")
+volumeEmaShort   = input.int(5,      "Volume EMA Short", minval=3, maxval=10)
+volumeEmaLong    = input.int(10,     "Volume EMA Long", minval=8, maxval=20)
+volumeThreshold  = input.float(15.0, "Volume Threshold %", step=5.0, minval=0.0, maxval=100.0)
+
+minCandleBodyPct       = input.float(0.0, "Min candle body% base", step=1.0, minval=0.0, maxval=50.0)
+enableDebug            = input.bool(false, "Debug labels")
+
+// Effective parameters
+effMinBarsBetween = minBarsBetweenSignals + (watchMode ? watchExtraCooldownBars : 0)
+effMinBodyPct     = math.max(minCandleBodyPct, watchMode ? watchMinBodyFloorPct : 0.0)
+effFilterModeShort = (watchMode and forceShortAndMode) ? "AND" : filterModeShort
+effRangeGuardOn   = useRangeGuard or (watchMode and forceRangeGuardInWatch)
+
+// Filter calculations
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+
+basisSqz = ta.sma(close, squeezeBbLength)
+dev = squeezeBbMult * ta.stdev(close, squeezeBbLength)
+upperBB = basisSqz + dev
+lowerBB = basisSqz - dev
+maSqz = ta.sma(close, squeezeBbLength)
+rangeMa = ta.sma(ta.tr, squeezeBbLength)
+upperKC = maSqz + rangeMa * squeezeKcMult
+lowerKC = maSqz - rangeMa * squeezeKcMult
+sqzOn = (lowerBB > lowerKC) and (upperBB < upperKC)
+squeezeOk = not useSqueezeFilter or not sqzOn
+
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+macdLongOk = not useMacdFilter or histLine > 0
+macdShortOk = not useMacdFilter or histLine < 0
+
+volShort = ta.ema(volume, volumeEmaShort)
+volLong  = ta.ema(volume, volumeEmaLong)
+volOsc   = 100 * (volShort - volLong) / math.max(volLong, 1)
+volumeOk = not useVolumeFilter or (volOsc > volumeThreshold)
+
+// Core UT Bot
+xATR  = ta.atr(c)
+nLoss = a * xATR
+haTkr = ticker.heikinashi(syminfo.tickerid)
+src   = h ? request.security(haTkr, timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+var float xATRTrailingStop = na
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src - nLoss) : src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src + nLoss) : src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+
+basis = crossSmoothLen == 1 ? src : nz(ta.ema(src, crossSmoothLen), src)
+above = ta.crossover(basis, xATRTrailingStop)
+below = ta.crossunder(basis, xATRTrailingStop)
+
+buy    = src > xATRTrailingStop and above
+sell   = src < xATRTrailingStop and below
+barbuy  = src > xATRTrailingStop
+barsell = src < xATRTrailingStop
+
+haOpen = request.security(haTkr, timeframe.period, open,  lookahead=barmerge.lookahead_off)
+haHigh = request.security(haTkr, timeframe.period, high,  lookahead=barmerge.lookahead_off)
+haLow  = request.security(haTkr, timeframe.period, low,   lookahead=barmerge.lookahead_off)
+src_open = h ? haOpen : open
+src_high = h ? haHigh : high
+src_low  = h ? haLow  : low
+
+// Quality filters
+den_src = math.max(math.abs(src), 1e-9)
+atrp    = na(src) or src == 0 ? na : (xATR / den_src) * 100.0
+emaF    = ta.ema(src, emaFastLen)
+emaS    = ta.ema(src, emaSlowLen)
+gapPct  = na(src) or src == 0 ? na : math.abs((emaF - emaS) / den_src) * 100.0
+
+trendUp   = emaF > emaS and gapPct >= minEmaGapPct
+trendDown = emaF < emaS and gapPct >= minEmaGapPct
+
+atr_gate_long  = atrp >= minAtrPctLong
+atr_gate_short = atrp >= minAtrPctShort
+
+long_core  = buy
+short_core = sell
+
+rangeHigh = ta.highest(src, rangeLen)
+rangeLow  = ta.lowest(src, rangeLen)
+den_rng   = math.max(math.abs(src), 1e-9)
+rangePct  = (rangeHigh - rangeLow) / den_rng * 100.0
+range_ok  = not effRangeGuardOn or (rangePct >= minRangePct)
+
+var int bearStreak_early = 0
+bearStreak_early := (src < src_open) ? nz(bearStreak_early[1]) + 1 : 0
+denAbs_early = math.max(math.abs(src), 1e-9)
+rng_early = math.max(src_high - src_low, 1e-9)
+body_early = math.abs(src_open - src)
+bearBodyPct_early = (src < src_open) ? (body_early / rng_early * 100.0) : 0.0
+stopGapShortPct_early = (xATRTrailingStop - src) / denAbs_early * 100.0
+
+cascade_bypass = (bearStreak_early >= minShortMomentumBars + 1 and bearBodyPct_early >= 40.0) or (bearStreak_early >= minShortMomentumBars + 2 and bearBodyPct_early >= 30.0) or (stopGapShortPct_early >= 0.18 and bearBodyPct_early >= 60.0 and atrp >= minAtrPctShort * 1.4)
+
+emaGapAbs = math.abs(emaF - emaS) / den_src
+ema_aligned_long  = not requireEmaAlignmentLong or (emaF > emaS) or (emaGapAbs < emaAlignToleranceLong)
+ema_aligned_short = not requireEmaAlignmentShort or (emaF < emaS) or (emaGapAbs < emaAlignTolShort)
+
+// Density guard
+var int rawSignalCount = 0
+rawSignalCount := (long_core or short_core) ? 1 : 0
+sigDensity = ta.sum(rawSignalCount, densityLookbackBars)
+densityExceeded = useDensityGuard and watchMode and (sigDensity > maxSignalsInWindow)
+
+finalAdxLong  = adxThresholdLong  + (watchMode ? adxWatchBoostLong  : 0.0) + (densityExceeded ? densityAdxBoost : 0.0)
+finalAdxShort = adxThresholdShort + (watchMode ? adxWatchBoostShort : 0.0) + (densityExceeded ? densityAdxBoost : 0.0)
+
+adxLongOk  = not useAdxFilter or (adx > finalAdxLong)
+adxShortOk = not useAdxFilter or (adx > finalAdxShort)
+
+// Final filters
+long_filt = filterModeLong == "AND" ? (long_core and atr_gate_long and trendUp) : (long_core and (atr_gate_long or trendUp))
+long_filt := long_filt and ema_aligned_long and adxLongOk and macdLongOk and volumeOk
+
+short_base = effFilterModeShort == "AND" ? (short_core and atr_gate_short and trendDown) : (short_core and (atr_gate_short or trendDown))
+short_filt = cascade_bypass ? short_core : (short_base and ema_aligned_short and adxShortOk and squeezeOk and macdShortOk and volumeOk)
+
+denAbs           = math.max(math.abs(src), 1e-9)
+stopGapShortPct  = (xATRTrailingStop - src) / denAbs * 100.0
+rng              = math.max(src_high - src_low, 1e-9)
+body             = math.abs(src_open - src)
+bearBodyPct      = (src < src_open) ? (body / rng * 100.0) : 0.0
+
+short_lite_ok     = not useShortGuardLite or ((stopGapShortPct >= minStopGapShortPct) or (bearBodyPct >= minBearBodyShortPct))
+isBelowStop = src < xATRTrailingStop
+barsBelowStop_raw = ta.barssince(not isBelowStop)
+barsBelowStop     = na(barsBelowStop_raw) ? 0 : barsBelowStop_raw
+stay_ok_short     = (requireShortStayBars == 0) or (barsBelowStop >= requireShortStayBars)
+
+var int bearStreak = 0
+bearStreak := (src < src_open) ? nz(bearStreak[1]) + 1 : 0
+short_momo_ok = (minShortMomentumBars == 0) or (bearStreak >= minShortMomentumBars) or (stopGapShortPct >= strongShortGapPct) or (bearBodyPct >= strongBearBodyBypass)
+
+var int bullStreak = 0
+bullStreak := (src > src_open) ? nz(bullStreak[1]) + 1 : 0
+bullBodyPct    = (src > src_open) ? (body / rng * 100.0) : 0.0
+stopGapLongPct = (src - xATRTrailingStop) / denAbs * 100.0
+long_momo_ok   = (minLongMomentumBars == 0) or (bullStreak >= minLongMomentumBars) or (stopGapLongPct >= strongLongGapPct) or (bullBodyPct >= strongBullBodyBypass)
+
+body_filter_ok = (effMinBodyPct == 0.0) or ((body / rng * 100.0) >= effMinBodyPct)
+
+var int lastSigBar = na
+cooldown_ok = na(lastSigBar) or (bar_index - lastSigBar >= effMinBarsBetween)
+
+long_filt  := long_filt  and range_ok and long_momo_ok and body_filter_ok
+short_quality_ok = short_lite_ok and stay_ok_short and short_momo_ok
+short_filt := short_filt and range_ok and (cascade_bypass or short_quality_ok) and body_filter_ok
+
+long_ok  = useSoftFilter ? (long_filt  and cooldown_ok) : long_core
+short_ok = useSoftFilter ? (short_filt and cooldown_ok) : short_core
+
+if (long_ok or short_ok) and (not confirmClose or barstate.isconfirmed)
+    lastSigBar := bar_index
+
+// Debug
+if enableDebug
+    densityStatus = densityExceeded ? str.format(" DENS({0}>{1})", sigDensity, maxSignalsInWindow) : ""
+    adxInfo = str.format(" ADX_L={0:0.1f} ADX_S={1:0.1f}", finalAdxLong, finalAdxShort)
+
+    short_reason = not short_core ? "NO_CORE" : cascade_bypass ? "CASCADE" : not ema_aligned_short ? "EMA_0.25%" : not atr_gate_short ? "ATR_0.38" : not trendDown ? "NO_TREND" : not squeezeOk ? "SQUEEZE" : not range_ok ? "RANGE" : not short_lite_ok ? "GUARD" : not stay_ok_short ? "STAY" : not short_momo_ok ? "1BAR" : not body_filter_ok ? "BODY" : not cooldown_ok ? "COOL" : not adxShortOk ? str.format("ADX<{0:0.1f}", finalAdxShort) : "PASS"
+    if short_core and not short_ok
+        label.new(bar_index, high, "X " + short_reason + adxInfo + densityStatus, style=label.style_label_up, color=color.new(color.red,30), textcolor=color.white, size=size.tiny)
+
+    long_reason = not long_core ? "NO_CORE" : not ema_aligned_long ? "EMA_0.5%" : not atr_gate_long ? "ATR_0.36" : not trendUp ? "NO_TREND" : not range_ok ? "RANGE" : not long_momo_ok ? "1BAR" : not body_filter_ok ? "BODY" : not cooldown_ok ? "COOL" : not adxLongOk ? str.format("ADX<{0:0.1f}", finalAdxLong) : "PASS"
+    if long_core and not long_ok
+        label.new(bar_index, low, "X " + long_reason + adxInfo + densityStatus, style=label.style_label_down, color=color.new(color.green,30), textcolor=color.white, size=size.tiny)
+
+// Visualization
+shouldPlot = (confirmClose ? barstate.isconfirmed : true)
+plotshape(shouldPlot and long_ok,  title="Buy",  text="Buy",  style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
+plotshape(shouldPlot and short_ok, title="Sell", text="Sell", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.tiny)
+barcolor(shouldPlot ? (barbuy ? color.new(color.green, 0) : (barsell ? color.new(color.red, 0) : na)) : na)
+
+plot(emaF, title="EMA 9", color=color.new(#2196F3, 0), linewidth=1)
+plot(emaS, title="EMA 21", color=color.new(#FF9800, 0), linewidth=2)
+
+plot(atrp,   title="atr_pct",     display=display.none)
+plot(gapPct, title="ema_gap_pct", display=display.none)
+
+// Alerts
+alertcondition((confirmClose ? barstate.isconfirmed : true) and long_ok,  "UT Long", message='{"action":"entry","side":"long","source":"utbot","symbol":"{{ticker}}","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')
+alertcondition((confirmClose ? barstate.isconfirmed : true) and short_ok, "UT Short", message='{"action":"entry","side":"short","source":"utbot","symbol":"{{ticker}}","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')

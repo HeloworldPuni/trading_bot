@@ -1,0 +1,803 @@
+//@version=5
+indicator("Tradewar Options Assistant Multiple", overlay=true, dynamic_requests=true, max_labels_count=500)
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 1: INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+// ─── Ticker 1 ───
+group1 = "═══ TICKER 1 ═══"
+t1_on   = input.bool(true, "Enable", group=group1)
+t1_sym  = input.string("INTC", "Symbol", group=group1)
+t1_k    = input.float(41.5, "Strike ($)", group=group1, step=1)
+t1_exp  = input.string("JAN-09-26", "Expiry", group=group1)
+t1_tgt  = input.float(42.5, "Target Price ($)", group=group1, step=0.01, tooltip="Final target price (T3) - script calculates T1/T2 automatically")
+t1_res  = input.float(41.28, "Entry: Breaks ($)", group=group1, step=0.01)
+
+// ─── Ticker 2 ───
+group2 = "═══ TICKER 2 ═══"
+t2_on   = input.bool(true, "Enable", group=group2)
+t2_sym  = input.string("IBM", "Symbol", group=group2)
+t2_k    = input.float(297.5, "Strike ($)", group=group2, step=1)
+t2_exp  = input.string("JAN-09-26", "Expiry", group=group2)
+t2_tgt  = input.float(299, "Target Price ($)", group=group2, step=0.01, tooltip="Final target price (T3)")
+t2_res  = input.float(295.75, "Entry: Breaks ($)", group=group2, step=0.01)
+
+// ─── Ticker 3 ───
+group3 = "═══ TICKER 3 ═══"
+t3_on   = input.bool(true, "Enable", group=group3)
+t3_sym  = input.string("COIN", "Symbol", group=group3)
+t3_k    = input.float(247.5, "Strike ($)", group=group3, step=1)
+t3_exp  = input.string("JAN-09-26", "Expiry", group=group3)
+t3_tgt  = input.float(252.5, "Target Price ($)", group=group3, step=0.01, tooltip="Final target price (T3)")
+t3_res  = input.float(247.5, "Entry: Breaks ($)", group=group3, step=0.01)
+
+// ─── Ticker 4 ───
+group4 = "═══ TICKER 4 ═══"
+t4_on   = input.bool(true, "Enable", group=group4)
+t4_sym  = input.string("CVX", "Symbol", group=group4)
+t4_k    = input.float(167.5, "Strike ($)", group=group4, step=1)
+t4_exp  = input.string("JAN-09-26", "Expiry", group=group4)
+t4_tgt  = input.float(172.5, "Target Price ($)", group=group4, step=0.01, tooltip="Final target price (T3)")
+t4_res  = input.float(167.5, "Entry: Breaks ($)", group=group4, step=0.01)
+
+// ─── Ticker 5 ───
+group5 = "═══ TICKER 5 ═══"
+t5_on   = input.bool(true, "Enable", group=group5)
+t5_sym  = input.string("SLV", "Symbol", group=group5)
+t5_k    = input.float(69, "Strike ($)", group=group5, step=1)
+t5_exp  = input.string("JAN-09-26", "Expiry", group=group5)
+t5_tgt  = input.float(70, "Target Price ($)", group=group5, step=0.01, tooltip="Final target price (T3)")
+t5_res  = input.float(68.75, "Entry: Breaks ($)", group=group5, step=0.01)
+
+// ─── Timing Settings ───
+groupSettings = "═══ SETTINGS ═══"
+cooldownMin     = input.int(2, "Cooldown After Open (min)", group=groupSettings, minval=1, maxval=10)
+lotoWindowEnd   = input.int(10, "LOTO Window End (min)", group=groupSettings, minval=3, maxval=15)
+confirmedStart  = input.int(5, "CONFIRMED Start (min)", group=groupSettings, minval=3, maxval=15)
+earlyAlertDist  = input.float(0.50, "Early Alert Distance (%)", group=groupSettings, minval=0.10, maxval=2.00, step=0.10, tooltip="% below resistance to trigger early alert")
+stopOffsetPct   = input.float(0.30, "Stop Offset (%)", group=groupSettings, minval=0.10, maxval=1.00, step=0.05, tooltip="% below entry for stop loss")
+
+// ─── Filter Settings ───
+groupFilters = "═══ FILTERS ═══"
+useTrendFilter  = input.bool(true, "Trend Filter (EMA 9 > 21)", group=groupFilters, tooltip="Recommended: ON - Prevents counter-trend entries")
+emaFastLen      = input.int(9, "Fast EMA", group=groupFilters, minval=5, maxval=20, inline="ema")
+emaSlowLen      = input.int(21, "Slow EMA", group=groupFilters, minval=10, maxval=50, inline="ema")
+useVwapConfirm  = input.bool(false, "Require VWAP Confirmation", group=groupFilters, tooltip="OFF for catalyst plays - news stocks often gap above VWAP")
+useLotoAlert    = input.bool(true, "Enable LOTO Alert (Fast 1-min)", group=groupFilters)
+
+// ─── Protection Settings ───
+groupProtection = "═══ PROTECTION ═══"
+useSpikeFilter      = input.bool(true, "Block Entry on Spike Candles", group=groupProtection, tooltip="Recommended: ON - Avoids chasing extended candles")
+spikeMultiplier     = input.float(2.5, "Spike Threshold (x Avg Range)", group=groupProtection, minval=1.5, maxval=4.0, step=0.5, tooltip="Higher = more lenient for news spikes")
+useVolumeConfirm    = input.bool(false, "Require Volume Confirmation", group=groupProtection, tooltip="OFF for catalyst plays - news already drives volume")
+volumeMultiplier    = input.float(1.0, "Volume Threshold (x Avg)", group=groupProtection, minval=0.5, maxval=3.0, step=0.1)
+useMiddayFilter     = input.bool(false, "Block Midday Chop (12:00-13:30 ET)", group=groupProtection, tooltip="OFF for catalyst plays - news can break out anytime")
+
+// ─── Alert Preferences ───
+groupAlerts = "═══ ALERT PREFERENCES ═══"
+showWarningAlerts = input.bool(true, "Show Warning Alerts", group=groupAlerts, tooltip="GAP PENDING alerts")
+
+// ─── Visual Settings ───
+groupVisual = "═══ VISUAL SETTINGS ═══"
+showLabels      = input.bool(true, "Show Chart Labels", group=groupVisual, tooltip="Display visual labels on chart for entries, targets, and stops")
+showLevelLines  = input.bool(true, "Show Entry/Target Lines", group=groupVisual, tooltip="Display horizontal lines for entry and target levels (only on matching ticker chart)")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 2: TYPES
+// ══════════════════════════════════════════════════════════════════════════════
+enum TradeState
+    IDLE
+    EARLY
+    IN_TRADE
+    EXITED
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 3: CONSTANTS
+// ══════════════════════════════════════════════════════════════════════════════
+MARKET_OPEN_HOUR  = 9
+MARKET_OPEN_MIN   = 30
+MARKET_CLOSE_HOUR = 16
+MARKET_CLOSE_MIN  = 0
+MARKET_OPEN       = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN
+MARKET_CLOSE      = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MIN
+DROP_THRESHOLD    = 0.10
+FORCE_EXIT_MIN    = 5
+MIDDAY_START      = 12 * 60
+MIDDAY_END        = 13 * 60 + 30
+
+// Target percentage constants
+T1_PCT = 0.33
+T2_PCT = 0.66
+T3_PCT = 1.00
+
+// Max entry slippage (%)
+MAX_ENTRY_SLIPPAGE = 0.15
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 4: FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+parseMonth(m) =>
+    u = str.upper(str.trim(m))
+    u == "JAN" ? 1 : u == "FEB" ? 2 : u == "MAR" ? 3 : u == "APR" ? 4 : u == "MAY" ? 5 : u == "JUN" ? 6 : u == "JUL" ? 7 : u == "AUG" ? 8 : u == "SEP" ? 9 : u == "OCT" ? 10 : u == "NOV" ? 11 : u == "DEC" ? 12 : 0
+
+parseExp(s) =>
+    result = float(na)
+    if str.length(s) >= 9
+        p = str.split(s, "-")
+        if array.size(p) >= 3
+            monthNum = parseMonth(array.get(p, 0))
+            dayNum = str.tonumber(array.get(p, 1))
+            yearNum = str.tonumber(array.get(p, 2))
+            if not na(yearNum) and yearNum < 100
+                yearNum := yearNum + 2000
+            if monthNum > 0 and not na(dayNum) and not na(yearNum)
+                result := timestamp(int(yearNum), monthNum, int(dayNum), 16, 0, 0)
+    result
+
+// Helper function for DTE string
+dteStr(d) => d == 0 ? "0DTE" : d == 1 ? "1DTE" : str.tostring(d) + "DTE"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 5: GLOBAL TIME CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+var string SESSION_STRING = str.format("{0,number,00}{1,number,00}-{2,number,00}{3,number,00}", MARKET_OPEN_HOUR, MARKET_OPEN_MIN, MARKET_CLOSE_HOUR, MARKET_CLOSE_MIN)
+currentHour      = hour(time, "America/New_York")
+currentMin       = minute(time, "America/New_York")
+minutesET        = currentHour * 60 + currentMin
+isRTH            = not na(time(timeframe.period, SESSION_STRING, "America/New_York"))
+minutesSinceOpen = minutesET - MARKET_OPEN
+minutesToClose   = MARKET_CLOSE - minutesET
+
+// Time Windows
+inCooldown    = isRTH and minutesSinceOpen >= 0 and minutesSinceOpen < cooldownMin
+lotoWindowOK  = minutesSinceOpen >= cooldownMin and minutesSinceOpen < lotoWindowEnd
+confirmedOK   = minutesSinceOpen >= confirmedStart
+approachingOK = minutesSinceOpen >= cooldownMin
+
+// Midday filter
+inMiddayChop = useMiddayFilter and minutesET >= MIDDAY_START and minutesET < MIDDAY_END
+
+// Alert control (isrealtime only - prevents false alerts on replay/reload)
+isLiveBar = barstate.isrealtime
+
+// Per-ticker alert flags (allows simultaneous alerts from different tickers)
+// NOTE: EARLY alerts don't check this flag - intentionally allows EARLY + ENTRY same bar
+// This is useful: you get "heads up" AND "execute" signals together when price jumps
+var bool t1AlertFired = false
+var bool t2AlertFired = false
+var bool t3AlertFired = false
+var bool t4AlertFired = false
+var bool t5AlertFired = false
+if barstate.isnew
+    t1AlertFired := false
+    t2AlertFired := false
+    t3AlertFired := false
+    t4AlertFired := false
+    t5AlertFired := false
+
+// Chart ticker for label matching
+chartTicker = str.upper(syminfo.ticker)
+
+// ─── Lock Timestamp ───
+var int configLockTime = na
+configLockTime := na(configLockTime) ? time : configLockTime
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 6: TICKER PROCESSING FUNCTION
+// ══════════════════════════════════════════════════════════════════════════════
+// Returns: [evt_early, evt_entry, evt_t1, evt_t2, evt_t3, evt_stop, evt_gapPend, evt_forceExit, entryMode, entryPrice, stopPrice, t1Final, t2Final, t3Final, dte, currentPrice, wasFirstTrade]
+
+processTicker(tickerIdx, enabled, sym, expTs, entryLevel, targetPrice, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr) =>
+    
+    // Default returns
+    evt_early    = false
+    evt_entry    = false
+    evt_t1       = false
+    evt_t2       = false
+    evt_t3       = false
+    evt_stop     = false
+    evt_gapPend  = false
+    evt_forceExit = false
+    returnEntryMode = ""
+    returnEntryPrice = 0.0
+    returnStopPrice = 0.0
+    returnT1 = 0.0
+    returnT2 = 0.0
+    returnT3 = 0.0
+    returnDte = 999
+    returnPrice = 0.0
+    returnWasFirstTrade = false  // Tracks if this entry was first trade (LOTO allowed)
+    
+    if enabled and entryLevel > 0
+        // Get ticker data
+        [tickerClose, tickerHigh, tickerLow, tickerClose1, tickerEmaFast, tickerEmaSlow, tickerVwap, tickerRange, tickerAvgRange, tickerVol, tickerVolAvg] = request.security(sym, "1", [close, high, low, close[1], ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen), ta.vwap, high - low, ta.sma(high - low, 20), volume, ta.sma(volume, 20)], lookahead=barmerge.lookahead_off)
+        
+        // 5-min data for CONFIRMED trend
+        [m5EmaFast, m5EmaSlow, m5Vwap, m5Close] = request.security(sym, "5", [ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen), ta.vwap, close])
+        
+        returnPrice := tickerClose
+        
+        // DTE calculation (expTs already parsed, just compute days)
+        dte = na(expTs) ? 1 : math.max(0, math.floor((expTs - time) / 86400000))
+        returnDte := dte
+        isExpired = not na(expTs) and time >= expTs
+        is0DTE = dte == 0
+        is1DTE = dte == 1
+        
+        // Force exit timing
+        forceExit = (is0DTE or is1DTE) and minutesToClose <= FORCE_EXIT_MIN
+        
+        // Get state from arrays
+        state = array.get(stateArr, tickerIdx)
+        entryMode = array.get(entryModeArr, tickerIdx)
+        entryBar = array.get(entryBarArr, tickerIdx)
+        entryPrice = array.get(entryPriceArr, tickerIdx)
+        stopPrice = array.get(stopPriceArr, tickerIdx)
+        t1Final = array.get(t1FinalArr, tickerIdx)
+        t2Final = array.get(t2FinalArr, tickerIdx)
+        t3Final = array.get(t3FinalArr, tickerIdx)
+        t1Hit = array.get(t1HitArr, tickerIdx)
+        t2Hit = array.get(t2HitArr, tickerIdx)
+        earlyFired = array.get(earlyFiredArr, tickerIdx)
+        gapPending = array.get(gapPendingArr, tickerIdx)
+        hadTrade = array.get(hadTradeArr, tickerIdx)
+        
+        // Filters
+        isSpike = useSpikeFilter and not na(tickerAvgRange) and tickerRange > tickerAvgRange * spikeMultiplier
+        // Volume filter: skip check in first 20 bars (insufficient average data)
+        volumeOK = not useVolumeConfirm or (bar_index > 20 and not na(tickerVolAvg) and tickerVol > tickerVolAvg * volumeMultiplier)
+        
+        // Trend detection (1-min for LOTO)
+        emaBullish1m = tickerEmaFast > tickerEmaSlow
+        vwapBullish1m = tickerClose > tickerVwap
+        lotoUptrend = emaBullish1m and (not useVwapConfirm or vwapBullish1m)
+        
+        // Trend detection (5-min for CONFIRMED)
+        emaBullish5m = m5EmaFast > m5EmaSlow
+        vwapBullish5m = m5Close > m5Vwap
+        confirmedUptrend = emaBullish5m and (not useVwapConfirm or vwapBullish5m)
+        
+        // Pure downtrend blocks all entries (both LOTO and CONFIRMED)
+        pureDowntrend5m = m5EmaFast < m5EmaSlow and m5Close < m5Vwap
+        
+        // Entry permissions (LOTO blocked on re-entry to reduce false breakouts - one LOTO per ticker per day)
+        // Design: First breakout = LOTO eligible, subsequent re-entries = CONFIRMED only
+        // Both modes blocked in pure downtrend for consistency
+        lotoAllowed = useLotoAlert and lotoUptrend and not pureDowntrend5m and not hadTrade
+        confirmedAllowed = (not useTrendFilter or confirmedUptrend) and not pureDowntrend5m
+        
+        // Price conditions
+        earlyDist = entryLevel * (earlyAlertDist / 100)
+        earlyLevelPrice = entryLevel - earlyDist
+        approaching = tickerClose < entryLevel and tickerClose >= earlyLevelPrice and approachingOK
+        
+        // Break detection
+        priceBreak = tickerClose >= entryLevel and tickerClose1 < entryLevel
+        
+        // Gap detection
+        isFirstBarOfDay = isRTH and not isRTH[1]
+        gapThrough = isFirstBarOfDay and tickerClose >= entryLevel
+        
+        // Combined break/gap
+        breakOrGap = priceBreak or gapThrough or (gapPending and tickerClose >= entryLevel)
+        
+        // Slippage check
+        maxSlip = entryLevel * (MAX_ENTRY_SLIPPAGE / 100)
+        slippageOK = tickerClose <= entryLevel + maxSlip
+        
+        // Validate target > entry
+        validTarget = targetPrice > entryLevel
+        
+        // Entry conditions
+        canEnter = breakOrGap and isRTH and not isExpired and not isSpike and volumeOK and not inMiddayChop and slippageOK and not forceExit and validTarget
+        lotoReady = canEnter and lotoWindowOK and lotoAllowed and not hadTrade  // Defensive double-check
+        confirmedReady = canEnter and confirmedOK and confirmedAllowed
+        readyToEnter = (state == TradeState.IDLE or state == TradeState.EARLY) and (lotoReady or confirmedReady)
+        entryType = lotoReady ? "LOTO" : "CONFIRMED"
+        
+        // Gap Pending (when gap occurs during cooldown)
+        if gapThrough and inCooldown and not gapPending
+            gapPending := true
+            evt_gapPend := true
+        
+        // IDLE → EARLY (warning only)
+        if state == TradeState.IDLE and approaching and isRTH and not isExpired and not earlyFired
+            state := TradeState.EARLY
+            earlyFired := true
+            evt_early := true
+        
+        // IDLE/EARLY → IN_TRADE (entry)
+        if readyToEnter
+            returnWasFirstTrade := not hadTrade  // Track if this was first trade BEFORE setting hadTrade
+            entryPrice := entryLevel
+            stopOffset = entryLevel * (stopOffsetPct / 100)
+            stopPrice := entryPrice - stopOffset
+            // Calculate target distance from target price - entry
+            targetDist = targetPrice - entryLevel
+            t1Final := entryPrice + (targetDist * T1_PCT)
+            t2Final := entryPrice + (targetDist * T2_PCT)
+            t3Final := entryPrice + (targetDist * T3_PCT)
+            entryMode := entryType
+            entryBar := bar_index
+            gapPending := false
+            hadTrade := true  // Block LOTO on re-entry
+            state := TradeState.IN_TRADE
+            evt_entry := true
+        
+        // IN_TRADE → Target Progression
+        if state == TradeState.IN_TRADE and bar_index > entryBar
+            // T1 Hit (33%)
+            if not t1Hit and not na(t1Final) and tickerHigh >= t1Final
+                t1Hit := true
+                evt_t1 := true
+            
+            // T2 Hit (66%)
+            if t1Hit and not t2Hit and not na(t2Final) and tickerHigh >= t2Final
+                t2Hit := true
+                evt_t2 := true
+            
+            // T3 Hit (100% - Final Target)
+            if t2Hit and not na(t3Final) and tickerHigh >= t3Final
+                state := TradeState.EXITED
+                evt_t3 := true
+        
+        // IN_TRADE → STOP (gated by not t2Hit)
+        if state == TradeState.IN_TRADE and bar_index > entryBar and not t2Hit and not na(stopPrice) and tickerLow <= stopPrice
+            state := TradeState.EXITED
+            evt_stop := true
+        
+        // Force Exit (runs AFTER targets/stop - priority: T3 > STOP > FORCE EXIT)
+        // If T3 or STOP already exited, forceExit is skipped (state already EXITED)
+        // T1/T2 + forceExit can both fire same bar - intentional (useful info)
+        if forceExit and state == TradeState.IN_TRADE
+            state := TradeState.EXITED
+            evt_forceExit := true
+        
+        // EXITED → IDLE (preserve entryMode for alerts - it's overwritten on next entry or daily reset)
+        // NOTE: Do NOT reset earlyFired here - only one EARLY per ticker per day (reset in daily reset)
+        if state == TradeState.EXITED
+            t1Hit := false
+            t2Hit := false
+            // earlyFired intentionally NOT reset - one EARLY alert per ticker per day
+            state := TradeState.IDLE
+        
+        // EARLY Timeout (DO NOT reset earlyFired - only one EARLY per setup until entry or day reset)
+        if state == TradeState.EARLY and tickerClose < earlyLevelPrice - (entryLevel * DROP_THRESHOLD / 100)
+            state := TradeState.IDLE
+        
+        // Save state back to arrays
+        array.set(stateArr, tickerIdx, state)
+        array.set(entryModeArr, tickerIdx, entryMode)
+        array.set(entryBarArr, tickerIdx, entryBar)
+        array.set(entryPriceArr, tickerIdx, entryPrice)
+        array.set(stopPriceArr, tickerIdx, stopPrice)
+        array.set(t1FinalArr, tickerIdx, t1Final)
+        array.set(t2FinalArr, tickerIdx, t2Final)
+        array.set(t3FinalArr, tickerIdx, t3Final)
+        array.set(t1HitArr, tickerIdx, t1Hit)
+        array.set(t2HitArr, tickerIdx, t2Hit)
+        array.set(earlyFiredArr, tickerIdx, earlyFired)
+        array.set(gapPendingArr, tickerIdx, gapPending)
+        array.set(hadTradeArr, tickerIdx, hadTrade)
+        
+        // Set return values
+        returnEntryMode := entryMode
+        returnEntryPrice := entryPrice
+        returnStopPrice := stopPrice
+        returnT1 := t1Final
+        returnT2 := t2Final
+        returnT3 := t3Final
+    
+    [evt_early, evt_entry, evt_t1, evt_t2, evt_t3, evt_stop, evt_gapPend, evt_forceExit, returnEntryMode, returnEntryPrice, returnStopPrice, returnT1, returnT2, returnT3, returnDte, returnPrice, returnWasFirstTrade]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 7: PRE-PARSED EXPIRATIONS (run once at script load)
+// ══════════════════════════════════════════════════════════════════════════════
+var float t1_expTs = parseExp(t1_exp)
+var float t2_expTs = parseExp(t2_exp)
+var float t3_expTs = parseExp(t3_exp)
+var float t4_expTs = parseExp(t4_exp)
+var float t5_expTs = parseExp(t5_exp)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 8: STATE ARRAYS (5 tickers)
+// ══════════════════════════════════════════════════════════════════════════════
+var stateArr = array.new<TradeState>(5, TradeState.IDLE)
+var string[] entryModeArr = array.new_string(5, "")
+var int[] entryBarArr = array.new_int(5, na)
+var float[] entryPriceArr = array.new_float(5, na)
+var float[] stopPriceArr = array.new_float(5, na)
+var float[] t1FinalArr = array.new_float(5, na)
+var float[] t2FinalArr = array.new_float(5, na)
+var float[] t3FinalArr = array.new_float(5, na)
+var bool[] t1HitArr = array.new_bool(5, false)
+var bool[] t2HitArr = array.new_bool(5, false)
+var bool[] earlyFiredArr = array.new_bool(5, false)
+var bool[] gapPendingArr = array.new_bool(5, false)
+var bool[] hadTradeArr = array.new_bool(5, false)  // Tracks if ticker had a trade today (blocks LOTO on re-entry, CONFIRMED still allowed)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 9: DAILY RESET
+// ══════════════════════════════════════════════════════════════════════════════
+if ta.change(time("D", "America/New_York")) != 0
+    for i = 0 to 4
+        array.set(stateArr, i, TradeState.IDLE)
+        array.set(entryModeArr, i, "")
+        array.set(entryBarArr, i, na)
+        array.set(entryPriceArr, i, na)
+        array.set(stopPriceArr, i, na)
+        array.set(t1FinalArr, i, na)
+        array.set(t2FinalArr, i, na)
+        array.set(t3FinalArr, i, na)
+        array.set(t1HitArr, i, false)
+        array.set(t2HitArr, i, false)
+        array.set(earlyFiredArr, i, false)
+        array.set(gapPendingArr, i, false)
+        array.set(hadTradeArr, i, false)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 10: PROCESS ALL TICKERS
+// ══════════════════════════════════════════════════════════════════════════════
+[evt1_early, evt1_entry, evt1_t1, evt1_t2, evt1_t3, evt1_stop, evt1_gapPend, evt1_forceExit, mode1, price1, stop1, t1_1, t2_1, t3_1, dte1, cur1, first1] = processTicker(0, t1_on, t1_sym, t1_expTs, t1_res, t1_tgt, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr)
+
+[evt2_early, evt2_entry, evt2_t1, evt2_t2, evt2_t3, evt2_stop, evt2_gapPend, evt2_forceExit, mode2, price2, stop2, t1_2, t2_2, t3_2, dte2, cur2, first2] = processTicker(1, t2_on, t2_sym, t2_expTs, t2_res, t2_tgt, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr)
+
+[evt3_early, evt3_entry, evt3_t1, evt3_t2, evt3_t3, evt3_stop, evt3_gapPend, evt3_forceExit, mode3, price3, stop3, t1_3, t2_3, t3_3, dte3, cur3, first3] = processTicker(2, t3_on, t3_sym, t3_expTs, t3_res, t3_tgt, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr)
+
+[evt4_early, evt4_entry, evt4_t1, evt4_t2, evt4_t3, evt4_stop, evt4_gapPend, evt4_forceExit, mode4, price4, stop4, t1_4, t2_4, t3_4, dte4, cur4, first4] = processTicker(3, t4_on, t4_sym, t4_expTs, t4_res, t4_tgt, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr)
+
+[evt5_early, evt5_entry, evt5_t1, evt5_t2, evt5_t3, evt5_stop, evt5_gapPend, evt5_forceExit, mode5, price5, stop5, t1_5, t2_5, t3_5, dte5, cur5, first5] = processTicker(4, t5_on, t5_sym, t5_expTs, t5_res, t5_tgt, stateArr, entryModeArr, entryBarArr, entryPriceArr, stopPriceArr, t1FinalArr, t2FinalArr, t3FinalArr, t1HitArr, t2HitArr, earlyFiredArr, gapPendingArr, hadTradeArr)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 11: ALERT DISPATCH
+// ══════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER 1 ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if evt1_gapPend and isLiveBar and showWarningAlerts
+    alert("[GAP PENDING] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C | Gapped above $" + str.tostring(t1_res, "#.##") + " | Entry queued after cooldown", alert.freq_once_per_bar)
+
+if evt1_early and isLiveBar
+    alert("[EARLY] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | Price $" + str.tostring(cur1, "#.##") + " | Approaching $" + str.tostring(t1_res, "#.##"), alert.freq_once_per_bar)
+
+// Defensive gate: LOTO only on first trade, CONFIRMED always allowed
+if evt1_entry and isLiveBar and not t1AlertFired and (mode1 == "CONFIRMED" or first1)
+    alertMsg = "[" + mode1 + "] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " (" + dteStr(dte1) + ") | Entry $" + str.tostring(price1, "#.##") + " | Stop $" + str.tostring(stop1, "#.##") + " | T1 $" + str.tostring(t1_1, "#.##") + " | T2 $" + str.tostring(t2_1, "#.##") + " | T3 $" + str.tostring(t3_1, "#.##")
+    if mode1 == "LOTO"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    t1AlertFired := true
+
+if evt1_t1 and isLiveBar and not t1AlertFired
+    alert("[T1 HIT] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | Hit $" + str.tostring(t1_1, "#.##") + " | Next T2 $" + str.tostring(t2_1, "#.##"), alert.freq_once_per_bar)
+    t1AlertFired := true
+
+if evt1_t2 and isLiveBar and not t1AlertFired
+    alert("[T2 HIT] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | Hit $" + str.tostring(t2_1, "#.##") + " | Final T3 $" + str.tostring(t3_1, "#.##"), alert.freq_once_per_bar)
+    t1AlertFired := true
+
+if evt1_t3 and isLiveBar and not t1AlertFired
+    alert("[TARGET] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | Hit $" + str.tostring(t3_1, "#.##") + " | CLOSE POSITION | Mode: " + mode1, alert.freq_once_per_bar)
+    t1AlertFired := true
+
+if evt1_stop and isLiveBar and not t1AlertFired
+    alert("[STOP] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | Stopped $" + str.tostring(stop1, "#.##") + " | Mode: " + mode1, alert.freq_once_per_bar)
+    t1AlertFired := true
+
+if evt1_forceExit and isLiveBar
+    alert("[FORCE EXIT] " + t1_sym + " | $" + str.tostring(t1_k, "#") + "C " + t1_exp + " | EXIT NOW - Market closing", alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER 2 ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if evt2_gapPend and isLiveBar and showWarningAlerts
+    alert("[GAP PENDING] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C | Gapped above $" + str.tostring(t2_res, "#.##") + " | Entry queued after cooldown", alert.freq_once_per_bar)
+
+if evt2_early and isLiveBar
+    alert("[EARLY] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | Price $" + str.tostring(cur2, "#.##") + " | Approaching $" + str.tostring(t2_res, "#.##"), alert.freq_once_per_bar)
+
+// Defensive gate: LOTO only on first trade, CONFIRMED always allowed
+if evt2_entry and isLiveBar and not t2AlertFired and (mode2 == "CONFIRMED" or first2)
+    alertMsg = "[" + mode2 + "] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " (" + dteStr(dte2) + ") | Entry $" + str.tostring(price2, "#.##") + " | Stop $" + str.tostring(stop2, "#.##") + " | T1 $" + str.tostring(t1_2, "#.##") + " | T2 $" + str.tostring(t2_2, "#.##") + " | T3 $" + str.tostring(t3_2, "#.##")
+    if mode2 == "LOTO"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    t2AlertFired := true
+
+if evt2_t1 and isLiveBar and not t2AlertFired
+    alert("[T1 HIT] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | Hit $" + str.tostring(t1_2, "#.##") + " | Next T2 $" + str.tostring(t2_2, "#.##"), alert.freq_once_per_bar)
+    t2AlertFired := true
+
+if evt2_t2 and isLiveBar and not t2AlertFired
+    alert("[T2 HIT] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | Hit $" + str.tostring(t2_2, "#.##") + " | Final T3 $" + str.tostring(t3_2, "#.##"), alert.freq_once_per_bar)
+    t2AlertFired := true
+
+if evt2_t3 and isLiveBar and not t2AlertFired
+    alert("[TARGET] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | Hit $" + str.tostring(t3_2, "#.##") + " | CLOSE POSITION | Mode: " + mode2, alert.freq_once_per_bar)
+    t2AlertFired := true
+
+if evt2_stop and isLiveBar and not t2AlertFired
+    alert("[STOP] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | Stopped $" + str.tostring(stop2, "#.##") + " | Mode: " + mode2, alert.freq_once_per_bar)
+    t2AlertFired := true
+
+if evt2_forceExit and isLiveBar
+    alert("[FORCE EXIT] " + t2_sym + " | $" + str.tostring(t2_k, "#") + "C " + t2_exp + " | EXIT NOW - Market closing", alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER 3 ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if evt3_gapPend and isLiveBar and showWarningAlerts
+    alert("[GAP PENDING] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C | Gapped above $" + str.tostring(t3_res, "#.##") + " | Entry queued after cooldown", alert.freq_once_per_bar)
+
+if evt3_early and isLiveBar
+    alert("[EARLY] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | Price $" + str.tostring(cur3, "#.##") + " | Approaching $" + str.tostring(t3_res, "#.##"), alert.freq_once_per_bar)
+
+// Defensive gate: LOTO only on first trade, CONFIRMED always allowed
+if evt3_entry and isLiveBar and not t3AlertFired and (mode3 == "CONFIRMED" or first3)
+    alertMsg = "[" + mode3 + "] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " (" + dteStr(dte3) + ") | Entry $" + str.tostring(price3, "#.##") + " | Stop $" + str.tostring(stop3, "#.##") + " | T1 $" + str.tostring(t1_3, "#.##") + " | T2 $" + str.tostring(t2_3, "#.##") + " | T3 $" + str.tostring(t3_3, "#.##")
+    if mode3 == "LOTO"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    t3AlertFired := true
+
+if evt3_t1 and isLiveBar and not t3AlertFired
+    alert("[T1 HIT] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | Hit $" + str.tostring(t1_3, "#.##") + " | Next T2 $" + str.tostring(t2_3, "#.##"), alert.freq_once_per_bar)
+    t3AlertFired := true
+
+if evt3_t2 and isLiveBar and not t3AlertFired
+    alert("[T2 HIT] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | Hit $" + str.tostring(t2_3, "#.##") + " | Final T3 $" + str.tostring(t3_3, "#.##"), alert.freq_once_per_bar)
+    t3AlertFired := true
+
+if evt3_t3 and isLiveBar and not t3AlertFired
+    alert("[TARGET] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | Hit $" + str.tostring(t3_3, "#.##") + " | CLOSE POSITION | Mode: " + mode3, alert.freq_once_per_bar)
+    t3AlertFired := true
+
+if evt3_stop and isLiveBar and not t3AlertFired
+    alert("[STOP] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | Stopped $" + str.tostring(stop3, "#.##") + " | Mode: " + mode3, alert.freq_once_per_bar)
+    t3AlertFired := true
+
+if evt3_forceExit and isLiveBar
+    alert("[FORCE EXIT] " + t3_sym + " | $" + str.tostring(t3_k, "#") + "C " + t3_exp + " | EXIT NOW - Market closing", alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER 4 ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if evt4_gapPend and isLiveBar and showWarningAlerts
+    alert("[GAP PENDING] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C | Gapped above $" + str.tostring(t4_res, "#.##") + " | Entry queued after cooldown", alert.freq_once_per_bar)
+
+if evt4_early and isLiveBar
+    alert("[EARLY] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | Price $" + str.tostring(cur4, "#.##") + " | Approaching $" + str.tostring(t4_res, "#.##"), alert.freq_once_per_bar)
+
+// Defensive gate: LOTO only on first trade, CONFIRMED always allowed
+if evt4_entry and isLiveBar and not t4AlertFired and (mode4 == "CONFIRMED" or first4)
+    alertMsg = "[" + mode4 + "] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " (" + dteStr(dte4) + ") | Entry $" + str.tostring(price4, "#.##") + " | Stop $" + str.tostring(stop4, "#.##") + " | T1 $" + str.tostring(t1_4, "#.##") + " | T2 $" + str.tostring(t2_4, "#.##") + " | T3 $" + str.tostring(t3_4, "#.##")
+    if mode4 == "LOTO"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    t4AlertFired := true
+
+if evt4_t1 and isLiveBar and not t4AlertFired
+    alert("[T1 HIT] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | Hit $" + str.tostring(t1_4, "#.##") + " | Next T2 $" + str.tostring(t2_4, "#.##"), alert.freq_once_per_bar)
+    t4AlertFired := true
+
+if evt4_t2 and isLiveBar and not t4AlertFired
+    alert("[T2 HIT] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | Hit $" + str.tostring(t2_4, "#.##") + " | Final T3 $" + str.tostring(t3_4, "#.##"), alert.freq_once_per_bar)
+    t4AlertFired := true
+
+if evt4_t3 and isLiveBar and not t4AlertFired
+    alert("[TARGET] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | Hit $" + str.tostring(t3_4, "#.##") + " | CLOSE POSITION | Mode: " + mode4, alert.freq_once_per_bar)
+    t4AlertFired := true
+
+if evt4_stop and isLiveBar and not t4AlertFired
+    alert("[STOP] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | Stopped $" + str.tostring(stop4, "#.##") + " | Mode: " + mode4, alert.freq_once_per_bar)
+    t4AlertFired := true
+
+if evt4_forceExit and isLiveBar
+    alert("[FORCE EXIT] " + t4_sym + " | $" + str.tostring(t4_k, "#") + "C " + t4_exp + " | EXIT NOW - Market closing", alert.freq_once_per_bar)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TICKER 5 ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+if evt5_gapPend and isLiveBar and showWarningAlerts
+    alert("[GAP PENDING] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C | Gapped above $" + str.tostring(t5_res, "#.##") + " | Entry queued after cooldown", alert.freq_once_per_bar)
+
+if evt5_early and isLiveBar
+    alert("[EARLY] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | Price $" + str.tostring(cur5, "#.##") + " | Approaching $" + str.tostring(t5_res, "#.##"), alert.freq_once_per_bar)
+
+// Defensive gate: LOTO only on first trade, CONFIRMED always allowed
+if evt5_entry and isLiveBar and not t5AlertFired and (mode5 == "CONFIRMED" or first5)
+    alertMsg = "[" + mode5 + "] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " (" + dteStr(dte5) + ") | Entry $" + str.tostring(price5, "#.##") + " | Stop $" + str.tostring(stop5, "#.##") + " | T1 $" + str.tostring(t1_5, "#.##") + " | T2 $" + str.tostring(t2_5, "#.##") + " | T3 $" + str.tostring(t3_5, "#.##")
+    if mode5 == "LOTO"
+        alert(alertMsg, alert.freq_once_per_bar)
+    else
+        alert(alertMsg, alert.freq_once_per_bar_close)
+    t5AlertFired := true
+
+if evt5_t1 and isLiveBar and not t5AlertFired
+    alert("[T1 HIT] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | Hit $" + str.tostring(t1_5, "#.##") + " | Next T2 $" + str.tostring(t2_5, "#.##"), alert.freq_once_per_bar)
+    t5AlertFired := true
+
+if evt5_t2 and isLiveBar and not t5AlertFired
+    alert("[T2 HIT] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | Hit $" + str.tostring(t2_5, "#.##") + " | Final T3 $" + str.tostring(t3_5, "#.##"), alert.freq_once_per_bar)
+    t5AlertFired := true
+
+if evt5_t3 and isLiveBar and not t5AlertFired
+    alert("[TARGET] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | Hit $" + str.tostring(t3_5, "#.##") + " | CLOSE POSITION | Mode: " + mode5, alert.freq_once_per_bar)
+    t5AlertFired := true
+
+if evt5_stop and isLiveBar and not t5AlertFired
+    alert("[STOP] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | Stopped $" + str.tostring(stop5, "#.##") + " | Mode: " + mode5, alert.freq_once_per_bar)
+    t5AlertFired := true
+
+if evt5_forceExit and isLiveBar
+    alert("[FORCE EXIT] " + t5_sym + " | $" + str.tostring(t5_k, "#") + "C " + t5_exp + " | EXIT NOW - Market closing", alert.freq_once_per_bar)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 12: LABEL DISPATCH (Visual labels on chart)
+// ══════════════════════════════════════════════════════════════════════════════
+// ─── TICKER 1 LABELS (only show if chart matches this ticker) ───
+t1_match = showLabels and str.upper(t1_sym) == chartTicker
+if evt1_early and t1_match
+    label.new(bar_index, high, "EARLY", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small, tooltip="EARLY " + t1_sym + " $" + str.tostring(t1_k, "#") + "C | Approaching $" + str.tostring(t1_res, "#.##"))
+
+if evt1_entry and (mode1 == "CONFIRMED" or first1) and t1_match
+    lblText = mode1 == "LOTO" ? "LOTO" : "CALL"
+    lblColor = mode1 == "LOTO" ? color.new(color.orange, 0) : color.new(color.green, 0)
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small, tooltip="[" + mode1 + "] " + t1_sym + " $" + str.tostring(t1_k, "#") + "C " + dteStr(dte1) + " | Entry $" + str.tostring(price1, "#.##") + " | Stop $" + str.tostring(stop1, "#.##") + " | T1 $" + str.tostring(t1_1, "#.##") + " | T2 $" + str.tostring(t2_1, "#.##") + " | T3 $" + str.tostring(t3_1, "#.##"))
+
+if evt1_t1 and t1_match
+    label.new(bar_index, high, "T1", style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small, tooltip="T1 HIT " + t1_sym + " | $" + str.tostring(t1_1, "#.##"))
+
+if evt1_t2 and t1_match
+    label.new(bar_index, high, "T2", style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small, tooltip="T2 HIT " + t1_sym + " | $" + str.tostring(t2_1, "#.##"))
+
+if evt1_t3 and t1_match
+    label.new(bar_index, high, "TARGET", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=size.small, tooltip="TARGET " + t1_sym + " | $" + str.tostring(t3_1, "#.##") + " | CLOSE")
+
+if evt1_stop and t1_match
+    label.new(bar_index, low, "STOP", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small, tooltip="STOP " + t1_sym + " | $" + str.tostring(stop1, "#.##"))
+
+if evt1_forceExit and t1_match
+    label.new(bar_index, high, "EXIT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.small, tooltip="FORCE EXIT " + t1_sym)
+
+// ─── TICKER 2 LABELS (only show if chart matches this ticker) ───
+t2_match = showLabels and str.upper(t2_sym) == chartTicker
+if evt2_early and t2_match
+    label.new(bar_index, high, "EARLY", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small, tooltip="EARLY " + t2_sym + " $" + str.tostring(t2_k, "#") + "C | Approaching $" + str.tostring(t2_res, "#.##"))
+
+if evt2_entry and (mode2 == "CONFIRMED" or first2) and t2_match
+    lblText = mode2 == "LOTO" ? "LOTO" : "CALL"
+    lblColor = mode2 == "LOTO" ? color.new(color.orange, 0) : color.new(color.green, 0)
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small, tooltip="[" + mode2 + "] " + t2_sym + " $" + str.tostring(t2_k, "#") + "C " + dteStr(dte2) + " | Entry $" + str.tostring(price2, "#.##") + " | Stop $" + str.tostring(stop2, "#.##") + " | T1 $" + str.tostring(t1_2, "#.##") + " | T2 $" + str.tostring(t2_2, "#.##") + " | T3 $" + str.tostring(t3_2, "#.##"))
+
+if evt2_t1 and t2_match
+    label.new(bar_index, high, "T1", style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small, tooltip="T1 HIT " + t2_sym + " | $" + str.tostring(t1_2, "#.##"))
+
+if evt2_t2 and t2_match
+    label.new(bar_index, high, "T2", style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small, tooltip="T2 HIT " + t2_sym + " | $" + str.tostring(t2_2, "#.##"))
+
+if evt2_t3 and t2_match
+    label.new(bar_index, high, "TARGET", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=size.small, tooltip="TARGET " + t2_sym + " | $" + str.tostring(t3_2, "#.##") + " | CLOSE")
+
+if evt2_stop and t2_match
+    label.new(bar_index, low, "STOP", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small, tooltip="STOP " + t2_sym + " | $" + str.tostring(stop2, "#.##"))
+
+if evt2_forceExit and t2_match
+    label.new(bar_index, high, "EXIT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.small, tooltip="FORCE EXIT " + t2_sym)
+
+// ─── TICKER 3 LABELS (only show if chart matches this ticker) ───
+t3_match = showLabels and str.upper(t3_sym) == chartTicker
+if evt3_early and t3_match
+    label.new(bar_index, high, "EARLY", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small, tooltip="EARLY " + t3_sym + " $" + str.tostring(t3_k, "#") + "C | Approaching $" + str.tostring(t3_res, "#.##"))
+
+if evt3_entry and (mode3 == "CONFIRMED" or first3) and t3_match
+    lblText = mode3 == "LOTO" ? "LOTO" : "CALL"
+    lblColor = mode3 == "LOTO" ? color.new(color.orange, 0) : color.new(color.green, 0)
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small, tooltip="[" + mode3 + "] " + t3_sym + " $" + str.tostring(t3_k, "#") + "C " + dteStr(dte3) + " | Entry $" + str.tostring(price3, "#.##") + " | Stop $" + str.tostring(stop3, "#.##") + " | T1 $" + str.tostring(t1_3, "#.##") + " | T2 $" + str.tostring(t2_3, "#.##") + " | T3 $" + str.tostring(t3_3, "#.##"))
+
+if evt3_t1 and t3_match
+    label.new(bar_index, high, "T1", style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small, tooltip="T1 HIT " + t3_sym + " | $" + str.tostring(t1_3, "#.##"))
+
+if evt3_t2 and t3_match
+    label.new(bar_index, high, "T2", style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small, tooltip="T2 HIT " + t3_sym + " | $" + str.tostring(t2_3, "#.##"))
+
+if evt3_t3 and t3_match
+    label.new(bar_index, high, "TARGET", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=size.small, tooltip="TARGET " + t3_sym + " | $" + str.tostring(t3_3, "#.##") + " | CLOSE")
+
+if evt3_stop and t3_match
+    label.new(bar_index, low, "STOP", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small, tooltip="STOP " + t3_sym + " | $" + str.tostring(stop3, "#.##"))
+
+if evt3_forceExit and t3_match
+    label.new(bar_index, high, "EXIT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.small, tooltip="FORCE EXIT " + t3_sym)
+
+// ─── TICKER 4 LABELS (only show if chart matches this ticker) ───
+t4_match = showLabels and str.upper(t4_sym) == chartTicker
+if evt4_early and t4_match
+    label.new(bar_index, high, "EARLY", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small, tooltip="EARLY " + t4_sym + " $" + str.tostring(t4_k, "#") + "C | Approaching $" + str.tostring(t4_res, "#.##"))
+
+if evt4_entry and (mode4 == "CONFIRMED" or first4) and t4_match
+    lblText = mode4 == "LOTO" ? "LOTO" : "CALL"
+    lblColor = mode4 == "LOTO" ? color.new(color.orange, 0) : color.new(color.green, 0)
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small, tooltip="[" + mode4 + "] " + t4_sym + " $" + str.tostring(t4_k, "#") + "C " + dteStr(dte4) + " | Entry $" + str.tostring(price4, "#.##") + " | Stop $" + str.tostring(stop4, "#.##") + " | T1 $" + str.tostring(t1_4, "#.##") + " | T2 $" + str.tostring(t2_4, "#.##") + " | T3 $" + str.tostring(t3_4, "#.##"))
+
+if evt4_t1 and t4_match
+    label.new(bar_index, high, "T1", style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small, tooltip="T1 HIT " + t4_sym + " | $" + str.tostring(t1_4, "#.##"))
+
+if evt4_t2 and t4_match
+    label.new(bar_index, high, "T2", style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small, tooltip="T2 HIT " + t4_sym + " | $" + str.tostring(t2_4, "#.##"))
+
+if evt4_t3 and t4_match
+    label.new(bar_index, high, "TARGET", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=size.small, tooltip="TARGET " + t4_sym + " | $" + str.tostring(t3_4, "#.##") + " | CLOSE")
+
+if evt4_stop and t4_match
+    label.new(bar_index, low, "STOP", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small, tooltip="STOP " + t4_sym + " | $" + str.tostring(stop4, "#.##"))
+
+if evt4_forceExit and t4_match
+    label.new(bar_index, high, "EXIT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.small, tooltip="FORCE EXIT " + t4_sym)
+
+// ─── TICKER 5 LABELS (only show if chart matches this ticker) ───
+t5_match = showLabels and str.upper(t5_sym) == chartTicker
+if evt5_early and t5_match
+    label.new(bar_index, high, "EARLY", style=label.style_label_down, color=color.new(color.yellow, 20), textcolor=color.black, size=size.small, tooltip="EARLY " + t5_sym + " $" + str.tostring(t5_k, "#") + "C | Approaching $" + str.tostring(t5_res, "#.##"))
+
+if evt5_entry and (mode5 == "CONFIRMED" or first5) and t5_match
+    lblText = mode5 == "LOTO" ? "LOTO" : "CALL"
+    lblColor = mode5 == "LOTO" ? color.new(color.orange, 0) : color.new(color.green, 0)
+    label.new(bar_index, low, lblText, style=label.style_label_up, color=lblColor, textcolor=color.white, size=size.small, tooltip="[" + mode5 + "] " + t5_sym + " $" + str.tostring(t5_k, "#") + "C " + dteStr(dte5) + " | Entry $" + str.tostring(price5, "#.##") + " | Stop $" + str.tostring(stop5, "#.##") + " | T1 $" + str.tostring(t1_5, "#.##") + " | T2 $" + str.tostring(t2_5, "#.##") + " | T3 $" + str.tostring(t3_5, "#.##"))
+
+if evt5_t1 and t5_match
+    label.new(bar_index, high, "T1", style=label.style_label_down, color=color.new(color.blue, 20), textcolor=color.white, size=size.small, tooltip="T1 HIT " + t5_sym + " | $" + str.tostring(t1_5, "#.##"))
+
+if evt5_t2 and t5_match
+    label.new(bar_index, high, "T2", style=label.style_label_down, color=color.new(color.blue, 0), textcolor=color.white, size=size.small, tooltip="T2 HIT " + t5_sym + " | $" + str.tostring(t2_5, "#.##"))
+
+if evt5_t3 and t5_match
+    label.new(bar_index, high, "TARGET", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=size.small, tooltip="TARGET " + t5_sym + " | $" + str.tostring(t3_5, "#.##") + " | CLOSE")
+
+if evt5_stop and t5_match
+    label.new(bar_index, low, "STOP", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=size.small, tooltip="STOP " + t5_sym + " | $" + str.tostring(stop5, "#.##"))
+
+if evt5_forceExit and t5_match
+    label.new(bar_index, high, "EXIT", style=label.style_label_down, color=color.new(color.purple, 0), textcolor=color.white, size=size.small, tooltip="FORCE EXIT " + t5_sym)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 13: LEVEL LINES (Entry and Target horizontal lines using plot)
+// ══════════════════════════════════════════════════════════════════════════════
+// Conditions for showing lines (only when chart matches ticker)
+showT1Lines = showLevelLines and t1_on and t1_res > 0 and str.upper(t1_sym) == chartTicker
+showT2Lines = showLevelLines and t2_on and t2_res > 0 and str.upper(t2_sym) == chartTicker
+showT3Lines = showLevelLines and t3_on and t3_res > 0 and str.upper(t3_sym) == chartTicker
+showT4Lines = showLevelLines and t4_on and t4_res > 0 and str.upper(t4_sym) == chartTicker
+showT5Lines = showLevelLines and t5_on and t5_res > 0 and str.upper(t5_sym) == chartTicker
+
+// TICKER 1 Lines (green) - Entry dashed style (lighter), Target solid
+plot(showT1Lines ? t1_res : na, "T1 Entry", color=color.new(color.green, 40), linewidth=2, style=plot.style_linebr)
+plot(showT1Lines ? t1_tgt : na, "T1 Target", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// TICKER 2 Lines
+plot(showT2Lines ? t2_res : na, "T2 Entry", color=color.new(color.green, 40), linewidth=2, style=plot.style_linebr)
+plot(showT2Lines ? t2_tgt : na, "T2 Target", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// TICKER 3 Lines
+plot(showT3Lines ? t3_res : na, "T3 Entry", color=color.new(color.green, 40), linewidth=2, style=plot.style_linebr)
+plot(showT3Lines ? t3_tgt : na, "T3 Target", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// TICKER 4 Lines
+plot(showT4Lines ? t4_res : na, "T4 Entry", color=color.new(color.green, 40), linewidth=2, style=plot.style_linebr)
+plot(showT4Lines ? t4_tgt : na, "T4 Target", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// TICKER 5 Lines
+plot(showT5Lines ? t5_res : na, "T5 Entry", color=color.new(color.green, 40), linewidth=2, style=plot.style_linebr)
+plot(showT5Lines ? t5_tgt : na, "T5 Target", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIGURATION LOCK TIMESTAMP (set once per load / input change)
+// ══════════════════════════════════════════════════════════════════════════════
+var label configLockLabel = na
+string configLockLabelText = "CONFIG : " + (month(configLockTime)  < 10 ? "0" : "") + str.tostring(month(configLockTime)) + "-" + (dayofmonth(configLockTime) < 10 ? "0" : "") + str.tostring(dayofmonth(configLockTime)) + " " + (hour(configLockTime)   < 10 ? "0" : "") + str.tostring(hour(configLockTime)) + ":" + (minute(configLockTime) < 10 ? "0" : "") + str.tostring(minute(configLockTime)) + ":" +(second(configLockTime) < 10 ? "0" : "") + str.tostring(second(configLockTime))
+if barstate.islast
+    label.delete(configLockLabel),
+    configLockLabel := label.new(bar_index, high, configLockLabelText, style = label.style_label_upper_right, color = color.new(color.blue, 70), textcolor = color.white, size = size.small)

@@ -1,0 +1,13 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © TemptingBeef
+//https://stackoverflow.com/questions/59765122/vwap-in-pine-script
+//@version=5
+strategy('VWAP example', overlay=true)
+// VWAP
+price = input(defval=hlc3, title='VWAP Source')
+enable_vwap = input(true, title='Enable VWAP')
+vwapResolution = input.timeframe(title='VWAP Resolution', defval='')
+vwapFunction = ta.vwap(price)
+vwapSecurity = request.security(syminfo.tickerid, vwapResolution, vwapFunction)
+plot(enable_vwap ? vwapSecurity : na, title='VWAP', color=color.new(color.black, 0), linewidth=2, editable=true)  // All TimeFrames
+

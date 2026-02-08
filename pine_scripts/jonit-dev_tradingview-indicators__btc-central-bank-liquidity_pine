@@ -1,0 +1,153 @@
+//@version=5
+indicator("BTC Power of Law x Central Bank Liquidity", overlay=false)
+
+// ---------------------------
+// Parameters
+// ---------------------------
+cbs_length = input.int(14, title="CBS ROC Period", minval=1)
+zscore_length = input.int(100, title="Z-Score Length", minval=1)
+signal_smoothing = input.int(9, title="Signal EMA Period", minval=1)
+threshold_upper = input.float(70.0, title="Upper Threshold", step=0.1)
+threshold_lower = input.float(30.0, title="Lower Threshold", step=0.1)
+cbs_ma_length = input.int(40, title="CBS Moving Average Length", minval=1)
+
+// ---------------------------
+// Calculate Days Since Inception
+// ---------------------------
+var inceptionDate = timestamp(2009, 1, 3, 0, 0)
+daysSinceInception = (time - inceptionDate) / 86400000
+daysSinceInception := daysSinceInception < 1 ? 1 : daysSinceInception  // Prevent log(0)
+
+// ---------------------------
+// Power Law Model Price
+// ---------------------------
+// Define the exponential model: price = exp(5.71 * ln(days) - 38.16)
+modelPrice = math.exp(5.71 * math.log(daysSinceInception) - 38.16)
+
+// ---------------------------
+// Power Law Oscillator
+// ---------------------------
+// Calculate the Power Law Oscillator as the percentage deviation from the model price
+powerLawOscillator = ((close - modelPrice) / modelPrice) * 100
+
+// ---------------------------
+// Fetch Central Bank Balance Sheets (Weekly Data)
+// ---------------------------
+us_cbs = request.security('ECONOMICS:USCBBS', 'W', close, gaps=barmerge.gaps_off)
+jp_cbs = request.security('ECONOMICS:JPCBBS', 'W', close, gaps=barmerge.gaps_off)
+cn_cbs = request.security('ECONOMICS:CNCBBS', 'W', close, gaps=barmerge.gaps_off)
+eu_cbs = request.security('ECONOMICS:EUCBBS', 'W', close, gaps=barmerge.gaps_off)
+
+// Fetch FX rates (Daily Data)
+usd_jpy = request.security('FX:USDJPY', timeframe.period, close, gaps=barmerge.gaps_off)
+usd_cny = request.security('FX_IDC:USDCNY', timeframe.period, close, gaps=barmerge.gaps_off)
+eur_usd = request.security('FX:EURUSD', timeframe.period, close, gaps=barmerge.gaps_off)
+
+// Adjust Non-USD Balance Sheets to USD
+jp_cbs_usd = na(jp_cbs) or na(usd_jpy) ? na : jp_cbs / usd_jpy
+cn_cbs_usd = na(cn_cbs) or na(usd_cny) ? na : cn_cbs / usd_cny
+eu_cbs_usd = na(eu_cbs) or na(eur_usd) ? na : eu_cbs * eur_usd
+
+// Total Adjusted Central Bank Liquidity in USD
+total_cbs_usd = na(us_cbs) or na(jp_cbs_usd) or na(cn_cbs_usd) or na(eu_cbs_usd) ? na : us_cbs + jp_cbs_usd + cn_cbs_usd + eu_cbs_usd
+
+// ---------------------------
+// Central Bank Liquidity Rate of Change
+// ---------------------------
+cbs_roc = na(total_cbs_usd) ? na : ta.roc(total_cbs_usd, cbs_length)
+
+// Z-Score Normalization of CBS ROC
+cbs_roc_mean = ta.sma(cbs_roc, zscore_length)
+cbs_roc_std = ta.stdev(cbs_roc, zscore_length)
+cbs_roc_zscore = (cbs_roc - cbs_roc_mean) / cbs_roc_std
+
+// ---------------------------
+// Combine Power Law Oscillator with CBS ROC Z-Score
+// ---------------------------
+// Scale the CBS ROC z-score to make the histogram visible alongside the normalized oscillator
+scaled_cbs_zscore = cbs_roc_zscore * 20  // Increased scaling factor for visibility
+
+// Combine the oscillators
+raw_combined_oscillator = powerLawOscillator + scaled_cbs_zscore
+
+// Smooth the combined oscillator
+smoothed_oscillator = ta.ema(raw_combined_oscillator, signal_smoothing)
+
+// ---------------------------
+// Normalize the Oscillator
+// ---------------------------
+osc_min = ta.lowest(smoothed_oscillator, zscore_length)
+osc_max = ta.highest(smoothed_oscillator, zscore_length)
+normalized_oscillator = 100 * (smoothed_oscillator - osc_min) / (osc_max - osc_min)
+
+// ---------------------------
+// Dynamic Coloring for Oscillator
+// ---------------------------
+is_osc_red = normalized_oscillator > threshold_upper
+is_osc_green = normalized_oscillator < threshold_lower
+osc_color = is_osc_red ? color.red : is_osc_green ? color.green : color.yellow
+
+// ---------------------------
+// Determine if the liquidity is rising or falling
+// ---------------------------
+cbs_ma = ta.sma(scaled_cbs_zscore, cbs_ma_length)
+
+// Determine if cbs_ma is rising or falling
+cbs_ma_diff = cbs_ma - cbs_ma[1]
+
+// Conditional color for CBS MA
+is_cbs_ma_green = (cbs_ma > 20 or cbs_ma < -20)
+is_cbs_ma_red = (cbs_ma_diff < 0) and not is_cbs_ma_green
+cbs_ma_color = is_cbs_ma_green ? color.green : is_cbs_ma_red ? color.red : (cbs_ma_diff > 0 and cbs_ma >= -20 and cbs_ma <= 20) ? color.yellow : color.white
+
+// ---------------------------
+// Plotting
+// ---------------------------
+// Plot the normalized oscillator
+plot(normalized_oscillator, color=osc_color, linewidth=2, title="Enhanced Power Law Oscillator")
+
+// Plot the scaled Central Bank Liquidity Histogram with dynamic colors
+liquidity_color = #33793554
+plot(scaled_cbs_zscore, color=liquidity_color, style=plot.style_histogram, title="Central Bank Liquidity (Z-Score)", linewidth=2)
+
+// Plot the Central Bank Liquidity MA with dynamic color
+plot(cbs_ma, color=cbs_ma_color, linewidth=2, title="Central Bank Liquidity MA")
+
+// ---------------------------
+// Alignment Detection and Emojis
+// ---------------------------
+// Check for alignment of red colors
+both_red = is_osc_red and is_cbs_ma_red
+
+// Check for alignment of green colors
+both_green = is_osc_green and is_cbs_ma_green
+
+// Detect crossovers to avoid multiple labels
+both_red_cross = both_red and not nz(both_red[1])
+both_green_cross = both_green and not nz(both_green[1])
+
+// Add labels with emojis at alignment points
+if both_red_cross
+    label.new(bar_index, normalized_oscillator, text='💀', style=label.style_label_down, color=color.new(color.black, 80), textcolor=color.white)
+
+if both_green_cross
+    label.new(bar_index, normalized_oscillator, text='💰', style=label.style_label_down, color=color.new(color.black, 80), textcolor=color.white)
+
+// ---------------------------
+// Background Coloring
+// ---------------------------
+bg_color = both_red ? color.new(color.maroon, 85) : both_green ? color.new(color.lime, 85) : is_osc_red ? color.new(color.red, 85) : is_osc_green ? color.new(color.green, 85) : na
+bgcolor(bg_color, title="Buy/Sell Zones")
+
+// ---------------------------
+// Plot Threshold Lines
+// ---------------------------
+hline(threshold_upper, title="Upper Threshold", color=color.gray, linestyle=hline.style_dotted)
+hline(threshold_lower, title="Lower Threshold", color=color.gray, linestyle=hline.style_dotted)
+
+// ---------------------------
+// Peak and Trough Detection
+// ---------------------------
+lookback = input.int(5, title="Peak/Trough Lookback", minval=1)
+is_peak = ta.pivothigh(normalized_oscillator, lookback, lookback)
+is_trough = ta.pivotlow(normalized_oscillator, lookback, lookback)

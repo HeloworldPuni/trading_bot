@@ -1,0 +1,144 @@
+//@version=5
+//indicator(shorttitle="Enhanced Whale Trader", title="Enhanced Whale Trader", overlay=true)
+
+// Basic Inputs
+length = input.int(20, title="Length")
+src = close
+mult = input.float(2, title="Dynamic StdDev Multiplier", minval=1.0, step=0.1)
+volMultiplier = input.float(1.5, title="Volume Multiplier for Stopping Volume")
+vwapLength = input.int(20, title="VWAP Length")
+maLength = input.int(20, title="Moving Average Length")
+kamaLength = input.int(20, title="KAMA Length")
+ichimokuDisplacement = input.int(26, title="Ichimoku Displacement")
+var float partialUpVolStop = na
+var float partialDownVolStop = na
+var float bcProjection = na
+var float cdRetracement = na
+var float stopLoss = 1.0 // or any other initial value
+var float takeProfit = 2.0 // or any other initial value
+
+// Enable/Disable Line Types - User Customization Panel
+showStoppingVolLines = input.bool(true, title="Show Stopping Volume Lines")
+showSRLines = input.bool(true, title="Show Support and Resistance Lines")
+showFibLines = input.bool(true, title="Show Fib Lines")
+showBollingerBand = input.bool(true, title="Show Bollinger Band")
+showStoppingVolumeIntersections = input.bool(true, title="Show Intersections between stopping volume candles to the upside and the downside")
+showHarmonicPatterns = input.bool(true, title="Show Harmonic Patterns")
+showMovingAverages = input.bool(true, title="Show Moving Averages")
+
+// KAMA Calculation
+change = math.abs(src - src[kamaLength])
+volatility = 0.0
+for i = 0 to kamaLength - 1
+    volatility := volatility + math.abs(src[i] - src[i + 1])
+er = change / volatility
+fastSC = 2 / (2 + 1)
+slowSC = 2 / (30 + 1)
+sc = math.pow(er * (fastSC - slowSC) + slowSC, 2)
+var float kama = na
+kama := na(kama) ? ta.sma(src, kamaLength) : kama[1] + sc * (src - kama[1])
+
+// Bollinger Bands with Dynamic Multiplier
+basis = ta.sma(src, length)
+dev = mult * ta.stdev(src, length)
+upper = basis + dev
+lower = basis - dev
+
+// VWAP and Moving Averages
+vwap = ta.vwap(vwapLength)
+ma = ta.sma(src, maLength)
+
+// Ichimoku Cloud Calculation
+conversionLinePeriods = 9
+baseLinePeriods = 26
+laggingSpan2Periods = 52
+displacement = ichimokuDisplacement
+lead1 = (ta.highest(high, conversionLinePeriods) + ta.lowest(low, conversionLinePeriods)) / 2
+lead2 = (ta.highest(high, baseLinePeriods) + ta.lowest(low, baseLinePeriods)) / 2
+conversionLine = (ta.highest(high, conversionLinePeriods) + ta.lowest(low, conversionLinePeriods)) / 2
+baseLine = (ta.highest(high, baseLinePeriods) + ta.lowest(low, baseLinePeriods)) / 2
+laggingSpan = close[displacement]
+
+// RSI, MACD, and ATR Parameters and Conditions
+rsiLength = input.int(14, title="RSI Length")
+rsiOverBought = input.int(70, title="RSI Overbought Level")
+rsiOverSold = input.int(30, title="RSI Oversold Level")
+rsi = ta.rsi(close, rsiLength)
+overSold = rsi < rsiOverSold
+overBought = rsi > rsiOverBought
+macdShortLength = input.int(12, title="MACD Short Period Length")
+macdLongLength = input.int(26, title="MACD Long Period Length")
+macdSignalSmoothing = input.int(9, title="MACD Signal Smoothing Period")
+[macdLine, signalLine, _] = ta.macd(close, macdShortLength, macdLongLength, macdSignalSmoothing)
+bullishMACD = ta.crossover(macdLine, signalLine)
+bearishMACD = ta.crossunder(macdLine, signalLine)
+atrLength = input.int(14, title="ATR Length")
+atr = ta.atr(atrLength)
+
+// Stopping Volume Analysis
+volSma = ta.sma(volume, length)
+stoppingVol = volume > volSma * volMultiplier
+upVolStop = stoppingVol and close > open
+downVolStop = stoppingVol and close < open
+
+// Fibonacci, S/R, and Harmonic Patterns
+highLevel = ta.highest(high, length)
+lowLevel = ta.lowest(low, length)
+fib382 = highLevel - 0.382 * (highLevel - lowLevel)
+fib618 = highLevel - 0.618 * (highLevel - lowLevel)
+
+// Buy and Sell Conditions with Risk Management
+buyCondition = bullishMACD and not overBought and rsi < 55
+sellCondition = bearishMACD and not overSold and rsi > 45
+
+// Alert and Notification Setup
+alertcondition(buyCondition, title="Buy Alert", message="Buy Signal Triggered")
+alertcondition(sellCondition, title="Sell Alert", message="Sell Signal Triggered")
+
+// Plotting
+plot(showBollingerBand ? upper : na, color=color.red)
+plot(showBollingerBand ? lower : na, color=color.green)
+plot(showMovingAverages ? vwap : na, color=color.blue)
+plot(showMovingAverages ? ma : na, color=color.purple)
+plot(conversionLine, color=color.red, title="Conversion Line")
+plot(baseLine, color=color.blue, title="Base Line")
+plot(lead1[displacement], color=color.green, title="Lead 1", offset=displacement)
+plot(lead2[displacement], color=color.orange, title="Lead 2", offset=displacement)
+plot(laggingSpan, color=color.purple, title="Lagging Span")
+plot(kama, color=color.orange, title="KAMA")
+
+plotshape(series=buyCondition, location=location.belowbar, color=color.green, style=shape.circle, title="Buy Signal")
+plotshape(series=sellCondition, location=location.abovebar, color=color.red, style=shape.circle, title="Sell Signal")
+
+// Additional Plotting for Stopping Volume, Fibonacci, S/R, Harmonic Patterns, etc.
+plotcandle(showStoppingVolLines and partialUpVolStop ? high : na, showStoppingVolLines and partialUpVolStop ? high : na, showStoppingVolLines and partialUpVolStop ? low : na, showStoppingVolLines and partialUpVolStop ? close : na, color=color.green, title="Partial Stopping Volume Up")
+plotcandle(showStoppingVolLines and partialDownVolStop ? high : na, showStoppingVolLines and partialDownVolStop ? high : na, showStoppingVolLines and partialDownVolStop ? low : na, showStoppingVolLines and partialDownVolStop ? close : na, color=color.red, title="Partial Stopping Volume Down")
+plot(showFibLines ? fib382 : na, color=color.blue, title="Fibonacci 0.382 Level")
+plot(showFibLines ? fib618 : na, color=color.olive, title="Fibonacci 0.618 Level")
+
+// Example for S/R Lines and Harmonic Patterns
+// Make sure to adjust the logic as per your requirements
+line.new(x1=bar_index[length], y1=highLevel, x2=bar_index, y2=highLevel, color=color.purple, width=1, extend=extend.right)
+line.new(x1=bar_index[length], y1=lowLevel, x2=bar_index, y2=lowLevel, color=color.orange, width=1, extend=extend.right)
+
+//plotshape(showHarmonicPatterns and series=ta.highest(high, length), location=location.abovebar, color=color.blue, style=shape.cross, title="X Point")
+//plotshape(showHarmonicPatterns and series=ta.lowest(low, length), location=location.belowbar, color=color.red, style=shape.cross, title="A Point")
+//plotshape(showHarmonicPatterns and series=ta.highest(high, length) - bcProjection, location=location.abovebar, color=color.orange, style=shape.cross, title="B Point")
+//plotshape(showHarmonicPatterns and series=ta.lowest(low, length) + cdRetracement, location=location.belowbar, color=color.purple, style=shape.cross, title="C Point")
+//plotshape(showHarmonicPatterns and series=ta.highest(high, length), location=location.abovebar, color=color.green, style=shape.cross, title="D Point")
+
+// [Rest of your code]
+
+
+// Backtesting Functionality
+strategy("Enhanced Whale Trader Strategy", overlay=true)
+strategy.entry("Buy", strategy.long, when=buyCondition)
+strategy.exit("Sell", "Buy", when=sellCondition, stop=atr*stopLoss, limit=atr*takeProfit)
+
+// Risk Management Tools
+riskPerTrade = input.float(5.0, title="Risk per Trade (%)", minval=0.1, maxval=10.0)
+accountSize = input.float(100000, title="Account Size")
+tradeRisk = accountSize * (riskPerTrade / 100)
+stopLossLevel = input.float(1.0, title="Stop Loss (%)", minval=0.1, maxval=5.0)
+takeProfitLevel = input.float(2.0, title="Take Profit (%)", minval=0.1, maxval=10.0)
+positionSize = tradeRisk / (atr * stopLossLevel)

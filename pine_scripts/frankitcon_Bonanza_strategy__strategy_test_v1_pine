@@ -1,0 +1,298 @@
+//@version=5
+strategy("95.Strategy Test v1 - Extended Conditions", overlay = true , default_qty_value = 100, default_qty_type = strategy.percent_of_equity, initial_capital = 1000000, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+//=============================================================================
+// STRATEGY EXPLANATION
+//=============================================================================
+// This strategy extends the base strategy v1 with advanced pattern detection
+// and momentum analysis from analyse2.pine. It combines:
+// 1. Basic SMA and RSI conditions from strategy v1
+// 2. Market structure patterns (Higher Highs, Lower Lows, Higher Lows, Lower Highs)
+// 3. Advanced momentum analysis using angle calculations
+// 4. Head and Shoulders pattern detection from the original strategy
+//=============================================================================
+
+// ******************************
+// ***** haveStock ***** 
+
+var int haveStock = 0
+_offset = 0
+
+// ******************************
+// ***** inTradeWindow ***** 
+
+i_dateFilter    = input      (true  , title="═════ Date Range Filtering ═════")
+i_fromYear      = input.int  (2019  , title="From Year"  , minval = 19, inline='from')
+i_fromMonth     = input.int  (4     , title="Month" , minval = 1, maxval = 12, inline='from')
+i_fromDay       = input.int  (4     , title=" Day"   , minval = 1, maxval = 31, inline='from')
+i_toYear        = input.int  (2023  , title="To Year"    , minval = 1900, inline='to')
+i_toMonth       = input.int  (4     , title="Month"   , minval = 1, maxval = 12, inline='to')
+i_toDay         = input.int  (4     , title="Day"     , minval = 1, maxval = 31, inline='to')
+
+fromDate        = timestamp  (i_fromYear, i_fromMonth, i_fromDay, 09, 00)
+toDate          = timestamp  (i_toYear  , i_toMonth  , i_toDay  , 09, 00)
+
+_backtestStartDate = input.time(timestamp("4 Apr 2019 09:00"), 
+     title="Start Date", group="Backtest Time Period", confirm = true,
+     tooltip="This start date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+_backtestEndDate = input.time(timestamp("4 Apr 2023 09:00"), 
+     title="End Date", group="Backtest Time Period", confirm = true,
+     tooltip="This end date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+
+inTradeWindow = i_dateFilter and time >= fromDate and time <= toDate or  not i_dateFilter and time >= _backtestStartDate and     time < _backtestEndDate  
+f_tradeDateIsAllowed() => inTradeWindow 
+bgcolor(inTradeWindow ? color.rgb(245, 250, 219) : na)
+
+// ******************************
+// ***** Percentage growth start end ***** 
+var float startCourse = na
+var float endCourse = na
+if inTradeWindow and not inTradeWindow[1]
+    startCourse := open
+if not inTradeWindow and inTradeWindow[1]
+    endCourse := close[1]
+plot (endCourse?(endCourse/startCourse-1)*100:na, "Percentage growth", display = display.data_window)
+plot (startCourse, "startCourse", display = display.data_window)
+plot (endCourse, "endCourse", display = display.data_window)
+
+// ******************************
+// ***** TECHNICAL INDICATORS *****
+
+sma50 = ta.sma(close, 50)
+sma100 = ta.sma(close, 100)
+rsi14 = ta.rsi(close,14)
+rsiInput = input.int(18,"rsiLevel", tooltip="RSI threshold for sell signals")
+atrLength=12
+atr = ta.atr(atrLength)
+
+// ******************************
+// ***** PATTERN DETECTION PARAMETERS *****
+
+lb = input.int(15, title='Left Bars', minval=1, tooltip="Number of bars to look back for pivot points")
+rb = input.int(10, title='Right Bars', minval=1, tooltip="Number of bars to look ahead for pivot points")
+max = input.int(10, title='Max size arrays', minval=3, maxval=50, inline='style', tooltip="Maximum number of pattern points to store")
+angle_len = input.int(2,"angle length", step=1, tooltip="Number of points to use for angle calculation")
+angle_factor= input.int (20,"angle multiply factor", step=10, tooltip="Multiplier to amplify angle values")
+pi= 3.141592
+
+// ******************************
+// ***** PATTERN DETECTION ARRAYS *****
+
+var float   [] a_HighClose    = array.new_float   (3)
+var int     [] a_HighDir      = array.new_int     (3)
+var int     [] a_HighIndex    = array.new_int     (3)
+var float   [] a_LowClose     = array.new_float   (3)
+var int     [] a_LowDir       = array.new_int     (3)
+var int     [] a_LowIndex     = array.new_int     (3)
+
+if array.size(a_HighClose) > max
+    array.pop(a_HighClose)
+    array.pop(a_HighDir)
+    array.pop(a_HighIndex)
+if array.size(a_LowClose) > max
+    array.pop(a_LowClose)
+    array.pop(a_LowDir)
+    array.pop(a_LowIndex)
+
+// ******************************
+// ***** PIVOT POINT DETECTION *****
+
+ph = ta.pivothigh(lb, rb)
+pl = ta.pivotlow(lb, rb)
+
+iff_1 = pl ? -1 : na
+hl = ph ? 1 : iff_1
+iff_2 = pl ? pl : na
+zz = ph ? ph : iff_2
+
+valuewhen_1 = ta.valuewhen(hl, hl, 1)
+valuewhen_2 = ta.valuewhen(zz, zz, 1)
+zz := pl and hl == -1 and valuewhen_1 == -1 and pl > valuewhen_2 ? na : zz
+
+valuewhen_3 = ta.valuewhen(hl, hl, 1)
+valuewhen_4 = ta.valuewhen(zz, zz, 1)
+zz := ph and hl == 1 and valuewhen_3 == 1 and ph < valuewhen_4 ? na : zz
+
+valuewhen_5 = ta.valuewhen(hl, hl, 1)
+valuewhen_6 = ta.valuewhen(zz, zz, 1)
+hl := hl == -1 and valuewhen_5 == 1 and zz > valuewhen_6 ? na : hl
+
+valuewhen_7 = ta.valuewhen(hl, hl, 1)
+valuewhen_8 = ta.valuewhen(zz, zz, 1)
+hl := hl == 1 and valuewhen_7 == -1 and zz < valuewhen_8 ? na : hl
+zz := na(hl) ? na : zz
+
+// ******************************
+// ***** PATTERN ANALYSIS FUNCTIONS *****
+
+findprevious() =>
+    ehl = hl == 1 ? -1 : 1
+    loc1 = 0.0
+    loc2 = 0.0
+    loc3 = 0.0
+    loc4 = 0.0
+    xx = 0
+    
+    for x = 1 to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc1 := zz[x]
+            xx := x + 1
+            break
+            
+    ehl := hl
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc2 := zz[x]
+            xx := x + 1
+            break
+            
+    ehl := hl == 1 ? -1 : 1
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc3 := zz[x]
+            xx := x + 1
+            break
+            
+    ehl := hl
+    for x = xx to 1000 by 1
+        if hl[x] == ehl and not na(zz[x])
+            loc4 := zz[x]
+            break
+            
+    [loc1, loc2, loc3, loc4]
+
+// ******************************
+// ***** PATTERN IDENTIFICATION *****
+
+float a = na
+float b = na
+float c = na
+float d = na
+float e = na
+
+if not na(hl)
+    [loc1, loc2, loc3, loc4] = findprevious()
+    a := zz
+    b := loc1
+    c := loc2
+    d := loc3
+    e := loc4
+    e
+
+_hh = zz and a > b and a > c and c > b and c > d
+_ll = zz and a < b and a < c and c < b and c < d
+_hl = zz and (a >= c and b > c and b > d and d > c and d > e or a < b and a > c and b < d)
+_lh = zz and (a <= c and b < c and b < d and d < c and d < e or a > b and a < c and b > d)
+
+// ******************************
+// ***** PATTERN STORAGE *****
+
+if _hh
+    array.unshift(a_HighClose, close[rb])
+    array.unshift(id = a_HighIndex, value = bar_index-rb)
+    array.unshift(a_HighDir, 1)
+
+if _lh
+    array.unshift(a_HighClose, close[rb])
+    array.unshift(id = a_HighIndex, value = bar_index-rb)
+    array.unshift(a_HighDir, -1)
+
+if _hl
+    array.unshift(a_LowClose, close[rb])
+    array.unshift(id = a_LowIndex, value = bar_index-rb)
+    array.unshift(a_LowDir, 1)
+
+if _ll
+    array.unshift(a_LowClose, close[rb])
+    array.unshift(id = a_LowIndex, value = bar_index-rb)
+    array.unshift(a_LowDir, -1)
+
+// ******************************
+// ***** MOMENTUM CALCULATIONS *****
+
+perc_High = array.size(a_HighIndex)<9? 0 : ((close - array.get(id = a_HighClose, index = 0 ))  / close * 100) / (bar_index - array.get(id = a_HighIndex, index = 0 )) 
+perc_Low = array.size(a_LowIndex)<9? 0 :((close - array.get(id = a_LowClose, index = 0 )) / close * 100)  / (bar_index - array.get(id = a_LowIndex, index = 0 ))  
+
+atan_High = math.atan(perc_High  * angle_factor) / pi * 2
+atan_Low = math.atan(perc_Low * angle_factor) / pi * 2
+
+plot (perc_High ,"High perc", display = display.data_window)
+plot (perc_Low ,"Low perc", display = display.data_window)
+plot (atan_High ,"High atan", display = display.data_window)
+plot (atan_Low ,"Low atan", display = display.data_window)
+
+// ******************************
+// ***** COMBINED TRADING CONDITIONS *****
+
+// Original conditions from strategy v1
+originalBuyConditions = sma50>sma100 and rsi14>50
+originalSellConditions = (sma50<=sma100 and rsi14<rsiInput)
+
+// Extended conditions from analyse2.pine
+extendedBuyConditions = sma50>=sma100 and _hl ==1 and (atan_Low >0 or atan_High>0)
+extendedSellConditions = (sma50<=sma100 and (rsi14<rsiInput or atan_Low< -0.90 or atan_High<-0.90))
+
+// COMBINED CONDITIONS: Both original AND extended conditions must be true
+buyConditions = originalBuyConditions and extendedBuyConditions
+sellConditions = originalSellConditions and extendedSellConditions
+
+preSellConditions = false
+
+// ******************************
+// ***** VISUALIZATION AND DEBUGGING *****
+
+plot(buyConditions?1:na, title="buyConditions", color=buyConditions?color.green:color.red, display = display.data_window, offset = -_offset )
+plot(sellConditions?1:na, title="sellConditions", color=sellConditions?color.green:color.red, display = display.data_window, offset = -_offset )
+plot(originalBuyConditions?1:na, title="originalBuyConditions", color=color.blue, display = display.data_window, offset = -_offset )
+plot(extendedBuyConditions?1:na, title="extendedBuyConditions", color=color.orange, display = display.data_window, offset = -_offset )
+
+plotchar(buyConditions?1:na, "myBuy", "⬆", location.top, display = display.pane, color = color.blue)
+plotchar(sellConditions?1:na, "mySell", "⬇", location.bottom, display = display.pane, color = color.red)
+
+plotshape(_hl, text='HL', title='Higher Low', style=shape.labelup, color=color.new(color.lime, 0), textcolor=color.new(color.black, 0), location=location.belowbar, offset=-rb)
+plotshape(_hh, text='HH', title='Higher High', style=shape.labeldown, color=color.new(color.lime, 0), textcolor=color.new(color.black, 0), location=location.abovebar, offset=-rb)
+plotshape(_ll, text='LL', title='Lower Low', style=shape.labelup, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), location=location.belowbar, offset=-rb)
+plotshape(_lh, text='LH', title='Lower High', style=shape.labeldown, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), location=location.abovebar, offset=-rb)
+
+// ******************************
+// ***** TRADE EXECUTION LOGIC *****
+
+if inTradeWindow and (haveStock>0) and sellConditions and not preSellConditions
+    if haveStock==1
+        strategy.close("EN", comment = "sell")
+    haveStock := 0
+    alert('VUSD sell')
+
+if inTradeWindow and (haveStock==2) and sellConditions
+    strategy.close("EN", comment = "sell")
+    haveStock := 0
+    alert('VUSD sell')
+
+if not inTradeWindow and inTradeWindow[1]
+    strategy.cancel_all()
+    strategy.close_all(comment="Date Range Exit")
+    haveStock := 0
+    alert('VUSD exit')
+
+if inTradeWindow and (haveStock != 1) and buyConditions and not sellConditions  and not preSellConditions
+    strategy.entry("EN", strategy.long, comment="buy")
+    haveStock := 1
+    alert('VUSD buy')
+
+bgcolor(haveStock==2 ? color.rgb(238, 244, 214)  : haveStock==1 ? color.rgb(235, 253, 163)  : na)
+
+plot(haveStock?1:na, title="haveStock", color=haveStock?color.blue:color.red, display = display.data_window, offset = -_offset )
+
+// ******************************
+// ***** ADDITIONAL DEBUGGING INFO *****
+
+plot(sma50, "SMA50", color=color.blue)
+plot(sma100, "SMA100", color=color.red)
+plot(rsi14, "RSI14", display = display.data_window)
+plot(_hl?1:0, "HL Pattern", display = display.data_window, color=color.green)
+plot(atan_Low, "atan_Low", display = display.data_window, color=color.purple)
+plot(atan_High, "atan_High", display = display.data_window, color=color.orange)

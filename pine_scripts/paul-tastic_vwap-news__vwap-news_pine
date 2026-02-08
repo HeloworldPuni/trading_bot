@@ -1,0 +1,1052 @@
+// © paul-tastic
+// version 1.0.0
+//@version=6
+strategy("VWAP News Filter", overlay=true, initial_capital=100000, commission_type=strategy.commission.cash_per_contract, commission_value=0.62, max_boxes_count=500, max_labels_count=500, process_orders_on_close=true, margin_long=1, margin_short=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ECONOMIC CALENDAR LIBRARY
+// ══════════════════════════════════════════════════════════════════════════════
+import jdehorty/EconomicCalendar/4 as ec
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Time Filter
+startHour = input.int(8, "Start Hour (EST)", minval=0, maxval=23, group="Time Filter")
+startMinute = input.int(30, "Start Minute", minval=0, maxval=59, group="Time Filter")
+endHour = input.int(14, "End Hour (EST)", minval=0, maxval=23, group="Time Filter")
+endMinute = input.int(30, "End Minute", minval=0, maxval=59, group="Time Filter")
+
+// News Filter Settings
+useNewsFilter = input.bool(true, "Enable News Filter", group="News Filter")
+blockFOMC = input.bool(true, "Block on FOMC Days", group="News Filter")
+blockCPI = input.bool(true, "Block on CPI Days", group="News Filter")
+blockNFP = input.bool(true, "Block on NFP Days", group="News Filter")
+blockPPI = input.bool(false, "Block on PPI Days", group="News Filter")
+reduceSizeOnMediumNews = input.bool(true, "Reduce Size on Medium News", tooltip="PPI, CCI, CSI - take half position", group="News Filter")
+newsBufferMinutes = input.int(60, "Post-News Buffer (minutes)", minval=0, maxval=240, tooltip="Wait this many minutes after news before trading", group="News Filter")
+
+// VWAP Settings
+vwapSource = input.source(hlc3, "VWAP Source", group="VWAP")
+stdev1Mult = input.float(1.0, "1st Std Dev Multiplier", step=0.1, group="VWAP")
+stdev2Mult = input.float(2.5, "2nd Std Dev Multiplier", step=0.1, group="VWAP")
+
+// Entry Settings
+requirePriorExtension = input.bool(false, "Require Prior Extension to 2 SD", group="Entry")
+minBarsExtended = input.int(3, "Min Bars at Extension", minval=1, group="Entry")
+requireCooldown = input.bool(true, "Require Cooldown After Trade", group="Entry")
+cooldownBarsAt2SD = input.int(4, "Cooldown Bars in 1-2SD Zone", minval=1, tooltip="After trade closes, price must be in 1-2SD zone for this many bars before next trade", group="Entry")
+
+// Exit Settings
+targetVWAP = input.bool(false, "Target VWAP", group="Exit")
+profitPoints = input.float(50.0, "Profit Target (points)", group="Exit")
+usePointsTarget = input.bool(false, "Use Points Target Instead", group="Exit")
+
+// Stop Loss
+atrLength = input.int(14, "ATR Length", group="Stop Loss")
+atrMult = input.float(1.5, "ATR Multiplier for Stop", group="Stop Loss")
+useBreakevenStop = input.bool(true, "Move SL to BE at 50% TP", group="Stop Loss")
+beOffsetTicks = input.int(4, "BE Offset (ticks)", minval=0, tooltip="Move SL to entry + this many ticks when 50% TP reached", group="Stop Loss")
+
+// Key Levels
+showPDHL = input.bool(false, "Show Previous Day High/Low", group="Key Levels")
+showRoundNumbers = input.bool(false, "Show Round Numbers", group="Key Levels")
+roundNumberInterval = input.int(100, "Round Number Interval", minval=10, step=10, group="Key Levels")
+
+// Setup Markers
+showSetupMarkers = input.bool(true, "Show Setup Condition Markers", group="Visuals")
+showOutOfWindowSetups = input.bool(true, "Show Out-of-Window Setups", tooltip="Show gray markers for setups that would have triggered outside the trading window", group="Visuals")
+showDebugTable = input.bool(true, "Show Debug Table", group="Visuals")
+showTradeTracker = input.bool(true, "Show Trade Tracker", group="Visuals")
+showNewsTable = input.bool(true, "Show News Status Table", group="Visuals")
+
+// Paul Rule
+requireReversalPattern = input.bool(false, "Require Reversal Pattern (Paul Rule)", group="Entry")
+
+// RSI Filter
+useRSIFilter = input.bool(false, "Use RSI Filter", group="Entry")
+rsiLength = input.int(14, "RSI Length", minval=1, group="Entry")
+rsiOverbought = input.int(80, "RSI Overbought", minval=50, maxval=99, tooltip="Short requires RSI > this level", group="Entry")
+rsiOversold = input.int(20, "RSI Oversold", minval=1, maxval=50, tooltip="Long requires RSI < this level", group="Entry")
+
+// Position Sizing
+riskPerTrade = input.float(500.0, "Risk Per Trade ($)", minval=1, step=50, tooltip="Dollar amount to risk per trade - position size calculated from this", group="Position Sizing")
+
+// Limit Order R:R Settings
+useLimitOrders = input.bool(true, "Use Limit Orders (R:R Based Entry)", group="R:R Entry")
+rrRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, step=0.1, tooltip="TP distance = SL distance × this value", group="R:R Entry")
+maxBarsToFill = input.int(10, "Max Bars to Wait for Fill", minval=1, tooltip="Cancel limit order if not filled within X bars", group="R:R Entry")
+useVWAPAsObstacle = input.bool(true, "Use VWAP as TP Target", group="R:R Entry")
+usePDHLAsObstacle = input.bool(false, "Use PDH/PDL as TP Target", group="R:R Entry")
+useRoundAsObstacle = input.bool(true, "Use Round Numbers as TP Target", group="R:R Entry")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NEWS FILTER LOGIC
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get economic calendar dates
+fomcDates = ec.fomcMeetings()
+fomcMinutesDates = ec.fomcMinutes()
+cpiDates = ec.cpiReleases()
+nfpDates = ec.nfpReleases()
+ppiDates = ec.ppiReleases()
+cciDates = ec.cciReleases()
+csiDates = ec.csiReleases()
+
+// Helper function: check if current day matches any date in array
+isEventDay(array<int> dates) =>
+    result = false
+    dayStart = timestamp("America/New_York", year, month, dayofmonth, 0, 0, 0)
+    dayEnd = timestamp("America/New_York", year, month, dayofmonth, 23, 59, 59)
+    for i = 0 to array.size(dates) - 1
+        eventTime = array.get(dates, i)
+        if eventTime >= dayStart and eventTime <= dayEnd
+            result := true
+            break
+    result
+
+// Helper function: check if we're within buffer minutes of an event
+isNearEvent(array<int> dates, bufferMins) =>
+    result = false
+    currentTime = time
+    bufferMs = bufferMins * 60 * 1000
+    for i = 0 to array.size(dates) - 1
+        eventTime = array.get(dates, i)
+        // Block from event time to event time + buffer
+        if currentTime >= eventTime and currentTime <= (eventTime + bufferMs)
+            result := true
+            break
+    result
+
+// Determine news conditions
+isFOMCDay = isEventDay(fomcDates) or isEventDay(fomcMinutesDates)
+isCPIDay = isEventDay(cpiDates)
+isNFPDay = isEventDay(nfpDates)
+isPPIDay = isEventDay(ppiDates)
+isCCIDay = isEventDay(cciDates)
+isCSIDay = isEventDay(csiDates)
+
+// Check if near high-impact events (within buffer)
+nearFOMC = isNearEvent(fomcDates, newsBufferMinutes) or isNearEvent(fomcMinutesDates, newsBufferMinutes)
+nearCPI = isNearEvent(cpiDates, newsBufferMinutes)
+nearNFP = isNearEvent(nfpDates, newsBufferMinutes)
+
+// High impact = block completely
+isHighImpactNews = (blockFOMC and isFOMCDay) or (blockCPI and isCPIDay) or (blockNFP and isNFPDay)
+
+// Medium impact = reduce size
+isMediumImpactNews = isPPIDay or isCCIDay or isCSIDay
+
+// Near high-impact event (within buffer) = also block
+isNearHighImpact = nearFOMC or nearCPI or nearNFP
+
+// News score: 0 = no trade, 1 = reduced size, 2 = full size
+newsScore = isHighImpactNews or isNearHighImpact ? 0 : (isMediumImpactNews and reduceSizeOnMediumNews ? 1 : 2)
+
+// News filter allows trading?
+newsAllowsTrade = not useNewsFilter or newsScore > 0
+
+// Position size multiplier based on news
+newsSizeMultiplier = newsScore == 1 ? 0.5 : 1.0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VWAP CALCULATION (Session-based for futures)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Detect new session (6 PM EST for futures = 18:00)
+newSession = ta.change(time("D")) != 0
+
+var float sumPV = 0.0
+var float sumV = 0.0
+var float sumPV2 = 0.0
+
+// For debug table display - declared here so newSession can reset them
+var bool extUpperForDisplay = false
+var bool extLowerForDisplay = false
+
+// Cooldown tracking - declared here so newSession can reset them
+var bool inCooldown = false
+var int cooldownBarsUpper = 0
+var int cooldownBarsLower = 0
+var bool cooldownSatisfied = true  // Start true so first trade can happen
+
+if newSession
+    sumPV := 0.0
+    sumV := 0.0
+    sumPV2 := 0.0
+    extUpperForDisplay := false
+    extLowerForDisplay := false
+    // Reset cooldown on new session - allow first trade
+    inCooldown := false
+    cooldownSatisfied := true
+    cooldownBarsUpper := 0
+    cooldownBarsLower := 0
+
+sumPV += vwapSource * volume
+sumV += volume
+sumPV2 += vwapSource * vwapSource * volume
+
+vwapValue = sumV != 0 ? sumPV / sumV : na
+variance = sumV != 0 ? (sumPV2 / sumV) - (vwapValue * vwapValue) : na
+stdev = math.sqrt(math.max(variance, 0))
+
+// VWAP Bands
+upperBand1 = vwapValue + stdev * stdev1Mult
+lowerBand1 = vwapValue - stdev * stdev1Mult
+upperBand2 = vwapValue + stdev * stdev2Mult
+lowerBand2 = vwapValue - stdev * stdev2Mult
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+plot(vwapValue, "VWAP", color=color.yellow, linewidth=2, style=plot.style_line)
+p_upper1 = plot(upperBand1, "Upper 1 SD", color=color.new(color.teal, 50))
+p_lower1 = plot(lowerBand1, "Lower 1 SD", color=color.new(color.fuchsia, 50))
+p_upper2 = plot(upperBand2, "Upper 2 SD", color=color.new(color.teal, 30), linewidth=2)
+p_lower2 = plot(lowerBand2, "Lower 2 SD", color=color.new(color.fuchsia, 30), linewidth=2)
+
+// Fill bands
+fill(p_upper1, p_upper2, color=color.new(color.teal, 85), title="Upper Zone")
+fill(p_lower1, p_lower2, color=color.new(color.fuchsia, 85), title="Lower Zone")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// KEY LEVELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Previous Day High/Low
+var float pdh = na
+var float pdl = na
+
+if newSession
+    pdh := high[1]
+    pdl := low[1]
+
+if newSession == false
+    pdh := pdh[1]
+    pdl := pdl[1]
+
+// Track actual previous day values
+var float prevDayHigh = na
+var float prevDayLow = na
+var float todayHigh = na
+var float todayLow = na
+
+if newSession
+    prevDayHigh := todayHigh
+    prevDayLow := todayLow
+    todayHigh := high
+    todayLow := low
+else
+    todayHigh := math.max(todayHigh, high)
+    todayLow := math.min(todayLow, low)
+
+plot(showPDHL ? prevDayHigh : na, "PDH", color=color.new(color.lime, 30), style=plot.style_line, linewidth=1)
+plot(showPDHL ? prevDayLow : na, "PDL", color=color.new(color.red, 30), style=plot.style_line, linewidth=1)
+
+// PDH/PDL Labels
+var label pdhLabel = na
+var label pdlLabel = na
+
+if barstate.islast and showPDHL
+    label.delete(pdhLabel)
+    label.delete(pdlLabel)
+    pdhLabel := label.new(bar_index + 5, prevDayHigh, "PDH", style=label.style_label_left, color=color.new(color.lime, 70), textcolor=color.lime, size=size.small)
+    pdlLabel := label.new(bar_index + 5, prevDayLow, "PDL", style=label.style_label_left, color=color.new(color.red, 70), textcolor=color.red, size=size.small)
+
+// Round Numbers (plot nearest ones above and below price)
+roundBelow = math.floor(close / roundNumberInterval) * roundNumberInterval
+roundAbove = roundBelow + roundNumberInterval
+
+plot(showRoundNumbers ? roundBelow : na, "Round Below", color=color.new(color.gray, 50), style=plot.style_circles, linewidth=1)
+plot(showRoundNumbers ? roundAbove : na, "Round Above", color=color.new(color.gray, 50), style=plot.style_circles, linewidth=1)
+
+// Round Number Labels
+var label roundBelowLabel = na
+var label roundAboveLabel = na
+
+if barstate.islast and showRoundNumbers
+    label.delete(roundBelowLabel)
+    label.delete(roundAboveLabel)
+    roundBelowLabel := label.new(bar_index + 5, roundBelow, str.tostring(roundBelow, "#"), style=label.style_label_left, color=color.new(color.gray, 70), textcolor=color.gray, size=size.small)
+    roundAboveLabel := label.new(bar_index + 5, roundAbove, str.tostring(roundAbove, "#"), style=label.style_label_left, color=color.new(color.gray, 70), textcolor=color.gray, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TIME FILTER
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Convert to exchange time (adjust for your timezone)
+currentHour = hour(time, "America/New_York")
+currentMinute = minute(time, "America/New_York")
+currentTime = currentHour * 100 + currentMinute
+startTime = startHour * 100 + startMinute
+endTime = endHour * 100 + endMinute
+
+inTradingWindow = currentTime >= startTime and currentTime <= endTime
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Track if price was FULLY extended beyond 2 SD (entire bar outside, no wicks touching)
+var int barsAtUpperExtension = 0
+var int barsAtLowerExtension = 0
+var bool hadValidUpperExtension = false
+var bool hadValidLowerExtension = false
+
+// Upper extension: entire bar above 2SD (low > upperBand2)
+fullyAboveUpper2SD = low > upperBand2
+// Lower extension: entire bar below 2SD (high < lowerBand2)
+fullyBelowLower2SD = high < lowerBand2
+
+// Check if price is IN the 1-2SD zone (for cooldown reset)
+inUpper1to2SDZone = close > upperBand1 and close <= upperBand2  // Close in upper 1-2SD zone
+inLower1to2SDZone = close < lowerBand1 and close >= lowerBand2  // Close in lower 1-2SD zone
+
+if fullyAboveUpper2SD
+    barsAtUpperExtension += 1
+else
+    barsAtUpperExtension := 0
+
+if fullyBelowLower2SD
+    barsAtLowerExtension += 1
+else
+    barsAtLowerExtension := 0
+
+// Extension is met when we have enough bars fully outside
+if barsAtUpperExtension >= minBarsExtended
+    hadValidUpperExtension := true
+    extUpperForDisplay := true
+if barsAtLowerExtension >= minBarsExtended
+    hadValidLowerExtension := true
+    extLowerForDisplay := true
+
+// Cooldown logic: track bars in 1-2SD zone during cooldown
+if inCooldown
+    if inUpper1to2SDZone
+        cooldownBarsUpper += 1
+    else
+        cooldownBarsUpper := 0
+    if inLower1to2SDZone
+        cooldownBarsLower += 1
+    else
+        cooldownBarsLower := 0
+    // Cooldown satisfied when we get enough bars in either 1-2SD zone
+    if cooldownBarsUpper >= cooldownBarsAt2SD or cooldownBarsLower >= cooldownBarsAt2SD
+        cooldownSatisfied := true
+        inCooldown := false
+        cooldownBarsUpper := 0
+        cooldownBarsLower := 0
+
+// Cooldown check for entries
+cooldownOK = cooldownSatisfied or not requireCooldown
+
+// Track which side of 1SD price came from (for directional context even when EXT is off)
+var bool cameFromAbove1SD = false  // For short setups - was above upper 1SD
+var bool cameFromBelow1SD = false  // For long setups - was below lower 1SD
+
+if low > upperBand1  // Entire bar above upper 1SD
+    cameFromAbove1SD := true
+    cameFromBelow1SD := false
+if high < lowerBand1  // Entire bar below lower 1SD
+    cameFromBelow1SD := true
+    cameFromAbove1SD := false
+
+// Reset on new session
+if newSession
+    cameFromAbove1SD := false
+    cameFromBelow1SD := false
+
+// When EXT is required, use extension tracking
+// When EXT is off, use directional tracking (must have been beyond 1SD on correct side)
+wasExtendedUp = requirePriorExtension ? hadValidUpperExtension : cameFromAbove1SD
+wasExtendedDown = requirePriorExtension ? hadValidLowerExtension : cameFromBelow1SD
+
+// Track when extension condition is first met
+justMetUpperExtension = barsAtUpperExtension == minBarsExtended and barsAtUpperExtension[1] < minBarsExtended
+justMetLowerExtension = barsAtLowerExtension == minBarsExtended and barsAtLowerExtension[1] < minBarsExtended
+
+// LONG Entry: Candle opens AND closes between lower 1 SD and VWAP (reverting from below)
+longEntryZone = open > lowerBand1 and open < vwapValue and close > lowerBand1 and close < vwapValue
+longEntry = longEntryZone and wasExtendedDown and inTradingWindow and cooldownOK and newsAllowsTrade
+
+// SHORT Entry: Candle opens AND closes between upper 1 SD and VWAP (reverting from above)
+shortEntryZone = open < upperBand1 and open > vwapValue and close < upperBand1 and close > vwapValue
+shortEntry = shortEntryZone and wasExtendedUp and inTradingWindow and cooldownOK and newsAllowsTrade
+
+// Reset extension tracking after entry or invalidation
+longSetupArmed = requirePriorExtension ? hadValidLowerExtension : cameFromBelow1SD
+shortSetupArmed = requirePriorExtension ? hadValidUpperExtension : cameFromAbove1SD
+
+longInvalidated = longSetupArmed and high >= vwapValue and not longEntry
+shortInvalidated = shortSetupArmed and low <= vwapValue and not shortEntry
+
+if longEntry or longInvalidated
+    hadValidLowerExtension := false
+    cameFromBelow1SD := false
+    if longInvalidated
+        extLowerForDisplay := false
+if shortEntry or shortInvalidated
+    hadValidUpperExtension := false
+    cameFromAbove1SD := false
+    if shortInvalidated
+        extUpperForDisplay := false
+
+// Track when price enters the entry zone (potential setup)
+justEnteredLongZone = longEntryZone and not longEntryZone[1] and wasExtendedDown and inTradingWindow
+justEnteredShortZone = shortEntryZone and not shortEntryZone[1] and wasExtendedUp and inTradingWindow
+
+// Out-of-window setups - would have triggered if we were in the trading window
+oowLongZone = longEntryZone and not longEntryZone[1] and wasExtendedDown and not inTradingWindow
+oowShortZone = shortEntryZone and not shortEntryZone[1] and wasExtendedUp and not inTradingWindow
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAUL RULE - REVERSAL PATTERN DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+var bool bullishReversalSeen = false
+var bool bearishReversalSeen = false
+
+// Bullish reversal patterns
+bullishEngulfing = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+bodySize = math.abs(close - open)
+lowerWick = math.min(open, close) - low
+upperWick = high - math.max(open, close)
+hammer = bodySize > 0 and lowerWick >= bodySize * 2 and upperWick < bodySize and close > open
+morningStar = close[2] < open[2] and math.abs(close[1] - open[1]) < bodySize[2] * 0.5 and close > open and close > (open[2] + close[2]) / 2
+
+// Bearish reversal patterns
+bearishEngulfing = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+shootingStar = bodySize > 0 and upperWick >= bodySize * 2 and lowerWick < bodySize and close < open
+eveningStar = close[2] > open[2] and math.abs(close[1] - open[1]) < bodySize[2] * 0.5 and close < open and close < (open[2] + close[2]) / 2
+
+// Detect reversal pattern while setup is armed
+bullishReversal = (bullishEngulfing or hammer or morningStar) and hadValidLowerExtension
+bearishReversal = (bearishEngulfing or shootingStar or eveningStar) and hadValidUpperExtension
+
+if bullishReversal
+    bullishReversalSeen := true
+if bearishReversal
+    bearishReversalSeen := true
+
+// Reset reversal tracking when setup resets
+if longEntry or longInvalidated
+    bullishReversalSeen := false
+if shortEntry or shortInvalidated
+    bearishReversalSeen := false
+
+// Apply Paul Rule to entry if enabled
+longEntryWithPaul = requireReversalPattern ? (longEntry and bullishReversalSeen) : longEntry
+shortEntryWithPaul = requireReversalPattern ? (shortEntry and bearishReversalSeen) : shortEntry
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ATR FOR STOP LOSS
+// ══════════════════════════════════════════════════════════════════════════════
+
+atrValue = ta.atr(atrLength)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RSI CALCULATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+rsiValue = ta.rsi(close, rsiLength)
+rsiLongOK = rsiValue < rsiOversold or not useRSIFilter
+rsiShortOK = rsiValue > rsiOverbought or not useRSIFilter
+
+// Final entry signals with RSI filter applied
+longEntryFinal = longEntryWithPaul and rsiLongOK
+shortEntryFinal = shortEntryWithPaul and rsiShortOK
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LINEAR REGRESSION SLOPE (for Tovio webhook context)
+// ══════════════════════════════════════════════════════════════════════════════
+
+lrs5 = ta.linreg(close, 5, 0) - ta.linreg(close, 5, 1)
+lrs15 = ta.linreg(close, 15, 0) - ta.linreg(close, 15, 1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LIMIT ORDER R:R CALCULATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+var bool pendingLongLimit = false
+var bool pendingShortLimit = false
+var float pendingLimitPrice = na
+var float pendingStopLoss = na
+var float pendingTakeProfit = na
+var int pendingOrderBar = na
+
+if newSession
+    pendingLongLimit := false
+    pendingShortLimit := false
+    pendingLimitPrice := na
+    pendingStopLoss := na
+    pendingTakeProfit := na
+    pendingOrderBar := na
+
+// Find nearest obstacle toward VWAP for take profit target
+findNearestObstacle(isLong) =>
+    float nearestObstacle = na
+    float currentPrice = close
+
+    if isLong
+        array<float> candidates = array.new_float(0)
+        if useVWAPAsObstacle and vwapValue > currentPrice
+            array.push(candidates, vwapValue)
+        if usePDHLAsObstacle and not na(prevDayLow) and prevDayLow > currentPrice
+            array.push(candidates, prevDayLow)
+        if usePDHLAsObstacle and not na(prevDayHigh) and prevDayHigh > currentPrice
+            array.push(candidates, prevDayHigh)
+        if useRoundAsObstacle
+            float roundUp = math.ceil(currentPrice / roundNumberInterval) * roundNumberInterval
+            if roundUp > currentPrice
+                array.push(candidates, roundUp)
+        if array.size(candidates) > 0
+            nearestObstacle := array.min(candidates)
+    else
+        array<float> candidates = array.new_float(0)
+        if useVWAPAsObstacle and vwapValue < currentPrice
+            array.push(candidates, vwapValue)
+        if usePDHLAsObstacle and not na(prevDayHigh) and prevDayHigh < currentPrice
+            array.push(candidates, prevDayHigh)
+        if usePDHLAsObstacle and not na(prevDayLow) and prevDayLow < currentPrice
+            array.push(candidates, prevDayLow)
+        if useRoundAsObstacle
+            float roundDown = math.floor(currentPrice / roundNumberInterval) * roundNumberInterval
+            if roundDown < currentPrice
+                array.push(candidates, roundDown)
+        if array.size(candidates) > 0
+            nearestObstacle := array.max(candidates)
+
+    nearestObstacle
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STRATEGY EXECUTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float entryPrice = na
+var int entryBar = na
+var bool isLongTrade = false
+var float tradeStopLoss = na
+var float tradeTakeProfit = na
+
+var bool beTriggered = false
+var float beStopLevel = na
+
+var string rrFailReason = ""
+var float rrFailEntry = na
+var float rrFailSL = na
+var float rrFailTP = na
+rrFailReason := ""
+rrFailEntry := na
+rrFailSL := na
+rrFailTP := na
+
+// Calculate risk (ATR-based stop distance)
+riskPoints = atrValue * atrMult
+
+// Calculate position size based on risk, adjusted for news
+riskDollarsPerContract = riskPoints * syminfo.pointvalue
+basePositionSize = math.floor(riskPerTrade / riskDollarsPerContract)
+basePositionSize := math.max(basePositionSize, 1)
+positionSize = math.max(math.floor(basePositionSize * newsSizeMultiplier), 1)
+
+// Calculate VWAP distance % for trade context
+vwapDistPct = ((close - vwapValue) / vwapValue) * 100
+
+// Build trade comment for Tovio webhook - includes news score
+buildTradeComment(isLong, actualRR) =>
+    dir = isLong ? "LONG" : "SHORT"
+    "VWAP-News|" + dir + "|RR:" + str.tostring(actualRR, "#.#") + "|NEWS:" + str.tostring(newsScore) + "|ATR:" + str.tostring(atrValue, "#.#") + "|VWAP%:" + str.tostring(vwapDistPct, "#.#") + "|RSI:" + str.tostring(rsiValue, "#") + "|LRS5:" + str.tostring(lrs5, "#.##")
+
+// Long Entry
+if longEntryFinal and strategy.position_size == 0 and not pendingLongLimit and not pendingShortLimit
+    if useLimitOrders
+        obstacle = findNearestObstacle(true)
+        if na(obstacle)
+            rrFailReason := "OBS"
+        else
+            tpDistanceAtClose = obstacle - close
+            slDistanceAtClose = riskPoints
+            rrAtClose = tpDistanceAtClose / slDistanceAtClose
+
+            if rrAtClose >= rrRatio
+                potentialSL = close - riskPoints
+                pendingLongLimit := true
+                pendingLimitPrice := close
+                pendingTakeProfit := obstacle
+                pendingStopLoss := potentialSL
+                pendingOrderBar := bar_index
+                entryPrice := close
+                entryBar := bar_index
+                isLongTrade := true
+                tradeStopLoss := potentialSL
+                tradeTakeProfit := obstacle
+                tradeComment = buildTradeComment(true, rrAtClose)
+                strategy.entry("Long", strategy.long, qty=positionSize, limit=close, comment=tradeComment)
+                strategy.exit("Long Exit", "Long", stop=potentialSL, limit=obstacle)
+            else
+                minEntry = obstacle - (riskPoints * rrRatio)
+                potentialSL = minEntry - riskPoints
+                if minEntry < close
+                    pendingLongLimit := true
+                    pendingLimitPrice := minEntry
+                    pendingTakeProfit := obstacle
+                    pendingStopLoss := potentialSL
+                    pendingOrderBar := bar_index
+                    entryPrice := minEntry
+                    entryBar := bar_index
+                    isLongTrade := true
+                    tradeStopLoss := potentialSL
+                    tradeTakeProfit := obstacle
+                    tradeComment = buildTradeComment(true, rrRatio)
+                    strategy.entry("Long", strategy.long, qty=positionSize, limit=minEntry, comment=tradeComment)
+                    strategy.exit("Long Exit", "Long", stop=potentialSL, limit=obstacle)
+                else
+                    rrFailReason := "MATH"
+                    rrFailEntry := minEntry
+                    rrFailSL := potentialSL
+                    rrFailTP := obstacle
+    else
+        stopLoss = close - riskPoints
+        takeProfit = usePointsTarget ? close + profitPoints : vwapValue
+        entryPrice := close
+        entryBar := bar_index
+        isLongTrade := true
+        tradeStopLoss := stopLoss
+        tradeTakeProfit := takeProfit
+        marketRR = math.abs(takeProfit - close) / riskPoints
+        tradeComment = buildTradeComment(true, marketRR)
+        strategy.entry("Long", strategy.long, qty=positionSize, comment=tradeComment)
+        strategy.exit("Long Exit", "Long", stop=stopLoss, limit=takeProfit)
+
+// Short Entry
+if shortEntryFinal and strategy.position_size == 0 and not pendingLongLimit and not pendingShortLimit
+    if useLimitOrders
+        obstacle = findNearestObstacle(false)
+        if na(obstacle)
+            rrFailReason := "OBS"
+        else
+            tpDistanceAtClose = close - obstacle
+            slDistanceAtClose = riskPoints
+            rrAtClose = tpDistanceAtClose / slDistanceAtClose
+
+            if rrAtClose >= rrRatio
+                potentialSL = close + riskPoints
+                pendingShortLimit := true
+                pendingLimitPrice := close
+                pendingTakeProfit := obstacle
+                pendingStopLoss := potentialSL
+                pendingOrderBar := bar_index
+                entryPrice := close
+                entryBar := bar_index
+                isLongTrade := false
+                tradeStopLoss := potentialSL
+                tradeTakeProfit := obstacle
+                tradeComment = buildTradeComment(false, rrAtClose)
+                strategy.entry("Short", strategy.short, qty=positionSize, limit=close, comment=tradeComment)
+                strategy.exit("Short Exit", "Short", stop=potentialSL, limit=obstacle)
+            else
+                minEntry = obstacle + (riskPoints * rrRatio)
+                potentialSL = minEntry + riskPoints
+                if minEntry > close
+                    pendingShortLimit := true
+                    pendingLimitPrice := minEntry
+                    pendingTakeProfit := obstacle
+                    pendingStopLoss := potentialSL
+                    pendingOrderBar := bar_index
+                    entryPrice := minEntry
+                    entryBar := bar_index
+                    isLongTrade := false
+                    tradeStopLoss := potentialSL
+                    tradeTakeProfit := obstacle
+                    tradeComment = buildTradeComment(false, rrRatio)
+                    strategy.entry("Short", strategy.short, qty=positionSize, limit=minEntry, comment=tradeComment)
+                    strategy.exit("Short Exit", "Short", stop=potentialSL, limit=obstacle)
+                else
+                    rrFailReason := "MATH"
+                    rrFailEntry := minEntry
+                    rrFailSL := potentialSL
+                    rrFailTP := obstacle
+    else
+        stopLoss = close + riskPoints
+        takeProfit = usePointsTarget ? close - profitPoints : vwapValue
+        entryPrice := close
+        entryBar := bar_index
+        isLongTrade := false
+        tradeStopLoss := stopLoss
+        tradeTakeProfit := takeProfit
+        marketRR = math.abs(close - takeProfit) / riskPoints
+        tradeComment = buildTradeComment(false, marketRR)
+        strategy.entry("Short", strategy.short, qty=positionSize, comment=tradeComment)
+        strategy.exit("Short Exit", "Short", stop=stopLoss, limit=takeProfit)
+
+// Close all positions at end of trading window
+windowJustEnded = not inTradingWindow and inTradingWindow[1]
+if windowJustEnded and strategy.position_size != 0
+    strategy.close_all(comment="Window Close")
+
+// Limit Order Cancellation Logic
+if pendingLongLimit or pendingShortLimit
+    barsSincePending = bar_index - pendingOrderBar
+    filledNow = strategy.position_size != 0
+
+    if filledNow
+        fillLabel = (pendingLongLimit ? "LONG" : "SHORT") + " FILLED\nE:" + str.tostring(pendingLimitPrice, "#.##") + "\nSL:" + str.tostring(pendingStopLoss, "#.##") + "\nTP:" + str.tostring(pendingTakeProfit, "#.##")
+        if pendingLongLimit
+            label.new(bar_index, low, fillLabel, style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+        else
+            label.new(bar_index, high, fillLabel, style=label.style_label_down, color=color.green, textcolor=color.white, size=size.small)
+        pendingLongLimit := false
+        pendingShortLimit := false
+        pendingOrderBar := na
+
+    if not filledNow
+        priceReachedTP = pendingLongLimit ? (high >= pendingTakeProfit) : (low <= pendingTakeProfit)
+        tooManyBars = barsSincePending >= maxBarsToFill
+        windowEnding = windowJustEnded or not inTradingWindow
+
+        if priceReachedTP or tooManyBars or windowEnding
+            cancelReason = priceReachedTP ? "TP HIT" : (tooManyBars ? "TIMEOUT" : "WINDOW")
+            cancelLabel = "CANCELLED: " + cancelReason + "\nE:" + str.tostring(pendingLimitPrice, "#.##") + " (missed by " + str.tostring(math.abs(pendingLimitPrice - (pendingLongLimit ? low : high)), "#.##") + ")\nBars:" + str.tostring(barsSincePending) + "/" + str.tostring(maxBarsToFill)
+            if pendingLongLimit
+                label.new(bar_index, low, cancelLabel, style=label.style_label_up, color=color.gray, textcolor=color.white, size=size.small)
+            else
+                label.new(bar_index, high, cancelLabel, style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.small)
+
+            strategy.cancel_all()
+            pendingLongLimit := false
+            pendingShortLimit := false
+            pendingLimitPrice := na
+            pendingStopLoss := na
+            pendingTakeProfit := na
+            pendingOrderBar := na
+            entryBar := na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BREAKEVEN STOP LOGIC
+// ══════════════════════════════════════════════════════════════════════════════
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    beTriggered := false
+    tickSize = syminfo.mintick
+    if isLongTrade
+        beStopLevel := entryPrice + (beOffsetTicks * tickSize)
+    else
+        beStopLevel := entryPrice - (beOffsetTicks * tickSize)
+
+if strategy.position_size != 0 and useBreakevenStop and not beTriggered
+    tpDistance = math.abs(tradeTakeProfit - entryPrice)
+    halfTPLevel = isLongTrade ? entryPrice + (tpDistance * 0.5) : entryPrice - (tpDistance * 0.5)
+    reached50Pct = isLongTrade ? (high >= halfTPLevel) : (low <= halfTPLevel)
+
+    if reached50Pct
+        beTriggered := true
+        if isLongTrade
+            strategy.exit("Long Exit", "Long", stop=beStopLevel, limit=tradeTakeProfit)
+        else
+            strategy.exit("Short Exit", "Short", stop=beStopLevel, limit=tradeTakeProfit)
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    beTriggered := false
+    beStopLevel := na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TRADE BOXES
+// ══════════════════════════════════════════════════════════════════════════════
+
+positionClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+var box tpBox = na
+var box slBox = na
+var box beBox = na
+var label tpLabel = na
+var label slLabel = na
+var label beLabel = na
+var int beBar = na
+
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    box.delete(tpBox)
+    box.delete(slBox)
+    box.delete(beBox)
+    label.delete(tpLabel)
+    label.delete(slLabel)
+    label.delete(beLabel)
+    beBar := na
+
+    if isLongTrade
+        tpBox := box.new(entryBar, tradeTakeProfit, bar_index, entryPrice,
+                         bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 100), border_width=0)
+        slBox := box.new(entryBar, entryPrice, bar_index, tradeStopLoss,
+                         bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 100), border_width=0)
+        tpLabel := label.new(bar_index, tradeTakeProfit, "TP " + str.tostring(tradeTakeProfit, "#.##"),
+                             style=label.style_label_left, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+        slLabel := label.new(bar_index, tradeStopLoss, "SL " + str.tostring(tradeStopLoss, "#.##"),
+                             style=label.style_label_left, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+    else
+        tpBox := box.new(entryBar, entryPrice, bar_index, tradeTakeProfit,
+                         bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 100), border_width=0)
+        slBox := box.new(entryBar, tradeStopLoss, bar_index, entryPrice,
+                         bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 100), border_width=0)
+        tpLabel := label.new(bar_index, tradeTakeProfit, "TP " + str.tostring(tradeTakeProfit, "#.##"),
+                             style=label.style_label_left, color=color.new(color.green, 50), textcolor=color.white, size=size.small)
+        slLabel := label.new(bar_index, tradeStopLoss, "SL " + str.tostring(tradeStopLoss, "#.##"),
+                             style=label.style_label_left, color=color.new(color.red, 50), textcolor=color.white, size=size.small)
+
+if strategy.position_size != 0 and not na(tpBox)
+    box.set_right(tpBox, bar_index)
+    label.set_x(tpLabel, bar_index)
+
+    if beTriggered and useBreakevenStop and na(beBar)
+        beBar := bar_index
+        box.set_right(slBox, bar_index - 1)
+        if isLongTrade
+            beBox := box.new(bar_index, entryPrice, bar_index, beStopLevel,
+                             bgcolor=color.new(color.blue, 85), border_color=color.new(color.blue, 100), border_width=0)
+            beLabel := label.new(bar_index, beStopLevel, "BE " + str.tostring(beStopLevel, "#.##"),
+                                 style=label.style_label_left, color=color.new(color.blue, 50), textcolor=color.white, size=size.small)
+        else
+            beBox := box.new(bar_index, beStopLevel, bar_index, entryPrice,
+                             bgcolor=color.new(color.blue, 85), border_color=color.new(color.blue, 100), border_width=0)
+            beLabel := label.new(bar_index, beStopLevel, "BE " + str.tostring(beStopLevel, "#.##"),
+                                 style=label.style_label_left, color=color.new(color.blue, 50), textcolor=color.white, size=size.small)
+
+    if na(beBar)
+        box.set_right(slBox, bar_index)
+        label.set_x(slLabel, bar_index)
+    else
+        box.set_right(beBox, bar_index)
+        label.set_x(beLabel, bar_index)
+
+if positionClosed
+    tpBox := na
+    slBox := na
+    beBox := na
+    tpLabel := na
+    slLabel := na
+    beLabel := na
+    entryBar := na
+    beBar := na
+    if requireCooldown
+        inCooldown := true
+        cooldownSatisfied := false
+        cooldownBarsUpper := 0
+        cooldownBarsLower := 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUAL SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+longPositionOpened = strategy.position_size > 0 and strategy.position_size[1] == 0
+shortPositionOpened = strategy.position_size < 0 and strategy.position_size[1] == 0
+
+plotshape(longPositionOpened, title="Long Signal", location=location.belowbar, color=color.black, style=shape.triangleup, size=size.small)
+plotshape(shortPositionOpened, title="Short Signal", location=location.abovebar, color=color.black, style=shape.triangledown, size=size.small)
+
+// Extension met markers
+plotshape(showSetupMarkers and justMetLowerExtension, title="Lower Extension Met", location=location.belowbar,
+          color=color.black, style=shape.diamond, size=size.tiny, text="EXT", textcolor=color.black)
+plotshape(showSetupMarkers and justMetUpperExtension, title="Upper Extension Met", location=location.abovebar,
+          color=color.black, style=shape.diamond, size=size.tiny, text="EXT", textcolor=color.black)
+
+// Extension invalidated markers
+plotshape(showSetupMarkers and longInvalidated, title="Long Setup Invalidated", location=location.abovebar,
+          color=color.gray, style=shape.xcross, size=size.tiny, text="X", textcolor=color.gray)
+plotshape(showSetupMarkers and shortInvalidated, title="Short Setup Invalidated", location=location.belowbar,
+          color=color.gray, style=shape.xcross, size=size.tiny, text="X", textcolor=color.gray)
+
+// News block markers - show when setup would fire but news blocks it
+newsBlockedLong = justEnteredLongZone and not newsAllowsTrade
+newsBlockedShort = justEnteredShortZone and not newsAllowsTrade
+
+plotshape(showSetupMarkers and newsBlockedLong, title="Long News Blocked", location=location.belowbar,
+          color=color.red, style=shape.circle, size=size.tiny, text="NEWS", textcolor=color.red)
+plotshape(showSetupMarkers and newsBlockedShort, title="Short News Blocked", location=location.abovebar,
+          color=color.red, style=shape.circle, size=size.tiny, text="NEWS", textcolor=color.red)
+
+// Out-of-window setups
+plotshape(showOutOfWindowSetups and oowLongZone, title="Long OOW", location=location.belowbar,
+          color=color.gray, style=shape.circle, size=size.tiny, text="OOW", textcolor=color.gray)
+plotshape(showOutOfWindowSetups and oowShortZone, title="Short OOW", location=location.abovebar,
+          color=color.gray, style=shape.circle, size=size.tiny, text="OOW", textcolor=color.gray)
+
+// Paul Rule - Reversal pattern detected
+plotshape(showSetupMarkers and bullishReversal, title="Bullish Reversal", location=location.belowbar,
+          color=color.red, style=shape.triangleup, size=size.tiny, text="REV", textcolor=color.red)
+plotshape(showSetupMarkers and bearishReversal, title="Bearish Reversal", location=location.abovebar,
+          color=color.red, style=shape.triangledown, size=size.tiny, text="REV", textcolor=color.red)
+
+// Background color for trading window and news status
+windowColor = not inTradingWindow ? na : (newsScore == 0 ? color.new(color.red, 90) : (newsScore == 1 ? color.new(color.orange, 90) : color.new(color.blue, 95)))
+bgcolor(windowColor, title="Trading Window / News Status")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NEWS STATUS TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table newsTable = table.new(position.top_right, 2, 8, bgcolor=color.black)
+
+if barstate.islast and showNewsTable
+    // Header
+    table.cell(newsTable, 0, 0, "NEWS FILTER", text_color=color.white, bgcolor=color.new(color.purple, 50))
+    table.cell(newsTable, 1, 0, useNewsFilter ? "ON" : "OFF", text_color=useNewsFilter ? color.green : color.gray, bgcolor=color.new(color.purple, 50))
+
+    // News Score
+    scoreColor = newsScore == 0 ? color.red : (newsScore == 1 ? color.orange : color.green)
+    scoreText = newsScore == 0 ? "BLOCKED" : (newsScore == 1 ? "REDUCED" : "CLEAR")
+    table.cell(newsTable, 0, 1, "Status", text_color=color.white)
+    table.cell(newsTable, 1, 1, scoreText, text_color=scoreColor)
+
+    // Today's Events
+    table.cell(newsTable, 0, 2, "FOMC", text_color=color.white)
+    table.cell(newsTable, 1, 2, isFOMCDay ? "YES" : "—", text_color=isFOMCDay ? color.red : color.gray)
+
+    table.cell(newsTable, 0, 3, "CPI", text_color=color.white)
+    table.cell(newsTable, 1, 3, isCPIDay ? "YES" : "—", text_color=isCPIDay ? color.red : color.gray)
+
+    table.cell(newsTable, 0, 4, "NFP", text_color=color.white)
+    table.cell(newsTable, 1, 4, isNFPDay ? "YES" : "—", text_color=isNFPDay ? color.red : color.gray)
+
+    table.cell(newsTable, 0, 5, "PPI", text_color=color.white)
+    table.cell(newsTable, 1, 5, isPPIDay ? "YES" : "—", text_color=isPPIDay ? color.orange : color.gray)
+
+    table.cell(newsTable, 0, 6, "CCI/CSI", text_color=color.white)
+    table.cell(newsTable, 1, 6, (isCCIDay or isCSIDay) ? "YES" : "—", text_color=(isCCIDay or isCSIDay) ? color.orange : color.gray)
+
+    // Position size multiplier
+    table.cell(newsTable, 0, 7, "Size Mult", text_color=color.white)
+    table.cell(newsTable, 1, 7, str.tostring(newsSizeMultiplier, "#.#") + "x", text_color=newsSizeMultiplier < 1 ? color.orange : color.green)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INFO TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table infoTable = table.new(position.top_left, 2, 5, bgcolor=color.black)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "VWAP", text_color=color.yellow)
+    table.cell(infoTable, 1, 0, str.tostring(vwapValue, "#.##"), text_color=color.white)
+    table.cell(infoTable, 0, 1, "ATR", text_color=color.orange)
+    table.cell(infoTable, 1, 1, str.tostring(atrValue, "#.##"), text_color=color.white)
+    table.cell(infoTable, 0, 2, "Upper 2SD", text_color=color.teal)
+    table.cell(infoTable, 1, 2, str.tostring(upperBand2, "#.##"), text_color=color.white)
+    table.cell(infoTable, 0, 3, "Lower 2SD", text_color=color.fuchsia)
+    table.cell(infoTable, 1, 3, str.tostring(lowerBand2, "#.##"), text_color=color.white)
+    table.cell(infoTable, 0, 4, "In Window", text_color=color.blue)
+    table.cell(infoTable, 1, 4, inTradingWindow ? "YES" : "NO", text_color=inTradingWindow ? color.green : color.red)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DEBUG TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table debugTable = table.new(position.bottom_left, 3, 12, bgcolor=color.black)
+
+if barstate.islast and showDebugTable
+    table.cell(debugTable, 0, 0, "STEP", text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 0, "LONG", text_color=color.green, text_halign=text.align_center)
+    table.cell(debugTable, 2, 0, "SHORT", text_color=color.red, text_halign=text.align_center)
+
+    table.cell(debugTable, 0, 1, "1. In Window", text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 1, inTradingWindow ? "✓" : "✗", text_color=inTradingWindow ? color.green : color.gray)
+    table.cell(debugTable, 2, 1, inTradingWindow ? "✓" : "✗", text_color=inTradingWindow ? color.green : color.gray)
+
+    table.cell(debugTable, 0, 2, "2. News OK", text_color=color.white, text_halign=text.align_left)
+    newsOKColor = newsAllowsTrade ? color.green : color.red
+    table.cell(debugTable, 1, 2, newsAllowsTrade ? "✓" : "✗", text_color=newsOKColor)
+    table.cell(debugTable, 2, 2, newsAllowsTrade ? "✓" : "✗", text_color=newsOKColor)
+
+    extLabel = requirePriorExtension ? "3. EXT (3 bars)" : "3. EXT (OFF)"
+    table.cell(debugTable, 0, 3, extLabel, text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 3, not requirePriorExtension ? "N/A" : (extLowerForDisplay ? "✓" : str.tostring(barsAtLowerExtension) + "/3"),
+               text_color=not requirePriorExtension ? color.gray : (extLowerForDisplay ? color.green : color.orange))
+    table.cell(debugTable, 2, 3, not requirePriorExtension ? "N/A" : (extUpperForDisplay ? "✓" : str.tostring(barsAtUpperExtension) + "/3"),
+               text_color=not requirePriorExtension ? color.gray : (extUpperForDisplay ? color.green : color.orange))
+
+    cooldownLabel = requireCooldown ? "   Cooldown" : "   Cool (OFF)"
+    cooldownBarsMax = math.max(cooldownBarsLower, cooldownBarsUpper)
+    cooldownDisplay = not requireCooldown ? "N/A" : (cooldownSatisfied ? "✓" : (inCooldown ? str.tostring(cooldownBarsMax) + "/" + str.tostring(cooldownBarsAt2SD) : "—"))
+    cooldownColor = not requireCooldown ? color.gray : (cooldownSatisfied ? color.green : (inCooldown ? color.orange : color.gray))
+    table.cell(debugTable, 0, 4, cooldownLabel, text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 4, cooldownDisplay, text_color=cooldownColor)
+    table.cell(debugTable, 2, 4, cooldownDisplay, text_color=cooldownColor)
+
+    table.cell(debugTable, 0, 5, "4. In Zone", text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 5, longEntryZone ? "✓" : "✗", text_color=longEntryZone ? color.green : color.gray)
+    table.cell(debugTable, 2, 5, shortEntryZone ? "✓" : "✗", text_color=shortEntryZone ? color.green : color.gray)
+
+    table.cell(debugTable, 0, 6, "5. ENTRY", text_color=color.white, text_halign=text.align_left)
+    table.cell(debugTable, 1, 6, longEntryFinal ? "FIRE!" : "—",
+               text_color=longEntryFinal ? color.lime : color.gray, bgcolor=longEntryFinal ? color.new(color.green, 70) : na)
+    table.cell(debugTable, 2, 6, shortEntryFinal ? "FIRE!" : "—",
+               text_color=shortEntryFinal ? color.fuchsia : color.gray, bgcolor=shortEntryFinal ? color.new(color.red, 70) : na)
+
+    table.cell(debugTable, 0, 7, "Position", text_color=color.white, text_halign=text.align_left)
+    posStatus = strategy.position_size > 0 ? "LONG" : (strategy.position_size < 0 ? "SHORT" : "FLAT")
+    posColor = strategy.position_size > 0 ? color.green : (strategy.position_size < 0 ? color.red : color.gray)
+    table.cell(debugTable, 1, 7, posStatus, text_color=posColor)
+    table.cell(debugTable, 2, 7, str.tostring(positionSize) + " ct", text_color=posColor)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TRADE TRACKER
+// ══════════════════════════════════════════════════════════════════════════════
+
+var int dailyTrades = 0
+var int dailyWins = 0
+var int dailyLosses = 0
+var float dailyPnL = 0.0
+var float dailyGrossProfit = 0.0
+var float dailyGrossLoss = 0.0
+
+if newSession
+    dailyTrades := 0
+    dailyWins := 0
+    dailyLosses := 0
+    dailyPnL := 0.0
+    dailyGrossProfit := 0.0
+    dailyGrossLoss := 0.0
+
+if positionClosed
+    tradePnL = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    dailyTrades += 1
+    dailyPnL += tradePnL
+    if tradePnL > 0
+        dailyWins += 1
+        dailyGrossProfit += tradePnL
+    else
+        dailyLosses += 1
+        dailyGrossLoss += tradePnL
+
+var table tradeTable = table.new(position.middle_left, 2, 7, bgcolor=color.black)
+
+if barstate.islast and showTradeTracker
+    winRate = dailyTrades > 0 ? (dailyWins / dailyTrades) * 100 : 0.0
+    avgWin = dailyWins > 0 ? dailyGrossProfit / dailyWins : 0.0
+    avgLoss = dailyLosses > 0 ? math.abs(dailyGrossLoss) / dailyLosses : 0.0
+    profitFactor = dailyGrossLoss != 0 ? dailyGrossProfit / math.abs(dailyGrossLoss) : (dailyGrossProfit > 0 ? 999.0 : 0.0)
+
+    table.cell(tradeTable, 0, 0, "TODAY", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(tradeTable, 1, 0, "", bgcolor=color.new(color.blue, 50))
+
+    table.cell(tradeTable, 0, 1, "Trades", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 1, str.tostring(dailyTrades), text_color=color.white, text_halign=text.align_right)
+
+    table.cell(tradeTable, 0, 2, "W / L", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 2, str.tostring(dailyWins) + " / " + str.tostring(dailyLosses),
+               text_color=dailyWins >= dailyLosses ? color.green : color.red, text_halign=text.align_right)
+
+    table.cell(tradeTable, 0, 3, "Win Rate", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 3, str.tostring(winRate, "#.0") + "%",
+               text_color=winRate >= 50 ? color.green : color.red, text_halign=text.align_right)
+
+    table.cell(tradeTable, 0, 4, "PF", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 4, profitFactor >= 999 ? "∞" : str.tostring(profitFactor, "#.##"),
+               text_color=profitFactor >= 1 ? color.green : color.red, text_halign=text.align_right)
+
+    table.cell(tradeTable, 0, 5, "Avg W/L", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 5, "$" + str.tostring(avgWin, "#.##") + " / $" + str.tostring(avgLoss, "#.##"),
+               text_color=color.white, text_halign=text.align_right)
+
+    table.cell(tradeTable, 0, 6, "P&L", text_color=color.white, text_halign=text.align_left)
+    table.cell(tradeTable, 1, 6, (dailyPnL >= 0 ? "+$" : "-$") + str.tostring(math.abs(dailyPnL), "#.##"),
+               text_color=dailyPnL >= 0 ? color.green : color.red, text_halign=text.align_right,
+               bgcolor=dailyPnL >= 0 ? color.new(color.green, 80) : color.new(color.red, 80))

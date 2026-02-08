@@ -1,0 +1,103 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © arminkheirkhahan
+// {
+// "symbol":"BCHUSDT",
+// "quantity":"{{strategy.position_size}}",
+// "enter_price":"{{strategy.order.price}}",
+// "side":"{{strategy.order.action}}"
+// }
+//@version=4
+strategy("ICHI_CMF_STC", overlay=true, margin_long=3, margin_short=3,initial_capital=100, 
+     commission_type=strategy.commission.percent, 
+     commission_value=0.1,currency=currency.USD,pyramiding=1)
+
+
+// Date 
+start_date =  input(title="Start Date", type=input.time,  group="TIME RANGE", defval=timestamp("30 Mar 2021 00:00 +0300"))
+end_date =  input(title="End Date", type=input.time, group="TIME RANGE", defval=timestamp("01 Jan 2022 00:00 +0300"))
+isDate = time >= start_date and time <= end_date  
+
+// ORDER SIZE SETTINGS
+order_size = input(title="Order Size", group="ORDER SIZE SETTINGS", type=input.integer, defval=100)
+leverage = input(title="Leverage", group="ORDER SIZE SETTINGS", type=input.integer, defval=1)
+
+// ATR SETTINGS
+atr_length = input(title="ATR Length", group="ATR SETTINGS", type=input.integer, defval=14)
+atr_value = rma(tr(true), atr_length)
+
+// POSITION EXIT SETTINGS
+take_profit_multiple = input(title="Take Profit ATR Multiplier (Reward)", group="POSITION EXIT SETTINGS", type=input.integer, defval=3)
+stop_loss_multiple = input(title="Stop Loss ATR Multiplier (Risk)", group="POSITION EXIT SETTINGS", type=input.integer, defval=2)
+
+// ICHI
+conversionPeriods = input(20, minval=1, title="Conversion Line Length")
+basePeriods = input(30, minval=1, title="Base Line Length")
+laggingSpan2Periods = input(120, minval=1, title="Lagging Span 2 Length")
+displacement = input(60, minval=1, title="Displacement")
+donchian(len) => avg(lowest(len), highest(len))
+conversionLine = donchian(conversionPeriods)
+baseLine = donchian(basePeriods)
+leadLine1 = avg(conversionLine, baseLine)
+leadLine2 = donchian(laggingSpan2Periods)
+
+
+
+
+// CMF
+length = input(20, minval=1)
+ad = close==high and close==low or high==low ? 0 : ((2*close-low-high)/(high-low))*volume
+mf = sum(ad, length) / sum(volume, length)
+
+
+// STC
+EEEEEE=input(12,"Length")
+BBBB=input(26,"FastLength")
+BBBBB=input(50,"SlowLength")
+AAAA(BBB, BBBB, BBBBB) =>
+    fastMA = ema(BBB, BBBB)
+    slowMA = ema(BBB, BBBBB)
+    AAAA = fastMA - slowMA
+    AAAA
+AAAAA(EEEEEE, BBBB, BBBBB) => 
+    AAA=input(0.5)
+    var CCCCC = 0.0
+    var DDD = 0.0
+    var DDDDDD = 0.0
+    var EEEEE = 0.0
+    BBBBBB = AAAA(close,BBBB,BBBBB)     
+    CCC = lowest(BBBBBB, EEEEEE)
+    CCCC = highest(BBBBBB, EEEEEE) - CCC    
+    CCCCC := (CCCC > 0 ? ((BBBBBB - CCC) / CCCC) * 100 : nz(CCCCC[1])) 
+    DDD := (na(DDD[1]) ? CCCCC : DDD[1] + (AAA * (CCCCC - DDD[1]))) 
+    DDDD = lowest(DDD, EEEEEE) 
+    DDDDD = highest(DDD, EEEEEE) - DDDD     
+    DDDDDD := (DDDDD > 0 ? ((DDD - DDDD) / DDDDD) * 100 : nz(DDDDDD[1])) 
+    EEEEE := (na(EEEEE[1]) ? DDDDDD : EEEEE[1] + (AAA * (DDDDDD - EEEEE[1])))
+    EEEEE
+mAAAAA = AAAAA(EEEEEE,BBBB,BBBBB)
+mColor = mAAAAA > mAAAAA[1] ? color.new(color.green,20) : color.new(color.red,20)
+
+// LONG STRATEGY
+goLongCondition1 = mAAAAA > 75
+goLongCondition2 = mf > 0
+goLongCondition3 = close > leadLine1[displacement - 1] and close > leadLine2[displacement - 1]
+inLongTrade = strategy.position_size > 0
+noLongTrade = strategy.position_size <= 0
+if(isDate and goLongCondition1 and goLongCondition2 and goLongCondition3 and noLongTrade)
+    strategy.entry("long",strategy.long, when= noLongTrade, qty=order_size/close*leverage)
+    stopLoss = close - atr_value * stop_loss_multiple
+    takeProfit = close + atr_value * take_profit_multiple
+    strategy.exit("exit","long", limit=takeProfit, stop=stopLoss)
+
+
+// SHORT STRATEGY
+goShortCondition1 = mAAAAA < 25
+goShortCondition2 = mf < 0
+goShortCondition3 = close < leadLine1[displacement - 1] and close < leadLine2[displacement - 1]
+inShortTrade = strategy.position_size < 0
+noShortTrade = strategy.position_size >= 0
+if(isDate and goShortCondition1 and goShortCondition2 and goShortCondition3 and noShortTrade)
+    strategy.entry("short",strategy.short, when= noShortTrade, qty=order_size/close*leverage)
+    stopLoss = close + atr_value * stop_loss_multiple
+    takeProfit = close - atr_value * take_profit_multiple
+    strategy.exit("exit","short", limit=takeProfit, stop=stopLoss)

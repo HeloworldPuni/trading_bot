@@ -1,0 +1,17 @@
+//@version=6
+strategy('RSI OB,OS', overlay = true, commission_type = strategy.commission.cash_per_contract, commission_value = 43.1, slippage = 2)
+
+rsiLen = input.int(title="RSI Length", defval = 14)
+
+rsi = ta.rsi(close, rsiLen)
+longCondition = rsi < 30
+exitCondition = rsi > 70
+
+if longCondition
+    strategy.entry('Long', strategy.long)
+if exitCondition
+    strategy.close('Long')
+
+plot(rsi, color = color.orange)
+hline(30, 'Oversold', color = color.green)
+hline(70, 'Overbought', color = color.red)

@@ -1,0 +1,226 @@
+//@version=5
+strategy("Estratégia Forex - Breakout com Confirmação", overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity,
+         commission_type=strategy.commission.percent,
+         commission_value=0.0001)
+
+// ============================================================================
+// 📊 ESTRATÉGIA EXEMPLO - BREAKOUT COM CONFIRMAÇÃO
+// ============================================================================
+//
+// 🎯 PROPÓSITO:
+// Esta é uma estratégia exemplo que demonstra como criar uma estratégia de breakout
+// com múltiplas confirmações para day trade em forex.
+//
+// 🔧 FUNCIONAMENTO:
+// 1. BREAKOUT: Rompimento de máxima/mínima de 20 períodos
+// 2. CONFIRMAÇÃO: Volume spike, momentum positivo (RSI, Stochastic)
+// 3. FILTROS: Tendência (EMAs), volatilidade (ATR), sessões forex
+// 4. GESTÃO: Stop loss baseado em ATR, take profit com risk/reward configurável
+//
+// 📈 CARACTERÍSTICAS:
+// - Template base para desenvolvimento
+// - Múltiplos filtros de confirmação
+// - Gerenciamento de risco completo
+// - Filtros de sessão forex
+// - Visualizações avançadas
+//
+// ⏰ TIMEFRAME IDEAL: M15, H1
+// 💱 PARES RECOMENDADOS: EUR/USD, GBP/USD, USD/JPY
+// 🎯 TIPO: Breakout Trading (Trading de Rompimento)
+// ⭐ DIFICULDADE: ⭐⭐⭐ (Intermediário)
+//
+// ============================================================================
+
+// ===== INPUTS CONFIGURÁVEIS =====
+// Parâmetros de Risco
+risk_per_trade = input.float(2.0, "Risco por Trade (%)", minval=0.1, maxval=5.0, group="Gerenciamento de Risco")
+risk_reward_ratio = input.float(2.0, "Risk/Reward Ratio", minval=1.0, maxval=5.0, group="Gerenciamento de Risco")
+use_trailing_stop = input.bool(false, "Usar Trailing Stop", group="Gerenciamento de Risco")
+trailing_stop_pct = input.float(1.0, "Trailing Stop (%)", minval=0.1, maxval=5.0, group="Gerenciamento de Risco")
+
+// Parâmetros de Indicadores
+rsi_length = input.int(14, "RSI Length", minval=1, group="Indicadores")
+ma_fast = input.int(20, "MA Rápida", minval=1, group="Indicadores")
+ma_slow = input.int(50, "MA Lenta", minval=1, group="Indicadores")
+atr_length = input.int(14, "ATR Length", minval=1, group="Indicadores")
+bb_length = input.int(20, "Bollinger Bands Length", minval=1, group="Indicadores")
+bb_mult = input.float(2.0, "Bollinger Bands Multiplier", minval=0.1, group="Indicadores")
+
+// Filtros de Tempo
+use_time_filter = input.bool(true, "Usar Filtro de Tempo", group="Filtros")
+start_hour = input.int(8, "Hora Início (GMT)", minval=0, maxval=23, group="Filtros")
+end_hour = input.int(17, "Hora Fim (GMT)", minval=0, maxval=23, group="Filtros")
+avoid_news = input.bool(true, "Evitar Horários de Notícias", group="Filtros")
+
+// Filtros de Volatilidade
+min_atr = input.float(0.0001, "ATR Mínimo", minval=0.0001, group="Filtros")
+max_atr = input.float(0.01, "ATR Máximo", minval=0.0001, group="Filtros")
+
+// ===== CÁLCULOS DE INDICADORES =====
+// Indicadores de Tendência
+ma_fast_line = ta.ema(close, ma_fast)
+ma_slow_line = ta.ema(close, ma_slow)
+ma_trend = ta.ema(close, 200)
+
+// Indicadores de Momentum
+rsi = ta.rsi(close, rsi_length)
+stoch_k = ta.stoch(close, high, low, 14)
+stoch_d = ta.sma(stoch_k, 3)
+
+// Indicadores de Volatilidade
+atr = ta.atr(atr_length)
+bb_upper = ta.sma(close, bb_length) + (ta.stdev(close, bb_length) * bb_mult)
+bb_lower = ta.sma(close, bb_length) - (ta.stdev(close, bb_length) * bb_mult)
+bb_middle = ta.sma(close, bb_length)
+
+// Indicadores de Volume
+volume_ma = ta.sma(volume, 20)
+volume_spike = volume > volume_ma * 1.5
+
+// ===== CONDIÇÕES DE FILTROS =====
+// Filtro de Tendência
+trend_bullish = ma_fast_line > ma_slow_line and ma_slow_line > ma_trend
+trend_bearish = ma_fast_line < ma_slow_line and ma_slow_line < ma_trend
+trend_neutral = not trend_bullish and not trend_bearish
+
+// Filtro de Momentum
+rsi_oversold = rsi < 30
+rsi_overbought = rsi > 70
+rsi_neutral = rsi >= 30 and rsi <= 70
+
+// Filtro de Volatilidade
+atr_ok = atr >= min_atr and atr <= max_atr
+bb_squeeze = (bb_upper - bb_lower) / bb_middle < 0.02
+
+// Filtro de Tempo
+time_ok = not use_time_filter or (hour >= start_hour and hour <= end_hour)
+news_ok = not avoid_news or (hour != 8 and hour != 13 and hour != 15) // Evitar horários de notícias
+
+// Filtro de Sessão (Forex)
+london_session = hour >= 8 and hour <= 17
+ny_session = hour >= 13 and hour <= 22
+tokyo_session = hour >= 0 and hour <= 9
+active_session = london_session or ny_session
+
+// ===== LÓGICA DE ENTRADA =====
+// Condições de Breakout Bullish
+breakout_high = close > ta.highest(high, 20)
+breakout_volume = volume_spike
+breakout_momentum = rsi > 50 and stoch_k > stoch_d
+
+long_condition = trend_bullish and 
+                 breakout_high and 
+                 breakout_volume and 
+                 breakout_momentum and 
+                 atr_ok and 
+                 time_ok and 
+                 news_ok and 
+                 active_session
+
+// Condições de Breakout Bearish
+breakout_low = close < ta.lowest(low, 20)
+breakout_momentum_bear = rsi < 50 and stoch_k < stoch_d
+
+short_condition = trend_bearish and 
+                  breakout_low and 
+                  breakout_volume and 
+                  breakout_momentum_bear and 
+                  atr_ok and 
+                  time_ok and 
+                  news_ok and 
+                  active_session
+
+// ===== LÓGICA DE SAÍDA =====
+// Cálculo de Stop Loss e Take Profit
+atr_multiplier = 2.0
+stop_distance = atr * atr_multiplier
+profit_distance = stop_distance * risk_reward_ratio
+
+// Entrada Long
+if long_condition and barstate.isconfirmed and strategy.position_size == 0
+    stop_loss = close - stop_distance
+    take_profit = close + profit_distance
+    
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Long Trailing", "Long", trail_price=close, trail_offset=close * trailing_stop_pct / 100)
+
+// Entrada Short
+if short_condition and barstate.isconfirmed and strategy.position_size == 0
+    stop_loss = close + stop_distance
+    take_profit = close - profit_distance
+    
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Short Trailing", "Short", trail_price=close, trail_offset=close * trailing_stop_pct / 100)
+
+// ===== PLOTS E VISUALIZAÇÕES =====
+// Médias Móveis
+plot(ma_fast_line, "MA Rápida", color=color.blue, linewidth=2)
+plot(ma_slow_line, "MA Lenta", color=color.red, linewidth=2)
+plot(ma_trend, "MA Tendência", color=color.gray, linewidth=1)
+
+// Bollinger Bands
+plot(bb_upper, "BB Superior", color=color.orange, linewidth=1)
+plot(bb_lower, "BB Inferior", color=color.orange, linewidth=1)
+plot(bb_middle, "BB Média", color=color.orange, linewidth=1, style=plot.style_line)
+
+// Sinais de Entrada
+plotchar(long_condition, "Long Signal", "▲", location.belowbar, color=color.green, size=size.normal)
+plotchar(short_condition, "Short Signal", "▼", location.abovebar, color=color.red, size=size.normal)
+
+// Níveis de Suporte e Resistência
+plot(ta.highest(high, 20), "Resistência", color=color.red, linewidth=1, style=plot.style_line)
+plot(ta.lowest(low, 20), "Suporte", color=color.green, linewidth=1, style=plot.style_line)
+
+// Background para Sessões
+bgcolor(london_session ? color.new(color.blue, 95) : na, title="Sessão Londres")
+bgcolor(ny_session ? color.new(color.orange, 95) : na, title="Sessão NY")
+bgcolor(tokyo_session ? color.new(color.purple, 95) : na, title="Sessão Tóquio")
+
+// ===== ALERTAS =====
+alertcondition(long_condition, title="Sinal de Compra", message="Sinal de compra detectado - Breakout Bullish")
+alertcondition(short_condition, title="Sinal de Venda", message="Sinal de venda detectado - Breakout Bearish")
+
+// ===== INFORMAÇÕES ADICIONAIS =====
+// Display de informações na tela
+var table info_table = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "RSI", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, str.tostring(rsi, "#.##"), text_color=color.black)
+    
+    table.cell(info_table, 0, 1, "ATR", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 1, str.tostring(atr, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 2, "Tendência", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 2, trend_bullish ? "Bullish" : trend_bearish ? "Bearish" : "Neutral", 
+               text_color=trend_bullish ? color.green : trend_bearish ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 3, "Sessão", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 3, london_session ? "Londres" : ny_session ? "NY" : tokyo_session ? "Tóquio" : "Fechado", 
+               text_color=color.black)
+    
+    table.cell(info_table, 0, 4, "Volume", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 4, volume_spike ? "Alto" : "Normal", 
+               text_color=volume_spike ? color.green : color.gray)
+    
+    table.cell(info_table, 0, 5, "BB Squeeze", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 5, bb_squeeze ? "Sim" : "Não", 
+               text_color=bb_squeeze ? color.orange : color.gray)
+    
+    table.cell(info_table, 0, 6, "Posição", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 6, strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Neutro", 
+               text_color=strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 7, "P&L", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 7, str.tostring(strategy.netprofit, "#.##"), 
+               text_color=strategy.netprofit > 0 ? color.green : color.red)

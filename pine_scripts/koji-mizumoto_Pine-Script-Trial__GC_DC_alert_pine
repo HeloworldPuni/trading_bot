@@ -1,0 +1,73 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+// golden_dead_cross.pine の改良版
+
+// 参考サイト：Pineスクリプト初級講座１
+// URL:https://pine.sr2.jp/8/
+// 備考：載っているスクリプトはversion4のものなので、version5のコードに直す
+
+// アラート、参考サイト：【Pine Script】TradingViewで簡単に作れる複数条件アラートの作成方法・手順
+// URL:https://da2-fx.com/articles/tradingview/create-tradingview-custom-alert.html
+
+//@version=5
+indicator("ゴールデンクロス", overlay = true)
+
+// 入力値、SMA or EMAの選択
+fast_val = input.int(defval = 5, title = "短期MA", minval = 1)  // 短期
+slow_val = input.int(defval = 14, title = "長期MA", minval = 1)   // 長期
+ma_type = input.string(title = "MA Type", defval = "SMA", options = ["SMA", "EMA"])
+ema_val = input.int(title = "EMA期間", defval = 200)
+
+// 移動平均線の計算
+fast_ma = ma_type == "SMA" ? ta.sma(close, fast_val) : ta.ema(close, fast_val)
+slow_ma = ma_type == "SMA" ? ta.sma(close, slow_val) : ta.ema(close, slow_val)
+// 日足ベースの指数平滑移動平均
+EMA = request.security(symbol = syminfo.tickerid, timeframe = "D", expression = ta.ema(close, ema_val))
+
+// 移動平均線のプロット（描画）
+plot(fast_ma, color = color.orange, title = "短期MA")
+plot(slow_ma, color = color.aqua, title = "長期MA")
+// plot(EMA, title = "EMA", color = color.new(color.green, 20))
+// -> 日足、週足、月足の場合にのみ表示
+plot(timeframe.isdwm ? EMA : na, title = 'EMA', color = color.new(color.green, 20))
+
+// 背景色（オプション）
+bgcolor(close >= EMA ? color.new(color.blue, 85) : na) // 価格がEMAより上の場合、薄い青色の背景色
+
+// ゴールデンクロスのシグナル
+crossUp = ta.crossover(fast_ma, slow_ma)
+crossDown = ta.crossunder(fast_ma, slow_ma)
+
+// =================== //
+//        アラート
+// =================== //
+// 各バーごとに初期化されない変数 has_long にロングポジション保有中か否かを代入（初期値：false）
+var bool has_long = false
+
+// ロング エントリー ゴールデンクロス
+bool long_entry_alertcondition = has_long == false and close >= EMA and ta.crossover(fast_ma, slow_ma)
+if long_entry_alertcondition
+    has_long := true
+    // エントリーアラート
+    alert('ゴールデンクロス エントリーアラート', freq = alert.freq_once_per_bar)
+
+// ロング エグジット デッドクロス
+bool long_exit_alertcondition = has_long and ta.crossunder(fast_ma, slow_ma)
+if long_exit_alertcondition
+    has_long := false
+    // エグジットアラート
+    alert('デッドクロス エグジットアラート', freq = alert.freq_once_per_bar)
+
+// アラート作成ダイアログで個別に設定可能なエントリーアラートイベントを作成
+alertcondition(condition = long_entry_alertcondition, title = 'ゴールデンクロス アラート')
+// アラート作成ダイアログで個別に設定可能なエグジットアラートイベントを作成
+alertcondition(condition = long_exit_alertcondition, title = 'デッドクロス アラート')
+
+// シグナルをプロット -> アラートが発生した場所をチャート上に表示
+plotshape(long_entry_alertcondition, style = shape.triangleup, location = location.bottom,
+     color = color.green, size = size.small, title = "ロング エントリーアラート発生",
+     text = "GC", textcolor = color.white)
+plotshape(crossDown, style = shape.triangleup, location = location.bottom,
+     color = color.red, size = size.small, title = "ロング エグジットアラート発生",
+     text = "DC", textcolor = color.white)

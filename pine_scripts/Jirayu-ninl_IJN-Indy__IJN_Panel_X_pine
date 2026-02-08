@@ -1,0 +1,728 @@
+//@version=5
+indicator('IJN Panel-X', 'IJN Pn-X', overlay=false, precision=0)
+
+// ------------------------------------------------
+//                     Constants
+// ------------------------------------------------
+
+color CLEAR = color.rgb(0,0,0,100)
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : WaveTrend, RSI, MFI, and Divergence
+//# * By : VMC
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+// Main Options
+g_mainOption = 'Main Options'
+bool show_MFI_bar = input.bool(true, title='Show MFI Bar', group=g_mainOption)
+bool show_RSIMFI_bar = input.bool(true, title='Show RSI-MFI Bar', group=g_mainOption)
+bool show_RSIMFI = input.bool(true, title='Show RSI-MFI Indicator', group=g_mainOption)
+bool show_SAR = input.bool(true, title='Show SAR Bar', group=g_mainOption)
+bool show_WT1 = input.bool(true, title='Show WaveTrend 1', group=g_mainOption)
+bool show_WT2 = input.bool(true, title='Show WaveTrend 2', group=g_mainOption)
+bool show_WT2kv = input.bool(true, title='WT2 with Implied volatility Coloring', group=g_mainOption)
+bool show_wtCross = input.bool(true, title='WT Cross dots', group=g_mainOption)
+bool show_vwap = input.bool(true, title='Show Fast WT', group=g_mainOption)
+bool show_rsi = input.bool(true, title='Show RSI', group=g_mainOption)
+bool show_stoch = input.bool(true, title='Show Stochastic RSI', group=g_mainOption)
+bool show_tcLine = input.bool(false, title='Show Schaff TC line', group=g_mainOption)
+bool show_ichi = input.bool(true, title='Show Ichimoku Buy/Sell Zone', group=g_mainOption)
+g_extraOption = 'Extra Options'
+bool wtShowDiv = input.bool(true, title='Show WT Regular Divergences', group=g_extraOption)
+bool wtShowHiddenDiv = input.bool(false, title='Show WT Hidden Divergences', group=g_extraOption)
+bool wtDivOBLevel_addshow = input.bool(true, title='Show 2nd WT Regular Divergences', group=g_extraOption)
+bool rsiShowDiv = input.bool(false, title='Show RSI Regular Divergences', group=g_extraOption)
+bool rsiShowHiddenDiv = input.bool(false, title='Show RSI Hidden Divergences', group=g_extraOption)
+bool stochShowDiv = input.bool(false, title='Show Stoch Regular Divergences', group=g_extraOption)
+bool stochShowHiddenDiv = input.bool(false, title='Show Stoch Hidden Divergences', group=g_extraOption)
+// Dot Signal
+g_dotSignals = 'Dot Signal Options'
+bool show_wtDot = input.bool(true, title='WaveTrend Buy/Sell dots', group=g_dotSignals)
+bool show_wtCrossDot = input.bool(true, title='Cross Buy/Sell dots', group=g_dotSignals)
+bool show_wtDivDot = input.bool(true, title='WaveTrend Divergence Buy/Sell Dots', group=g_dotSignals)
+bool show_wtGoldDot = input.bool(true, title='WaveTrend Gold Buy Dot', group=g_dotSignals)
+
+
+// WaveTrend
+
+
+wtChannelLen = input.int(9, title='WT Channel Length', group='WaveTrend Settings')
+wtAverageLen = input.int(12, title='WT Average Length', group='WaveTrend Settings')
+wtMASource = input.source(hlc3, title='WT MA Source', group='WaveTrend Settings')
+wtMALen = input.int(3, title='WT MA Length', group='WaveTrend Settings')
+// WaveTrend Overbought & Oversold lines
+obLevel = input.int(53, title='WT Overbought Level 1', group='WaveTrend Settings')
+obLevel2 = input.int(60, title='WT Overbought Level 2', group='WaveTrend Settings')
+obLevel3 = input.int(100, title='WT Overbought Level 3', group='WaveTrend Settings')
+osLevel = input.int(-53, title='WT Oversold Level 1', group='WaveTrend Settings')
+osLevel2 = input.int(-60, title='WT Oversold Level 2', group='WaveTrend Settings')
+osLevel3 = input.int(-75, title='WT Oversold Level 3', group='WaveTrend Settings')
+// Divergence WT
+
+showHiddenDiv_nl = input.bool(true, title='Not apply OB/OS Limits on Hidden Divergences', group='WaveTrend Settings')
+wtDivOBLevel = input.int(45, title='WT Bearish Divergence min', group='WaveTrend Settings')
+wtDivOSLevel = input.int(-65, title='WT Bullish Divergence min', group='WaveTrend Settings')
+// Divergence extra range
+wtDivOBLevel_add = input.int(15, title='WT 2nd Bearish Divergence', group='WaveTrend Settings')
+wtDivOSLevel_add = input.int(-40, title='WT 2nd Bullish Divergence 15 min', group='WaveTrend Settings')
+// RSI+MFI
+rsiMFIperiod = input.int(60, title='MFI Period', group='MFI Settings')
+rsiMFIMultiplier = input.float(150, title='MFI Area multiplier', group='MFI Settings')
+rsiMFIPosY = input.float(2.5, title='MFI Area Y Pos', group='MFI Settings')
+// RSI
+rsiSRC = input.source(close, title='RSI Source', group='RSI Settings')
+rsiLen = input.int(14, title='RSI Length', group='RSI Settings')
+rsiOversold = input.int(30, title='RSI Oversold', minval=0, maxval=100, group='RSI Settings')
+rsiOverbought = input.int(60, title='RSI Overbought', minval=0, maxval=100, group='RSI Settings')
+// Divergence RSI
+rsiDivOBLevel = input.int(60, title='RSI Bearish Divergence min', group='RSI Settings')
+rsiDivOSLevel = input.int(30, title='RSI Bullish Divergence min', group='RSI Settings')
+// RSI Stochastic
+stochUseLog = input.bool(true, title=' Use Log?', group='Stoch Settings')
+stochAvg = input.bool(false, title='Use Average of both K & D', group='Stoch Settings')
+stochSRC = input.source(close, title='Stochastic RSI Source', group='Stoch Settings')
+stochLen = input.int(14, title='Stochastic RSI Length', group='Stoch Settings')
+stochRsiLen = input.int(14, title='RSI Length ', group='Stoch Settings')
+stochKSmooth = input.int(3, title='Stochastic RSI K Smooth', group='Stoch Settings')
+stochDSmooth = input.int(3, title='Stochastic RSI D Smooth', group='Stoch Settings')
+// Schaff Trend Cycle
+tcSRC = input.source(close, title='Schaff TC Source', group='Schaff Settings')
+tclength = input.int(10, title='Schaff TC', group='Schaff Settings')
+tcfastLength = input.int(23, title='Schaff TC Fast Lenght', group='Schaff Settings')
+tcslowLength = input.int(50, title='Schaff TC Slow Length', group='Schaff Settings')
+tcfactor = input.float(0.5, title='Schaff TC Factor', group='Schaff Settings')
+// Sommi Flag
+sommiFlagShow = input.bool(false, title='Show Sommi flag', group='Sommi Settings')
+sommiShowVwap = input.bool(false, title='Show Sommi F. Wave', group='Sommi Settings')
+sommiVwapTF = input.string('720', title='Sommi F. Wave timeframe', group='Sommi Settings')
+sommiVwapBearLevel = input.int(0, title='F. Wave Bear Level (less than)', group='Sommi Settings')
+sommiVwapBullLevel = input.int(0, title='F. Wave Bull Level (more than)', group='Sommi Settings')
+soomiFlagWTBearLevel = input.int(0, title='WT Bear Level (more than)', group='Sommi Settings')
+soomiFlagWTBullLevel = input.int(0, title='WT Bull Level (less than)', group='Sommi Settings')
+soomiRSIMFIBearLevel = input.int(0, title='Money flow Bear Level (less than)', group='Sommi Settings')
+soomiRSIMFIBullLevel = input.int(0, title='Money flow Bull Level (more than)', group='Sommi Settings')
+// Sommi Diamond
+sommiDiamondShow = input.bool(false, title='Show Sommi diamond', group='Sommi Settings')
+sommiHTCRes = input.string('60', title='HTF Candle Res. 1', group='Sommi Settings')
+sommiHTCRes2 = input.string('240', title='HTF Candle Res. 2', group='Sommi Settings')
+soomiDiamondWTBearLevel = input.int(0, title='WT Bear Level (More than)', group='Sommi Settings')
+soomiDiamondWTBullLevel = input.int(0, title='WT Bull Level (Less than)', group='Sommi Settings')
+// macd
+macdWTColorsTF = input.string('240', title='MACD Colors MACD TF', group='MACD Settings')
+// Colors
+colorRed = #ff0000
+colorPurple = #e600e6
+colorGreen = #3fff00
+colorOrange = #e2a400
+colorYellow = #ffe500
+colorWhite = #ffffff
+colorPink = #ff00f0
+colorBluelight = #31c0ff
+colorWT2 = #0d47a1
+colorWT2_ = #131722
+colormacdWT1a = #4caf58
+colormacdWT1b = #af4c4c
+colormacdWT1c = #7ee57e
+colormacdWT1d = #ff3535
+colormacdWT2a = #305630
+colormacdWT2b = #310101
+colormacdWT2c = #132213
+colormacdWT2d = #770000
+
+// -----------------------------------------------------------------------------------------------
+//   Functions
+// -----------------------------------------------------------------------------------------------
+// Divergences 
+f_top_fractal(src) =>
+    src[4] < src[2] and src[3] < src[2] and src[2] > src[1] and src[2] > src[0]
+f_bot_fractal(src) =>
+    src[4] > src[2] and src[3] > src[2] and src[2] < src[1] and src[2] < src[0]
+f_fractalize(src) =>
+    f_top_fractal(src) ? 1 : f_bot_fractal(src) ? -1 : 0
+f_findDivs(src, topLimit, botLimit, useLimits) =>
+    fractalTop = f_fractalize(src) > 0 and (useLimits ? src[2] >= topLimit : true) ? src[2] : na
+    fractalBot = f_fractalize(src) < 0 and (useLimits ? src[2] <= botLimit : true) ? src[2] : na
+    highPrev = ta.valuewhen(fractalTop, src[2], 0)[2]
+    highPrice = ta.valuewhen(fractalTop, high[2], 0)[2]
+    lowPrev = ta.valuewhen(fractalBot, src[2], 0)[2]
+    lowPrice = ta.valuewhen(fractalBot, low[2], 0)[2]
+    bearSignal = fractalTop and high[2] > highPrice and src[2] < highPrev
+    bullSignal = fractalBot and low[2] < lowPrice and src[2] > lowPrev
+    bearDivHidden = fractalTop and high[2] < highPrice and src[2] > highPrev
+    bullDivHidden = fractalBot and low[2] > lowPrice and src[2] < lowPrev
+    [fractalTop, fractalBot, lowPrev, bearSignal, bullSignal, bearDivHidden, bullDivHidden]
+// RSI+MFI
+f_rsimfi(_period, _multiplier, _tf) =>
+    request.security(syminfo.tickerid, _tf, ta.sma((close - open) / (high - low) * _multiplier, _period) - rsiMFIPosY)
+// WaveTrend
+f_wavetrend(src, chlen, avg, malen, tf) =>
+    tfsrc = request.security(syminfo.tickerid, tf, src)
+    esa = ta.ema(tfsrc, chlen)
+    de = ta.ema(math.abs(tfsrc - esa), chlen)
+    ci = (tfsrc - esa) / (0.015 * de)
+    wt1 = request.security(syminfo.tickerid, tf, ta.ema(ci, avg))
+    wt2 = request.security(syminfo.tickerid, tf, ta.sma(wt1, malen))
+    wtVwap = wt1 - wt2
+    wtOversold = wt2 <= osLevel
+    wtOverbought = wt2 >= obLevel
+    wtCross = ta.cross(wt1, wt2)
+    wtCrossUp = wt2 - wt1 <= 0
+    wtCrossDown = wt2 - wt1 >= 0
+    wtCrosslast = ta.cross(wt1[2], wt2[2])
+    wtCrossUplast = wt2[2] - wt1[2] <= 0
+    wtCrossDownlast = wt2[2] - wt1[2] >= 0
+    [wt1, wt2, wtOversold, wtOverbought, wtCross, wtCrossUp, wtCrossDown, wtCrosslast, wtCrossUplast, wtCrossDownlast, wtVwap]
+// Schaff Trend Cycle
+f_tc(src, length, fastLength, slowLength) =>
+    ema1 = ta.ema(src, fastLength)
+    ema2 = ta.ema(src, slowLength)
+    macdVal = ema1 - ema2
+    alpha = ta.lowest(macdVal, length)
+    beta = ta.highest(macdVal, length) - alpha
+    gamma = (macdVal - alpha) / beta * 100
+    gamma := beta > 0 ? gamma : nz(gamma[1])
+    delta = gamma
+    delta := na(delta[1]) ? delta : delta[1] + tcfactor * (gamma - delta[1])
+    epsilon = ta.lowest(delta, length)
+    zeta = ta.highest(delta, length) - epsilon
+    eta = (delta - epsilon) / zeta * 100
+    eta := zeta > 0 ? eta : nz(eta[1])
+    stcReturn = eta
+    stcReturn := na(stcReturn[1]) ? stcReturn : stcReturn[1] + tcfactor * (eta - stcReturn[1])
+    stcReturn
+// Stochastic RSI
+f_stochrsi(_src, _stochlen, _rsilen, _smoothk, _smoothd, _log, _avg) =>
+    src = _log ? math.log(_src) : _src
+    rsi = ta.rsi(src, _rsilen)
+    kk = ta.sma(ta.stoch(rsi, rsi, rsi, _stochlen), _smoothk)
+    d1 = ta.sma(kk, _smoothd)
+    avg_1 = math.avg(kk, d1)
+    k = _avg ? avg_1 : kk
+    [k, d1]
+// MACD
+f_macd(src, fastlen, slowlen, sigsmooth, tf) =>
+    fast_ma = request.security(syminfo.tickerid, tf, ta.ema(src, fastlen))
+    slow_ma = request.security(syminfo.tickerid, tf, ta.ema(src, slowlen))
+    macd = fast_ma - slow_ma
+    signal = request.security(syminfo.tickerid, tf, ta.sma(macd, sigsmooth))
+    hist = macd - signal
+    [macd, signal, hist]
+// MACD Colors on WT    
+f_macdWTColors(tf) =>
+    hrsimfi = f_rsimfi(rsiMFIperiod, rsiMFIMultiplier, tf)
+    [macd, signal, hist] = f_macd(close, 28, 42, 9, macdWTColorsTF)
+    macdup = macd >= signal
+    macddown = macd <= signal
+    macdWT1Color = macdup ? hrsimfi > 0 ? colormacdWT1c : colormacdWT1a : macddown ? hrsimfi < 0 ? colormacdWT1d : colormacdWT1b : na
+    macdWT2Color = macdup ? hrsimfi < 0 ? colormacdWT2c : colormacdWT2a : macddown ? hrsimfi < 0 ? colormacdWT2d : colormacdWT2b : na
+    [macdWT1Color, macdWT2Color]
+// Get higher timeframe candle
+f_getTFCandle(_tf) =>
+    _open = request.security(ticker.heikinashi(syminfo.tickerid), _tf, open, barmerge.gaps_off, barmerge.lookahead_on)
+    _close = request.security(ticker.heikinashi(syminfo.tickerid), _tf, close, barmerge.gaps_off, barmerge.lookahead_on)
+    _high = request.security(ticker.heikinashi(syminfo.tickerid), _tf, high, barmerge.gaps_off, barmerge.lookahead_on)
+    _low = request.security(ticker.heikinashi(syminfo.tickerid), _tf, low, barmerge.gaps_off, barmerge.lookahead_on)
+    hl2 = (_high + _low) / 2.0
+    newBar = ta.change(_open)
+    candleBodyDir = _close > _open
+    [candleBodyDir, newBar]
+// Sommi flag
+f_findSommiFlag(tf, wt1, wt2, rsimfi, wtCross, wtCrossUp, wtCrossDown) =>
+    [hwt1, hwt2, hwtOversold, hwtOverbought, hwtCross, hwtCrossUp, hwtCrossDown, hwtCrosslast, hwtCrossUplast, hwtCrossDownlast, hwtVwap] = f_wavetrend(wtMASource, wtChannelLen, wtAverageLen, wtMALen, tf)
+    bearPattern = rsimfi < soomiRSIMFIBearLevel and wt2 > soomiFlagWTBearLevel and wtCross and wtCrossDown and hwtVwap < sommiVwapBearLevel
+    bullPattern = rsimfi > soomiRSIMFIBullLevel and wt2 < soomiFlagWTBullLevel and wtCross and wtCrossUp and hwtVwap > sommiVwapBullLevel
+    [bearPattern, bullPattern, hwtVwap]
+f_findSommiDiamond(tf, tf2, wt1, wt2, wtCross, wtCrossUp, wtCrossDown) =>
+    [candleBodyDir, newBar] = f_getTFCandle(tf)
+    [candleBodyDir2, newBar2] = f_getTFCandle(tf2)
+    bearPattern = wt2 >= soomiDiamondWTBearLevel and wtCross and wtCrossDown and not candleBodyDir and not candleBodyDir2
+    bullPattern = wt2 <= soomiDiamondWTBullLevel and wtCross and wtCrossUp and candleBodyDir and candleBodyDir2
+    [bearPattern, bullPattern]
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+// RSI
+rsi = ta.rsi(rsiSRC, rsiLen)
+rsiobcolor = input.color(color.new(#e13e3e, 25), 'RSI OverBought', group='Color Settings')
+rsioscolor = input.color(color.new(#3ee145, 25), 'RSI OverSold', group='Color Settings')
+rsinacolor = input.color(color.new(#c33ee1, 25), 'RSI InBetween', group='Color Settings')
+rsiColor = rsi <= rsiOversold ? rsioscolor : rsi >= rsiOverbought ? rsiobcolor : rsinacolor
+// RSI + MFI Area
+rsiMFI = f_rsimfi(rsiMFIperiod, rsiMFIMultiplier, timeframe.period)
+rsiMFIColorAbove = input.color(color.new(#3ee1a2, 50), 'MFI Color > 0', group='Color Settings')
+rsiMFIColorBelow = input.color(color.new(#ff2e8f, 50), 'MFI Color < 0', group='Color Settings')
+rsiMFIColor = rsiMFI > 0 ? rsiMFIColorAbove : rsiMFIColorBelow
+// Calculates WaveTrend
+[wt1, wt2, wtOversold, wtOverbought, wtCross, wtCrossUp, wtCrossDown, wtCross_last, wtCrossUp_last, wtCrossDown_last, wtVwap] = f_wavetrend(wtMASource, wtChannelLen, wtAverageLen, wtMALen, timeframe.period)
+// Stochastic RSI
+[stochK, stochD] = f_stochrsi(stochSRC, stochLen, stochRsiLen, stochKSmooth, stochDSmooth, stochUseLog, stochAvg)
+// Schaff Trend Cycle
+tcVal = f_tc(tcSRC, tclength, tcfastLength, tcslowLength)
+// Sommi flag
+[sommiBearish, sommiBullish, hvwap] = f_findSommiFlag(sommiVwapTF, wt1, wt2, rsiMFI, wtCross, wtCrossUp, wtCrossDown)
+//Sommi diamond
+[sommiBearishDiamond, sommiBullishDiamond] = f_findSommiDiamond(sommiHTCRes, sommiHTCRes2, wt1, wt2, wtCross, wtCrossUp, wtCrossDown)
+// macd colors
+[macdWT1Color, macdWT2Color] = f_macdWTColors(macdWTColorsTF)
+// WT Divergences
+[wtFractalTop, wtFractalBot, wtLow_prev, wtBearDiv, wtBullDiv, wtBearDivHidden, wtBullDivHidden] = f_findDivs(wt2, wtDivOBLevel, wtDivOSLevel, true)
+[wtFractalTop_add, wtFractalBot_add, wtLow_prev_add, wtBearDiv_add, wtBullDiv_add, wtBearDivHidden_add, wtBullDivHidden_add] = f_findDivs(wt2, wtDivOBLevel_add, wtDivOSLevel_add, true)
+[wtFractalTop_nl, wtFractalBot_nl, wtLow_prev_nl, wtBearDiv_nl, wtBullDiv_nl, wtBearDivHidden_nl, wtBullDivHidden_nl] = f_findDivs(wt2, 0, 0, false)
+wtBearDivHidden_ = showHiddenDiv_nl ? wtBearDivHidden_nl : wtBearDivHidden
+wtBullDivHidden_ = showHiddenDiv_nl ? wtBullDivHidden_nl : wtBullDivHidden
+WTBearDivColorDown = input.color(color.new(#e60000, 0), 'WT Bear Div', group='Color Settings')
+wtBullDivColorUp = input.color(color.new(#00e676, 0), 'WT Bull Div', group='Color Settings')
+WTBearDivColorDownExtra = input.color(color.new(#e65c00, 0), 'WT Bear Div (Extra)', group='Color Settings')
+wtBullDivColorUpExtra = input.color(color.new(#00e6c0, 0), 'WT Bull Div (Extra)', group='Color Settings')
+wtBearDivColor = wtShowDiv and wtBearDiv or wtShowHiddenDiv and wtBearDivHidden_ ? WTBearDivColorDown : na
+wtBullDivColor = wtShowDiv and wtBullDiv or wtShowHiddenDiv and wtBullDivHidden_ ? wtBullDivColorUp : na
+wtBearDivColor_add = wtShowDiv and wtDivOBLevel_addshow and wtBearDiv_add or wtShowHiddenDiv and wtDivOBLevel_addshow and wtBearDivHidden_add ? WTBearDivColorDownExtra : na
+wtBullDivColor_add = wtShowDiv and wtDivOBLevel_addshow and wtBullDiv_add or wtShowHiddenDiv and wtDivOBLevel_addshow and wtBullDivHidden_add ? wtBullDivColorUpExtra : na
+// RSI Divergences
+[rsiFractalTop, rsiFractalBot, rsiLow_prev, rsiBearDiv, rsiBullDiv, rsiBearDivHidden, rsiBullDivHidden] = f_findDivs(rsi, rsiDivOBLevel, rsiDivOSLevel, true)
+[rsiFractalTop_nl, rsiFractalBot_nl, rsiLow_prev_nl, rsiBearDiv_nl, rsiBullDiv_nl, rsiBearDivHidden_nl, rsiBullDivHidden_nl] = f_findDivs(rsi, 0, 0, false)
+rsiBearDivHidden_ = showHiddenDiv_nl ? rsiBearDivHidden_nl : rsiBearDivHidden
+rsiBullDivHidden_ = showHiddenDiv_nl ? rsiBullDivHidden_nl : rsiBullDivHidden
+rsiBearColor = color.new(#e60000, 0)  //input(color.new(#e60000, 0), 'RSI Bear Div', group = 'Color Settings')
+rsiBullColor = color.new(#38ff42, 0)  //input(color.new(#38ff42, 0), 'RSI Bull Div', group = 'Color Settings')
+rsiBearDivColor = rsiShowDiv and rsiBearDiv or rsiShowHiddenDiv and rsiBearDivHidden_ ? rsiBearColor : na
+rsiBullDivColor = rsiShowDiv and rsiBullDiv or rsiShowHiddenDiv and rsiBullDivHidden_ ? rsiBullColor : na
+// Stoch Divergences
+[stochFractalTop, stochFractalBot, stochLow_prev, stochBearDiv, stochBullDiv, stochBearDivHidden, stochBullDivHidden] = f_findDivs(stochK, 0, 0, false)
+stochbearcolor = color.new(#e60000, 0)  //input(color.new(#e60000, 0), 'Stoch Bear Div', group = 'Color Settings')
+stochbullcolor = color.new(#38ff42, 0)  //input(color.new(#38ff42, 0), 'Stoch Bull Div', group = 'Color Settings')
+stochBearDivColor = stochShowDiv and stochBearDiv or stochShowHiddenDiv and stochBearDivHidden ? stochbearcolor : na
+stochBullDivColor = stochShowDiv and stochBullDiv or stochShowHiddenDiv and stochBullDivHidden ? stochbullcolor : na
+// Small Circles WT Cross
+signalcolorup = input.color(color.new(#00e676, 15), 'WT Buy Dot', group='Color Settings')
+signalcolordown = input.color(color.new(#ff5252, 15), 'WT Sell Dot', group='Color Settings')
+signalColor = wt2 - wt1 > 0 ? signalcolordown : signalcolorup
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : Bollinger, Wavetrend in Dynamic Zones with Kumo Implied Volatility
+//# * By : Adonis Werther
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+n1 = input(9, 'Wavetrend Channel Length')
+n2 = input(12, 'Wavetrend Average Length')
+ap = hlc3
+esa = ta.ema(ap, n1)
+d = ta.ema(math.abs(ap - esa), n1)
+ci = (ap - esa) / (0.015 * d)
+tci = ta.ema(ci, n2)
+tsi1 = tci
+tsi2 = ta.sma(tsi1, 4)
+long = n1
+short = n2
+signal = n2
+price = hlc3
+src2 = hlc3
+src = hlc3
+input_src = tsi1
+input_lookbackbars = input.int(70, title='Lookback Bars', minval=1)
+input_startbuyprobability = input(0.12, title='Start Buy Probability')
+input_startsellprobability = input(0.12, title='Start Sell Probability')
+dzsell(src, initvalue, lookbackbars) =>
+    left = -10000.0
+    right = 10000.0
+    eps = 0.001
+    yval = (left + right) / 2.0
+    delta = yval - left
+    maxsteps = 0
+    for i = 0 to 99999 by 1
+        if not(delta > 0.005 and maxsteps < 50)
+            break
+        maxsteps += 1
+        count = 0
+        for k = 0 to lookbackbars - 1 by 1
+            if src[k] > yval
+                count += 1
+                count
+        prob = count / lookbackbars
+        if prob > initvalue + eps
+            left := yval
+            yval := (yval + right) / 2.0
+            yval
+        if prob < initvalue - eps
+            right := yval
+            yval := (yval + left) / 2.0
+            yval
+        if prob < initvalue + eps and prob > initvalue - eps
+            left := yval
+            yval := (yval + right) / 2.0
+            yval
+        delta := yval - left
+        delta
+    [yval, delta, maxsteps]
+
+dzbuy(src, initvalue, lookbackbars) =>
+    left = -10000.0
+    right = 10000.0
+    eps = 0.001
+    yval = (left + right) / 2.0
+    delta = yval - left
+    maxsteps = 0
+    for i = 0 to 99999 by 1
+        if not(delta > 0.005 and maxsteps < 50)
+            break
+        maxsteps += 1
+        count = 0
+        for k = 0 to lookbackbars - 1 by 1
+            if src[k] < yval
+                count += 1
+                count
+        prob = count / lookbackbars
+        if prob > initvalue + eps
+            right := yval
+            yval := (yval + left) / 2.0
+            yval
+        if prob < initvalue - eps
+            left := yval
+            yval := (yval + right) / 2.0
+            yval
+        if prob < initvalue + eps and prob > initvalue - eps
+            right := yval
+            yval := (yval + left) / 2.0
+            yval
+        delta := yval - left
+        delta
+    [yval, delta, maxsteps]
+[sell_zone, sell_delta, sell_maxsteps] = dzsell(input_src, input_startsellprobability, input_lookbackbars)
+[buy_zone, buy_delta, buy_maxsteps] = dzbuy(input_src, input_startbuyprobability, input_lookbackbars)
+pivR = input(title='WT Pivot Lookback Right', defval=1)
+pivL = input(title='WT Pivot Lookback Left', defval=20)
+trshold = input(25, 'Pivot Threshold')
+// Compute VPT ocillator
+obvOsc = tsi1
+obvColor = obvOsc > 0 ? color.new(color.aqua, 60) : color.new(color.orange, 60)
+// Divergence
+up = ta.rma(math.max(ta.change(src), 0), short)
+down = ta.rma(-math.min(ta.change(src), 0), short)
+lbR = input(title='Divergence Pivot Lookback Right', defval=1)
+lbL = input(title='Divergence Pivot Lookback Left', defval=5)
+rangeUpper = input(title='Max of Lookback Range', defval=100)
+rangeLower = input(title='Min of Lookback Range', defval=2)
+bearColor = color.new(color.red, 0)
+bullColor = color.new(color.green, 0)
+hiddenBullColor = color.new(color.aqua, 0)
+hiddenBearColor = color.new(color.orange, 0)
+textColor = color.new(color.white, 0)
+noneColor = color.new(color.white, 100)
+osc = tsi1
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+//Ichimoku
+Tenkansen = (ta.highest(high, 9) + ta.lowest(low, 9)) / 2
+Kijunsen = (ta.highest(high, 26) + ta.lowest(low, 26)) / 2
+FutureSpanA = (Tenkansen + Kijunsen) / 2
+FutureSpanB = (ta.highest(high, 52) + ta.lowest(low, 52)) / 2
+int c_IchimokuBarAlpha = 70
+color c_Ichimuku_6 = color.new(#8d0000, c_IchimokuBarAlpha)
+color c_Ichimuku_5 = color.new(color.red,c_IchimokuBarAlpha)
+color c_Ichimuku_4 = color.new(color.orange,c_IchimokuBarAlpha)
+color c_Ichimuku_3 = color.new(color.yellow,c_IchimokuBarAlpha)
+color c_Ichimuku_2 = color.new(color.rgb(143, 255, 39), c_IchimokuBarAlpha)
+color c_Ichimuku_1 = color.new(color.rgb(51, 255, 143),c_IchimokuBarAlpha)
+color c_Ichimuku_0 = color.new(color.rgb(77, 249, 255),c_IchimokuBarAlpha)
+//Implied volatility based on Kumo thickness
+Kumodepth = math.abs(FutureSpanA - FutureSpanB)
+//Normalize implied volatility
+Indicator = Kumodepth
+AverageIndicator = ta.sma(Indicator, 200)
+StandardDeviation = ta.stdev(Indicator, 200)
+UpperBand = AverageIndicator + 2 * StandardDeviation
+LowerBand = AverageIndicator - 2 * StandardDeviation
+NormalizedIndicator = (Indicator - LowerBand) / (UpperBand - LowerBand) * 100
+// Bollinger Bands Percentage 
+lengthBB = input.int(20, minval=1, title="Bollinger Bands Lengh")
+srcBB = input(close, title="Bollinger Bands Source")
+multBB = input.float(2.0, minval=0.001, maxval=50, title="Bollinger Bands StdDev")
+basisBB = ta.sma(srcBB, lengthBB)
+devBB = multBB * ta.stdev(srcBB, lengthBB)
+upperBB = basisBB + devBB
+lowerBB = basisBB - devBB
+bbrBB = (srcBB - lowerBB)/(upperBB - lowerBB)
+Perc1=bbrBB
+//BB Width %
+i_priceSrc = input.source ( close,   'BB Price Source',                                 inline='1', group='BBWP Properties')
+i_bbwpLen  = input.int    ( 13,      'BB Length',       minval=1,                       inline='2', group='BBWP Properties')
+i_bbwpLkbk = input.int    ( 252,     '     Lookback',  minval=1,                     inline='2', group='BBWP Properties')
+i_ma1On    = input.bool   ( true,    '',                                             inline='3', group='BBWP Properties')
+i_ma1Type  = input.string ( 'SMA',   'BBWP MA Type', options=['SMA', 'EMA', 'VWMA'], inline='3', group='BBWP Properties')
+i_ma1Len   = input.int    ( 5,       'BB Length',       minval=1,                       inline='3', group='BBWP Properties')
+
+bbwp       = ta.percentrank(ta.bbw(i_priceSrc, i_bbwpLen, 1), i_bbwpLkbk) 
+c_bbwp     = bbwp >= 50 ? color.from_gradient(bbwp, 50, 100, #0AFF00, #FF2900): color.from_gradient(bbwp, 0, 49, #0000FF, #0AFF00)
+bbwpMA1    = i_ma1On ? i_ma1Type == 'VWMA' ? ta.vwma ( bbwp, i_ma1Len ) : i_ma1Type == 'EMA' ? ta.ema ( bbwp, i_ma1Len ) : ta.sma ( bbwp, i_ma1Len ) : na
+//HMA 
+lengthHMA = input.int(100, minval=1, title="Hull Long Moving Averge")
+srcHMA = input(close, title="Hull Moving Long Averge Source")
+hullma = ta.wma(2*ta.wma(srcHMA, lengthHMA/2)-ta.wma(srcHMA, lengthHMA), math.floor(math.sqrt(lengthHMA)))
+lengthHMA2 = input.int(30, minval=1, title="Hull Short Moving Averge")
+srcHMA2 = input(close, title="Hull Moving Short Averge Source")
+hullma2 = ta.wma(2*ta.wma(srcHMA2, lengthHMA2/2)-ta.wma(srcHMA2, lengthHMA2), math.floor(math.sqrt(lengthHMA2)))
+//MFI 
+lengthMFI = input.int(title="Money Flow Index Length", defval=14, minval=1, maxval=2000)
+srcMFI = hlc3
+mfMFI = ta.mfi(srcMFI, lengthMFI)
+//RSI MFI
+rsiMFIline_Show = input(false, title='Show RSI MFI Line')
+//SAR 
+AF_initial = input(0.02, title='SAR Initial')
+AF_increment = input(0.02, title='SAR Increment')
+AF_maximum = input(0.02, title='SAR Maximum')
+someema = input(10, title='SAR SMA')
+uptrend = true
+newtrend = false
+EP = high
+SAR = low
+AF = AF_initial
+
+if not na(uptrend[1]) and not na(newtrend[1])
+    if uptrend[1]
+        EP := math.max(high, EP[1])
+        EP
+    else
+        EP := math.min(low, EP[1])
+        EP
+    if newtrend[1]
+        AF := AF_initial
+        AF
+    else
+        if EP != EP[1]
+            AF := math.min(AF_maximum, AF[1] + AF_increment)
+            AF
+        else
+            AF := AF[1]
+            AF
+    SAR := SAR[1] + AF * (EP - SAR[1])
+    if uptrend[1]
+        if newtrend
+            SAR := math.max(high, EP[1])
+            EP := math.min(low, low[1])
+            EP
+        else
+            SAR := math.min(SAR, low[1])
+            if not na(low[2])
+                SAR := math.min(SAR, low[2])
+                SAR
+            if SAR > low
+                uptrend := false
+                newtrend := true
+                SAR := math.max(high, EP[1])
+                EP := math.min(low, low[1])
+                EP
+            else
+                uptrend := true
+                newtrend := false
+                newtrend
+    else
+        if newtrend
+            SAR := math.min(low, EP[1])
+            EP := math.max(high, high[1])
+            EP
+        else
+            SAR := math.max(SAR, high[1])
+            if not na(high[2])
+                SAR := math.max(SAR, high[2])
+                SAR
+            if SAR < high
+                uptrend := true
+                newtrend := true
+                SAR := math.min(low, EP[1])
+                EP := math.max(high, high[1])
+                EP
+            else
+                uptrend := false
+                newtrend := false
+                newtrend
+
+XSAR = ta.sma((close - SAR),someema)
+SARColor = XSAR > XSAR[1] ? color.new(color.aqua,50) : color.new(color.orange,50)
+
+// Plots Calc
+labelwhere = input.int(20, title="Where to Draw the Label 1")
+labelwhere2 = input.int(50, title="Where to Draw the Label 2")
+labelwhere3 = input.int(50, title="Where to Draw the Label 3")
+perccolor = bbrBB < 0.5 and bbrBB > 0 ? color.new(color.aqua,50) : bbrBB < 0 ? color.new(color.green,50) : bbrBB > 1 ? color.new(color.red,50) : color.new(color.orange,50)
+pertext = bbrBB > 1 ? "Bollinger Bands Overbought" : bbrBB < 0 ? "Bollinger Bands Oversold" : "BB"
+perccolorMFI = mfMFI > 80 ? color.new(color.red,50) : mfMFI < 20 ? color.new(color.green,50) : mfMFI > 50 ? color.new(color.aqua,50) : color.new(color.orange,50)
+pertextMFI = mfMFI > 80 ? "MoneyFlow Overbought" : mfMFI < 20 ? "MoneyFlow Oversold" : "Money Flow"
+hullhull = hullma - hullma2
+perccolorBBW = bbwp < 7 ? color.new(color.red,50) : color.new(color.aqua,50)
+pertextBBW = bbwp < 7 ? "BB Width Squeeze" : "BB Width"
+signallinelookback = input(1, title='Signal Line Lookback')
+perccolorHMA = hullhull[1] < hullhull and tsi2[signallinelookback] > tsi2 ? color.new(color.orange,50) : hullhull[1] > hullhull and tsi2[signallinelookback] < tsi2 ? color.new(color.aqua,50) : tsi2[signallinelookback] > tsi2 ? color.new(color.orange,70) : tsi2[signallinelookback] < tsi2 ? color.new(color.aqua,70) : color.new(color.gray,50)
+
+if barstate.islast
+    var lbl = label.new(na, na)
+    label.set_xy(lbl, bar_index + labelwhere, input_src)
+    label.set_textalign(lbl, text.align_right)
+    label.set_text(lbl, str.tostring(Perc1, format.mintick)+ " " + (pertext))
+    label.set_textcolor(lbl, perccolor)
+    label.set_style(lbl, label.style_none)
+if barstate.islast
+    var lbl2 = label.new(na, na)
+    label.set_xy(lbl2, bar_index + labelwhere2, 55)
+    label.set_textalign(lbl2, text.align_right)
+    label.set_text(lbl2, str.tostring(bbwp, format.mintick)+ " " + "%" + " " + (pertextBBW))
+    label.set_textcolor(lbl2, perccolorBBW)
+    label.set_style(lbl2, label.style_none)
+if barstate.islast
+    var lbl3 = label.new(na, na)
+    label.set_xy(lbl3, bar_index + labelwhere3, -85)
+    label.set_textalign(lbl3, text.align_right)
+    label.set_text(lbl3, str.tostring(mfMFI, format.mintick)+ " " + (pertextMFI))
+    label.set_textcolor(lbl3, perccolorMFI)
+    label.set_style(lbl3, label.style_none)
+
+crossoverCond1 = ta.crossunder(tsi1, tsi2)
+crossoverCond2 = ta.crossover(tsi1, tsi2)
+
+PHCond = tsi1 > trshold ? ta.pivothigh(tsi1, pivL, pivR) : na
+PLCond = tsi1 < -(trshold) ? ta.pivotlow(tsi1, pivL, pivR) : na
+crossPHCond = input_src < 0 and ta.crossunder(input_src, tsi2) ? ta.valuewhen(input_src, tsi2,0) : na
+crossPLCond = input_src > 0 and ta.crossover(input_src, tsi2) ? ta.valuewhen(input_src, tsi2,0) : na
+vwph = ta.valuewhen(PHCond, PHCond, 0)
+vwpl = ta.valuewhen(PLCond, PLCond, 0)
+counterph = 0
+counterph := ta.change(vwph < vwph[1]) ? nz(counterph[1]) + 1 : 0
+counterpl = 0
+counterpl := ta.change(vwpl > vwpl[1]) ? nz(counterpl[1]) + 1 : 0
+// sellmaybe = counterph == 1 ? color.new(color.orange,00) : color.new(color.white,00)
+// buymaybe = counterpl == 1 ? color.new(color.aqua,00) : color.new(color.white,00)
+crossvwph = ta.valuewhen(crossPHCond, crossPHCond, 0)
+crossvwpl = ta.valuewhen(crossPLCond, crossPLCond, 0)
+crosscounterph = 0
+crosscounterph := ta.change(crossvwph < crossvwph[1]) ? nz(crosscounterph[1]) + 1 : 0
+crosscounterpl = 0
+crosscounterpl := ta.change(crossvwpl > crossvwpl[1]) ? nz(crosscounterpl[1]) + 1 : 0
+vwapLine_Show = input(false, title='Show WT VWAP')
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Finalize
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+// Maybe
+buymaybe = counterpl == 1
+sellmaybe = counterph == 1
+// Cross
+crossbuymaybe = crosscounterpl == 1
+crosssellmaybe = crosscounterph == 1
+// Buy signal.
+buySignalDiv = wtShowDiv and wtBullDiv or wtShowDiv and wtBullDiv_add or stochShowDiv and stochBullDiv or rsiShowDiv and rsiBullDiv
+buySignalDiv_color = wtBullDiv ? colorGreen : wtBullDiv_add ? color.new(colorGreen, 60) : rsiShowDiv ? colorGreen : na
+buySignal = wtCross and wtCrossUp and wtOversold
+// color c_buySignal = crossbuymaybe ? color.new(color.aqua,00) : buySignal ? color.new(colorGreen, 15) : na
+color c_buySignal = crossbuymaybe ? color.new(color.aqua,00) : buymaybe ? color.new(color.aqua,20) : buySignal ? color.new(colorGreen, 15) : color.white
+
+// Sell signal
+sellSignalDiv = wtShowDiv and wtBearDiv or wtShowDiv and wtBearDiv_add or stochShowDiv and stochBearDiv or rsiShowDiv and rsiBearDiv
+sellSignalDiv_color = wtBearDiv ? colorRed : wtBearDiv_add ? color.new(colorRed, 60) : rsiBearDiv ? colorRed : na
+sellSignal = wtCross and wtCrossDown and wtOverbought
+// color c_sellSignal = crosssellmaybe ? color.new(color.orange,00) : sellSignal ? color.new(colorRed, 15) : na
+color c_sellSignal = crosssellmaybe ? color.new(color.orange,00) : sellmaybe ? color.new(color.orange,20) : sellSignal ? color.new(colorRed, 15) : color.white
+// Gold Buy 
+lastRsi = ta.valuewhen(wtFractalBot, rsi[2], 0)[2]
+wtGoldBuy = (wtShowDiv and wtBullDiv or rsiShowDiv and rsiBullDiv) and wtLow_prev <= osLevel3 and wt2 > osLevel3 and wtLow_prev - wt2 <= -5 and lastRsi < 30
+
+// -----------------------------------------------------------------------------------------------
+//   Ploting
+// -----------------------------------------------------------------------------------------------
+//  MFI BAR
+plot(show_MFI_bar ? -60 : na, title='MFI Bar Colors', color=rsiMFIColor, style=plot.style_line, linewidth=2)
+// WT Areas
+colorWT1 = input.color(color.new(#4994ec, 0), 'WT1 Fill', group='Color Settings')
+colorWT2line = input.color(color.new(color.orange, 0), 'WT2 Line', group='Color Settings')
+colorWT2fill = input.color(color.new(#001aff, 70), 'WT2 Fill (no Implied volatility)', group='Color Settings')
+plot(show_WT1 ? wt1 : na, style=plot.style_area, title='WT Wave 1', color=color.new(colorWT1, 30))
+plot(show_WT2 ? wt2 : na, style=plot.style_line, title='WT Wave 2', color=color.new(colorWT2line, 25), linewidth=2)
+color c_Ichimuku = NormalizedIndicator >= 105 ? c_Ichimuku_6 : NormalizedIndicator >= 90 ? c_Ichimuku_5 : NormalizedIndicator >= 70 ? c_Ichimuku_4 : NormalizedIndicator >= 50 ? c_Ichimuku_3 : NormalizedIndicator >= 20 ? c_Ichimuku_2 : NormalizedIndicator >= 5 ? c_Ichimuku_1 : c_Ichimuku_0
+plot(show_WT2 ? wt2 : na, style=plot.style_area, title='WT Wave 2 with Implied volatility', color=show_WT2kv ? c_Ichimuku : colorWT2fill, linewidth=1)
+// VWAP
+VWAPColor = input.color(color.new(#ffffff, 50), 'VWAP', group='Color Settings')
+plot(show_vwap ? wtVwap : na, title='VWAP', color=VWAPColor, style=plot.style_area, linewidth=2)
+// MFI AREA
+plot(show_RSIMFI ? rsiMFI : na, style=plot.style_area, title='rsiMFI', color=color.new(rsiMFIColor, 50))
+// WT Div
+plot(series=wtFractalTop ? wt2[2] : na, title='WT Bearish Divergence', color=wtBearDivColor, linewidth=2, offset=-2)
+plot(series=wtFractalBot ? wt2[2] : na, title='WT Bullish Divergence', color=wtBullDivColor, linewidth=2, offset=-2)
+// WT 2nd Div
+plot(series=wtFractalTop_add ? wt2[2] : na, title='WT 2nd Bearish Divergence', color=wtBearDivColor_add, linewidth=2, offset=-2)
+plot(series=wtFractalBot_add ? wt2[2] : na, title='WT 2nd Bullish Divergence', color=wtBullDivColor_add, linewidth=2, offset=-2)
+// RSI
+plot(show_rsi ? rsi : na, title='RSI', color=rsiColor, linewidth=2)
+// RSI Div
+plot(series=rsiFractalTop ? rsi[2] : na, title='RSI Bearish Divergence', color=rsiBearDivColor, linewidth=1, offset=-2)
+plot(series=rsiFractalBot ? rsi[2] : na, title='RSI Bullish Divergence', color=rsiBullDivColor, linewidth=1, offset=-2)
+// Stochastic RSI
+stochkcolor = input.color(color.new(#15c1ff, 70), 'Stoch K', group='Color Settings')
+stochdcolor = input.color(color.new(#8b47ff, 50), 'Stoch D', group='Color Settings')
+stochKplot = plot(show_stoch ? stochK : na, title='Stoch K', color=stochkcolor, linewidth=2)
+stochDplot = plot(show_stoch ? stochD : na, title='Stoch D', color=stochdcolor, linewidth=1)
+stochFillColor = stochK >= stochD ? color.new(#21baf3, 95) : color.new(#673ab7, 90)
+fill(stochKplot, stochDplot, title='KD Fill', color=stochFillColor)
+// Stoch Div
+plot(series=stochFractalTop ? stochK[2] : na, title='Stoch Bearish Divergence', color=stochBearDivColor, linewidth=1, offset=-2)
+plot(series=stochFractalBot ? stochK[2] : na, title='Stoch Bullish Divergence', color=stochBullDivColor, linewidth=1, offset=-2)
+// Schaff Trend Cycle
+plot(show_tcLine ? tcVal : na, color=color.new(#673ab7, 25), linewidth=2, title='Schaff Trend Cycle 1')
+plot(show_tcLine ? tcVal : na, color=color.new(colorWhite, 50), linewidth=1, title='Schaff Trend Cycle 2')
+// Draw Overbought & Oversold lines
+hline(obLevel2, title='Over Bought Level 2', color=color.new(#8921ff, 15), linewidth=1, linestyle=hline.style_solid)
+hline(obLevel2-20, title='Over Bought Level 2', color=color.new(color.orange,80), linewidth=1, linestyle=hline.style_dashed)
+// Sommi flag
+plotchar(sommiFlagShow and sommiBearish ? 108 : na, title='Sommi bearish flag', char='⚑', color=color.new(colorPink, 0), location=location.absolute, size=size.tiny)
+plotchar(sommiFlagShow and sommiBullish ? -108 : na, title='Sommi bullish flag', char='⚑', color=color.new(colorBluelight, 0), location=location.absolute, size=size.tiny)
+plot(sommiShowVwap ? ta.ema(hvwap, 3) : na, title='Sommi higher VWAP', color=color.new(colorYellow, 55), linewidth=2, style=plot.style_line)
+// Sommi diamond
+plotchar(sommiDiamondShow and sommiBearishDiamond ? 108 : na, title='Sommi bearish diamond', char='◆', color=color.new(colorPink, 0), location=location.absolute, size=size.tiny)
+plotchar(sommiDiamondShow and sommiBullishDiamond ? -108 : na, title='Sommi bullish diamond', char='◆', color=color.new(colorBluelight, 0), location=location.absolute, size=size.tiny)
+// Buy-Sell Zone
+upper_band = plot(show_ichi ? sell_zone : na, title='Sell Zone', color=color.new(color.orange, 65))
+lower_band = plot(show_ichi ? buy_zone : na, title='Buy Zone', color=color.new(color.aqua, 65))
+zero1 = plot(100, title='Absolute Max', color=color.new(color.white, 100))
+zero2 = plot(-100, title='Absolute Min', color=color.new(color.white, 100))
+fill(upper_band, zero1, color=show_ichi ? color.new(color.orange, 90) : na)
+fill(lower_band, zero2, color=show_ichi ? color.new(color.aqua, 90) : na)
+// plot(input_src, linewidth=1, style=plot.style_columns, color=c_Ichimuku, title='Kumo Implied Historical Volatility')
+// Divinder
+// zeromarker = plot(0, linewidth=1, title='Zero', style=plot.style_line, color=color.new(color.white, 100))
+hline(0, 'Zero', color.new(color.white,15), hline.style_solid, 1)
+hline(80, 'Overbought', color.new(color.orange,80), hline.style_dashed, 1)
+hline(-80, 'Oversold', color.new(color.aqua,80), hline.style_dashed, 1)
+// RSI-MIF
+plot(show_RSIMFI_bar ? -99 : na, linewidth=2, title='Money Flow Line', style=plot.style_line, color=perccolorMFI)
+string showSARas_type = input.string('Line', title='Show SAR Chart type', options=['Line', 'Indicator'])
+whatcolor2 = showSARas_type == 'Indicator' ? SARColor : perccolorHMA
+plot(show_SAR and showSARas_type == 'Indicator' ? XSAR : show_SAR ? 99 : na, linewidth=2, title='Trend Line', style=plot.style_line, color=whatcolor2)
+// VMC Signals
+plot(show_wtCross and wtCross ? wt2 : na, title='Buy and sell circle', color=signalColor, style=plot.style_circles, linewidth=2)
+// Big
+plotchar(show_wtDivDot and buySignalDiv ? -98 : na, title='Divergence buy circle', char='•', color=buySignalDiv_color, location=location.absolute, size=size.small, offset=-2)
+plotchar(show_wtDivDot and sellSignalDiv ? 98 : na, title='Divergence sell circle', char='•', color=sellSignalDiv_color, location=location.absolute, size=size.small, offset=-2)
+plotchar(show_wtGoldDot and wtGoldBuy ? -98 : na, title='Gold  buy gold circle', char='•', color=color.new(colorOrange, 0), location=location.absolute, size=size.normal, offset=-5)
+// Little
+plotchar(show_wtDot and buySignal ? -100 : show_wtCrossDot and crossbuymaybe ? -100 : show_wtDot and buymaybe or show_wtDot and PLCond ? -115 : na, title='Buy circle', char='·', color=c_buySignal, location=location.absolute, size=size.small)
+plotchar(show_wtDot and sellSignal ? 98 : show_wtCrossDot and crosssellmaybe ? 98 : show_wtDot and sellmaybe or show_wtDot and PHCond ? 113 : na, title='Sell circle', char='·', color=c_sellSignal, location=location.absolute, size=size.small)

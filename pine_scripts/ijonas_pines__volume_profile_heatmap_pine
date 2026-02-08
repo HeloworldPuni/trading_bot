@@ -1,0 +1,276 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════
+// Volume Profile Heatmap Indicator
+// ══════════════════════════════════════════════════════════════════════════════
+// Description: Visual representation of volume at different price levels
+// Features: HVN/LVN detection, POC (Point of Control), customizable lookback
+// Author: Pine Script Collection
+// Version: 1.0
+// ══════════════════════════════════════════════════════════════════════════════
+
+indicator("Volume Profile Heatmap", shorttitle="Vol Profile", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Profile Settings ===
+lookbackBars = input.int(100, "Lookback Bars", minval=20, maxval=500, group="Profile Settings")
+numRows = input.int(24, "Number of Price Rows", minval=10, maxval=50, group="Profile Settings", tooltip="More rows = more detailed profile")
+profileWidth = input.int(20, "Profile Width (bars)", minval=5, maxval=100, group="Profile Settings")
+
+// === Display Settings ===
+showPOC = input.bool(true, "Show POC (Point of Control)", group="Display")
+showVAH = input.bool(true, "Show Value Area High", group="Display")
+showVAL = input.bool(true, "Show Value Area Low", group="Display")
+valueAreaPercent = input.int(70, "Value Area %", minval=50, maxval=95, group="Display", tooltip="Percentage of volume in value area")
+
+showHVN = input.bool(true, "Highlight High Volume Nodes", group="Display")
+showLVN = input.bool(true, "Highlight Low Volume Nodes", group="Display")
+hvnThreshold = input.float(1.5, "HVN Threshold (x average)", minval=1.0, maxval=3.0, step=0.1, group="Display")
+lvnThreshold = input.float(0.5, "LVN Threshold (x average)", minval=0.1, maxval=0.9, step=0.1, group="Display")
+
+// === Color Settings ===
+useHeatmap = input.bool(true, "Use Heatmap Colors", group="Colors")
+highVolumeColor = input.color(color.new(color.red, 30), "High Volume", group="Colors")
+lowVolumeColor = input.color(color.new(color.blue, 70), "Low Volume", group="Colors")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get price range for lookback period
+highestPrice = ta.highest(high, lookbackBars)
+lowestPrice = ta.lowest(low, lookbackBars)
+priceRange = highestPrice - lowestPrice
+rowHeight = priceRange / numRows
+
+// Create arrays to store volume at each price level
+var volumeProfile = array.new<float>(numRows, 0.0)
+var pricelevels = array.new<float>(numRows, 0.0)
+
+// Reset arrays
+if barstate.islast
+    array.clear(volumeProfile)
+    array.clear(pricelevels)
+
+    for i = 0 to numRows - 1
+        array.push(volumeProfile, 0.0)
+        array.push(pricelevels, lowestPrice + (rowHeight * i) + (rowHeight / 2))
+
+    // Calculate volume at each price level
+    for j = 0 to math.min(lookbackBars - 1, bar_index)
+        barHigh = high[j]
+        barLow = low[j]
+        barVolume = volume[j]
+
+        // Distribute volume across price rows that the bar touched
+        for k = 0 to numRows - 1
+            levelPrice = array.get(pricelevels, k)
+            levelTop = levelPrice + (rowHeight / 2)
+            levelBottom = levelPrice - (rowHeight / 2)
+
+            // Check if this bar overlaps with this price level
+            if barLow <= levelTop and barHigh >= levelBottom
+                // Calculate overlap percentage
+                overlapTop = math.min(barHigh, levelTop)
+                overlapBottom = math.max(barLow, levelBottom)
+                overlapSize = overlapTop - overlapBottom
+                barSize = barHigh - barLow
+
+                // Distribute proportional volume
+                if barSize > 0
+                    proportionalVolume = (overlapSize / barSize) * barVolume
+                    currentVol = array.get(volumeProfile, k)
+                    array.set(volumeProfile, k, currentVol + proportionalVolume)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIND KEY LEVELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float poc = na  // Point of Control (highest volume)
+var float vah = na  // Value Area High
+var float val = na  // Value Area Low
+var float maxVolume = na
+var float totalVolume = 0.0
+var float avgVolume = 0.0
+
+if barstate.islast and array.size(volumeProfile) > 0
+    // Find POC (max volume level)
+    maxVolume := array.max(volumeProfile)
+    maxVolumeIndex = array.indexof(volumeProfile, maxVolume)
+    poc := array.get(pricelevels, maxVolumeIndex)
+
+    // Calculate total and average volume
+    totalVolume := array.sum(volumeProfile)
+    avgVolume := totalVolume / numRows
+
+    // Find Value Area (70% of volume around POC)
+    targetVolume = totalVolume * (valueAreaPercent / 100)
+    valueAreaVolume = maxVolume
+
+    upperIndex = maxVolumeIndex
+    lowerIndex = maxVolumeIndex
+
+    // Expand from POC until we reach target volume
+    while valueAreaVolume < targetVolume and (upperIndex < numRows - 1 or lowerIndex > 0)
+        upperVol = upperIndex < numRows - 1 ? array.get(volumeProfile, upperIndex + 1) : 0
+        lowerVol = lowerIndex > 0 ? array.get(volumeProfile, lowerIndex - 1) : 0
+
+        if upperVol >= lowerVol and upperIndex < numRows - 1
+            upperIndex += 1
+            valueAreaVolume += upperVol
+        else if lowerIndex > 0
+            lowerIndex -= 1
+            valueAreaVolume += lowerVol
+
+    vah := array.get(pricelevels, upperIndex)
+    val := array.get(pricelevels, lowerIndex)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DRAW VOLUME PROFILE
+// ══════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast and array.size(volumeProfile) > 0
+    // Find max volume for scaling
+    maxVol = array.max(volumeProfile)
+
+    // Draw each volume bar
+    for i = 0 to numRows - 1
+        vol = array.get(volumeProfile, i)
+        price = array.get(pricelevels, i)
+
+        // Scale volume bar width
+        volWidth = (vol / maxVol) * profileWidth
+        barLeft = bar_index - lookbackBars
+        barRight = barLeft + math.floor(volWidth)
+
+        // Determine color based on volume
+        boxColor = color.new(color.gray, 80)
+        if useHeatmap
+            volumeRatio = vol / avgVolume
+            if volumeRatio >= hvnThreshold
+                boxColor := highVolumeColor
+            else if volumeRatio <= lvnThreshold
+                boxColor := lowVolumeColor
+            else
+                // Gradient between low and high
+                transparency = int(70 - ((volumeRatio - lvnThreshold) / (hvnThreshold - lvnThreshold) * 40))
+                boxColor := color.new(color.orange, math.max(30, math.min(90, transparency)))
+
+        // Draw volume bar
+        if volWidth > 0.5
+            box.new(barLeft, price - (rowHeight / 2), barRight, price + (rowHeight / 2),
+                   bgcolor=boxColor, border_color=color.new(boxColor, 50), border_width=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DRAW KEY LEVELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POC - Point of Control
+plot(showPOC ? poc : na, "POC", color=color.new(color.yellow, 0), linewidth=3, style=plot.style_line)
+
+// Value Area High
+plot(showVAH ? vah : na, "VAH", color=color.new(color.green, 30), linewidth=2, style=plot.style_line)
+
+// Value Area Low
+plot(showVAL ? val : na, "VAL", color=color.new(color.red, 30), linewidth=2, style=plot.style_line)
+
+// Value Area Fill
+vahPlot = plot(showVAH and showVAL ? vah : na, display=display.none)
+valPlot = plot(showVAL and showVAH ? val : na, display=display.none)
+fill(vahPlot, valPlot, color=color.new(color.gray, 95), title="Value Area")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LABELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
+    if showPOC and not na(poc)
+        label.new(bar_index, poc, "POC: " + str.tostring(poc, format.mintick),
+                 color=color.new(color.yellow, 0), textcolor=color.black,
+                 style=label.style_label_left, size=size.small)
+
+    if showVAH and not na(vah)
+        label.new(bar_index, vah, "VAH: " + str.tostring(vah, format.mintick),
+                 color=color.new(color.green, 30), textcolor=color.white,
+                 style=label.style_label_left, size=size.tiny)
+
+    if showVAL and not na(val)
+        label.new(bar_index, val, "VAL: " + str.tostring(val, format.mintick),
+                 color=color.new(color.red, 30), textcolor=color.white,
+                 style=label.style_label_left, size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HVN/LVN DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+var hvnLevels = array.new<float>()
+var lvnLevels = array.new<float>()
+
+if barstate.islast and array.size(volumeProfile) > 0
+    array.clear(hvnLevels)
+    array.clear(lvnLevels)
+
+    for i = 0 to numRows - 1
+        vol = array.get(volumeProfile, i)
+        price = array.get(pricelevels, i)
+        volumeRatio = vol / avgVolume
+
+        // Detect HVN (High Volume Node)
+        if showHVN and volumeRatio >= hvnThreshold
+            array.push(hvnLevels, price)
+            if array.size(hvnLevels) <= 5  // Limit labels
+                label.new(bar_index - lookbackBars + profileWidth + 2, price, "HVN",
+                         color=color.new(color.red, 50), textcolor=color.white,
+                         style=label.style_label_left, size=size.tiny)
+
+        // Detect LVN (Low Volume Node) - potential breakout areas
+        if showLVN and volumeRatio <= lvnThreshold and volumeRatio > 0
+            array.push(lvnLevels, price)
+            if array.size(lvnLevels) <= 5  // Limit labels
+                label.new(bar_index - lookbackBars + profileWidth + 2, price, "LVN",
+                         color=color.new(color.blue, 50), textcolor=color.white,
+                         style=label.style_label_left, size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PRICE ACTION ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Check current price position relative to profile
+var string pricePosition = ""
+if barstate.islast and not na(poc) and not na(vah) and not na(val)
+    if close > vah
+        pricePosition := "Above Value Area (Bullish)"
+    else if close < val
+        pricePosition := "Below Value Area (Bearish)"
+    else if close > poc
+        pricePosition := "In Value Area (Upper Half)"
+    else
+        pricePosition := "In Value Area (Lower Half)"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+pocTouch = not na(poc) and math.abs(close - poc) / close < 0.002
+vahTouch = not na(vah) and math.abs(close - vah) / close < 0.002
+valTouch = not na(val) and math.abs(close - val) / close < 0.002
+
+alertcondition(pocTouch, "Price at POC", "Price touching Point of Control - {{ticker}} @ {{close}}")
+alertcondition(vahTouch, "Price at VAH", "Price at Value Area High - {{ticker}} @ {{close}}")
+alertcondition(valTouch, "Price at VAL", "Price at Value Area Low - {{ticker}} @ {{close}}")
+alertcondition(close > vah and close[1] <= vah, "Break Above VAH", "Price broke above Value Area High - {{ticker}}")
+alertcondition(close < val and close[1] >= val, "Break Below VAL", "Price broke below Value Area Low - {{ticker}}")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// USAGE NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+// POC: Strongest support/resistance where most volume traded
+// VAH/VAL: Boundaries of value area (70% of volume)
+// HVN: High volume nodes - strong S/R levels
+// LVN: Low volume nodes - weak areas, potential breakout zones
+// Price above VAH: Bullish, look for longs
+// Price below VAL: Bearish, look for shorts
+// Price in value area: Range-bound, mean reversion trades
+// ══════════════════════════════════════════════════════════════════════════════

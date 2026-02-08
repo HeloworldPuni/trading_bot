@@ -1,0 +1,41 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified
+
+//@version=5
+indicator("Risk Assist", overlay=true)
+import Electrified/LabelHelper/8 as LH
+
+targetTake = input.float(33.3, "Target Safe Take %", step=0.1, minval=0, maxval=100, tooltip="The desired maximium percent of the position to exit in order to avoid a losing position.")
+entryTime = input.time(-1, "Entry", confirm=true, tooltip="The point in time the entry was executed.\nThe price is defaulted to the HLC3 of that bar.")
+costBasis = input.price(0, "Basis", tooltip="The cost basis to use instead of the HLC3 of the entry.\nA value of zero or less will assume the entry price is the HLC3 from the entry bar.")
+stopLevel = input.price(-1, "Stop", confirm=true, tooltip="A stop level below the entry price assumes a long position, and a price above assumes a short position.")
+ready = entryTime != -1 and stopLevel != -1
+var L = 100
+
+var float EP = na // entry price
+var float RA = na // risk amount
+var float TL = na // target level
+float GA = na // gain
+
+
+if ready and na(EP)
+    // Necessary for if time frame has been changed.
+    if time == entryTime
+        EP := costBasis==0 ? hlc3 : costBasis
+    else if time > entryTime
+        EP := costBasis==0 ? hlc3[1] : costBasis
+        
+    if not na(EP)
+        RA := EP - stopLevel
+        TL = EP + L * RA / targetTake - RA
+        line.new(time, stopLevel, time, EP, xloc.bar_time, extend.both, color.white, line.style_dotted, 2)
+        line.new(time, stopLevel, time + timeframe.multiplier, stopLevel, xloc.bar_time, extend.right, color.red, line.style_dotted, 2)
+        line.new(time, TL, time + timeframe.multiplier, TL, xloc.bar_time, extend.right, color.green, line.style_dotted, 2)
+        box.new(time, EP, time + timeframe.multiplier, stopLevel, border_width=0, xloc=xloc.bar_time, extend=extend.right, bgcolor=color.new(color.red, 85))
+        box.new(time, TL, time + timeframe.multiplier, EP, border_width=0, xloc=xloc.bar_time, extend=extend.right, bgcolor=color.new(color.yellow, 95))
+
+if not na(RA)
+    GA := close - EP
+
+// d = RA + GA // current distance from risk level
+// T = L * RA / d // % profit take to avoid a losing trade if stop is hit

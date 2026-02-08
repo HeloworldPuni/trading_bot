@@ -1,0 +1,107 @@
+//@version=4
+strategy(title="VWAP & RSI", shorttitle="VWAP & RSI", overlay=true)
+
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+FromYear  = input(defval = 2023, title = "From Year", minval = 1900)
+ToMonth   = FromMonth + 1
+ToDay     = FromDay
+ToYear    = input(defval = 2023, title = "To Year", minval = 1900)
+
+FromTime = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+ToTime   = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+
+length = input(14, title="Length")
+overBought = input(70, title="Overbought Level")
+overSold = input(30, title="Oversold Level")
+
+VWAP = vwap(hlc3)
+rsi = rsi(close, length)
+
+
+
+if (time >= FromTime and time <= ToTime)
+    RPT = 0.01
+    positionSize = (strategy.equity * RPT) / atr(14)
+
+    buyCondition = (crossover(close, VWAP) and (not crossunder(rsi, overBought))) or (crossover(rsi, overSold) and (not crossunder(close, VWAP)))
+    sellCondition = (not crossover(close, VWAP) and (crossunder(rsi, overBought))) or (not crossover(rsi, overSold) and (crossunder(close, VWAP)))
+
+    strategy.entry("Buy", strategy.long, when = buyCondition,qty=positionSize)
+    strategy.entry("Sell", strategy.short, when = sellCondition, qty=positionSize)
+
+    buyProfitLimit = close * 1.10
+    buyLossLimit = close * 0.98
+    sellProfitLimit = close * 0.9
+    sellLossLimit = close * 1.02
+
+    strategy.exit("Exit", "Buy", when = strategy.position_size > 0, stop=buyLossLimit, limit=buyProfitLimit)
+    strategy.exit("Exit", "Sell", when = strategy.position_size < 0, stop=sellLossLimit, limit=sellProfitLimit)
+
+
+
+// plot(VWAP, title="VWAP", color=color.blue, linewidth=2)
+// plot(rsi, title="RSI", color=color.red, linewidth=2)
+
+
+-------------------------------------------------------------------------------------------------------------------------------
+
+//@version=4
+strategy(title="VWAP & RSI", shorttitle="VWAP & RSI", overlay=true)
+
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+FromYear  = input(defval = 2023, title = "From Year", minval = 1900)
+ToMonth   = FromMonth + 1
+ToDay     = FromDay
+ToYear    = input(defval = 2023, title = "To Year", minval = 1900)
+
+FromTime = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+ToTime   = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+
+length = input(14, title="Length")
+overBought = input(70, title="Overbought Level")
+overSold = input(30, title="Oversold Level")
+
+higherTf = input("D", title="Higher Time Frame")
+lowerTf = input("60", title="Lower Time Frame")
+
+
+higherTimeFrameVWAP = security(syminfo.tickerid, higherTf, vwap(hlc3))
+higherTimeFrameRSI = security(syminfo.tickerid, higherTf, rsi(close, length))
+
+
+lowerTimeFrameVWAP = security(syminfo.tickerid, lowerTf, vwap(hlc3))
+lowerTimeFrameRSI = security(syminfo.tickerid, lowerTf, rsi(close, length))
+
+// VWAP = vwap(hlc3)
+// rsi = rsi(close, length)
+
+if (time >= FromTime and time <= ToTime)
+    RPT = 0.01
+    positionSize = (strategy.equity * RPT) / atr(14)
+
+    higherTimeFrame_buyCondition = (crossover(close, higherTimeFrameVWAP) and (not crossunder(higherTimeFrameRSI, overBought))) or (crossover(higherTimeFrameRSI, overSold) and (not crossunder(close, higherTimeFrameVWAP)))
+    lowerTimeFrame_buyCondition = (crossover(close, lowerTimeFrameVWAP) and (not crossunder(lowerTimeFrameRSI, overBought))) or (crossover(lowerTimeFrameRSI, overSold) and (not crossunder(close, lowerTimeFrameVWAP)))
+    higherTimeFrame_sellCondition = (not crossover(close, higherTimeFrameVWAP) and (crossunder(higherTimeFrameRSI, overBought))) or (not crossover(higherTimeFrameRSI, overSold) and (crossunder(close, higherTimeFrameVWAP)))
+    lowerTimeFrame_sellCondition = (not crossover(close, lowerTimeFrameVWAP) and (crossunder(lowerTimeFrameRSI, overBought))) or (not crossover(lowerTimeFrameRSI, overSold) and (crossunder(close, lowerTimeFrameVWAP)))
+
+    buyCondition = higherTimeFrame_buyCondition and lowerTimeFrame_buyCondition
+    sellCondition = higherTimeFrame_sellCondition and lowerTimeFrame_sellCondition
+
+    strategy.entry("Buy", strategy.long, when = buyCondition,qty=positionSize)
+    strategy.entry("Sell", strategy.short, when = sellCondition, qty=positionSize)
+
+    buyProfitLimit = close * 1.10
+    buyLossLimit = close * 0.98
+    sellProfitLimit = close * 0.9
+    sellLossLimit = close * 1.02
+
+    strategy.exit("Exit", "Buy", when = strategy.position_size > 0, stop=buyLossLimit, limit=buyProfitLimit)
+    strategy.exit("Exit", "Sell", when = strategy.position_size < 0, stop=sellLossLimit, limit=sellProfitLimit)
+
+
+
+// plot(VWAP, title="VWAP", color=color.blue, linewidth=2)
+// plot(rsi, title="RSI", color=color.red, linewidth=2)
+

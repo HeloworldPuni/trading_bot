@@ -1,0 +1,520 @@
+//@version=5
+indicator(title="MKN: S/R Algo 1: Volume Profile Detection", shorttitle="MKN: S/R A1 Volume Profile", overlay=true, max_lines_count=50, max_labels_count=20, max_boxes_count=10)
+
+// ============================================================================
+// S/R ALGORITHM 1: VOLUME PROFILE-BASED S/R DETECTION
+// ============================================================================
+// Identifies support/resistance from volume distribution across price levels
+// Most accurate method: detects institutional "footprints" at specific prices
+// Target Accuracy: 75-85% for predicting S/R holds
+// ============================================================================
+
+// ============================= LABEL DOCUMENTATION ==========================
+//
+// WHAT THE LABELS MEAN:
+//
+// Format: "[Type] [Strength]"
+//   Example: "Support 85" or "Resistance 72"
+//
+// Type: Level classification
+//   - Support     = Price floor (buyers concentrated here)
+//   - Resistance  = Price ceiling (sellers concentrated here)
+//   - POC         = Point of Control (highest volume price - strongest level)
+//
+// Strength Score (0-100): Volume concentration + adjustments
+//   - Base score from volume distribution
+//   - POC always = 100 (highest volume by definition)
+//   - HVN (High Volume Nodes) = 60-95 based on volume rank
+//   - Adjustments: +15% per touch, +20% for rejections, +recency boost
+//
+// Visual Cues:
+//   - Label Style: Up arrow (Support/POC below), Down arrow (Resistance above)
+//   - Line Style: Solid (POC), Dashed (HVN/LVN)
+//   - Color Intensity: Stronger = more opaque, Weaker = more transparent
+//   - Value Area Box: Shaded region containing 70% of volume (VAH to VAL)
+//
+// Level Types (toggleable):
+//   - POC: Point of Control - peak volume price (always shown if enabled)
+//   - VAH/VAL: Value Area High/Low - 70% volume boundaries
+//   - HVN: High Volume Nodes - local volume peaks (strong S/R)
+//   - LVN: Low Volume Nodes - low volume valleys (weak S/R, usually hidden)
+//
+// ============================================================================
+
+// ============================= LIBRARY IMPORTS ==============================
+import redshad0ww/CoreMath/3 as math_lib
+import redshad0ww/RegimeDetection/3 as regime_lib
+import redshad0ww/LevelUtils/2 as level_lib
+
+// ============================= INPUTS =======================================
+
+// Volume Profile Settings
+vpLookback = input.int(200, "Volume Profile Lookback", minval=50, maxval=500, group="Volume Profile", tooltip="Bars to analyze for volume distribution")
+priceBins = input.int(40, "Price Bins", minval=20, maxval=60, group="Volume Profile", tooltip="Number of price levels to divide range into (fewer = faster)")
+useAdaptiveBins = input.bool(true, "Use Adaptive Bin Sizing", group="Volume Profile", tooltip="Auto-adjust bins based on ATR. Disable for fixed bins.")
+
+// Level Detection
+showPOC = input.bool(true, "Show POC (Point of Control)", group="Key Levels", tooltip="Highest volume price level")
+showValueArea = input.bool(true, "Show Value Area (VAH/VAL)", group="Key Levels", tooltip="70% of volume range")
+showHVN = input.bool(true, "Show High Volume Nodes", group="Key Levels", tooltip="Local volume peaks")
+showLVN = input.bool(false, "Show Low Volume Nodes", group="Key Levels", tooltip="Low volume valleys (weak S/R)")
+
+hvnPercentile = input.int(85, "HVN Percentile Threshold", minval=70, maxval=95, group="Key Levels", tooltip="Top % of volume to qualify as HVN")
+lvnPercentile = input.int(15, "LVN Percentile Threshold", minval=5, maxval=30, group="Key Levels", tooltip="Bottom % of volume for LVN")
+
+// Strength Adjustment Factors
+enableTouchCount = input.bool(true, "Enable Touch Count Bonus", group="Strength Scoring", tooltip="+15% per additional touch")
+enableRejection = input.bool(true, "Enable Rejection Analysis", group="Strength Scoring", tooltip="Boost for decisive wick rejections")
+enableRecency = input.bool(true, "Enable Recency Boost", group="Strength Scoring", tooltip="Boost for recently tested levels")
+touchTolerance = input.float(0.002, "Touch Tolerance %", minval=0.001, maxval=0.01, step=0.001, group="Strength Scoring", tooltip="Distance to count as level touch")
+
+// Display Settings
+minStrength = input.int(60, "Minimum Strength to Display", minval=40, maxval=85, group="Display")
+showLabels = input.bool(true, "Show Strength Labels", group="Display")
+showVolumeHistogram = input.bool(false, "Show Volume Histogram (Debug)", group="Display", tooltip="Visual volume distribution")
+
+// Regime Detection
+useRegimeFilter = input.bool(true, "Enable Regime-Aware Scoring", group="Regime Detection")
+atrLength = input.int(14, "ATR Length", minval=7, maxval=50, group="Regime Detection")
+atrLookback = input.int(50, "ATR Regime Lookback", minval=20, maxval=100, group="Regime Detection")
+
+// ============================= REGIME DETECTION =============================
+// Use library function for regime detection
+
+regimeData = regime_lib.detectRegime(atrLength, atrLookback)
+regimeName = regimeData.name
+atrRatio = regimeData.atrRatio
+isHighVol = regimeData.isHighVol
+isLowVol = regimeData.isLowVol
+isNormalVol = regimeData.isNormalVol
+regimeMultiplier = regimeData.multiplier
+
+// For adaptive bin calculation (needed below)
+currentATR = ta.atr(atrLength)
+avgATR = ta.sma(ta.atr(atrLength), atrLookback)
+
+// ============================= ADAPTIVE BIN SIZING ==========================
+// PHASE 2 IMPROVEMENT: Calculate optimal bin count based on ATR
+// Rationale: ATR-based discretization matches asset's intrinsic volatility
+// Low vol assets → smaller bins (higher resolution)
+// High vol assets → larger bins (less noise)
+
+// Calculate base bin count
+baseBins = priceBins  // User's manual setting (40 default)
+
+// Calculate adaptive bin count (reuses avgATR from regime detection)
+// Optimal bin size = 2× ATR (statistically meaningful price level)
+// Number of bins = price range / (2 × ATR)
+
+// Extract ta.highest/ta.lowest to be called on each calculation
+tempHighest = ta.highest(high, vpLookback)
+tempLowest = ta.lowest(low, vpLookback)
+
+adaptiveBinCount = baseBins
+if useAdaptiveBins and avgATR > 0 and not na(avgATR)
+    // Get price range first (needed for calculation)
+    priceRangeTemp = tempHighest - tempLowest
+
+    if priceRangeTemp > 0
+        optimalBinSize = avgATR * 2
+        adaptiveBinCount := math.round(priceRangeTemp / optimalBinSize)
+
+        // Constrain to reasonable range (safety limits)
+        adaptiveBinCount := math.max(20, math.min(60, adaptiveBinCount))
+
+// Use adaptive count for profile construction
+priceBinsActual = adaptiveBinCount
+
+// ============================= BUILD VOLUME PROFILE =========================
+
+// Get price range for lookback period
+highestPrice = ta.highest(high, vpLookback)
+lowestPrice = ta.lowest(low, vpLookback)
+priceRange = highestPrice - lowestPrice
+
+// BUG FIX #1: Handle zero price range (flat markets, consolidation)
+binSize = 0.0
+if priceRange == 0 or na(priceRange)
+    // Degenerate case: all prices identical or insufficient data
+    // Create minimal bin size to avoid division by zero
+    binSize := lowestPrice * 0.001  // 0.1% of price as arbitrary bin
+else
+    binSize := priceRange / priceBinsActual  // Use adaptive count
+
+// Initialize volume-at-price array (dynamic sizing for adaptive bins)
+var array<float> volumeAtPrice = array.new_float()
+var array<float> binPrices = array.new_float()
+
+// FLAW FIX #1: Recalculate on confirmed bars for historical backtesting support
+// Changed from barstate.islast to barstate.isconfirmed for historical visibility
+if barstate.isconfirmed or barstate.islast
+    // Clear arrays
+    array.clear(volumeAtPrice)
+    array.clear(binPrices)
+
+    // Initialize with adaptive bin count
+    for i = 0 to priceBinsActual - 1
+        array.push(volumeAtPrice, 0.0)
+        array.push(binPrices, lowestPrice + (i * binSize) + (binSize / 2))
+
+    // Distribute volume across price levels
+    // Lookback through history
+    for i = 0 to math.min(vpLookback - 1, bar_index)
+        barHigh = high[i]
+        barLow = low[i]
+        barOpen = open[i]
+        barClose = close[i]
+        barVolume = volume[i]
+
+        // Simplified OHLC volume distribution (optimized for PineScript)
+        // Allocate: 25% to open, 20% to high, 20% to low, 35% to close
+        // This approximates actual volume distribution better than uniform
+
+        // Calculate bin indices for OHLC
+        openBin = math.floor((barOpen - lowestPrice) / binSize)
+        highBin = math.floor((barHigh - lowestPrice) / binSize)
+        lowBin = math.floor((barLow - lowestPrice) / binSize)
+        closeBin = math.floor((barClose - lowestPrice) / binSize)
+
+        // Bounds check (use adaptive bin count)
+        openBin := math.max(0, math.min(priceBinsActual - 1, openBin))
+        highBin := math.max(0, math.min(priceBinsActual - 1, highBin))
+        lowBin := math.max(0, math.min(priceBinsActual - 1, lowBin))
+        closeBin := math.max(0, math.min(priceBinsActual - 1, closeBin))
+
+        // Distribute volume
+        array.set(volumeAtPrice, openBin, array.get(volumeAtPrice, openBin) + (barVolume * 0.25))
+        array.set(volumeAtPrice, highBin, array.get(volumeAtPrice, highBin) + (barVolume * 0.20))
+        array.set(volumeAtPrice, lowBin, array.get(volumeAtPrice, lowBin) + (barVolume * 0.20))
+        array.set(volumeAtPrice, closeBin, array.get(volumeAtPrice, closeBin) + (barVolume * 0.35))
+
+// ============================= IDENTIFY KEY LEVELS ==========================
+
+type VPLevel
+    string levelType
+    float price
+    float volume
+    float baseStrength
+    float finalStrength
+    color levelColor
+
+var array<VPLevel> vpLevels = array.new<VPLevel>()
+
+if (barstate.isconfirmed or barstate.islast) and array.size(volumeAtPrice) > 0
+    array.clear(vpLevels)
+
+    // Calculate total volume
+    totalVolume = array.sum(volumeAtPrice)
+    maxVolume = array.max(volumeAtPrice)
+
+    // 1. POINT OF CONTROL (POC) - Highest volume bin
+    pocIndex = 0
+    pocVolume = 0.0
+    for i = 0 to array.size(volumeAtPrice) - 1
+        if array.get(volumeAtPrice, i) > pocVolume
+            pocVolume := array.get(volumeAtPrice, i)
+            pocIndex := i
+
+    if showPOC
+        pocPrice = array.get(binPrices, pocIndex)
+        pocLevel = VPLevel.new(
+             levelType = "POC",
+             price = pocPrice,
+             volume = pocVolume,
+             baseStrength = 100.0,  // POC is strongest level
+             finalStrength = 100.0,
+             levelColor = color.new(color.blue, 0)
+         )
+        array.push(vpLevels, pocLevel)
+
+    // 2. VALUE AREA (VAH/VAL) - 70% of total volume
+    if showValueArea
+        targetVolume = totalVolume * 0.70
+        var array<int> valueAreaBins = array.new_int()
+        array.clear(valueAreaBins)
+        array.push(valueAreaBins, pocIndex)
+
+        accumulatedVolume = pocVolume
+
+        // Expand from POC outward
+        while accumulatedVolume < targetVolume
+            upperBin = array.max(valueAreaBins) + 1
+            lowerBin = array.min(valueAreaBins) - 1
+
+            upperVolume = upperBin < array.size(volumeAtPrice) ? array.get(volumeAtPrice, upperBin) : 0.0
+            lowerVolume = lowerBin >= 0 ? array.get(volumeAtPrice, lowerBin) : 0.0
+
+            if upperVolume > lowerVolume and upperBin < array.size(volumeAtPrice)
+                array.push(valueAreaBins, upperBin)
+                accumulatedVolume += upperVolume
+            else if lowerBin >= 0
+                array.push(valueAreaBins, lowerBin)
+                accumulatedVolume += lowerVolume
+            else
+                break
+
+        // Value Area High (VAH)
+        vahIndex = array.max(valueAreaBins)
+        vahPrice = array.get(binPrices, vahIndex)
+        vahLevel = VPLevel.new(
+             levelType = "VAH",
+             price = vahPrice,
+             volume = accumulatedVolume,
+             baseStrength = 80.0,
+             finalStrength = 80.0,
+             levelColor = color.new(color.red, 30)
+         )
+        array.push(vpLevels, vahLevel)
+
+        // Value Area Low (VAL)
+        valIndex = array.min(valueAreaBins)
+        valPrice = array.get(binPrices, valIndex)
+        valLevel = VPLevel.new(
+             levelType = "VAL",
+             price = valPrice,
+             volume = accumulatedVolume,
+             baseStrength = 80.0,
+             finalStrength = 80.0,
+             levelColor = color.new(color.green, 30)
+         )
+        array.push(vpLevels, valLevel)
+
+    // 3. HIGH VOLUME NODES (HVN) - Local volume peaks above threshold
+    if showHVN
+        hvnThreshold = array.percentile_nearest_rank(volumeAtPrice, hvnPercentile)
+
+        for i = 1 to array.size(volumeAtPrice) - 2
+            currentVol = array.get(volumeAtPrice, i)
+            leftVol = array.get(volumeAtPrice, i - 1)
+            rightVol = array.get(volumeAtPrice, i + 1)
+
+            // Check if local maximum above threshold
+            if currentVol > leftVol and currentVol > rightVol and currentVol >= hvnThreshold
+                // Skip if too close to POC
+                if math.abs(i - pocIndex) > 2
+                    hvnPrice = array.get(binPrices, i)
+                    hvnLevel = VPLevel.new(
+                         levelType = "HVN",
+                         price = hvnPrice,
+                         volume = currentVol,
+                         baseStrength = 70.0,
+                         finalStrength = 70.0,
+                         levelColor = color.new(color.purple, 40)
+                     )
+                    array.push(vpLevels, hvnLevel)
+
+    // 4. LOW VOLUME NODES (LVN) - Volume valleys (weak S/R)
+    if showLVN
+        lvnThreshold = array.percentile_nearest_rank(volumeAtPrice, lvnPercentile)
+
+        for i = 1 to array.size(volumeAtPrice) - 2
+            currentVol = array.get(volumeAtPrice, i)
+            leftVol = array.get(volumeAtPrice, i - 1)
+            rightVol = array.get(volumeAtPrice, i + 1)
+
+            // Check if local minimum below threshold
+            if currentVol < leftVol and currentVol < rightVol and currentVol <= lvnThreshold
+                lvnPrice = array.get(binPrices, i)
+                lvnLevel = VPLevel.new(
+                     levelType = "LVN",
+                     price = lvnPrice,
+                     volume = currentVol,
+                     baseStrength = 50.0,
+                     finalStrength = 50.0,
+                     levelColor = color.new(color.gray, 60)
+                 )
+                array.push(vpLevels, lvnLevel)
+
+// ============================= DYNAMIC STRENGTH SCORING =====================
+// Touch counting, rejection analysis, and recency detection now use library functions
+
+// Apply dynamic strength scoring to all levels
+if (barstate.isconfirmed or barstate.islast) and array.size(vpLevels) > 0
+    for i = 0 to array.size(vpLevels) - 1
+        level = array.get(vpLevels, i)
+
+        // FLAW FIX #2: Additive strength scoring (prevents saturation at 100)
+        // Changed from multiplicative to additive per auditor recommendation
+        baseStrength = level.baseStrength
+
+        // Touch count bonus (additive) - using library
+        touchBonus = 0.0
+        if enableTouchCount
+            touches = level_lib.countTouches(level.price, vpLookback, touchTolerance)
+            touchBonus := level_lib.calculateTouchBonus(touches, 8.0)
+
+        // Rejection bonus (additive) - using library
+        rejectionBonus = 0.0
+        if enableRejection
+            rejectionData = level_lib.analyzeRejections(level.price, vpLookback, touchTolerance, 0.5)
+            rejectionBonus := level_lib.calculateRejectionBonus(rejectionData, 12.0)
+
+        // Recency bonus (additive) - using library
+        recencyBonus = 0.0
+        if enableRecency
+            barsSinceTouch = level_lib.findMostRecentTouch(level.price, vpLookback, touchTolerance)
+            recencyBonus := barsSinceTouch < 50 ? (50 - barsSinceTouch) * 0.3 : 0
+
+        // Volume bonus (additive, 0-10 points based on volume ratio)
+        maxVol = array.max(volumeAtPrice)
+        volumeBonus = 0.0
+        if maxVol > 0 and level.volume > 0 and not na(level.volume)
+            volumeBonus := (level.volume / maxVol) * 10  // 0-10 points
+
+        // Distance penalty (additive penalty) - using library
+        distance = level_lib.calculateDistance(level.price, close)
+        distancePenalty = distance > 0.05 ? (distance - 0.05) * 50 : 0  // -50 if 6% away
+
+        // Regime adjustment (additive adjustment)
+        regimeAdjustment = 0.0
+        if useRegimeFilter
+            regimeAdjustment := (regimeMultiplier - 1.0) * baseStrength  // ±15 for regime
+
+        // Calculate final strength (additive model)
+        finalStrength = baseStrength + touchBonus + rejectionBonus + recencyBonus +
+                       volumeBonus - distancePenalty + regimeAdjustment
+
+        // Update level (clamp to 0-100 range)
+        level.finalStrength := math.max(0, math.min(100, finalStrength))
+
+// ============================= VISUALIZATION ================================
+
+// Draw levels
+if (barstate.isconfirmed or barstate.islast) and array.size(vpLevels) > 0
+    for i = 0 to array.size(vpLevels) - 1
+        level = array.get(vpLevels, i)
+
+        if level.finalStrength >= minStrength
+            // Draw line
+            lineWidth = level.levelType == "POC" ? 3 : level.finalStrength >= 75 ? 2 : 1
+            lineStyle = level.levelType == "LVN" ? line.style_dashed : line.style_solid
+
+            line.new(
+                 bar_index - vpLookback,
+                 level.price,
+                 bar_index + 20,
+                 level.price,
+                 color = level.levelColor,
+                 width = lineWidth,
+                 style = lineStyle
+             )
+
+            // Draw label
+            if showLabels
+                labelText = level.levelType + " " + str.tostring(math.round(level.finalStrength))
+                labelStyle = level.levelType == "POC" ? label.style_label_center : level.price > close ? label.style_label_down : label.style_label_up
+
+                label.new(
+                     bar_index + 10,
+                     level.price,
+                     text = labelText,
+                     style = labelStyle,
+                     color = level.levelColor,
+                     textcolor = color.white,
+                     size = level.levelType == "POC" ? size.normal : size.small
+                 )
+
+// Optional: Draw volume histogram (debug mode)
+if showVolumeHistogram and (barstate.isconfirmed or barstate.islast) and array.size(volumeAtPrice) > 0
+    maxVol = array.max(volumeAtPrice)
+    histogramWidth = 30
+
+    for i = 0 to array.size(volumeAtPrice) - 1
+        vol = array.get(volumeAtPrice, i)
+        price = array.get(binPrices, i)
+        barLength = vol / maxVol * histogramWidth
+
+        box.new(
+             bar_index - histogramWidth - 40,
+             price - (binSize / 2),
+             bar_index - histogramWidth - 40 + math.floor(barLength),
+             price + (binSize / 2),
+             bgcolor = color.new(color.blue, 70),
+             border_color = color.new(color.blue, 50),
+             border_width = 1
+         )
+
+// ============================= INFO TABLE ===================================
+
+var table infoTable = table.new(position.top_right, 2, 10, border_width=1)
+
+if barstate.isconfirmed or barstate.islast
+    // Header
+    table.cell(infoTable, 0, 0, "S/R Volume Profile",
+               text_color=color.white, bgcolor=color.new(color.blue, 30), text_size=size.normal)
+    table.merge_cells(infoTable, 0, 0, 1, 0)
+
+    // Stats
+    table.cell(infoTable, 0, 1, "Lookback Bars:", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(vpLookback),
+               text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(infoTable, 0, 2, "Price Bins:", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    table.cell(infoTable, 1, 2,
+               useAdaptiveBins ?
+               str.tostring(priceBinsActual) + " (adaptive)" :
+               str.tostring(priceBinsActual),
+               text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    table.cell(infoTable, 0, 3, "Total Levels:", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    levelCount = 0
+    for i = 0 to array.size(vpLevels) - 1
+        if array.get(vpLevels, i).finalStrength >= minStrength
+            levelCount += 1
+    table.cell(infoTable, 1, 3, str.tostring(levelCount),
+               text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    // Key Levels
+    if array.size(vpLevels) > 0
+        table.cell(infoTable, 0, 4, "POC Price:", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+        pocLevel = array.get(vpLevels, 0)
+        table.cell(infoTable, 1, 4, str.tostring(pocLevel.price, format.mintick),
+                   text_color=color.blue, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+        table.cell(infoTable, 0, 5, "POC Strength:", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.small)
+        table.cell(infoTable, 1, 5, str.tostring(math.round(pocLevel.finalStrength)),
+                   text_color=color.blue, bgcolor=color.new(color.gray, 80), text_size=size.small)
+
+    // Regime
+    table.cell(infoTable, 0, 6, "Regime:", text_color=color.white, bgcolor=color.new(color.gray, 70), text_size=size.small)
+    regimeColor = isLowVol ? color.green : isHighVol ? color.red : color.orange
+    table.cell(infoTable, 1, 6, regimeName + " (" + str.tostring(atrRatio, "#.##") + "x)",
+               text_color=regimeColor, bgcolor=color.new(color.gray, 70), text_size=size.small)
+
+    // Active Features
+    table.cell(infoTable, 0, 7, "Touch Count:", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(infoTable, 1, 7, enableTouchCount ? "✓" : "✗",
+               text_color=enableTouchCount ? color.green : color.gray, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    table.cell(infoTable, 0, 8, "Rejection:", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(infoTable, 1, 8, enableRejection ? "✓" : "✗",
+               text_color=enableRejection ? color.green : color.gray, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+    table.cell(infoTable, 0, 9, "Recency:", text_color=color.white, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+    table.cell(infoTable, 1, 9, enableRecency ? "✓" : "✗",
+               text_color=enableRecency ? color.green : color.gray, bgcolor=color.new(color.gray, 80), text_size=size.tiny)
+
+// ============================= ALERTS =======================================
+
+// Alert when price near POC
+nearPOC = false
+if array.size(vpLevels) > 0
+    pocPrice = array.get(vpLevels, 0).price
+    distance = level_lib.calculateDistance(pocPrice, close)
+    if distance < 0.01  // Within 1%
+        nearPOC := true
+
+if nearPOC and not nearPOC[1]
+    alert("Price near POC (highest volume level) on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+// ============================= DATA BRIDGE EXPORTS ===============================
+// Export POC/VAH/VAL for SR-Algo3 MTF Confluence (via input.source data bridge)
+// These invisible plots allow SR-Algo3 to import volume profile levels
+
+pocExport = array.size(vpLevels) > 0 ? array.get(vpLevels, 0).price : close
+vahExport = array.size(vpLevels) >= 2 ? array.get(vpLevels, 1).price : close
+valExport = array.size(vpLevels) >= 3 ? array.get(vpLevels, 2).price : close
+
+plot(pocExport, "POC", color=color.new(color.blue, 100), display=display.none)
+plot(vahExport, "VAH", color=color.new(color.red, 100), display=display.none)
+plot(valExport, "VAL", color=color.new(color.green, 100), display=display.none)

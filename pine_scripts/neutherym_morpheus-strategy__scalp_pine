@@ -1,0 +1,110 @@
+//@version=5
+strategy("ALPHA INVESTINDO GLOBAL — SCALPING (Limit@Fib1, Cooldown & Rearm)",
+     overlay=true,
+     initial_capital=100000,
+     commission_type=strategy.commission.percent,
+     commission_value=0.01,
+     slippage=20,
+     pyramiding=1,
+     process_orders_on_close=false,   // intrabar fills
+     calc_on_every_tick=true)
+
+ATRPeriod      = input.int(28,  "ATR Period", minval=1)
+fib1Level      = input.float(61.8, "Fib 1 Level (%)", minval=0, maxval=100, step=0.1)
+scalpFactor    = input.float(6.95, "Scalping ATR Factor", step=0.05)
+riskPct        = input.float(0.4,  "Risk % per trade", step=0.1, minval=0.1, maxval=5)
+rearmPips      = input.float(5.0,  "Re-arm distance from Fib1 (pips)", step=0.1) // must move away by this much
+cooldownBars   = input.int(1,     "Cooldown bars after exit", minval=0)
+pipSize        = input.float(0.1, "Pip Size (XAU pip=0.1)")
+stopTrailOnly  = input.bool(true, "Use trailing stop only (no extra buffer)")
+
+wildma(src, len) => ta.rma(src, len)
+
+calc_trail_ex_fib(_factor) =>
+    float h = high, l = low, c = close
+    hiLo = math.min(h - l, 1.5 * ta.sma(h - l, ATRPeriod))
+    hRef = l <= h[1] ? (h - c[1]) : (h - c[1]) - 0.5 * (l - h[1])
+    lRef = h >= l[1] ? (c[1] - l) : (c[1] - l) - 0.5 * (l[1] - h)
+    trueRange = math.max(math.max(hiLo, hRef), lRef)
+
+    loss = _factor * wildma(trueRange, ATRPeriod)
+    up   = c - loss
+    dn   = c + loss
+
+    var float trendUp   = na
+    var float trendDown = na
+    var float trail     = na
+    var int   trend     = 1
+    var float ex        = na
+
+    trendUp   := na(trendUp[1])   ? up : (c[1] > trendUp[1]   ? math.max(up, trendUp[1])   : up)
+    trendDown := na(trendDown[1]) ? dn : (c[1] < trendDown[1] ? math.min(dn, trendDown[1]) : dn)
+
+    trend := c > nz(trendDown[1]) ? 1 : c < nz(trendUp[1]) ? -1 : nz(trend[1], 1)
+    trail := trend == 1 ? trendUp : trendDown
+
+    ex := ta.crossover(trend, 0)  ? h :
+          ta.crossunder(trend, 0) ? l :
+          trend == 1              ? math.max(nz(ex[1], h), h) :
+          trend == -1             ? math.min(nz(ex[1], l), l) :
+          nz(ex[1])
+
+    f1 = ex + (trail - ex) * (fib1Level / 100.0)
+    [trail, f1, ex, trend]
+
+[trailScalp, fib1Scalp, exScalp, trendScalp] = calc_trail_ex_fib(scalpFactor)
+plot(trailScalp, "Scalping Trailing Stop", color=color.orange, linewidth=2)
+plot(fib1Scalp,  "Scalping Fib 1",         color=color.yellow)
+plot(exScalp,    "Scalping Extremum",      color=color.red, style=plot.style_circles)
+
+hasOpen(id) =>
+    bool found = false
+    for i = 0 to strategy.opentrades - 1
+        found := found or (strategy.opentrades.entry_id(i) == id)
+    found
+
+var int lastClosedTrades = 0
+var int lastExitBar      = na
+justClosed = strategy.closedtrades > lastClosedTrades
+if justClosed
+    lastExitBar := bar_index
+    lastClosedTrades := strategy.closedtrades
+
+barsSinceExit = na(lastExitBar) ? 10*6 : (bar_index - lastExitBar)
+
+equity       = strategy.equity
+riskAmt      = equity * (riskPct / 100.0)
+longRisk     = math.max(syminfo.mintick, close - trailScalp)
+shortRisk    = math.max(syminfo.mintick, trailScalp - close)
+qtyLong      = math.max(0.0, riskAmt / longRisk)
+qtyShort     = math.max(0.0, riskAmt / shortRisk)
+
+// Must move away from Fib1 by `rearmPips` AND respect cooldown
+awayLong  = (close > fib1Scalp + rearmPips * pipSize)  // for uptrend longs, reset above Fib1
+awayShort = (close < fib1Scalp - rearmPips * pipSize)  // for downtrend shorts, reset below Fib1
+readyLong  = (barsSinceExit >= cooldownBars) and awayLong
+readyShort = (barsSinceExit >= cooldownBars) and awayShort
+
+canLong  = trendScalp == 1  and not hasOpen("LONG_SCALP")  and readyLong
+canShort = trendScalp == -1 and not hasOpen("SHORT_SCALP") and readyShort
+
+if canLong
+    strategy.close("SHORT_SCALP")
+    strategy.entry(id="LONG_SCALP",  direction=strategy.long,  qty=qtyLong,  limit=fib1Scalp)
+else
+    strategy.cancel("LONG_SCALP")
+
+if canShort
+    strategy.close("LONG_SCALP")
+    strategy.entry(id="SHORT_SCALP", direction=strategy.short, qty=qtyShort, limit=fib1Scalp)
+else
+    strategy.cancel("SHORT_SCALP")
+
+tpLong  = (trendScalp == 1  and exScalp > close) ? exScalp : na
+tpShort = (trendScalp == -1 and exScalp < close) ? exScalp : na
+
+stopLong  = stopTrailOnly ? trailScalp : trailScalp - 0.5 * pipSize
+stopShort = stopTrailOnly ? trailScalp : trailScalp + 0.5 * pipSize
+
+strategy.exit("LX_SCALP", from_entry="LONG_SCALP",  stop=stopLong,  limit=tpLong)
+strategy.exit("SX_SCALP", from_entry="SHORT_SCALP", stop=stopShort, limit=tpShort)

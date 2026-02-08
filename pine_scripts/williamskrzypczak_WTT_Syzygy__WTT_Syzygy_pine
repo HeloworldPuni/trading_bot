@@ -1,0 +1,916 @@
+//@version=5
+indicator("WTT_Syzygy_Rev2.5", shorttitle="WTT_Syzygy R2.5", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// =============================================================================
+// Copyright © 2025 Bulldog Ventures Inc. All rights reserved.
+//
+// WaveRider Trading Technologies - WTT_Syzygy Unified Indicator
+// Version: Rev2.5
+// 
+// Description: A comprehensive trading indicator that combines volume spike 
+// detection with support/resistance zone analysis, doji breakout detection,
+// and period opening price threshold detection to provide enhanced market 
+// insights and trading signals.
+//
+// Features:
+// - Volume spike detection with configurable thresholds
+// - Support and resistance zone identification with liquidity analysis
+// - Daily high/low tracking
+// - Zone penetration alerts
+// - Zone breakout alerts with visual indicators
+// - Doji breakout detection (compression patterns)
+// - Period opening price threshold detection (timeframe-agnostic)
+// - Breakout success ratio tracking (decision-making data)
+// - Unified alert system for all signal types
+//
+// Revision History:
+// R2.5: Fixed compression breakout alerts - Fixed compression breakout alerts not triggering when checkbox was enabled by checking breakout conditions directly instead of relying on confirmed signal variables, ensuring alerts fire correctly when enableCompressionAlerts is checked
+// R2.4: Added trade direction recommendations to table and alerts - Added recommendation column to success ratio table with arrow indicators (↑ for LONG, ↓ for SHORT, → for NEUTRAL), added toggle to show/hide ratio column (default off), abbreviated "Recommendation" to "Rec", included trade direction recommendations in breakout and penetration alert messages
+// R2.3: Enhanced success ratio table with penetration tracking and visual improvements - Added penetration success ratio tracking (resistance and support), updated table with black background for ratio column and white text for labels, ratio text colors now reflect trade direction (green for long bias, red for short bias)
+// R2.2: Added breakout success ratio tracking - Implemented success ratio calculation for zone breakouts, tracking whether price moves past previous breakout levels within 3-5 bars after each breakout, displays separate ratios for resistance and support breakouts (last 10) in a table for decision-making data
+// R2.1: Added WTT PriceAction (period opening price threshold detection) - Integrated timeframe-agnostic period opening price tracking with ATR-based thresholds, visual threshold lines and trigger markers, alerts for threshold crossings
+// R2.0: Added WTT Compression (doji breakout detection) - Integrated doji candle detection with configurable body threshold, marks bullish and bearish breakouts with visual indicators, added compression breakout alerts to unified alert system
+// R1.9: Refined alert toggle structure - Maintained combined alert toggles for simplified control (volume spike alerts, zone penetration alerts, zone breakout alerts) providing streamlined alert management
+// R1.8: Hardcoded parameters and streamlined alert controls - Hardcoded key parameters (volume lookback, ATR length, liquidity thresholds, zone colors), combined alert toggles (volume spike, penetration, breakout), updated breakout indicator colors to bright cranberry and lime, added individual liquidity zone visibility toggles
+// R1.7: Updated zone penetration visuals - Switched penetration markers to tiny diamonds for clearer differentiation while reducing chart clutter
+// R1.6: Refined zone penetration sensitivity - Increased default zone penetration threshold from 50% to 70% for more conservative alert triggering, reducing noise and focusing on significant zone penetrations
+// R1.5: Added zone breakout detection - Implemented alerts and tiny dot indicators (orange for resistance breakout, blue for support breakout) when price breaks through support/resistance boxes, providing immediate notification of key level violations
+// R1.4: Enhanced alert control and color refinement - Added volume spike alerts toggle (default disabled), refined downward volume spike bar color to custom light blue-gray (#cfd7d7ca) for improved visual distinction
+// R1.3: Optimized zone display - Reduced support/resistance box extension from 20 bars to 10 bars for cleaner chart appearance and less clutter
+// R1.2: Streamlined visual design - Removed volume spike label plots, enabled volume spike bar coloring by default (green for upward, bright purple for downward), increased zone penetration triangle size to small for better visibility
+// R1.1: Enhanced visual indicators - Changed volume spike signals from circles to small labels, zone penetration from circles to tiny triangles, enabled low liquidity zones by default for comprehensive zone visibility
+// R1.0: Initial unified release combining WTT_VolumeSpike v1.2 and WTT_SupportResistance R1.65
+// =============================================================================
+
+// =============================================================================
+// INPUT PARAMETERS
+// =============================================================================
+
+// Volume Spike Settings
+volumeThreshold = input.float(1.2, "Volume Spike Threshold", minval=1.0, maxval=5.0, step=0.1, group="Volume Spike Settings")
+priceChangeThreshold = input.float(0.5, "Price Change Threshold (%)", minval=0.1, maxval=2.0, step=0.1, group="Volume Spike Settings")
+
+// Support/Resistance Settings
+showWeakLiquidityZones = input.bool(true, "Show Weak Liquidity Zones", group="Support/Resistance Settings", tooltip="Toggle visibility of weak liquidity zones")
+showModerateLiquidityZones = input.bool(true, "Show Moderate Liquidity Zones", group="Support/Resistance Settings", tooltip="Toggle visibility of moderate liquidity zones")
+showStrongLiquidityZones = input.bool(true, "Show Strong Liquidity Zones", group="Support/Resistance Settings", tooltip="Toggle visibility of strong liquidity zones")
+
+// Compression Detection Settings
+dojiBodyPercent = input.float(0.13, "Doji Body Threshold", minval=0.0, maxval=0.5, step=0.01, group="Compression Detection Settings", tooltip="Maximum body-to-range ratio (0.13 = body <= 13% of total range) for a candle to qualify as a doji.")
+requireCloseBreak = input.bool(true, "Require Close Breakout", group="Compression Detection Settings", tooltip="When enabled, the breakout candle must close beyond the doji high/low. Disable to react on intrabar breaches.")
+confirmOnBarClose = input.bool(true, "Confirm Breakouts On Close", group="Compression Detection Settings", tooltip="Wait for the bar to close before confirming breakout signals. Disable to allow intrabar alerts/markers that may disappear if price reverses.")
+showCompressionMarkers = input.bool(true, "Show Breakout Markers", group="Compression Detection Settings", tooltip="Toggle display of the breakout triangles.")
+defaultPurple = color.rgb(128, 0, 255)
+compressionUpColor = input.color(color.new(color.orange, 0), "Uptrend Color", group="Compression Detection Settings", tooltip="Marker color for bullish doji breakouts.")
+compressionDownColor = input.color(color.new(defaultPurple, 0), "Downtrend Color", group="Compression Detection Settings", tooltip="Marker color for bearish doji breakouts.")
+
+// Price Action Settings
+priceActionAtrPeriod = input.int(14, "ATR Period", minval=1, maxval=200, group="Price Action Settings", tooltip="Period for Average True Range calculation. Lower values make the threshold more responsive to recent volatility, higher values use longer-term volatility.")
+priceActionAtrMultiplier = input.float(0.15, "ATR Multiplier", minval=0.01, maxval=5.0, step=0.01, group="Price Action Settings", tooltip="Multiplier for ATR to determine threshold distance from opening price. Price must move this many ATRs above/below the opening price to trigger. Lower values = more sensitive (more signals), higher values = less sensitive (fewer signals).")
+showThresholdLines = input.bool(true, "Show Threshold Lines", group="Price Action Settings", tooltip="Display horizontal lines showing the upper and lower threshold levels")
+showPriceActionMarkers = input.bool(false, "Show Trigger Markers", group="Price Action Settings", tooltip="Display markers when price crosses the threshold levels")
+showPriceLabels = input.bool(false, "Show Price Labels", group="Price Action Settings", tooltip="Display labels showing the ATR distance from opening price")
+aboveThresholdColor = input.color(color.new(#FF8000, 0), "Above Threshold Color", group="Price Action Settings", tooltip="Color for markers and lines when price is above threshold")
+belowThresholdColor = input.color(color.new(#8000FF, 0), "Below Threshold Color", group="Price Action Settings", tooltip="Color for markers and lines when price is below threshold")
+thresholdLineColor = input.color(color.new(color.yellow, 50), "Threshold Line Color", group="Price Action Settings", tooltip="Color for the threshold reference lines")
+
+// Alert Settings
+enableVolumeSpikeAlerts = input.bool(true, "Enable Volume Spike Alerts", group="Alert Settings", tooltip="Enable/disable volume spike alert notifications (both long and short)")
+enablePenetrationAlerts = input.bool(false, "Enable Zone Penetration Alerts", group="Alert Settings", tooltip="Enable/disable zone penetration alert notifications (both resistance and support)")
+enableBreakoutAlerts = input.bool(true, "Enable Zone Breakout Alerts", group="Alert Settings", tooltip="Enable/disable zone breakout alert notifications (both resistance and support)")
+enableCompressionAlerts = input.bool(true, "Enable Compression Alerts", group="Alert Settings", tooltip="Send an alert notification whenever a bullish or bearish doji breakout is detected.")
+enablePriceActionAlerts = input.bool(true, "Enable Price Action Alerts", group="Alert Settings", tooltip="Send alert notifications when price crosses ATR-based thresholds above/below the period opening price.")
+show_alert_indicators = input.bool(true, "Show Alert Indicators", group="Alert Settings", tooltip="Show visual indicators on the chart for alert triggers.")
+
+// Display Settings
+show_daily_levels = input.bool(false, "Show Daily High/Low", group="Display Settings", tooltip="Display the highest high and lowest low of the current trading day")
+showRatioColumn = input.bool(false, "Show Ratio Column", group="Display Settings", tooltip="Toggle visibility of the ratio column in the success ratio table")
+
+// Volume spike bars always enabled
+showVolumeBars = true
+
+// =============================================================================
+// CONSTANTS
+// =============================================================================
+
+// Hardcoded parameters
+VOLUME_LOOKBACK_PERIOD = 20
+ATR_LENGTH = 14
+NUMBER_OF_LIQUIDITY_ZONES = 5
+MEDIUM_LIQUIDITY_THRESHOLD = 3.0
+HIGH_LIQUIDITY_THRESHOLD = 7.0
+ZONE_PENETRATION_THRESHOLD = 0.70
+USE_ATR = true
+ATR_MULTIPLIER = 1.0
+SUPPORT_ZONE_COLOR = color.gray
+RESISTANCE_ZONE_COLOR = color.rgb(0, 128, 128)
+
+// =============================================================================
+// FUNCTION DEFINITIONS
+// =============================================================================
+
+// Normalize volume for support/resistance analysis
+normalize_volume() =>
+    vol = math.avg(volume, 10) / 10
+    reference_vol = ta.percentile_nearest_rank(vol, 1000, 99)
+    norm_vol = vol / reference_vol * 5
+    norm_vol := norm_vol >= 10 ? 10 : norm_vol
+    norm_vol
+
+// =============================================================================
+// VOLUME SPIKE CALCULATIONS
+// =============================================================================
+
+// Volume analysis for spike detection
+volumeMA = ta.sma(volume, VOLUME_LOOKBACK_PERIOD)
+volumeRatio = volume / volumeMA
+isVolumeSpike = volumeRatio > volumeThreshold
+
+// Price analysis for spike detection
+priceChange = ((close - close[1]) / close[1]) * 100
+atr = ta.atr(ATR_LENGTH)
+priceThreshold = USE_ATR ? atr * ATR_MULTIPLIER : priceChangeThreshold
+
+// Volume spike signal generation
+longVolumeCondition = isVolumeSpike and priceChange > priceThreshold and close > open
+shortVolumeCondition = isVolumeSpike and priceChange < -priceThreshold and close < open
+
+// =============================================================================
+// SUPPORT/RESISTANCE ZONE MANAGEMENT
+// =============================================================================
+
+// Variables to track price in zones
+var bool price_in_resistance = false
+var bool price_in_support = false
+var bool significant_zone_penetration = false
+var string penetration_zone_type = ""
+
+// Arrays to store boxes and their liquidity levels
+var box_res_array = array.new<box>()
+var box_sup_array = array.new<box>()
+var float_res_levels = array.new<float>()
+var float_sup_levels = array.new<float>()
+
+// Function to check if price is in zones and manage boxes
+process_zones(boxes, levels, is_resistance) =>
+    price_in_zone = false
+    zone_level = 0.0
+    zone_price = 0.0
+    breakout_detected = false
+    breakout_price = 0.0
+    
+    // Create a list of indices to remove (we can't remove while iterating)
+    var indices_to_remove = array.new<int>()
+    array.clear(indices_to_remove)
+    
+    // Process each box
+    if boxes.size() > 0
+        for i = 0 to boxes.size() - 1
+            box_id = boxes.get(i)
+            box_id.set_right(bar_index + 10)
+            box_id.set_border_color(na)
+            
+            // Check if price has broken the zone
+            broken_zone = is_resistance ? 
+             high > box_id.get_top() : 
+             low < box_id.get_bottom()
+            
+            if broken_zone
+                box_id.set_right(bar_index)
+                box_id.set_text('')
+                array.push(indices_to_remove, i)
+                // Mark breakout detected
+                if not breakout_detected
+                    breakout_detected := true
+                    breakout_price := is_resistance ? box_id.get_top() : box_id.get_bottom()
+            else
+                // Check if current price is inside this box
+                box_top = box_id.get_top()
+                box_bottom = box_id.get_bottom()
+                
+                if close >= box_bottom and close <= box_top
+                    price_in_zone := true
+                    zone_level := math.max(zone_level, levels.get(i))
+                    // Store the key price level for breakout detection
+                    zone_price := is_resistance ? box_top : box_bottom
+    
+    // Remove boxes that were broken (in reverse order to maintain correct indices)
+    if indices_to_remove.size() > 0
+        for i = indices_to_remove.size() - 1 to 0
+            idx = indices_to_remove.get(i)
+            boxes.remove(idx)
+            levels.remove(idx)
+    
+    [price_in_zone, zone_level, zone_price, breakout_detected, breakout_price]
+
+// Main function to create and manage liquidity zones
+update_liquidity_zones() =>
+    volume_ = normalize_volume()[1]
+    h = ta.highest(15)
+    l = ta.lowest(15)
+    _size = (high - low) / 2
+
+    // Color definitions with transparency
+    color_low_sup = color.new(SUPPORT_ZONE_COLOR, 95)
+    color_low_res = color.new(RESISTANCE_ZONE_COLOR, 95)
+    
+    // Darker boxes for better visibility
+    color_upper = color.new(SUPPORT_ZONE_COLOR, math.max(35, 75 - volume_ * 9))
+    color_lower = color.new(RESISTANCE_ZONE_COLOR, math.max(35, 75 - volume_ * 9))
+    text_col = color.white
+    
+    // Set the label text based on liquidity level
+    txt = volume_ < MEDIUM_LIQUIDITY_THRESHOLD ? "Weak" : 
+          volume_ < HIGH_LIQUIDITY_THRESHOLD ? "Moderate" : 
+          "Strong"
+    
+    // Calculate current liquidity level
+    current_level = volume_ >= HIGH_LIQUIDITY_THRESHOLD ? HIGH_LIQUIDITY_THRESHOLD : 
+                   volume_ >= MEDIUM_LIQUIDITY_THRESHOLD ? MEDIUM_LIQUIDITY_THRESHOLD : 
+                   1.0
+
+    // Liquidity zone creation for high prices (resistance)
+    if h[1] == high[1] and high < h
+        shouldShowZone = (volume_ >= HIGH_LIQUIDITY_THRESHOLD and showStrongLiquidityZones) or (volume_ >= MEDIUM_LIQUIDITY_THRESHOLD and volume_ < HIGH_LIQUIDITY_THRESHOLD and showModerateLiquidityZones) or (volume_ < MEDIUM_LIQUIDITY_THRESHOLD and showWeakLiquidityZones)
+        
+        if shouldShowZone
+            box box1 = na
+            if volume_ >= HIGH_LIQUIDITY_THRESHOLD
+                box1 := box.new(bar_index[1], high[1] + _size[1], bar_index, high[1], bgcolor=color_lower, force_overlay=true, border_color=na)
+            else if volume_ >= MEDIUM_LIQUIDITY_THRESHOLD
+                box1 := box.new(bar_index[1], high[1] + _size[1], bar_index, high[1], bgcolor=color.new(RESISTANCE_ZONE_COLOR, 15), force_overlay=false, border_color=na)
+            else
+                box1 := box.new(bar_index[1], high[1] + _size[1], bar_index, high[1], bgcolor=color.new(RESISTANCE_ZONE_COLOR, 45), force_overlay=false, border_color=na)
+
+            box.set_text(box1, txt)
+            box.set_text_size(box1, volume_ >= HIGH_LIQUIDITY_THRESHOLD ? size.large : volume_ >= MEDIUM_LIQUIDITY_THRESHOLD ? size.normal : size.small)
+            box.set_text_halign(box1, text.align_right)
+            box.set_text_color(box1, text_col)
+            
+            box_res_array.push(box1)
+            float_res_levels.push(current_level)
+
+    // Liquidity zone creation for low prices (support)
+    if l[1] == low[1] and low > l
+        shouldShowZone = (volume_ >= HIGH_LIQUIDITY_THRESHOLD and showStrongLiquidityZones) or (volume_ >= MEDIUM_LIQUIDITY_THRESHOLD and volume_ < HIGH_LIQUIDITY_THRESHOLD and showModerateLiquidityZones) or (volume_ < MEDIUM_LIQUIDITY_THRESHOLD and showWeakLiquidityZones)
+        
+        if shouldShowZone
+            box box2 = na
+            if volume_ >= HIGH_LIQUIDITY_THRESHOLD
+                box2 := box.new(bar_index[1], low[1], bar_index, low[1] - _size[1], bgcolor=color_upper, force_overlay=true, border_color=na)
+            else if volume_ >= MEDIUM_LIQUIDITY_THRESHOLD
+                box2 := box.new(bar_index[1], low[1], bar_index, low[1] - _size[1], bgcolor=color.new(SUPPORT_ZONE_COLOR, 15), force_overlay=false, border_color=na)
+            else
+                box2 := box.new(bar_index[1], low[1], bar_index, low[1] - _size[1], bgcolor=color.new(SUPPORT_ZONE_COLOR, 45), force_overlay=false, border_color=na)
+
+            box.set_text(box2, txt)
+            box.set_text_size(box2, volume_ >= HIGH_LIQUIDITY_THRESHOLD ? size.large : volume_ >= MEDIUM_LIQUIDITY_THRESHOLD ? size.normal : size.small)
+            box.set_text_halign(box2, text.align_right)
+            box.set_text_color(box2, text_col)
+            
+            box_sup_array.push(box2)
+            float_sup_levels.push(current_level)
+
+    // Process existing zones and check if price is inside
+    [in_res, _, _, res_breakout, res_breakout_price] = process_zones(box_res_array, float_res_levels, true)
+    [in_sup, _, _, sup_breakout, sup_breakout_price] = process_zones(box_sup_array, float_sup_levels, false)
+    
+    [in_res, in_sup, res_breakout, sup_breakout, res_breakout_price, sup_breakout_price]
+
+// =============================================================================
+// BREAKOUT SUCCESS TRACKING DATA STRUCTURES
+// =============================================================================
+
+// Arrays to store breakout information (last 10 breakouts each)
+var array<int> resBreakoutBars = array.new<int>()
+var array<float> resBreakoutHighs = array.new<float>()
+var array<bool> resBreakoutSuccess = array.new<bool>()
+
+var array<int> supBreakoutBars = array.new<int>()
+var array<float> supBreakoutLows = array.new<float>()
+var array<bool> supBreakoutSuccess = array.new<bool>()
+
+// Arrays to store penetration information (last 10 penetrations each)
+var array<int> resPenetrationBars = array.new<int>()
+var array<float> resPenetrationHighs = array.new<float>()
+var array<bool> resPenetrationSuccess = array.new<bool>()
+
+var array<int> supPenetrationBars = array.new<int>()
+var array<float> supPenetrationLows = array.new<float>()
+var array<bool> supPenetrationSuccess = array.new<bool>()
+
+// =============================================================================
+// COMPRESSION DETECTION CALCULATIONS
+// =============================================================================
+
+// Doji detection - check if candle body is small relative to range
+hasValidRange = not na(high) and not na(low) and high != low
+trueRange = hasValidRange ? high - low : na
+bodySize = not na(close) and not na(open) ? math.abs(close - open) : na
+
+// Determine if current candle is a doji
+isDoji = hasValidRange and not na(bodySize) and not na(trueRange) and trueRange > 0 and bodySize <= trueRange * dojiBodyPercent
+
+// Check if previous bar was a doji
+hasPriorBar = bar_index > 0
+wasDoji = hasPriorBar and nz(isDoji[1], false)
+
+// Check if price breaks out of doji range
+hasPriorHighLow = hasPriorBar and not na(high[1]) and not na(low[1])
+closeBreaksUp = hasPriorHighLow and (requireCloseBreak ? close >= high[1] : high > high[1])
+closeBreaksDown = hasPriorHighLow and (requireCloseBreak ? close <= low[1] : low < low[1])
+
+// Detect breakout signals
+isBullBreakout = wasDoji and closeBreaksUp
+isBearBreakout = wasDoji and closeBreaksDown
+
+// Confirm signals based on bar close setting
+isBarConfirmed = not confirmOnBarClose or barstate.isconfirmed
+isBullSignal = isBullBreakout and isBarConfirmed
+isBearSignal = isBearBreakout and isBarConfirmed
+
+// =============================================================================
+// PRICE ACTION DETECTION CALCULATIONS
+// =============================================================================
+
+// Detect new timeframe period - track when a new bar starts in the current timeframe
+// This works for any timeframe (1min, 5min, 1h, 1D, etc.)
+var int lastBarTime = 0
+currentBarTime = time(timeframe.period)
+isNewPeriod = not na(currentBarTime) and (lastBarTime == 0 or currentBarTime != lastBarTime)
+
+// Store period opening price (reset each new timeframe period)
+var float periodOpen = na
+if isNewPeriod or na(periodOpen)
+    periodOpen := open
+
+// Update bar time tracking for next comparison
+if not na(currentBarTime)
+    lastBarTime := currentBarTime
+
+// Calculate ATR for volatility-based threshold (separate from volume spike ATR)
+priceActionAtr = ta.atr(priceActionAtrPeriod)
+
+// Calculate threshold levels using ATR multiplier
+upperThreshold = not na(periodOpen) and not na(priceActionAtr) ? periodOpen + (priceActionAtr * priceActionAtrMultiplier) : na
+lowerThreshold = not na(periodOpen) and not na(priceActionAtr) ? periodOpen - (priceActionAtr * priceActionAtrMultiplier) : na
+
+// Calculate distance from opening price in ATR units (for display)
+distanceFromOpen = not na(periodOpen) and not na(priceActionAtr) and priceActionAtr > 0 ? (close - periodOpen) / priceActionAtr : 0.0
+
+// Calculate percentage change from opening price (for alerts)
+percentageChange = periodOpen > 0 ? ((close - periodOpen) / periodOpen) * 100.0 : 0.0
+
+// Detect threshold crossings (crossed above/below logic)
+// Use previous bar's close to determine if we crossed the threshold
+prevClose = close[1]
+prevUpperThreshold = upperThreshold[1]
+prevLowerThreshold = lowerThreshold[1]
+
+// Check current position relative to thresholds
+isAboveUpper = not na(upperThreshold) and close >= upperThreshold
+isBelowLower = not na(lowerThreshold) and close <= lowerThreshold
+
+// Check previous bar's position relative to thresholds (within same period)
+wasAboveUpper = not isNewPeriod and not na(prevUpperThreshold) and prevClose >= prevUpperThreshold
+wasBelowLower = not isNewPeriod and not na(prevLowerThreshold) and prevClose <= prevLowerThreshold
+
+// Detect crossings: price moved from below threshold to above, or above to below (within same period)
+crossedAboveThreshold = not isNewPeriod and not wasAboveUpper and isAboveUpper
+crossedBelowThreshold = not isNewPeriod and not wasBelowLower and isBelowLower
+
+// Determine current state
+isAboveThreshold = isAboveUpper
+isBelowThreshold = isBelowLower
+
+// =============================================================================
+// DAILY HIGH/LOW TRACKING
+// =============================================================================
+
+// Daily level settings
+daily_high_color = color.new(color.green, 15)
+daily_low_color = color.new(color.red, 15)
+daily_level_width = 2
+daily_level_style = "Dashed"
+
+// Set line style based on user input
+var line_style = daily_level_style == "Solid" ? line.style_solid : daily_level_style == "Dashed" ? line.style_dashed : line.style_dotted
+
+// Variables to track daily high and low. Create lines/labels once and update.
+var float day_high = na
+var float day_low = na
+var line day_high_line = line.new(na, na, na, na)
+var line day_low_line = line.new(na, na, na, na)
+var label day_high_label = label.new(na, na, "")
+var label day_low_label = label.new(na, na, "")
+
+// Check for new day
+new_day = ta.change(dayofweek)
+
+// Update high and low values
+day_high := new_day ? high : (high > day_high ? high : day_high)
+day_low := new_day ? low : (low < day_low ? low : day_low)
+
+// Manage the visibility and position of lines and labels
+if show_daily_levels
+    // Define style for the current bar
+    line_style := daily_level_style == "Solid" ? line.style_solid : daily_level_style == "Dashed" ? line.style_dashed : line.style_dotted
+
+    // Update High Line
+    line.set_xy1(day_high_line, bar_index[1], day_high)
+    line.set_xy2(day_high_line, bar_index, day_high)
+    line.set_color(day_high_line, daily_high_color)
+    line.set_width(day_high_line, daily_level_width)
+    line.set_style(day_high_line, line_style)
+    
+    // Update High Label
+    label.set_xy(day_high_label, bar_index, day_high)
+    label.set_text(day_high_label, "Day High")
+    label.set_color(day_high_label, color.new(color.black, 100))
+    label.set_textcolor(day_high_label, color.teal)
+    label.set_style(day_high_label, label.style_label_down)
+    label.set_size(day_high_label, size.small)
+
+    // Update Low Line
+    line.set_xy1(day_low_line, bar_index[1], day_low)
+    line.set_xy2(day_low_line, bar_index, day_low)
+    line.set_color(day_low_line, daily_low_color)
+    line.set_width(day_low_line, daily_level_width)
+    line.set_style(day_low_line, line_style)
+
+    // Update Low Label
+    label.set_xy(day_low_label, bar_index, day_low)
+    label.set_text(day_low_label, "Day Low")
+    label.set_color(day_low_label, color.new(color.black, 100))
+    label.set_textcolor(day_low_label, color.maroon)
+    label.set_style(day_low_label, label.style_label_up)
+    label.set_size(day_low_label, size.small)
+else
+    // If disabled, hide the drawings by moving them to na
+    line.set_xy1(day_high_line, na, na)
+    line.set_xy2(day_high_line, na, na)
+    label.set_xy(day_high_label, na, na)
+    line.set_xy1(day_low_line, na, na)
+    line.set_xy2(day_low_line, na, na)
+    label.set_xy(day_low_label, na, na)
+
+// =============================================================================
+// MAIN EXECUTION
+// =============================================================================
+
+// Update liquidity zones and get price status
+[in_resistance, in_support, resistance_breakout, support_breakout, resistance_breakout_price, support_breakout_price] = update_liquidity_zones()
+
+// =============================================================================
+// BREAKOUT TRACKING
+// =============================================================================
+
+// Track resistance breakouts
+if resistance_breakout
+    // Store breakout information
+    array.push(resBreakoutBars, bar_index)
+    array.push(resBreakoutHighs, high)
+    array.push(resBreakoutSuccess, false)
+    
+    // Limit to last 10 breakouts
+    if array.size(resBreakoutBars) > 10
+        array.shift(resBreakoutBars)
+        array.shift(resBreakoutHighs)
+        array.shift(resBreakoutSuccess)
+
+// Track support breakouts
+if support_breakout
+    // Store breakout information
+    array.push(supBreakoutBars, bar_index)
+    array.push(supBreakoutLows, low)
+    array.push(supBreakoutSuccess, false)
+    
+    // Limit to last 10 breakouts
+    if array.size(supBreakoutBars) > 10
+        array.shift(supBreakoutBars)
+        array.shift(supBreakoutLows)
+        array.shift(supBreakoutSuccess)
+
+// =============================================================================
+// BREAKOUT SUCCESS DETECTION
+// =============================================================================
+
+// Check resistance breakouts for success (within 3-5 bars after breakout)
+if array.size(resBreakoutBars) > 0
+    for i = 0 to array.size(resBreakoutBars) - 1
+        breakoutBar = array.get(resBreakoutBars, i)
+        barsSinceBreakout = bar_index - breakoutBar
+        
+        // Check within 3-5 bars after breakout
+        if barsSinceBreakout >= 3 and barsSinceBreakout <= 5 and not array.get(resBreakoutSuccess, i)
+            // Check if current high has risen above the high of any previous resistance breakout bar
+            currentBreakoutHigh = array.get(resBreakoutHighs, i)
+            for j = 0 to array.size(resBreakoutHighs) - 1
+                if j != i  // Don't compare with itself
+                    previousBreakoutBar = array.get(resBreakoutBars, j)
+                    // Only check breakouts that occurred before this one
+                    if previousBreakoutBar < breakoutBar
+                        previousBreakoutHigh = array.get(resBreakoutHighs, j)
+                        if high > previousBreakoutHigh
+                            array.set(resBreakoutSuccess, i, true)
+                            break
+
+// Check support breakouts for success (within 3-5 bars after breakout)
+if array.size(supBreakoutBars) > 0
+    for i = 0 to array.size(supBreakoutBars) - 1
+        breakoutBar = array.get(supBreakoutBars, i)
+        barsSinceBreakout = bar_index - breakoutBar
+        
+        // Check within 3-5 bars after breakout
+        if barsSinceBreakout >= 3 and barsSinceBreakout <= 5 and not array.get(supBreakoutSuccess, i)
+            // Check if current low has moved below the low of any previous support breakout bar
+            currentBreakoutLow = array.get(supBreakoutLows, i)
+            for j = 0 to array.size(supBreakoutLows) - 1
+                if j != i  // Don't compare with itself
+                    previousBreakoutBar = array.get(supBreakoutBars, j)
+                    // Only check breakouts that occurred before this one
+                    if previousBreakoutBar < breakoutBar
+                        previousBreakoutLow = array.get(supBreakoutLows, j)
+                        if low < previousBreakoutLow
+                            array.set(supBreakoutSuccess, i, true)
+                            break
+
+// =============================================================================
+// SUCCESS RATIO CALCULATION
+// =============================================================================
+
+// Calculate resistance breakout success ratio
+resSuccessCount = 0
+if array.size(resBreakoutSuccess) > 0
+    for i = 0 to array.size(resBreakoutSuccess) - 1
+        if array.get(resBreakoutSuccess, i)
+            resSuccessCount := resSuccessCount + 1
+
+resTotalCount = array.size(resBreakoutBars)
+resSuccessRatio = resTotalCount > 0 ? (resSuccessCount / resTotalCount) * 100.0 : 0.0
+
+// Calculate support breakout success ratio
+supSuccessCount = 0
+if array.size(supBreakoutSuccess) > 0
+    for i = 0 to array.size(supBreakoutSuccess) - 1
+        if array.get(supBreakoutSuccess, i)
+            supSuccessCount := supSuccessCount + 1
+
+supTotalCount = array.size(supBreakoutBars)
+supSuccessRatio = supTotalCount > 0 ? (supSuccessCount / supTotalCount) * 100.0 : 0.0
+
+// Calculate breakout recommendations for alerts
+resRecommendation = resTotalCount > 0 ? (resSuccessRatio >= 50.0 ? "↑" : "↓") : "→"
+supRecommendation = supTotalCount > 0 ? (supSuccessRatio <= 50.0 ? "↑" : "↓") : "→"
+
+// Store price zone status for alerts
+price_in_resistance := in_resistance
+price_in_support := in_support
+
+// Detect significant zone penetration (more than threshold% into zone) - only most current
+significant_zone_penetration := false
+penetration_zone_type := ""
+
+if price_in_resistance and box_res_array.size() > 0
+    // Find the most current resistance zone that contains current price
+    for i = box_res_array.size() - 1 to 0
+        box_id = box_res_array.get(i)
+        box_top = box_id.get_top()
+        box_bottom = box_id.get_bottom()
+        if not na(box_top) and not na(box_bottom) and close >= box_bottom and close <= box_top
+            zone_height = box_top - box_bottom
+            penetration_distance = box_top - close
+            penetration_percentage = penetration_distance / zone_height
+            if penetration_percentage > ZONE_PENETRATION_THRESHOLD  // More than 70% into the resistance zone
+                significant_zone_penetration := true
+                penetration_zone_type := "resistance"
+                break
+
+if price_in_support and box_sup_array.size() > 0
+    // Find the most current support zone that contains current price
+    for i = box_sup_array.size() - 1 to 0
+        box_id = box_sup_array.get(i)
+        box_top = box_id.get_top()
+        box_bottom = box_id.get_bottom()
+        if not na(box_top) and not na(box_bottom) and close >= box_bottom and close <= box_top
+            zone_height = box_top - box_bottom
+            penetration_distance = close - box_bottom
+            penetration_percentage = penetration_distance / zone_height
+            if penetration_percentage > ZONE_PENETRATION_THRESHOLD  // More than 70% into the support zone
+                significant_zone_penetration := true
+                penetration_zone_type := "support"
+                break
+
+// =============================================================================
+// PENETRATION TRACKING
+// =============================================================================
+
+// Track previous penetration state to detect new penetrations
+var bool wasInResistancePenetration = false
+var bool wasInSupportPenetration = false
+
+// Track resistance penetrations (only when new penetration occurs)
+isNewResistancePenetration = significant_zone_penetration and penetration_zone_type == "resistance" and not wasInResistancePenetration
+if isNewResistancePenetration
+    // Store penetration information
+    array.push(resPenetrationBars, bar_index)
+    array.push(resPenetrationHighs, high)
+    array.push(resPenetrationSuccess, false)
+    
+    // Limit to last 10 penetrations
+    if array.size(resPenetrationBars) > 10
+        array.shift(resPenetrationBars)
+        array.shift(resPenetrationHighs)
+        array.shift(resPenetrationSuccess)
+
+// Track support penetrations (only when new penetration occurs)
+isNewSupportPenetration = significant_zone_penetration and penetration_zone_type == "support" and not wasInSupportPenetration
+if isNewSupportPenetration
+    // Store penetration information
+    array.push(supPenetrationBars, bar_index)
+    array.push(supPenetrationLows, low)
+    array.push(supPenetrationSuccess, false)
+    
+    // Limit to last 10 penetrations
+    if array.size(supPenetrationBars) > 10
+        array.shift(supPenetrationBars)
+        array.shift(supPenetrationLows)
+        array.shift(supPenetrationSuccess)
+
+// Update previous penetration state
+wasInResistancePenetration := significant_zone_penetration and penetration_zone_type == "resistance"
+wasInSupportPenetration := significant_zone_penetration and penetration_zone_type == "support"
+
+// =============================================================================
+// PENETRATION SUCCESS DETECTION
+// =============================================================================
+
+// Check resistance penetrations for success (within 3-5 bars after penetration)
+if array.size(resPenetrationBars) > 0
+    for i = 0 to array.size(resPenetrationBars) - 1
+        penetrationBar = array.get(resPenetrationBars, i)
+        barsSincePenetration = bar_index - penetrationBar
+        
+        // Check within 3-5 bars after penetration
+        if barsSincePenetration >= 3 and barsSincePenetration <= 5 and not array.get(resPenetrationSuccess, i)
+            // Check if current high has risen above the high of any previous resistance penetration bar
+            currentPenetrationHigh = array.get(resPenetrationHighs, i)
+            for j = 0 to array.size(resPenetrationHighs) - 1
+                if j != i  // Don't compare with itself
+                    previousPenetrationBar = array.get(resPenetrationBars, j)
+                    // Only check penetrations that occurred before this one
+                    if previousPenetrationBar < penetrationBar
+                        previousPenetrationHigh = array.get(resPenetrationHighs, j)
+                        if high > previousPenetrationHigh
+                            array.set(resPenetrationSuccess, i, true)
+                            break
+
+// Check support penetrations for success (within 3-5 bars after penetration)
+if array.size(supPenetrationBars) > 0
+    for i = 0 to array.size(supPenetrationBars) - 1
+        penetrationBar = array.get(supPenetrationBars, i)
+        barsSincePenetration = bar_index - penetrationBar
+        
+        // Check within 3-5 bars after penetration
+        if barsSincePenetration >= 3 and barsSincePenetration <= 5 and not array.get(supPenetrationSuccess, i)
+            // Check if current low has moved below the low of any previous support penetration bar
+            currentPenetrationLow = array.get(supPenetrationLows, i)
+            for j = 0 to array.size(supPenetrationLows) - 1
+                if j != i  // Don't compare with itself
+                    previousPenetrationBar = array.get(supPenetrationBars, j)
+                    // Only check penetrations that occurred before this one
+                    if previousPenetrationBar < penetrationBar
+                        previousPenetrationLow = array.get(supPenetrationLows, j)
+                        if low < previousPenetrationLow
+                            array.set(supPenetrationSuccess, i, true)
+                            break
+
+// =============================================================================
+// PENETRATION SUCCESS RATIO CALCULATION
+// =============================================================================
+
+// Calculate resistance penetration success ratio
+resPenetrationSuccessCount = 0
+if array.size(resPenetrationSuccess) > 0
+    for i = 0 to array.size(resPenetrationSuccess) - 1
+        if array.get(resPenetrationSuccess, i)
+            resPenetrationSuccessCount := resPenetrationSuccessCount + 1
+
+resPenetrationTotalCount = array.size(resPenetrationBars)
+resPenetrationSuccessRatio = resPenetrationTotalCount > 0 ? (resPenetrationSuccessCount / resPenetrationTotalCount) * 100.0 : 0.0
+
+// Calculate support penetration success ratio
+supPenetrationSuccessCount = 0
+if array.size(supPenetrationSuccess) > 0
+    for i = 0 to array.size(supPenetrationSuccess) - 1
+        if array.get(supPenetrationSuccess, i)
+            supPenetrationSuccessCount := supPenetrationSuccessCount + 1
+
+supPenetrationTotalCount = array.size(supPenetrationBars)
+supPenetrationSuccessRatio = supPenetrationTotalCount > 0 ? (supPenetrationSuccessCount / supPenetrationTotalCount) * 100.0 : 0.0
+
+// Calculate penetration recommendations for alerts
+resPenetrationRecommendation = resPenetrationTotalCount > 0 ? (resPenetrationSuccessRatio >= 50.0 ? "↑" : "↓") : "→"
+supPenetrationRecommendation = supPenetrationTotalCount > 0 ? (supPenetrationSuccessRatio <= 50.0 ? "↑" : "↓") : "→"
+
+// =============================================================================
+// VISUAL ELEMENTS
+// =============================================================================
+
+// Volume spike bars
+longVolumeSpike = isVolumeSpike and priceChange > 0
+shortVolumeSpike = isVolumeSpike and priceChange < 0
+barcolor(showVolumeBars and longVolumeSpike ? color.new(color.green, 0) : showVolumeBars and shortVolumeSpike ? #cfd7d7ca : na, title="Volume Spike")
+
+// Zone penetration indicators
+plotshape(series=significant_zone_penetration and penetration_zone_type == "resistance" and show_alert_indicators, title="Resistance Zone Penetration", location=location.abovebar, color=color.red, style=shape.diamond, size=size.tiny)
+plotshape(series=significant_zone_penetration and penetration_zone_type == "support" and show_alert_indicators, title="Support Zone Penetration", location=location.belowbar, color=color.green, style=shape.diamond, size=size.tiny)
+
+// Zone breakout indicators (dots)
+plotshape(series=resistance_breakout and show_alert_indicators, title="Resistance Breakout", location=location.abovebar, color=color.rgb(220, 20, 60), style=shape.circle, size=size.tiny)
+plotshape(series=support_breakout and show_alert_indicators, title="Support Breakout", location=location.belowbar, color=color.rgb(50, 255, 0), style=shape.circle, size=size.tiny)
+
+// Compression breakout indicators (triangles)
+plotshape(series=showCompressionMarkers and isBullSignal and show_alert_indicators, title="Doji Breakout Up", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=compressionUpColor)
+plotshape(series=showCompressionMarkers and isBearSignal and show_alert_indicators, title="Doji Breakout Down", style=shape.triangledown, location=location.abovebar, size=size.tiny, color=compressionDownColor)
+
+// Price Action visual elements
+// Plot opening price line for reference
+plot(periodOpen, "Period Open", color=color.new(color.gray, 50), linewidth=1, style=plot.style_line)
+
+// Threshold lines - drawn only on current bar as horizontal segments
+var line upperThresholdLine = na
+var line lowerThresholdLine = na
+
+if showThresholdLines and barstate.islast
+    // Delete previous lines
+    if not na(upperThresholdLine)
+        line.delete(upperThresholdLine)
+    if not na(lowerThresholdLine)
+        line.delete(lowerThresholdLine)
+    
+    // Draw horizontal lines above and below current bar
+    if not na(upperThreshold)
+        upperThresholdLine := line.new(bar_index, upperThreshold, bar_index + 1, upperThreshold, color=thresholdLineColor, width=2, style=line.style_solid)
+    if not na(lowerThreshold)
+        lowerThresholdLine := line.new(bar_index, lowerThreshold, bar_index + 1, lowerThreshold, color=thresholdLineColor, width=2, style=line.style_solid)
+
+// Plot trigger markers - show only the most current square marker using labels
+// Store the single most recent marker
+var label lastTriggerMarker = na
+
+// Show markers on threshold crossing OR when new period starts with price already beyond threshold
+showAboveMarker = showPriceActionMarkers and (crossedAboveThreshold or (isNewPeriod and isAboveUpper))
+showBelowMarker = showPriceActionMarkers and (crossedBelowThreshold or (isNewPeriod and isBelowLower))
+
+// Delete marker if markers are disabled
+if not showPriceActionMarkers
+    if not na(lastTriggerMarker)
+        label.delete(lastTriggerMarker)
+        lastTriggerMarker := na
+
+// When a new signal appears (either direction), delete the previous marker and create the new one
+if showAboveMarker
+    if not na(lastTriggerMarker)
+        label.delete(lastTriggerMarker)
+    lastTriggerMarker := label.new(bar_index, low, "", style=label.style_diamond, color=aboveThresholdColor, size=size.auto, textcolor=color.white)
+
+if showBelowMarker
+    if not na(lastTriggerMarker)
+        label.delete(lastTriggerMarker)
+    lastTriggerMarker := label.new(bar_index, high, "", style=label.style_diamond, color=belowThresholdColor, size=size.auto, textcolor=color.white)
+
+// Plot price labels if enabled
+var label priceLabel = na
+if showPriceLabels and barstate.islast and not na(periodOpen) and not na(priceActionAtr) and priceActionAtr > 0
+    label.delete(priceLabel)
+    labelText = str.tostring(distanceFromOpen, "#.##") + " ATR"
+    labelColor = isAboveThreshold ? aboveThresholdColor : isBelowThreshold ? belowThresholdColor : color.gray
+    priceLabel := label.new(bar_index, high, labelText, style=label.style_label_down, color=labelColor, textcolor=color.white, size=size.small)
+
+// Limit number of boxes displayed on the chart
+a_allBoxes = box.all
+if a_allBoxes.size() > NUMBER_OF_LIQUIDITY_ZONES
+    box.delete(a_allBoxes.shift())
+
+// =============================================================================
+// BREAKOUT SUCCESS RATIO TABLE
+// =============================================================================
+
+// Create and update table showing breakout and penetration success ratios
+if barstate.islast
+    var table breakoutTable = table.new(position.top_right, 3, 5, bgcolor=color.new(color.white, 95), border_width=2, border_color=color.gray)
+    
+    // Clear and rebuild table on last bar
+    table.clear(breakoutTable, 0, 0, 2, 4)
+    
+    // Header row
+    table.cell(breakoutTable, 0, 0, "Success Ratio", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.normal)
+    if showRatioColumn
+        table.cell(breakoutTable, 1, 0, "Ratio", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.normal)
+    table.cell(breakoutTable, 2, 0, "Rec", bgcolor=color.new(color.gray, 70), text_color=color.white, text_size=size.normal)
+    
+    // Resistance breakout row
+    resRatioText = resTotalCount > 0 ? str.tostring(resSuccessRatio, "#.#") + "%" : "N/A"
+    resRatioTextColor = resTotalCount > 0 ? (resSuccessRatio >= 50.0 ? color.green : color.red) : color.yellow  // Green for long bias, red for short bias
+    resRecommendation = resTotalCount > 0 ? (resSuccessRatio >= 50.0 ? "↑" : "↓") : "→"
+    resRecommendationColor = resTotalCount > 0 ? (resSuccessRatio >= 50.0 ? color.green : color.red) : color.yellow
+    table.cell(breakoutTable, 0, 1, "Res Breakout", text_color=color.white, text_size=size.small)
+    if showRatioColumn
+        table.cell(breakoutTable, 1, 1, resRatioText, bgcolor=color.black, text_color=resRatioTextColor, text_size=size.normal)
+    table.cell(breakoutTable, 2, 1, resRecommendation, bgcolor=color.black, text_color=resRecommendationColor, text_size=size.normal)
+    
+    // Support breakout row
+    supRatioText = supTotalCount > 0 ? str.tostring(supSuccessRatio, "#.#") + "%" : "N/A"
+    supRatioTextColor = supTotalCount > 0 ? (supSuccessRatio <= 50.0 ? color.green : color.red) : color.yellow  // Green for long bias (low success = support failing), red for short bias
+    supRecommendation = supTotalCount > 0 ? (supSuccessRatio <= 50.0 ? "↑" : "↓") : "→"
+    supRecommendationColor = supTotalCount > 0 ? (supSuccessRatio <= 50.0 ? color.green : color.red) : color.yellow
+    table.cell(breakoutTable, 0, 2, "Sup Breakout", text_color=color.white, text_size=size.small)
+    if showRatioColumn
+        table.cell(breakoutTable, 1, 2, supRatioText, bgcolor=color.black, text_color=supRatioTextColor, text_size=size.normal)
+    table.cell(breakoutTable, 2, 2, supRecommendation, bgcolor=color.black, text_color=supRecommendationColor, text_size=size.normal)
+    
+    // Resistance penetration row
+    resPenetrationRatioText = resPenetrationTotalCount > 0 ? str.tostring(resPenetrationSuccessRatio, "#.#") + "%" : "N/A"
+    resPenetrationRatioTextColor = resPenetrationTotalCount > 0 ? (resPenetrationSuccessRatio >= 50.0 ? color.green : color.red) : color.yellow  // Green for long bias, red for short bias
+    resPenetrationRecommendation = resPenetrationTotalCount > 0 ? (resPenetrationSuccessRatio >= 50.0 ? "↑" : "↓") : "→"
+    resPenetrationRecommendationColor = resPenetrationTotalCount > 0 ? (resPenetrationSuccessRatio >= 50.0 ? color.green : color.red) : color.yellow
+    table.cell(breakoutTable, 0, 3, "Res Penetration", text_color=color.white, text_size=size.small)
+    if showRatioColumn
+        table.cell(breakoutTable, 1, 3, resPenetrationRatioText, bgcolor=color.black, text_color=resPenetrationRatioTextColor, text_size=size.normal)
+    table.cell(breakoutTable, 2, 3, resPenetrationRecommendation, bgcolor=color.black, text_color=resPenetrationRecommendationColor, text_size=size.normal)
+    
+    // Support penetration row
+    supPenetrationRatioText = supPenetrationTotalCount > 0 ? str.tostring(supPenetrationSuccessRatio, "#.#") + "%" : "N/A"
+    supPenetrationRatioTextColor = supPenetrationTotalCount > 0 ? (supPenetrationSuccessRatio <= 50.0 ? color.green : color.red) : color.yellow  // Green for long bias (low success = support failing), red for short bias
+    supPenetrationRecommendation = supPenetrationTotalCount > 0 ? (supPenetrationSuccessRatio <= 50.0 ? "↑" : "↓") : "→"
+    supPenetrationRecommendationColor = supPenetrationTotalCount > 0 ? (supPenetrationSuccessRatio <= 50.0 ? color.green : color.red) : color.yellow
+    table.cell(breakoutTable, 0, 4, "Sup Penetration", text_color=color.white, text_size=size.small)
+    if showRatioColumn
+        table.cell(breakoutTable, 1, 4, supPenetrationRatioText, bgcolor=color.black, text_color=supPenetrationRatioTextColor, text_size=size.normal)
+    table.cell(breakoutTable, 2, 4, supPenetrationRecommendation, bgcolor=color.black, text_color=supPenetrationRecommendationColor, text_size=size.normal)
+
+// =============================================================================
+// ALERT SYSTEM
+// =============================================================================
+
+// Volume spike alerts
+if enableVolumeSpikeAlerts and longVolumeCondition
+    alert("WTT_Syzygy Volume Spike Long - " + syminfo.ticker + " Price: " + str.tostring(close) + " - Rec: ↑", alert.freq_once_per_bar)
+
+if enableVolumeSpikeAlerts and shortVolumeCondition
+    alert("WTT_Syzygy Volume Spike Short - " + syminfo.ticker + " Price: " + str.tostring(close) + " - Rec: ↓", alert.freq_once_per_bar)
+
+// Zone penetration alerts - requires MORE than 70% penetration
+if enablePenetrationAlerts and significant_zone_penetration and penetration_zone_type == "resistance"
+    alert(syminfo.ticker + " - WTT_Syzygy Resistance zone penetration: Price (" + str.tostring(close) + ") penetrated MORE than " + str.tostring(math.round(ZONE_PENETRATION_THRESHOLD * 100)) + "% into resistance zone. - Rec: " + resPenetrationRecommendation, alert.freq_once_per_bar)
+
+if enablePenetrationAlerts and significant_zone_penetration and penetration_zone_type == "support"
+    alert(syminfo.ticker + " - WTT_Syzygy Support zone penetration: Price (" + str.tostring(close) + ") penetrated MORE than " + str.tostring(math.round(ZONE_PENETRATION_THRESHOLD * 100)) + "% into support zone. - Rec: " + supPenetrationRecommendation, alert.freq_once_per_bar)
+
+// Zone breakout alerts
+if enableBreakoutAlerts and resistance_breakout
+    alert(syminfo.ticker + " - WTT_Syzygy Resistance Breakout: Price broke through resistance at " + str.tostring(resistance_breakout_price) + ", current price: " + str.tostring(close) + " - Rec: " + resRecommendation, alert.freq_once_per_bar)
+
+if enableBreakoutAlerts and support_breakout
+    alert(syminfo.ticker + " - WTT_Syzygy Support Breakout: Price broke through support at " + str.tostring(support_breakout_price) + ", current price: " + str.tostring(close) + " - Rec: " + supRecommendation, alert.freq_once_per_bar)
+
+// Compression breakout alerts
+// Check breakout conditions directly and respect confirmOnBarClose setting
+compressionAlertConfirmed = not confirmOnBarClose or barstate.isconfirmed
+if enableCompressionAlerts and isBullBreakout and compressionAlertConfirmed
+    alert("WaveRider WTT Compression: Bullish doji breakout on " + syminfo.ticker + " at " + str.tostring(close, format.mintick) + " - Rec: ↑", alert.freq_once_per_bar)
+
+if enableCompressionAlerts and isBearBreakout and compressionAlertConfirmed
+    alert("WaveRider WTT Compression: Bearish doji breakout on " + syminfo.ticker + " at " + str.tostring(close, format.mintick) + " - Rec: ↓", alert.freq_once_per_bar)
+
+// Price Action alerts
+// Alert on threshold crossing (price moves from below to above, or above to below)
+if enablePriceActionAlerts and crossedAboveThreshold
+    alertMessage = "GO LONG - Price moved above +" + str.tostring(priceActionAtrMultiplier, "#.#") + " ATR threshold from period open. Distance: " + str.tostring(distanceFromOpen, "#.##") + " ATR (" + str.tostring(percentageChange, "#.##") + "%)"
+    alert(alertMessage, alert.freq_once_per_bar)
+
+if enablePriceActionAlerts and crossedBelowThreshold
+    alertMessage = "GO SHORT - Price moved below -" + str.tostring(priceActionAtrMultiplier, "#.#") + " ATR threshold from period open. Distance: " + str.tostring(distanceFromOpen, "#.##") + " ATR (" + str.tostring(percentageChange, "#.##") + "%)"
+    alert(alertMessage, alert.freq_once_per_bar)
+
+// Alert on new period if price is already above/below threshold (catches cases where period opens beyond threshold)
+if enablePriceActionAlerts and isNewPeriod and isAboveUpper
+    alertMessage = "GO LONG - New period started with price above +" + str.tostring(priceActionAtrMultiplier, "#.#") + " ATR threshold. Distance: " + str.tostring(distanceFromOpen, "#.##") + " ATR (" + str.tostring(percentageChange, "#.##") + "%)"
+    alert(alertMessage, alert.freq_once_per_bar)
+
+if enablePriceActionAlerts and isNewPeriod and isBelowLower
+    alertMessage = "GO SHORT - New period started with price below -" + str.tostring(priceActionAtrMultiplier, "#.#") + " ATR threshold. Distance: " + str.tostring(distanceFromOpen, "#.##") + " ATR (" + str.tostring(percentageChange, "#.##") + "%)"
+    alert(alertMessage, alert.freq_once_per_bar)
+
+// =============================================================================
+// REFERENCE PLOTS (HIDDEN)
+// =============================================================================
+
+// Plot volume ratio for reference (hidden)
+plot(volumeRatio, "Volume Ratio", color=color.gray, display=display.none)
+plot(volumeThreshold, "Threshold", color=color.red, display=display.none)
+
+// =============================================================================
+// END OF INDICATOR
+// =============================================================================

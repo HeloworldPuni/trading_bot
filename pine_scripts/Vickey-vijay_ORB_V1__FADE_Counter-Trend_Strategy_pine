@@ -1,0 +1,90 @@
+// FADE Counter-Trend Strategy (ORB) - TradingView Backtest
+// Strategy Name: FADE Counter-Trend Strategy
+// Timeframe: 1H
+// Trend Filter: EMA(10) vs EMA(20) on Daily
+// ORB: 08:00–09:00 UTC
+// Entry Window: 09:00–11:00 UTC
+// TP: ORB Mid | SL: 1x ORB Range
+
+//@version=5
+strategy("FADE Counter-Trend Strategy", overlay=true, initial_capital=5000, commission_type=strategy.commission.percent, commission_value=0.0)
+
+// ===== Inputs =====
+orbHourUTC = input.int(8, "ORB Start Hour (UTC)")
+tradeStartUTC = input.int(9, "Trade Window Start (UTC)")
+tradeEndUTC = input.int(11, "Trade Window End (UTC)")
+minRangePips = input.float(10, "Min ORB Range (pips)")
+maxRangePips = input.float(100, "Max ORB Range (pips)")
+rrRatio = input.float(1.5, "Risk:Reward")
+
+// EMA Trend (Daily)
+emaFastLen = input.int(10, "EMA Fast (Daily)")
+emaSlowLen = input.int(20, "EMA Slow (Daily)")
+
+// Pip size
+pipSize = syminfo.mintick * (syminfo.type == "forex" ? 10 : 1)
+
+// ===== Daily Trend =====
+dailyEMAfast = request.security(syminfo.tickerid, "D", ta.ema(close, emaFastLen))
+dailyEMAslow = request.security(syminfo.tickerid, "D", ta.ema(close, emaSlowLen))
+trendBull = dailyEMAfast > dailyEMAslow
+trendBear = dailyEMAfast < dailyEMAslow
+
+// ===== ORB Calculation =====
+// Track ORB high/low for current day
+var float orbHigh = na
+var float orbLow = na
+var float orbMid = na
+var bool orbReady = false
+var int currentDay = na
+
+isNewDay = dayofyear != currentDay
+if isNewDay
+    currentDay := dayofyear
+    orbHigh := na
+    orbLow := na
+    orbMid := na
+    orbReady := false
+
+// ORB hour candle (08:00–09:00 UTC)
+orbCandle = (hour == orbHourUTC)
+if orbCandle
+    orbHigh := high
+    orbLow := low
+    orbMid := (orbHigh + orbLow) / 2
+    orbReady := true
+
+// Range filter
+orbRange = orbHigh - orbLow
+orbRangePips = orbRange / pipSize
+rangeOk = orbReady and (orbRangePips >= minRangePips) and (orbRangePips <= maxRangePips)
+
+// ===== Trade Window =====
+inTradeWindow = (hour >= tradeStartUTC and hour < tradeEndUTC)
+
+// ===== Entry Conditions =====
+longSignal = rangeOk and inTradeWindow and trendBull and low < orbLow
+shortSignal = rangeOk and inTradeWindow and trendBear and high > orbHigh
+
+// ===== Orders =====
+if longSignal
+    entry = close
+    sl = orbLow - orbRange
+    tp = orbMid
+    strategy.entry("FADE-BUY", strategy.long)
+    strategy.exit("TP/SL BUY", "FADE-BUY", stop=sl, limit=tp)
+
+if shortSignal
+    entry = close
+    sl = orbHigh + orbRange
+    tp = orbMid
+    strategy.entry("FADE-SELL", strategy.short)
+    strategy.exit("TP/SL SELL", "FADE-SELL", stop=sl, limit=tp)
+
+// ===== Plots =====
+plot(orbHigh, "ORB High", color=color.new(color.green, 0), linewidth=1, style=plot.style_linebr)
+plot(orbLow, "ORB Low", color=color.new(color.red, 0), linewidth=1, style=plot.style_linebr)
+plot(orbMid, "ORB Mid", color=color.new(color.blue, 0), linewidth=1, style=plot.style_linebr)
+
+plotchar(longSignal, "BUY Signal", "▲", location=location.belowbar, color=color.green, size=size.tiny)
+plotchar(shortSignal, "SELL Signal", "▼", location=location.abovebar, color=color.red, size=size.tiny)

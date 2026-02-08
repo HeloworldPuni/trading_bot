@@ -1,0 +1,44 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © budinweig
+// Este script busca definir una estrategia de Scalping en el período de 5m utilizando Parabolic SAR, Directional Index y RSI paa definir entradas al trade.
+// Estado: En desarrollo, inestable
+//
+
+//@version=4
+study("Directional Index Crossing Signal", overlay=true)
+len = input(14, minval=1, title="DI Length")
+lensig = input(14, title="ADX Smoothing", minval=1, maxval=50)
+adxFastEma = input(7, title="Fast ADX Exp. Moving Average", minval=1, maxval=50)
+adxSlowEma = input(14, title="Slow ADX Exp. Moving Average", minval=1, maxval=50)
+atr = atr(14)
+
+//Directional Index
+[diplus, diminus, adx] = dmi(len, lensig)
+dicross = cross(diplus, diminus)
+dicrossover = crossover(diplus, diminus) 
+dicrossunder = crossunder(diplus, diminus)
+
+//EMA ADX
+emaCrossover = crossover(ema(adx,adxFastEma), ema(adx,adxSlowEma))
+emaUnder = crossunder(ema(adx,adxFastEma), ema(adx,adxSlowEma))
+realeasingenergy = ema(adx,adxFastEma) > ema(adx,adxSlowEma)
+
+// Strategy
+longCondition = dicrossover and realeasingenergy
+shortCondition = dicrossunder and realeasingenergy
+
+// Plots
+//plot(adx, color=color.yellow, title="ADX")
+//plot(ema(adx,adxFastEma), color=color.white, title="ADX FAST SMA")
+//plot(ema(adx,adxSlowEma), color=color.silver, title="ADX SLOW SMA")
+
+//plot(diplus, color=color.green, title="+DI") 
+//plot(diminus, color=color.red, title="-DI")
+
+// DI Signals
+//plotchar(dicrossover, "LONG", "▲", location.bottom, color.green, size = size.tiny)
+//plotchar(dicrossunder, "SHORT", "▼", location.top, color.red,  size = size.tiny)
+//plotchar(longCondition, "LONG", "▲", location.belowbar, color.green, size = size.tiny)
+//plotchar(shortCondition, "SHORT", "▼", location.abovebar, color.red,  size = size.tiny)
+plotshape(dicrossover, title="Buy", text="Buy", location = location.belowbar, style = shape.labelup, size = size.tiny, color = color.lime, textcolor = color.black, transp = 0)
+plotshape(dicrossunder, title="Sell", text="Sell", location = location.abovebar, style = shape.labeldown, size = size.tiny, color = color.red, textcolor = color.white, transp = 0)

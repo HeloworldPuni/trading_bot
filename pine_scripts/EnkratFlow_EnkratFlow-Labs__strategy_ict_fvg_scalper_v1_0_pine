@@ -1,0 +1,151 @@
+//@version=5
+// =====================================================================================
+// | Strategy Name : ICT FVG Scalper v1.0                                              |
+// | Author        : Your Name / AI Assistant                                          |
+// | Version       : 1.0                                                               |
+// | Description   : Scalping strategy based on price re-entering ICT Fair Value Gaps. |
+// |               : Enters on FVG mitigation.                                         |
+// =====================================================================================
+
+strategy("ICT FVG Scalper v1.0",
+         overlay=true,
+         initial_capital=1000,      // Scalping often uses smaller capital for testing
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=20,      // Potentially higher % for scalping, adjust carefully
+         commission_type=strategy.commission.percent,
+         commission_value=0.075,    // Example commission
+         pyramiding=0,              // No pyramiding for this version
+         slippage = 2               // Account for some slippage in points/ticks
+         )
+
+// === INPUTS ===
+// FVG Lookback & Validity
+fvgLookback = input.int(10, title="FVG Max Age (Bars)", minval=1, tooltip="How many bars back to consider an FVG valid for entry")
+
+// Trade Management
+riskRewardRatio = input.float(1.5, title="Risk/Reward Ratio", minval=0.1, step=0.1)
+slBufferPips = input.int(2, title="SL Buffer (Pips/Ticks)", minval=0, tooltip="Extra pips/ticks beyond FVG for SL")
+
+// FVG Display (from indicator)
+showBullishFVG = input.bool(true, title="Show Bullish FVGs (BISI)")
+bullishColor = input.color(color.new(color.green, 75), title="Bullish FVG Color")
+showBearishFVG = input.bool(true, title="Show Bearish FVGs (SIBI)")
+bearishColor = input.color(color.new(color.red, 75), title="Bearish FVG Color")
+extendFVG = input.bool(true, title="Extend FVG Boxes Until Mitigated")
+maxExtensionBars = input.int(50, title="Max Bars to Extend FVG", minval=1)
+deleteOnFullMitigation = input.bool(true, title="Delete Visual FVG Box on Full Mitigation")
+
+// === FVG DATA STRUCTURES ===
+// For visual plotting
+var box[] fvg_boxes_bullish = array.new_box()
+var box[] fvg_boxes_bearish = array.new_box()
+
+// For strategy logic - storing active, unmitigated FVGs
+// [0]=FVG High, [1]=FVG Low, [2]=Bar Index FVG Formed, [3]=Is Bullish (1=true, 0=false)
+var fvgs = array.new_float_array() // Array of arrays: [[high,low,bar_idx,isBullish], ...]
+
+// Helper to convert pips to price for SL buffer
+pricePerPip = syminfo.mintick * 10 // Assuming standard forex pairs; for others, syminfo.mintick is better
+slBufferPrice = slBufferPips * syminfo.mintick
+
+
+// === FVG DETECTION & VISUALIZATION LOGIC (Adapted from Indicator) ===
+detectAndDrawFVGs() =>
+    // --- Bullish FVG (BISI) ---
+    // Candle 1: bar[2], Candle 2: bar[1], Candle 3: bar[0] (current confirmed bar)
+    isBullishFVG_condition = high[2] < low[0] and low[1] > high[2]
+
+    if isBullishFVG_condition and showBullishFVG
+        fvg_high = low[0]   // Top of bullish FVG
+        fvg_low = high[2]   // Bottom of bullish FVG
+        array.push(fvgs, array.from(fvg_high, fvg_low, bar_index[2], 1.0)) // 1.0 for bullish
+
+        if array.size(fvg_boxes_bullish) > maxExtensionBars * 2 // Simple cleanup for visual boxes
+            box.delete(array.shift(fvg_boxes_bullish))
+
+        newBox = box.new(left=time[2], top=fvg_high, right=time[0], bottom=fvg_low,
+             border_color=bullishColor, border_width=1, extend=extend.none,
+             bgcolor=bullishColor)
+        array.push(fvg_boxes_bullish, newBox)
+
+    // --- Bearish FVG (SIBI) ---
+    isBearishFVG_condition = low[2] > high[0] and high[1] < low[2]
+
+    if isBearishFVG_condition and showBearishFVG
+        fvg_high = low[2]    // Top of bearish FVG
+        fvg_low = high[0]    // Bottom of bearish FVG
+        array.push(fvgs, array.from(fvg_high, fvg_low, bar_index[2], 0.0)) // 0.0 for bearish
+
+        if array.size(fvg_boxes_bearish) > maxExtensionBars * 2 // Simple cleanup
+            box.delete(array.shift(fvg_boxes_bearish))
+
+        newBox = box.new(left=time[2], top=fvg_high, right=time[0], bottom=fvg_low,
+             border_color=bearishColor, border_width=1, extend=extend.none,
+             bgcolor=bearishColor)
+        array.push(fvg_boxes_bearish, newBox)
+
+    // Extend and manage visual boxes
+    for box_b in fvg_boxes_bullish
+        if extendFVG and (bar_index - box.get_left_bar_index(box_b) < maxExtensionBars)
+            box.set_right(box_b, time + (time-time[1])*maxExtensionBars)
+        if deleteOnFullMitigation and low < box.get_bottom(box_b) and bar_index > box.get_left_bar_index(box_b) + 2
+            box.delete(box_b) // This will remove it from array in next iteration implicitly
+    for box_s in fvg_boxes_bearish
+        if extendFVG and (bar_index - box.get_left_bar_index(box_s) < maxExtensionBars)
+            box.set_right(box_s, time + (time-time[1])*maxExtensionBars)
+        if deleteOnFullMitigation and high > box.get_top(box_s) and bar_index > box.get_left_bar_index(box_s) + 2
+            box.delete(box_s)
+
+// Call FVG detection on confirmed bars
+if barstate.isconfirmed
+    detectAndDrawFVGs()
+
+
+// === STRATEGY TRADING LOGIC ===
+if strategy.opentrades == 0 and array.size(fvgs) > 0 // Only trade if flat and FVGs exist
+    // Loop through detected FVGs (newest first) to find a tradable one
+    for i = array.size(fvgs) - 1 to 0
+        fvg_data = array.get(fvgs, i)
+        fvg_h = array.get(fvg_data, 0)
+        fvg_l = array.get(fvg_data, 1)
+        fvg_bar = array.get(fvg_data, 2)
+        fvg_is_bullish = array.get(fvg_data, 3) == 1.0
+
+        // Check if FVG is recent enough and not the bar it formed on
+        if bar_index - fvg_bar <= fvgLookback and bar_index > fvg_bar
+
+            // --- Bullish FVG Entry (Long) ---
+            if fvg_is_bullish
+                // Entry Condition: Price closes inside the FVG after forming
+                if close < fvg_h and close > fvg_l and high[1] >= fvg_h // Price came from above into FVG
+                    entryPrice = close // Or fvg_h for limit, or ta.valuewhen for precise touch
+                    stopLossPrice = fvg_l - slBufferPrice
+                    takeProfitPrice = entryPrice + (entryPrice - stopLossPrice) * riskRewardRatio
+
+                    strategy.entry("FVG_L", strategy.long, comment="Enter Long FVG")
+                    strategy.exit("L_SLTP", "FVG_L", stop=stopLossPrice, limit=takeProfitPrice, comment="Exit Long FVG")
+                    array.remove(fvgs, i) // Remove FVG once traded to prevent re-entry
+                    break // Exit loop once a trade is initiated
+
+            // --- Bearish FVG Entry (Short) ---
+            else // FVG is bearish
+                // Entry Condition: Price closes inside the FVG after forming
+                if close > fvg_l and close < fvg_h and low[1] <= fvg_l // Price came from below into FVG
+                    entryPrice = close // Or fvg_l for limit
+                    stopLossPrice = fvg_h + slBufferPrice
+                    takeProfitPrice = entryPrice - (stopLossPrice - entryPrice) * riskRewardRatio
+
+                    strategy.entry("FVG_S", strategy.short, comment="Enter Short FVG")
+                    strategy.exit("S_SLTP", "FVG_S", stop=stopLossPrice, limit=takeProfitPrice, comment="Exit Short FVG")
+                    array.remove(fvgs, i) // Remove FVG once traded
+                    break // Exit loop
+
+// Cleanup very old FVGs from the 'fvgs' array to manage memory
+if barstate.isnew and array.size(fvgs) > fvgLookback + 50 // Arbitrary larger number for safety
+    for i = array.size(fvgs) -1 to 0
+        fvg_data = array.get(fvgs, i)
+        fvg_bar = array.get(fvg_data, 2)
+        if bar_index - fvg_bar > fvgLookback + 50
+            array.remove(fvgs,i)
+        else
+            break // Array is sorted by bar_index effectively, so stop once recent enough

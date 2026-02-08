@@ -1,0 +1,43 @@
+// PropSync - MACD Momentum Strategy (5 Minute)
+// MACD crosses signal line with histogram confirmation
+//@version=5
+strategy("PropSync MACD Momentum 5m", overlay=false, default_qty_type=strategy.fixed, default_qty_value=1)
+
+// ===== INPUTS =====
+fastLength = input.int(12, "MACD Fast Length")
+slowLength = input.int(26, "MACD Slow Length")
+signalLength = input.int(9, "Signal Length")
+webhookUrl = input.string("YOUR_NGROK_URL_HERE/webhook", "Webhook URL")
+passphrase = input.string("YOUR_SECRET_PASSPHRASE", "Webhook Passphrase")
+symbol = input.string("NQ", "Trading Symbol (NQ, ES, etc)")
+quantity = input.int(1, "Contract Quantity", minval=1)
+
+// ===== CALCULATIONS =====
+[macdLine, signalLine, histLine] = ta.macd(close, fastLength, slowLength, signalLength)
+
+// Plot MACD
+plot(macdLine, "MACD", color=color.blue, linewidth=2)
+plot(signalLine, "Signal", color=color.orange, linewidth=2)
+plot(histLine, "Histogram", color=histLine >= 0 ? color.green : color.red, style=plot.style_histogram)
+hline(0, "Zero Line", color=color.gray)
+
+// ===== SIGNALS =====
+// Buy when MACD crosses above signal AND histogram is positive
+macdCrossOver = ta.crossover(macdLine, signalLine)
+macdCrossUnder = ta.crossunder(macdLine, signalLine)
+
+buySignal = macdCrossOver and histLine > 0
+sellSignal = macdCrossUnder and histLine < 0
+
+// ===== ENTRIES =====
+if buySignal
+    strategy.entry("Long", strategy.long)
+    alert('{"passphrase":"' + passphrase + '","action":"buy","symbol":"' + symbol + '","quantity":' + str.tostring(quantity) + ',"price":' + str.tostring(close) + ',"strategy":"MACD_Momentum_5m","macd":' + str.tostring(macdLine) + ',"signal":' + str.tostring(signalLine) + '}', alert.freq_once_per_bar)
+
+if sellSignal
+    strategy.entry("Short", strategy.short)
+    alert('{"passphrase":"' + passphrase + '","action":"sell","symbol":"' + symbol + '","quantity":' + str.tostring(quantity) + ',"price":' + str.tostring(close) + ',"strategy":"MACD_Momentum_5m","macd":' + str.tostring(macdLine) + ',"signal":' + str.tostring(signalLine) + '}', alert.freq_once_per_bar)
+
+// ===== VISUALIZATION =====
+bgcolor(buySignal ? color.new(color.green, 90) : na)
+bgcolor(sellSignal ? color.new(color.red, 90) : na)

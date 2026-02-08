@@ -1,0 +1,65 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+//@version=5
+// MACD
+// 参考サイト：TradingView（トレーディングビュー）のプログラム言語「Pineスクリプト」って何？ Pineスクリプトを覗いてみよう
+// URL:https://www.oanda.jp/lab-education/tradingviewstrategy/pine/5819/
+indicator('MACD' ,overlay = false)
+
+// 入力
+fast_length = input.int(defval = 12, title = '短期EMA')
+slow_length = input.int(defval = 26, title = '長期EMA')
+src = input(title = 'ソース', defval = close)
+signal_length = input.int(defval = 9, title = 'MACDのシグナル', minval = 1, maxval = 50, display = display.data_window)
+sma_sourse = input.string(title = 'オシレーターMAタイプ', defval = 'EMA', options = ['SMA', 'EMA'], display = display.data_window)
+sma_signal = input.string(title = 'MACDシグナルMAタイプ', defval = 'EMA', options = ['SMA', 'EMA'], display = display.data_window)
+
+// 計算
+fast_MA = sma_sourse == 'SMA' ? ta.sma(src, fast_length) : ta.ema(src, fast_length)
+slow_MA = sma_sourse == 'SMA' ? ta.sma(src, slow_length) : ta.ema(src, slow_length)
+macd = fast_MA -slow_MA
+signal = sma_signal == 'EMA'? ta.sma(macd, signal_length) : ta.ema(macd, signal_length)
+hist = macd - signal
+sell_signal = hist[1] <= 0 and hist > 0
+
+// アラート
+alertcondition(hist[1] >= 0 and hist < 0, title = '下降中', message = 'MAXDのヒストグラムが上げから下げに移動しています')
+alertcondition(hist[1] <= 0 and hist > 0, title = '上昇中', message = 'MAXDのヒストグラムが下げから上げに移動しています')
+
+// 描画
+hline(0, 'Zero Line', color = color.new(#7B7B86,60))
+plot(
+     hist, title = 'ヒストグラム',
+     style = plot.style_columns,
+     color = (hist >= 0 ? (hist[1] < hist ? #26A69A : #B2DFDB) : (hist[1] < hist ? #FFCDD2 : #FF5252))
+     )
+plot(macd, title = 'MACD', color = #2962FF)
+plot(signal, title = 'Signal', color = #FF6D00)
+
+// シグナル（描画は後から描いたほうが優先的に表示される -> レイヤーのトップになる）
+plotshape(
+     series = hist[1] <= 0 and hist > 0,
+     title = "買い",
+     style = shape.arrowup,
+     location = location.top,
+     color = color.blue,
+     offset = 0,
+     text = "Buy(Closs)",
+     textcolor = color.white,
+     editable = false,
+     display = display.all
+     )
+
+plotshape(hist[1] >= 0 and hist < 0,
+     title = "売り",
+     style = shape.arrowdown,
+     location = location.bottom,
+     color = color.red,
+     offset = 1,
+     text = "Sell(Closs)",
+     textcolor = color.white,
+     editable = false,
+     display = display.all
+     )
+

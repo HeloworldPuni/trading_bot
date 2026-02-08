@@ -1,0 +1,32 @@
+//=== Designing usable colors schemes
+
+//=== Plot crisp lines
+
+//@version=4
+study("")
+plot(high, "", color.new(color.orange, 80), 8)
+plot(high, "", color.new(color.orange, 60), 4)
+plot(high, "", color.new(color.orange, 00), 1)
+
+plot(hl2, "", color.new(color.orange, 60), 4)
+plot(hl2, "", color.new(color.orange, 00), 1)
+
+plot(low, "", color.new(color.orange, 0), 1)
+
+
+
+//=== Customize gradients
+
+//=== Color selection through script settings
+
+//@version=4
+study("Calculated colors", "", true)
+color i_c_ma = input(color.purple, "MA")
+color i_c_close = input(color.blue, "Close")
+float ma = sma(close, 20)
+float maHeight = percentrank(ma, 100)
+float transparency = min(80, 100 - maHeight)
+// This plot uses a calculated color.
+plot(ma, "MA1", color.new(i_c_ma, transparency), 2)
+// This plot does not use a calculated color.
+plot(close, "Close", i_c_close)

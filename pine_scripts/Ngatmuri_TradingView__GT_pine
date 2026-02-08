@@ -1,0 +1,123 @@
+//@version=5
+indicator("NGATMURIFX wkwkwkwkw", overlay=true)
+
+// User Inputs
+period = input.int(20, title="Period for S&D, BOS, and CHoCH")
+
+// Mengambil data OHLC
+openPrice = open
+highPrice = high
+closePrice = close
+lowPrice = low
+
+// Menentukan kondisi bearish
+bearishCandle = closePrice < openPrice
+
+// Menghitung panjang bodi dan sumbu
+bodyLength = math.abs(closePrice - openPrice)
+upperWickLength = highPrice - math.max(openPrice, closePrice)
+lowerWickLength = math.min(openPrice, closePrice) - lowPrice
+
+// Menentukan kondisi untuk candle dengan bodi kecil dan sumbu hampir sama
+equalWickCondition = bearishCandle and 
+                     (upperWickLength > 0 and lowerWickLength > 0) and
+                     (math.abs(upperWickLength - lowerWickLength) <= ((upperWickLength + lowerWickLength) * 0.1)) and 
+                     (bodyLength < (highPrice - lowPrice) * 0.5)
+
+// Menentukan zona Support and Demand (S&D)
+demandZone = low >= ta.lowest(low, period)
+supplyZone = high <= ta.highest(high, period)
+
+// Menandai candle bearish yang memenuhi syarat di area S&D
+highlightBearishCandle = equalWickCondition and demandZone
+
+// Menentukan warna sinyal pembalikan
+reversalColor = highlightBearishCandle ? color.yellow : color.white
+
+// Plotting untuk menandai candle bearish dalam area S&D
+bgcolor(highlightBearishCandle ? color.red : na, transp=90)
+plotshape(equalWickCondition, title="Reversal Signal", location=location.abovebar, color=reversalColor, style=shape.labelup, text="Reversal", size=size.small)
+
+// Input untuk warna garis demand dan supply
+demandLineColor = input.color(color.green, title="Warna Garis Demand")
+supplyLineColor = input.color(color.red, title="Warna Garis Supply")
+
+// Variabel untuk menyimpan level garis untuk demand dan supply
+var float demandLinePrice = na
+var float supplyLinePrice = na
+
+// Menghapus garis jika harga telah melewati level garis
+if not na(demandLinePrice) and closePrice < demandLinePrice
+    demandLinePrice := na
+
+if not na(supplyLinePrice) and closePrice > supplyLinePrice
+    supplyLinePrice := na
+
+// Menandai area S&D dengan garis horizontal panjang ke kanan jika sinyal pembalikan
+if highlightBearishCandle
+    demandLinePrice := low
+    supplyLinePrice := high
+
+// Garis sinyal untuk harga sebelumnya yang belum terlewati
+var line demandLine = na
+var line supplyLine = na
+
+// Menggambar garis demand dan supply jika belum dihapus
+if highlightBearishCandle
+    if na(demandLine)
+        demandLine := line.new(bar_index, demandLinePrice, bar_index + 300, demandLinePrice, color=demandLineColor, width=1, style=line.style_dashed)
+
+    if na(supplyLine)
+        supplyLine := line.new(bar_index, supplyLinePrice, bar_index + 300, supplyLinePrice, color=supplyLineColor, width=1, style=line.style_dashed)
+
+// Memperbarui garis demand dan supply yang ada
+if not na(demandLine)
+    line.set_xy1(demandLine, bar_index, demandLinePrice)
+    line.set_xy2(demandLine, bar_index + 300, demandLinePrice)
+
+if not na(supplyLine)
+    line.set_xy1(supplyLine, bar_index, supplyLinePrice)
+    line.set_xy2(supplyLine, bar_index + 300, supplyLinePrice)
+
+// Menghapus garis jika harga telah melewati level sinyal
+if not na(demandLinePrice) and closePrice >= demandLinePrice
+    line.delete(demandLine)
+    demandLine := na
+
+if not na(supplyLinePrice) and closePrice <= supplyLinePrice
+    line.delete(supplyLine)
+    supplyLine := na
+
+// Menambahkan fitur Break of Structure (BOS)
+var float lastHigh = na
+var float lastLow = na
+
+// Mendeteksi BOS
+if closePrice > ta.highest(high, period)
+    lastHigh := closePrice
+    label.new(bar_index, closePrice, "BOS (High)", style=label.style_label_down, color=color.green)
+    alert("Break of Structure (High) detected!", alert.freq_once_per_bar)
+
+if closePrice < ta.lowest(low, period)
+    lastLow := closePrice
+    label.new(bar_index, closePrice, "BOS (Low)", style=label.style_label_up, color=color.red)
+    alert("Break of Structure (Low) detected!", alert.freq_once_per_bar)
+
+// Menambahkan fitur Change of Character (CHoCH)
+var bool isBullish = false
+var bool isBearish = false
+
+if lastHigh and closePrice < lastHigh
+    isBearish := true
+    isBullish := false
+
+if lastLow and closePrice > lastLow
+    isBullish := true
+    isBearish := false
+
+// Menampilkan sinyal CHoCH
+if isBullish
+    label.new(bar_index, low, "CHoCH (Bullish)", style=label.style_label_up, color=color.blue)
+
+if isBearish
+    label.new(bar_index, high, "CHoCH (Bearish)", style=label.style_label_down, color=color.orange)

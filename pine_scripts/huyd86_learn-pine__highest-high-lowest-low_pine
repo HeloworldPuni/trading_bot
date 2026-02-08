@@ -1,0 +1,24 @@
+//==============================
+// Example indicator: plot the highest high and lowest low
+//==============================
+//@version=5
+indicator(title='Extreme highs and lows', overlay=true)
+
+// Input options
+hiLen = input(title='High Length', defval=20)
+loLen = input(title='Low Length', defval=20)
+
+// Calculate values
+hiHighs = ta.highest(high, hiLen)[1]
+loLows = ta.lowest(low, loLen)[1]
+
+// Plot values on the chart
+plot(series=hiHighs, color=color.new(color.green, 0), linewidth=2)
+plot(series=loLows, color=color.new(color.red, 0), linewidth=2)
+
+// Highlight new highs and lows with
+// a coloured background
+bgColour = high > hiHighs ? color.teal : low < loLows ? color.maroon : na
+
+bgcolor(color=bgColour, transp=90)
+//==============================

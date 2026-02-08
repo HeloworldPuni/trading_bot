@@ -1,0 +1,90 @@
+//@version=6
+strategy("Enhanced Buy & Sell Strategy with Custom Targets", overlay=true, margin_long=100, margin_short=100)
+
+// ─── INPUTS ────────────────────────────────────────────────────────────────
+// Common Inputs
+emaLength   = input.int(21, "EMA Length", minval=1)
+rsiLength   = input.int(14, "RSI Length", minval=1)
+pivotLen    = input.int(5, "Pivot Length")
+
+// BUY-specific Inputs
+rsiOversold      = input.int(30, "RSI Oversold Level", inline="BUY")
+supportTolerance = input.float(0.5, "Support Tolerance (%)", step=0.1, inline="BUY")
+
+// SELL-specific Inputs
+rsiOverbought       = input.int(70, "RSI Overbought Level", inline="SELL")
+resistanceTolerance = input.float(0.5, "Resistance Tolerance (%)", step=0.1, inline="SELL")
+
+// Profit Targets
+target1x = input.float(1.49, "First Target (1.49x)")
+target2x = input.float(2.0, "Second Target (2.0x)")
+stopLoss = input.float(0.95, "Stop Loss (0.95x)")
+
+// ─── INDICATORS ─────────────────────────────────────────────────────────────
+// Exponential Moving Average & RSI
+emaValue = ta.ema(close, emaLength)
+rsiValue = ta.rsi(close, rsiLength)
+
+// Improved Pivot Levels with confirmation
+supportLevel = ta.valuewhen(ta.pivotlow(low, pivotLen, pivotLen), low[pivotLen], 0)
+resistanceLevel = ta.valuewhen(ta.pivothigh(high, pivotLen, pivotLen), high[pivotLen], 0)
+
+// Check if current price is near the support/resistance zone
+inSupportZone = not na(supportLevel) and low <= supportLevel * (1 + supportTolerance/100)
+inResistanceZone = not na(resistanceLevel) and high >= resistanceLevel * (1 - resistanceTolerance/100)
+
+// Volume Analysis
+volumeAvg = ta.sma(volume, 20)
+volumeSpike = volume > volumeAvg * 1.5
+
+// ─── CANDLESTICK PATTERNS ──────────────────────────────────────────────────
+body      = math.abs(open - close)
+upperWick = high - math.max(open, close)
+lowerWick = math.min(open, close) - low
+
+// Enhanced Bullish Patterns (for BUY)
+isHammer = (lowerWick >= body * 2) and (upperWick <= body * 0.5) and (close > open)
+bullishEngulfing = (open[1] > close[1]) and (close > open) and (open <= close[1]) and (close >= open[1]) and body > body[1]
+
+// Enhanced Bearish Patterns (for SELL)
+isShootingStar = (upperWick >= body * 2) and (lowerWick <= body * 0.5) and (close < open)
+bearishEngulfing = (open[1] < close[1]) and (close < open) and (open >= close[1]) and (close <= open[1]) and body > body[1]
+
+// ─── SIGNAL LOGIC ──────────────────────────────────────────────────────────
+// Enhanced BUY SIGNAL: Uptrend confirmation, RSI oversold, bullish pattern near support with volume spike
+buySignal = inSupportZone and (rsiValue < rsiOversold) and 
+           ((isHammer) or (bullishEngulfing)) and 
+           (close > emaValue) and 
+           (volumeSpike)
+
+// Enhanced SELL SIGNAL: Downtrend confirmation, RSI overbought, bearish pattern near resistance with volume spike
+sellSignal = inResistanceZone and (rsiValue > rsiOverbought) and 
+            ((isShootingStar) or (bearishEngulfing)) and 
+            (close < emaValue) and 
+            (volumeSpike)
+
+// ─── TRADE EXECUTION ──────────────────────────────────────────────────────
+// Strategy for partial exits at 1.49x and 2.0x targets
+if buySignal
+    strategy.entry("Long", strategy.long)
+    strategy.exit("TP1", "Long", qty_percent=50, profit=target1x, loss=stopLoss)
+    strategy.exit("TP2", "Long", profit=target2x, loss=stopLoss)
+
+if sellSignal
+    strategy.entry("Short", strategy.short)
+    strategy.exit("TP1", "Short", qty_percent=50, profit=target1x, loss=stopLoss)
+    strategy.exit("TP2", "Short", profit=target2x, loss=stopLoss)
+
+// ─── PLOTTING ─────────────────────────────────────────────────────────────
+// Plot EMA for trend
+plot(emaValue, title="EMA", color=color.blue, linewidth=2)
+
+// Plot dynamic support/resistance levels
+plot(supportLevel, title="Support", style=plot.style_linebr, color=color.green, linewidth=2, offset=-pivotLen)
+plot(resistanceLevel, title="Resistance", style=plot.style_linebr, color=color.red, linewidth=2, offset=-pivotLen)
+
+// Mark enhanced signals with volume confirmation
+plotshape(buySignal and volumeSpike, style=shape.labelup, color=color.new(color.lime, 0),
+     text="Strong Buy", textcolor=color.white, location=location.belowbar, size=size.small)
+plotshape(sellSignal and volumeSpike, style=shape.labeldown, color=color.new(color.red, 0),
+     text="Strong Sell", textcolor=color.white, location=location.abovebar, size=size.small)

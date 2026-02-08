@@ -1,0 +1,64 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © arminkheirkhahan
+
+//@version=4
+strategy("Ichimoko", overlay=true, margin_long=10, margin_short=10)
+
+ep = 0.0
+ep := na(ep[1]) ? na : ep[1]
+
+
+// Date 
+start_date =  input(title="Start Date", type=input.time,  group="TIME RANGE", defval=timestamp("14 May 2021 00:00 +0300"))
+end_date =  input(title="End Date", type=input.time, group="TIME RANGE", defval=timestamp("14 Jun 2021 00:00 +0300"))
+
+isDate = time >= start_date and time <= end_date  
+conversionPeriods = input(9, minval=1, title="Conversion Line Length")
+basePeriods = input(26, minval=1, title="Base Line Length")
+laggingSpan2Periods = input(52, minval=1, title="Lagging Span 2 Length")
+displacement = input(26, minval=1, title="Displacement")
+donchian(len) => avg(lowest(len), highest(len))
+conversionLine = donchian(conversionPeriods)
+baseLine = donchian(basePeriods)
+leadLine1 = avg(conversionLine, baseLine)
+leadLine2 = donchian(laggingSpan2Periods)
+//plot(conversionLine,color=color.blue, title="Conversion Line")
+//plot(baseLine, color=color.yellow, title="Base Line")
+plot(close, offset = -displacement + 1, linewidth=2, color=#9c27b0, title="Lagging Span")
+
+p1 = plot(leadLine1, offset = displacement - 1, color=color.green,
+	 title="Lead 1")
+p2 = plot(leadLine2, offset = displacement - 1, color=color.red,
+	 title="Lead 2")
+//fill(p1, p2, color = leadLine1 > leadLine2 ? color.green : color.red)
+condition1 = close > leadLine1 and close > leadLine2
+condition2 = baseLine < conversionLine
+condition3 = cross(close,leadLine1[displacement-1])
+//plot(close)
+plot(leadLine1[laggingSpan2Periods])
+plotshape(condition3, style=shape.triangleup, location=location.belowbar, color=color.green)
+
+
+// ORDER SIZE SETTINGS
+order_size = input(title="Order Size", group="ORDER SIZE SETTINGS", type=input.integer,inline = "Highlight", defval=100)
+order_mode = input(title="",group="ORDER SIZE SETTINGS", options=["% of equality","cash"],inline = "Highlight", defval="cash")
+
+buy_condition = 1 == 1
+
+
+// ATR SETTINGS
+atr_length = input(title="ATR Length", group="ATR SETTINGS", type=input.integer, defval=14)
+
+atr_value = rma(tr(true), atr_length)
+
+// POSITION EXIT SETTINGS
+stop_loss_multiple = input(title="Stop Loss ATR Multiplier (Risk)", group="POSITION EXIT SETTINGS", type=input.integer, defval=3)
+take_profit_multiple = input(title="Take Profit ATR Multiplier (Reward)", group="POSITION EXIT SETTINGS", type=input.integer, defval=2)
+
+if (buy_condition and isDate)
+    ep := close
+    strategy.entry("long", strategy.long,order_size/close, limit=close)
+    take_profit_price = ep + (atr_value * take_profit_multiple)
+    stop_loss_price = ep - (atr_value * stop_loss_multiple)
+    strategy.exit("exit", "long", limit=take_profit_price,stop= stop_loss_price)
+

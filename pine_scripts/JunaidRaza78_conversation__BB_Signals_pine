@@ -1,0 +1,24 @@
+//@version=5
+indicator(title="Bollinger Bands Signals", overlay=true)
+
+// **Input Parameters:**
+bollingerLength = input(20, title="Bollinger Bands Length")
+bollingerDeviation = input(2.0, title="Bollinger Bands StdDev")
+
+// **Indicator Calculations:**
+basis = ta.sma(close, bollingerLength)
+dev = ta.stdev(close, bollingerLength)
+upperBand = basis + dev * bollingerDeviation
+lowerBand = basis - dev * bollingerDeviation
+
+// **Signal Conditions:**
+// Bollinger Bands Signals
+touchingLowerBB = close <= lowerBand
+touchingUpperBB = close >= upperBand
+oversoldBB = touchingLowerBB
+overboughtBB = touchingUpperBB
+
+// **Plot Signals:**
+// Bollinger Bands Signals
+plotshape(oversoldBB, style=shape.cross, location=location.belowbar, color=color.purple, text="BBOS", size=size.tiny)
+plotshape(overboughtBB, style=shape.xcross, location=location.abovebar, color=color.orange, text="BBOB", size=size.tiny)

@@ -1,0 +1,753 @@
+TITLE: Implementing Trading Signal Screener in PineScript
+DESCRIPTION: This code implements a screener for different trading patterns. It defines condition functions for different signal types (FVG %, First Touch, Full Fill, Reversal) and creates an indicator calculation function that evaluates these conditions, returning time, gap percentage, and other metrics when signals are detected.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/ICT Fair Value Gap (FVG) Scanner/Scanner - ICT Fair Value Gap (FVG) Scanner.txt#2025-04-16_snippet_21
+
+LANGUAGE: pinescript
+CODE:
+```
+// Acknowledgement & Reference
+// Trader: 'MUQWISHI'
+// Indicator Title: 'Candlestick Patterns Screener [By MUQWISHI]'
+// Indicator Link: 'https://www.tradingview.com/script/xiWQuGOq-Candlestick-Patterns-Screener-By-MUQWISHI/'
+
+// Scanner Conditions
+short_cond = 
+ i_scr_choose == 'FVG %' ? short_cont_1 : 
+ i_scr_choose == 'First Touch' ? short_first_touch_signal : 
+ i_scr_choose == 'First Touch Confirmed' ? short_first_touch_conf_signal : 
+ i_scr_choose == 'Full Fill' ? short_full_fill_signal : 
+ i_scr_choose == 'Full Fill Confirmed' ? short_full_fill_conf_signal : 
+ short_reversal_signal
+
+long_cond = 
+ i_scr_choose == 'FVG %' ? long_cont_1 : 
+ i_scr_choose == 'First Touch' ? long_first_touch_signal : 
+ i_scr_choose == 'First Touch Confirmed' ? long_first_touch_conf_signal : 
+ i_scr_choose == 'Full Fill' ? long_full_fill_signal : 
+ i_scr_choose == 'Full Fill Confirmed' ? long_full_fill_conf_signal : 
+ long_reversal_signal
+
+// Function for Screener Indicator Calculation
+indicator_calculation() =>
+    // Initialize variables
+    gap_percent = float(na)
+    //price = float(na)
+    _time = int(na)
+    _cum_pchg = float(na)
+    _cum_vol_pchg = float(na)
+    signal = int(na)
+
+    if barstate.isconfirmed
+        // Check for Short Momentum Candle and conditions (Modify here to customize indicators)
+        if i_scr_show_long and long_cond
+            gap_percent := FVGUpPercent
+            signal := 1
+            signal
+
+        // Check for Long Momentum Candle and conditions (Modify here to customize indicators)
+        else if i_scr_show_short and short_cond
+            gap_percent := FVGDownPercent
+            signal := -1
+            signal
+
+        // Update price and time if signal is not null
+        if not na(signal)
+            //price := math.round_to_mintick(close)
+            _time := time
+            _cum_pchg := cum_pchg
+            _cum_vol_pchg := cum_vol_pchg
+            _cum_vol_pchg
+
+    [_time, gap_percent, _cum_pchg, _cum_vol_pchg, signal]
+```
+
+----------------------------------------
+
+TITLE: ICT Liquidity Void Scanner Core Implementation
+DESCRIPTION: Main indicator implementation including menu settings, filters, Fibonacci calculations, signal generation, and plotting functionality. Features configurable ATR, body percentage, time, and date filters with customizable visual elements.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/ICT Liquidity Void Fill/[Indicator] ICT Liquidity Void Fill.txt#2025-04-16_snippet_0
+
+LANGUAGE: pinescript
+CODE:
+```
+//@version=6
+indicator(title = 'ICT Liquidity Void Fill', shorttitle = 'ICT LV Fill', overlay = true, max_lines_count = 500)
+
+//_____________________________ Menu Start
+
+string g_lv = '███████████████ Liquidity Void ███████████████'
+
+string tt_lv_fib = 
+ "• '0' → Bottom of a bullish candle, top of a bearish candle." + 
+ "\n• '1' → Top of a bullish candle, bottom of a bearish candle." + 
+ "\n• '0.5' → 50% level of the candle." + 
+ "\n• Other Fibonacci/OTE values like 0.62, 0.705, 0.79, etc., are usable." + 
+ "\n• Range: Min = 0, Max = 1."
+
+bool i_scr_show_long = input.bool(defval = true, title = 'Long Signals', inline = 'tb_2', group = g_lv)
+bool i_scr_show_short = input.bool(defval = true, title = 'Short Signals', inline = 'tb_2', group = g_lv)
+float i_fib_val = input.float(defval = 0.5, title = 'Fib Value', minval = 0, maxval = 1, step = 0.1, tooltip = tt_lv_fib, group = g_lv)
+string i_fvg_ln_style = input.string(defval = line.style_solid, title = 'Line Style', options = [line.style_solid, line.style_dashed, line.style_dotted], group = g_lv)
+```
+
+----------------------------------------
+
+TITLE: Implementing ICT Market Structure Shift Indicator in Pine Script
+DESCRIPTION: Complete implementation of an ICT Market Structure Shift indicator in Pine Script version 5. The indicator detects bullish and bearish shifts in market structure using zigzag patterns and includes configuration options for visualization, filtering, and retracement level detection.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/ICT Market Structure Shift (MSS)/ICT Market Structure Shift (MSS).txt#2025-04-16_snippet_0
+
+LANGUAGE: pine
+CODE:
+```
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Arun_K_Bhaskar
+
+//@version=5
+i_max_bars_back = 300
+indicator(title="ICT Market Structure Shift (MSS)", shorttitle="ICT MSS", overlay=true, max_bars_back=i_max_bars_back, max_lines_count=500, max_boxes_count=500)
+
+//_____________________________ Menu Zig Zag Start 
+
+g_zz = '██████████████████ Zig Zag ██████████████████'
+
+bool i_zz_bear_show = input.bool(defval=true, title='Bearish', inline='be', group=g_zz)
+bool i_zz_bear_shift_show = input.bool(defval=true, title='Shift', inline='be', group=g_zz)
+bool i_zz_bear_ret_show = input.bool(defval=true, title='Retracement', inline='be', group=g_zz)
+
+bool i_zz_bull_show = input.bool(defval=true, title='Bullish ', inline='bu', group=g_zz)
+bool i_zz_bull_shift_show = input.bool(defval=true, title='Shift', inline='bu', group=g_zz)
+bool i_zz_bull_ret_show = input.bool(defval=true, title='Retracement', inline='bu', group=g_zz)
+
+int i_zz_period = input.int(defval=4, title='Zig Zag Length', minval=2, group=g_zz)
+string i_zz_source = input.string(defval='High/Low', title='Source', options=['High/Low', 'Open/Close'], group=g_zz)
+tt_zz = "• Distance between swings." +
+     "\n• Lower values mean highs and lows are closer."
+float i_zz_percent = input.float(defval=0, minval=0, step=0.1, title='% Difference >', tooltip=tt_zz, group=g_zz)
+bool i_zz_show = input.bool(defval=false, title='', inline='zz', group=g_zz)
+color i_zz_bull_color = input.color(defval=#1E53E5, title='Zig Zag Colors: +', inline='zz', group=g_zz)
+color i_zz_bear_color = input.color(defval=#1E53E5, title='-', inline='zz', group=g_zz)
+color i_pos_color = input.color(defval=#22AB94, title='Colors:             +', inline='c_1', group=g_zz)
+color i_neg_color = input.color(defval=#F7525F, title='-', inline='c_1', group=g_zz)
+color i_zz_bull_signal_color = input.color(defval=#70CCBD, title='Signal Colors:       +', inline='c_2', group=g_zz)
+color i_zz_bear_signal_color = input.color(defval=#FAA1A4, title='-', inline='c_2', group=g_zz)
+int i_zz_bx_transp = input.int(defval=75, title='Box Transparency   ', minval=0, maxval=100, group=g_zz)
+
+g_zz_f = "Additional Filters"
+tt_zz_f = "• Filters remove narrow swing displacements." +
+ "\n• Swing displacement means the distance between old swing high/low and new swing high/low." +
+ "\n• Multiplier filtering adjusts automatically when the chart timeframe changes." +
+ "\n• Percentage filter will be constant across all timeframes." +
+ "\n• If you don't want any filtering, choose 'Percentage' and then change Percentage to 0."
+string i_zz_filter_choice = input.string(defval='Percentage', title='Filter Using', options=['Multiplier', 'Percentage'], tooltip=tt_zz_f, group=g_zz_f)
+tt_zz_m = "• Higher the number, filters higher swing displacement." +
+ "\n• Eg: If 'Multiplier' is 2, swing displacement is 2 times than the previous swing."
+float i_zz_multiplier = input.float(defval=2, minval=1, step=0.1, title='Multiplier', tooltip=tt_zz_m, group=g_zz_f)
+tt_zz_p = "Filters liquidity displacement above the given percentage."
+float i_zz_percentage = input.float(defval=0.7, minval=0, step=0.1, title='Percentage Above', tooltip=tt_zz_p, group=g_zz_f)
+
+//_____________________________ Menu Zig Zag End 
+
+//_____________________________ Zig Zag Start 
+
+// Acknowledgement & Reference
+// Trader: 'RozaniGhani-RG'
+// Indicator Title: 'Zig Zag Ratio Simplified'
+// Indicator Link: 'https://www.tradingview.com/script/CIk186OY-Zig-Zag-Ratio-Simplified/'
+
+//_____________________________ Get Source
+
+float _high = i_zz_source == 'Open/Close' ? math.max(open, close) : high
+float _low = i_zz_source == 'Open/Close' ? math.min(open, close) : low
+
+//============================== 1.  Variables
+
+//_____________________________ 1.1 Highest / Lowest
+float ph = ta.highestbars(_high, i_zz_period) == 0 ? _high : na
+float pl = ta.lowestbars(_low, i_zz_period) == 0 ? _low  : na
+
+//_____________________________ 1.2 Dir
+var int dir = 0, dir := pl and na(ph) ? -1 : ph and na(pl) ? 1 : dir
+
+//_____________________________ 1.4 Array
+var max_array_size = 10, var zigzag = array.new_float(0), oldzigzag = array.copy(zigzag)
+
+//_____________________________ 1.5 Others
+var line line_zz = na
+
+//============================== 3.  Custom Functions
+
+add_to_zigzag(float[] pointer, float value, int bindex) =>
+    array.unshift(pointer, bindex)
+    array.unshift(pointer, value)
+    if array.size(pointer) > max_array_size
+        array.pop(pointer)
+        array.pop(pointer)
+    
+update_zigzag(float[] pointer, float value, int bindex, int dir) =>
+    if array.size(pointer) == 0
+        add_to_zigzag(pointer, value, bindex)
+    else
+        if dir == 1 and value > array.get(pointer, 0) or dir == -1 and value < array.get(pointer, 0)
+            array.set(pointer, 0, value)
+            array.set(pointer, 1, bindex)
+        0.
+
+//============================== 4.  Calculations
+
+dirchanged = ta.change(dir)
+
+if ph or pl
+    if dirchanged
+        add_to_zigzag(zigzag, dir == 1 ? ph : pl, bar_index)
+    else
+        update_zigzag(zigzag, dir == 1 ? ph : pl, bar_index, dir)
+
+//============================== 5.  Constructs
+
+if array.size(zigzag) >= 6
+    if array.get(zigzag, 0) != array.get(oldzigzag, 0) or array.get(zigzag, 1) != array.get(oldzigzag, 1)
+        if array.get(zigzag, 2) == array.get(oldzigzag, 2) and array.get(zigzag, 3) == array.get(oldzigzag, 3)
+            line.delete(line_zz)
+        if i_zz_show
+            line_zz := line.new(x1 = math.round(array.get(zigzag, 1)), y1 = array.get(zigzag, 0), x2 = math.round(array.get(zigzag, 3)), y2 = array.get(zigzag, 2), color = dir == 1 ? i_zz_bull_color : i_zz_bear_color, width=2)
+
+//_____________________________ Get Swing Price & Bar Index
+
+zz_1 = array.size(zigzag) > 7 ? array.get(zigzag, array.size(zigzag) - 8) : na
+bi_1 = array.size(zigzag) > 6 ? array.get(zigzag, array.size(zigzag) - 7) : na
+zz_2 = array.size(zigzag) > 5 ? array.get(zigzag, array.size(zigzag) - 6) : na
+bi_2 = array.size(zigzag) > 4 ? array.get(zigzag, array.size(zigzag) - 5) : na
+zz_3 = array.size(zigzag) > 3 ? array.get(zigzag, array.size(zigzag) - 4) : na
+bi_3 = array.size(zigzag) > 2 ? array.get(zigzag, array.size(zigzag) - 3) : na
+
+// Create a single label for the last five zigzag values and their corresponding bar index
+//label_text = str.tostring(zz_0) + "\n" + str.tostring(bi_0) + "\n" + str.tostring(zz_1) + "\n" + str.tostring(bi_1) + "\n" + str.tostring(zz_2) + 
+// "\n" + str.tostring(bi_2) + "\n" + str.tostring(zz_3) + "\n" + str.tostring(bi_3) + "\n" + str.tostring(zz_4) + "\n" + str.tostring(bi_4)
+//if barstate.islast
+//    label.new(x = bar_index, y = high, text = label_text, color=color.white)
+
+// Function to calculate filter based on ATR or percentage
+filter(float swing_3, float swing_2, float swing_1, float multiplier, float percentage, string choice) =>
+    filter_x_times = math.abs(swing_1 - swing_2) > math.abs(swing_3 - swing_2) * multiplier
+    filter_percent = math.abs((swing_3 - swing_1) / swing_3 * 100) > percentage
+    choice == 'Multiplier' ? filter_x_times : filter_percent
+
+bearish_filter = filter(zz_3, zz_2, zz_1, i_zz_multiplier, i_zz_percentage, i_zz_filter_choice)
+bullish_filter = filter(zz_3, zz_2, zz_1, i_zz_multiplier, i_zz_percentage, i_zz_filter_choice)
+
+//_____________________________ MSS Conditions
+
+// Bearish Condition
+bearish_condition = 
+ zz_1 > zz_2 and
+ zz_1 > zz_3 and
+ zz_2 < zz_1 and
+ zz_2 < zz_3 and
+ zz_3 < zz_1 and
+ zz_3 > zz_2 and
+ close < zz_1 and
+ close < zz_2 and
+ close < zz_3 and
+ ta.crossunder(close, zz_2) and
+ bearish_filter and 
+ barstate.isconfirmed
+
+// Bullish Condition
+bullish_condition = 
+ zz_1 < zz_2 and
+ zz_1 < zz_3 and
+ zz_2 > zz_1 and
+ zz_2 > zz_3 and
+ zz_3 > zz_1 and
+ zz_3 < zz_2 and
+ close > zz_1 and
+ close > zz_2 and
+ close > zz_3 and
+ ta.crossover(close, zz_2) and
+ bullish_filter and 
+ barstate.isconfirmed
+
+//___________________________ Bearish Retracement
+
+// Retracement Levels
+float bearish_retracement_level = zz_1 - ((zz_1-zz_2)/3)
+float bullish_retracement_level = zz_1 + ((zz_2-zz_1)/3)
+
+// Get Bearish Retracement Price in Bearish Condition
+var bearish_retracement_price = float(na)
+var bearish_retracement_bi = float(na)
+if bearish_condition
+    bearish_retracement_price := bearish_retracement_level
+    bearish_retracement_bi := bi_1
+
+// Bearish Retracement Condition
+bool bearish_retracement_condition = 
+ ta.crossover(high, bearish_retracement_price) and
+ barstate.isconfirmed
+
+// Bearish Retracement in Sequential Order
+var bear_current_state = 0
+bear_previous_state = nz(bear_current_state[1])
+bear_current_state := bear_previous_state == 2 ? 0 : bear_previous_state
+if bearish_condition and bear_current_state == 0
+    bear_current_state := 1
+if bearish_retracement_condition and bear_current_state == 1
+    bear_current_state := 2
+
+bool bearish_retracement_trigger = bear_current_state == 2 ? true : false
+
+//___________________________ Bullish Retracement
+
+// Get Bullish Retracement Price in Bullish Condition
+var bullish_retracement_price = float(na)
+var bullish_retracement_bi = float(na)
+if bullish_condition
+    bullish_retracement_price := bullish_retracement_level
+    bullish_retracement_bi := bi_1
+
+// Bullish Retracement Condition
+bool bullish_retracement_condition = 
+ ta.crossunder(low, bullish_retracement_price) and
+ barstate.isconfirmed
+
+// Bullish Retracement in Sequential Order
+var bull_current_state = 0
+bull_previous_state = nz(bull_current_state[1])
+bull_current_state := bull_previous_state == 2 ? 0 : bull_previous_state
+if bullish_condition and bull_current_state == 0
+    bull_current_state := 1
+if bullish_retracement_condition and bull_current_state == 1
+    bull_current_state := 2
+
+```
+
+----------------------------------------
+
+TITLE: Implementing Trend Following Scanner in Pine Script
+DESCRIPTION: Complete Pine Script indicator that scans for trend following setups while skipping sideways markets. The script includes multiple input parameters for customization, built-in Supertrend calculation, volatility range detection, and additional filters for ATR, volume, candle body, and time-based conditions.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/Trend Following Setup - Sideways Market Skipper Scanner/Scanner - Trend Following Setup - Sideways Market Skipper Scanner.txt#2025-04-16_snippet_0
+
+LANGUAGE: pine
+CODE:
+```
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Arun_K_Bhaskar
+
+//@version=5
+indicator(title='Trend Following Setup - Sideways Market Skipper Scanner', shorttitle='Sideways Skip Scan', overlay=false, max_bars_back=500)
+
+//_____________________________ Menu Scanner Start
+
+g_scrtb = '██████████████████ Scanner ██████████████████'
+
+//string i_scr_choose = input.string(defval='Continuous Signals', title='Scanning Method', options=['Continuous Signals', 'Flip Signals'], group=g_scrtb)
+
+tt_is = "• Reads only up to first 40 symbols." +
+     "\n• Total characters cannot exceed 4096." +
+     "\n• Eg: EXCHANGE:SYMBOL_A,EXCHANGE:SYMBOL_B"
+
+string i_symbols = input.text_area(
+ defval="NSE:ABFRL,NSE:ASHOKA,NSE:BALMLAWRIE,NSE:BEL,NSE:BHEL,NSE:BOMDYEING,NSE:CANBK,NSE:DBREALTY,NSE:DCXINDIA,NSE:ENGINERSIN,NSE:GAIL,NSE:HINDCOPPER,NSE:HUDCO,NSE:INDIACEM,NSE:INOXWIND,NSE:IRCON,NSE:IRFC,NSE:ITI,NSE:MARKSANS,NSE:MIDHANI,NSE:MRPL,NSE:NATIONALUM,NSE:NBCC,NSE:NCC,NSE:NFL,NSE:NHPC,NSE:NLCINDIA,NSE:PNB,NSE:PTC,NSE:RAILTEL,NSE:RCF,NSE:RELINFRA,NSE:RVNL,NSE:SAIL,NSE:SCI,NSE:SJVN,NSE:TI,NSE:UNIONBANK,NSE:VEDL,NSE:ZEEL", 
+ title="Paste Symbols", tooltip=tt_is, group=g_scrtb)
+
+bool i_scr_show_table  = input.bool(defval=true, title='Display Table', group=g_scrtb)
+bool i_scr_show_long  = input.bool(defval=true, title='Long Signals', inline='tb_2', group=g_scrtb)
+bool i_scr_show_short  = input.bool(defval=true, title='Short Signals', inline='tb_2', group=g_scrtb)
+
+int i_scr_tbl_disp_rows = input.int(defval=12, title='Display Rows', minval=0, maxval=100, group=g_scrtb)
+string i_scr_tbl_position = input.string(defval=position.bottom_left, title='Table Position', options=[position.top_left, position.top_center, position.top_right, position.middle_left, position.middle_center, position.middle_right, position.bottom_left, position.bottom_center, position.bottom_right], group=g_scrtb)
+string i_scr_tbl_text_size = input.string(defval=size.small, title='Table Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group=g_scrtb)
+
+//_____________________________ Menu Scanner End
+
+//_____________________________ Menu Supertrend Start
+
+g_st = '█████████████████ Supertrend █████████████████'
+//bool i_st_display = input.bool(defval=true, title='Display', group=g_st)
+int i_st_atr_period = input.int(defval=10, title="ATR Length", minval=1, group=g_st)
+float i_st_factor = input.float(defval=3.0, title="Factor", minval=0.01, step=0.01, group=g_st)
+
+//_____________________________ Menu Supertrend End
+
+//_____________________________ Menu Range Start
+
+g_r = '███████████████ Volatility Range ███████████████'
+
+tt_r = 
+ "• 'Auto ATR': Automatically sets the range based on the ATR value." +
+ "\n• The range adjusts automatically when switching between symbols." +
+ "\n• The default ATR timeframe is 1 hour." +
+ "\n• For a Supertrend Long Crossover, the range is defined by adding the ATR value." +
+ "\n• For a Supertrend Short Crossunder, the range is defined by subtracting the ATR value." +
+ "\n\n• Type Points: Manually enter the points for different symbols to define the volatility range." +
+ "\n• For example, the points are 60 for NIFTY and 120 for BANKNIFTY."
+
+tt_tp = "Applicable only when 'Range Type' is selected as 'Type Points'."
+
+tt_atr_tf =
+ "• This uses the ATR value of the given timeframe." +
+ "\n• The default ATR timeframe is 1 hour."
+
+bool i_atr_range_display = input.bool(defval=true, title='Display', group=g_r)
+string i_atr_range_choice = input.string(defval='Auto ATR', title='Range Type', options=['Auto ATR', 'Type Points'], tooltip=tt_r, group=g_r)
+float i_atr_range_points = input.float(defval=120, title="Type Points", minval=0.01, tooltip=tt_tp, group=g_r)
+
+//string i_atr_range_timeframe = input.timeframe(defval='60', title='ATR Timeframe', tooltip=tt_atr_tf, group=g_r)
+int i_atr_range_length = input.int(defval=14, title='ATR Length', minval=1, group=g_r)
+string i_atr_range_smoothing = input.string(title="ATR Smoothing", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"], group=g_r)
+float i_atr_range_multiplier = input.float(defval=1.5, title="ATR Multiplier", minval=1, step=0.5, group=g_r)
+int i_atr_range_sma_length = input.int(defval=14, title='ATR SMA Length', minval=1, group=g_r)
+
+//_____________________________ Menu Range End
+
+//_____________________________ Menu Additional Fiters Start
+
+g_af = '███████████████ Additional Fiters ███████████████'
+tt_pchg = 
+ "• If '% Change Above/Below +/-' is 4, it means relative volume is considered when the price change is above 4%." +
+ "\n• A value of 4% is positive for bullish scenarios and negative for bearish scenarios." +
+ "\n• The percentage change is calculated using cumulative percentage change, so there might be a minor difference between the actual and displayed percentage change."
+tt_vpchg = 
+ "• If 'Volume % Change Above' is 0, it means Relative Volume is considered when today's volume is greater than the previous day's volume." +
+ "\n• For 'Screening Method' choice 'Retracement to EMA,' the 'Apply Volume % Change Filter' can be unchecked." +
+ "\n• A 'Volume % Change Above' 300% or more often indicates a major breakout, which may happen today or the next day." +
+ "\n• The volume percentage change is calculated using cumulative percentage change, so there might be a minor difference between the actual and displayed percentage change."
+tt_atr = 
+ "• ATR helps filter out longer or more volatile signal candles."
+tt_atr_mul =
+ "• Higher multiplier value filters a longer or more volatile signal candle."
+tt_bf =
+ "• If the input is '80', it means the body covers over 80% of the candle."
+tt_bs =
+ "• 2 means the candle is 2 times larger than the previous candle."
+tt_vol =
+ "• Filter out a candle when its volume is greater than the SMA of the volume."
+tt_rv =
+ "• Filter out a candle when its volume is greater than the Relative Volume."
+tt_tf =
+ "• Filter out a signals between the given Time."
+
+bool i_pchg_filter = input.bool(defval=false, title='Apply % Change Filter', tooltip=tt_pchg, group=g_af)
+float i_pchg_above_below = input.float(defval=2, title='% Change Above/Below +/-', minval=0, group=g_af)
+
+bool i_vol_pchg_filter = input.bool(defval=false, title='Apply Volume % Change Filter', tooltip=tt_vpchg, group=g_af)
+float i_vol_pchg_above = input.float(defval=0, title='Volume % Change Above', minval=0, group=g_af)
+
+bool i_atr_filter = input.bool(defval=true, title='Apply ATR Filter', tooltip=tt_atr, group=g_af)
+int i_atr_length = input.int(defval=14, minval=1, title='ATR Length', group=g_af)
+float i_atr_multi = input.float(defval=1, title='ATR Multiplier', minval=1, group=g_af)
+
+bool i_body_filter = input.bool(defval=false, title='Apply Body % Filter', tooltip=tt_bf, group=g_af)
+float i_body_percent = input.float(defval=80, title='Body % Above', minval=0, maxval=100, group=g_af) / 100
+
+bool i_body_size_filter = input.bool(defval=false, title='Apply Body Size Filter', tooltip=tt_bs, group=g_af)
+int i_body_size_multiplier = input.int(defval=2, title='Body Size Multiplier (x)', minval=0,  group=g_af)
+
+bool i_volume_filter = input.bool(defval=false, title='Apply Volume Filter', tooltip=tt_vol, group=g_af)
+int i_vol_sma_length = input.int(defval=20, minval=1, title='Volume SMA Length', group=g_af)
+
+bool i_rel_vol_filter = input.bool(defval=false, title='Apply Relative Volume Filter', tooltip=tt_rv, group=g_af)
+int i_rel_vol_avg_vol_len = input.int(defval=90, title='Relative Volume Length', minval=2, group=g_af)
+float i_rel_vol_avg_vol_multi = input.float(defval=5, title='Rel Vol SMA Multiplier', minval=0, group=g_af)
+
+bool i_time_filter = input.bool(defval=false, title='Apply Time Filter', tooltip=tt_tf, group=g_af)
+int i_hour_1 = input.int(defval=9, minval=0, title='Time From', inline='t_1', group=g_af)
+int i_minute_1 = input.int(defval=15, minval=0, title=':', inline='t_1', group=g_af)
+int i_hour_2 = input.int(defval=10, minval=0, title='Time To ', inline='t_2', group=g_af)
+int i_minute_2 = input.int(defval=15, minval=0, title=':', inline='t_2', group=g_af)
+
+//_____________________________ Menu Additional Fiters End
+
+//_____________________________ Menu Table Start
+
+g_dtb = '█████████████████ Data Table █████████████████'
+bool i_tbl_data_show  = input.bool(defval=true, title='Display Table', group=g_dtb)
+string i_tbl_data_pos = input.string(defval=position.bottom_right, title='Position', options=[position.top_left, position.top_center, position.top_right, position.middle_left, position.middle_center, position.middle_right, position.bottom_left, position.bottom_center, position.bottom_right], group=g_dtb)
+string i_tbl_data_txt_size = input.string(defval=size.normal, title='Size', options=[size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group=g_dtb)
+
+//_____________________________ Menu Table End
+
+//_____________________________ Chart Settings Start
+
+g_ch = '███████████████ Chart Settings ███████████████'
+color i_pos_dark_color = input.color(defval=#03110F, title='Positive Dark', group=g_ch)
+color i_pos_color = input.color(defval=#26A69A, title='Positive Mid', group=g_ch)
+color i_pos_light_color = input.color(defval=#ACE5DC, title='Positive Light', group=g_ch)
+color i_neg_light_color = input.color(defval=#FCCBCD, title='Negative Light', group=g_ch)
+color i_neg_color = input.color(defval=#FF5252, title='Negative Mid', group=g_ch)
+color i_neg_dark_color = input.color(defval=#180809, title='Negative Dark', group=g_ch)
+color i_indicator_color = input.color(defval=#2962FF, title='Indicator', group=g_ch)
+color i_signal_color = input.color(defval=#FF6D00, title='Signal', group=g_ch)
+color i_neu_color = input.color(defval=#D1D4DC, title='Neutral Light', group=g_ch)
+color i_neu_mid_color = input.color(defval=#2A2E39, title='Neutral Mid', group=g_ch)
+```
+
+----------------------------------------
+
+TITLE: Implementing Multi-Symbol Screener in PineScript
+DESCRIPTION: This snippet implements a multi-symbol screener that detects bullish and bearish conditions across multiple symbols. It uses a matrix to store data and displays results in a table.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/ICT Liquidity Void/ICT Liquidity Void Screener.txt#2025-04-16_snippet_6
+
+LANGUAGE: pine
+CODE:
+```
+// Screener Conditions
+bearish_cond = ta.crossunder(low, bull_price_source_val) and barstate.isconfirmed
+bullish_cond = ta.crossover(high, bear_price_source_val) and barstate.isconfirmed
+
+// Define Bull and Bear Conditions
+bull = not(i_scr_direction == "Bearish")
+bear = not(i_scr_direction == "Bullish")
+
+// Function for Screener Indicator Calculation
+indicator_calculation() =>
+    // Initialize variables
+    price = float(na)
+    _time = int(na)
+    indicator = ""
+    signal = int(na) 
+
+    if barstate.isconfirmed
+        // Check for Bearish Momentum Candle and conditions (Modify here to customize indicators)
+        if i_scr_show_bull and bearish_cond and bear 
+            indicator := "L"
+            signal := -1
+
+        // Check for Bullish Momentum Candle and conditions (Modify here to customize indicators)
+        else if i_scr_show_bear and bullish_cond and bull
+            indicator := "H"
+            signal := 1
+
+        // Update price and time if signal is not null
+        if not na(signal)
+            price := math.round_to_mintick(close)
+            _time := time
+
+    [_time, indicator, price, signal]
+
+// Function to format time
+format_time(x) =>
+    timezone = syminfo.timezone
+    timeframe.isintraday ? str.format_time(x, "HH:mm  dd-MM-yyyy", timezone) : str.format_time(x, "dd-MM-yyyy", timezone)
+
+// Function to extract symbol name
+symbol(s) => 
+    array.get(str.split(s, ":"), 1)
+
+// Matrix setup
+var matrix = matrix.new<string>(0, 5, na)
+
+// Function to add rows to the matrix
+mtxFun(symbol, _time, indicator, price, signal) =>
+    matrix.add_row(matrix, 0, array.from(symbol, _time, indicator, price, signal))
+
+// Screener function to collect data
+screener(s) =>
+    sym = ticker.modify(s, syminfo.session)
+    [_time, indicator, price, signal] = request.security(sym, timeframe.period, indicator_calculation())
+
+    // Check if the signal is not na and the time matches
+    if not na(signal) and _time == time
+        symbolName = symbol(s)
+        formattedTime = format_time(_time)
+        strPrice = str.tostring(price)
+        strSignal = str.tostring(signal)
+        
+        // Add data to the matrix
+        mtxFun(symbolName, formattedTime, indicator, strPrice, strSignal)
+
+// Call Screener function for multiple symbols
+screener(tid_01), screener(tid_02), screener(tid_03), screener(tid_04), screener(tid_05), screener(tid_06), screener(tid_07),
+screener(tid_08), screener(tid_09), screener(tid_10), screener(tid_11), screener(tid_12), screener(tid_13), screener(tid_14),
+screener(tid_15), screener(tid_16), screener(tid_17), screener(tid_18), screener(tid_19), screener(tid_20), screener(tid_21),
+screener(tid_22), screener(tid_23), screener(tid_24), screener(tid_25), screener(tid_26), screener(tid_27), screener(tid_28),
+screener(tid_29), screener(tid_30), screener(tid_31), screener(tid_32), screener(tid_33), screener(tid_34), screener(tid_35),
+screener(tid_36), screener(tid_37), screener(tid_38), screener(tid_39), screener(tid_40)
+
+// Trim excess rows in the matrix
+if matrix.rows(matrix) > i_scr_disp_rows
+    while matrix.rows(matrix) > i_scr_disp_rows
+        matrix.remove_row(matrix, matrix.rows(matrix)-1)
+
+// Plot Table
+// Create table with specified properties
+var table tbl = table.new(position=i_scr_position, columns=4, rows=102, border_width=1)
+
+// Function to populate cells in the table
+cell(col, row, txt, color) => 
+    table.cell(tbl, col, row, text = txt, text_color = color, text_halign=text.align_left, bgcolor = color.new(color, 90), text_size=i_scr_text_size)
+
+// Check if it's the last bar
+if barstate.islast
+    // Clear existing data in the table
+    table.clear(tbl, 0, 0, 3, 101)
+
+    // Set headers for the table
+    cell(0, 0, "Symbol", i_scr_neu_col)
+    cell(1, 0, "Time",   i_scr_neu_col)
+    cell(2, 0, "Dir" ,  i_scr_neu_col)
+    cell(3, 0, "Price",  i_scr_neu_col)
+
+    j = 1
+    // Populate table with matrix data
+    if matrix.rows(matrix) > 0
+        for i = 0 to matrix.rows(matrix) - 1
+            // Determine color based on the signal
+            col = matrix.get(matrix, i, 4) ==  "1" ? i_scr_neg_col :
+                  matrix.get(matrix, i, 4) == "-1" ? i_scr_pos_col : i_scr_neu_col
+
+            // Populate cells in the table
+            cell(0, j, matrix.get(matrix, i, 0), col)
+            cell(1, j, matrix.get(matrix, i, 1), col)
+            cell(2, j, matrix.get(matrix, i, 2), col)
+            cell(3, j, matrix.get(matrix, i, 3), col)
+
+            j += 1
+```
+
+----------------------------------------
+
+TITLE: Defining Screener Logic for Market Structure and Retracements in PineScript
+DESCRIPTION: This snippet implements the core logic for a market structure and retracement screener. It defines conditions for bullish and bearish signals based on user-selected screening methods and direction preferences.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/ICT Market Structure Shift (MSS)/ICT Market Structure Shift (MSS) Screener.txt#2025-04-16_snippet_8
+
+LANGUAGE: pinescript
+CODE:
+```
+bear_method =
+ i_scr_choose == 'Market Structure Shift' ? bearish_condition :
+ bearish_retracement_trigger and bearish_retracement_condition
+
+bull_method =
+ i_scr_choose == 'Market Structure Shift' ? bullish_condition :
+ bullish_retracement_trigger and bullish_retracement_condition
+
+bearish_cond = bear_method
+bullish_cond = bull_method 
+
+bull = not(i_scr_direction == "Bearish")
+bear = not(i_scr_direction == "Bullish")
+
+indicator_calculation() =>
+    price = float(na)
+    _time = int(na)
+    signal = int(na) 
+
+    if barstate.isconfirmed
+        if i_scr_show_bull and bearish_cond and bear 
+            signal := -1
+        else if i_scr_show_bear and bullish_cond and bull
+            signal := 1
+
+        if not na(signal)
+            price := math.round_to_mintick(close)
+            _time := time
+
+    [_time, price, signal]
+
+format_time(x) =>
+    timezone = syminfo.timezone
+    timeframe.isintraday ? str.format_time(x, "HH:mm  dd-MM-yyyy", timezone) : str.format_time(x, "dd-MM-yyyy", timezone)
+```
+
+----------------------------------------
+
+TITLE: Generating Trading Signals Based on Multiple Indicator Conditions in Pine Script
+DESCRIPTION: This section defines the conditions for generating short and long trading signals based on the combination of multiple indicators. Signals occur when percentage change, RSI, MFI, CCI, and volume criteria are all met simultaneously, and are visualized as triangles on the chart.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/Momentum Setup - Ankush Bajaj Momentum Investing Setup/Momentum Setup - Ankush Bajaj Momentum Investing Setup with Scanner.txt#2025-04-16_snippet_4
+
+LANGUAGE: pine
+CODE:
+```
+//_____________________________ Signals Start
+
+// Condition
+short_cont = 
+ //ta.crossunder(pchg, (-i_pchg_250)) and 
+ pchg < (-i_pchg_250) and 
+ rsi < i_rsi_os and 
+ mfi < i_mfi_os and 
+ cci < i_cci_os and
+ volume > vol_sma and
+ barstate.isconfirmed
+
+long_cont = 
+ //ta.crossover(pchg, i_pchg_250) and 
+ pchg > i_pchg_250 and 
+ rsi > i_rsi_ob and 
+ mfi > i_mfi_ob and 
+ cci > i_cci_ob and
+ volume > vol_sma and
+ barstate.isconfirmed
+
+// Plot 
+plotshape(series=short_cont, title='Short Signal', style=shape.triangledown, location=location.abovebar, color=i_neg_light_col, size=size.tiny)
+plotshape(series=long_cont, title='Long Signal', style=shape.triangleup, location=location.belowbar, color=i_pos_light_col, size=size.tiny)
+```
+
+----------------------------------------
+
+TITLE: Documentation for BANKNIFTY Option Scalping Strategy in PineScript
+DESCRIPTION: This comment section provides comprehensive documentation for an options scalping strategy developed by trader Vijay S. Thakare. It details the strategy type, timeframe, indicators used, entry/exit rules, and risk management parameters for both long and short positions.
+SOURCE: https://github.com/ArunKBhaskar/PineScript/blob/main/Momentum Setup - Vijay Thakare Option Buying Scalping Setup/Momentum Setup - Vijay Thakare Option Buying Scalping Setup.txt#2025-04-16_snippet_19
+
+LANGUAGE: text
+CODE:
+```
+// Readme First:
+// 
+// About:
+// This is a BANKNIFTY option buying or scalping setup shared by trader Vijay S. Thakare on YouTube.
+// 
+// Strategy Reference Video:
+// Vijay Thakare at Traders Carnival Seminar:
+// Video Title: "Vijay Thakare: An Excellent Option Scalper Sharing His Knowledge @ Traders Carnival"
+// Video Link: https://www.youtube.com/watch?v=6INokexfeLc
+// 
+// Explanation Video from His YouTube Channel:
+// Video Title: "Setup Video"
+// Video Link: https://www.youtube.com/watch?v=KK5j1dgklIY&t=9150s
+// 
+// Strategy Type: Momentum
+// Bias: Strongly Directional
+// Trading Style: Scalping
+// Instrument: Option - Buying
+// Original Symbol: NSE:BANKNIFTY (Works with other symbols as well)
+// Timeframe: 5 minute
+// 
+// Risk Reward Ratio: 1:2
+// Stop Loss: Rs. 20 on the premium chart
+// Target: Rs. 40 on the premium chart
+// 
+// Charts Referred:
+// - BANKNIFTY Futures Chart
+// - BANKNIFTY Options Premium Chart
+// 
+// Indicator Used and Settings:
+// 1. EMA: Close, 20, 50, 100, 200
+// 2. VWAP: Daily VWAP
+// 3. MACD: Fast Length - 3, Slow Length - 9, Signal Smoothing - 15
+// 4. Stochastic: %K Length - 5, %K Smoothing - 3, %D Smoothing - 3
+// 
+// Long Entry Rules:
+// - Close above VWAP
+// - Close above Supertrend (Not in original strategy. It avoids many false signals.)
+// - MACD above 0
+// - Stochastic above 40
+// - Consider VWAP, EMA 20, 50, 100, 200 are closer to each other
+// - Rising volume (optional)
+// 
+// Short Entry Rules:
+// - Close below VWAP
+// - Close below Supertrend (Not in original strategy. It avoids many false signals.)
+// - MACD below 0
+// - Stochastic below 60
+// - Consider VWAP, EMA 20, 50, 100, 200 are closer to each other
+// - Rising volume (optional)
+//
+// Update 09 June 2024
+// 1. Added Supertrend filter.
+// 2. Added TWAP to use it with Symbols without Volume.
+// 3. Removed indicator values Table.
+// 4. Two types of scanners are available. One generates continuous signals and one generates flip signals.
+```

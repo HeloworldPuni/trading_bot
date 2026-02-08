@@ -1,0 +1,305 @@
+//@version=5
+indicator("Order Blocks Detector - Smart Money Concepts", "OB SMC", overlay=true, max_boxes_count=500)
+
+// ============================================================================
+// PARÂMETROS DE CONFIGURAÇÃO
+// ============================================================================
+
+// === ORDER BLOCKS ===
+group_ob = "🔷 Order Blocks"
+show_bullish_ob = input.bool(true, "Mostrar Order Blocks Bullish", group=group_ob)
+show_bearish_ob = input.bool(true, "Mostrar Order Blocks Bearish", group=group_ob)
+ob_lookback = input.int(50, "Lookback para Movimento Forte", minval=10, maxval=200, group=group_ob)
+min_movement_pips = input.float(2.0, "Movimento Mínimo (pips)", minval=0.5, maxval=10.0, step=0.5, group=group_ob)
+volume_threshold = input.float(1.5, "Multiplicador de Volume", minval=0.5, maxval=5.0, step=0.1, group=group_ob)
+
+// === VALIDAÇÃO RIGOROSA ===
+group_validation = "✅ Validação SMC"
+enable_bos_validation = input.bool(true, "Validar Quebra de Estrutura (BOS)", group=group_validation)
+enable_inefficiency_validation = input.bool(true, "Validar Ineficiência/Desequilíbrio", group=group_validation)
+enable_mitigation_validation = input.bool(true, "Validar Mitigação", group=group_validation)
+show_validation_labels = input.bool(true, "Mostrar Labels de Validação", group=group_validation)
+quality_threshold = input.int(2, "Qualidade Mínima (1-3)", minval=1, maxval=3, group=group_validation)
+
+// === CORES E ESTILOS ===
+group_colors = "🎨 Cores e Estilos"
+bullish_color = input.color(color.new(color.green, 70), "Cor Bullish", group=group_colors)
+bearish_color = input.color(color.new(color.red, 70), "Cor Bearish", group=group_colors)
+border_width = input.int(2, "Espessura da Borda", minval=1, maxval=5, group=group_colors)
+
+// === PERFORMANCE ===
+group_performance = "⚡ Performance"
+visible_range = input.int(100, "Range Visível (barras)", minval=20, maxval=200, group=group_performance)
+max_order_blocks = input.int(20, "Máximo Order Blocks", minval=5, maxval=50, group=group_performance)
+min_distance_bars = input.int(3, "Distância Mínima (barras)", minval=1, maxval=20, group=group_performance)
+debug_mode = input.bool(false, "Modo Debug", group=group_performance)
+
+// ============================================================================
+// VARIÁVEIS GLOBAIS
+// ============================================================================
+
+var array<box> bullish_ob_boxes = array.new<box>()
+var array<box> bearish_ob_boxes = array.new<box>()
+var int last_bullish_ob_bar = 0
+var int last_bearish_ob_bar = 0
+
+// ============================================================================
+// FUNÇÕES AUXILIARES - SMART MONEY CONCEPTS
+// ============================================================================
+
+// Função para calcular ATR
+atr_value = ta.atr(14)
+
+// Função para verificar volume balance
+volume_balance() =>
+    vol_avg = ta.sma(volume, 20)
+    volume > vol_avg * volume_threshold
+
+// Função para detectar Fair Value Gap (ineficiência)
+fvg_bullish() =>
+    low > high[2] and close > open
+
+fvg_bearish() =>
+    high < low[2] and close < open
+
+// Função para detectar Break of Structure (BOS) - mais rigorosa
+bos_bullish() =>
+    // Quebra de máxima anterior dentro do lookback
+    highest_high = ta.highest(high, ob_lookback)[1]
+    close > highest_high and close > open
+
+bos_bearish() =>
+    // Quebra de mínima anterior dentro do lookback
+    lowest_low = ta.lowest(low, ob_lookback)[1]
+    close < lowest_low and close < open
+
+// Função para detectar movimento forte de preço
+strong_bullish_movement() =>
+    // Movimento de alta com pelo menos X pips e volume confirmado
+    movement_size = (high - low) / syminfo.mintick
+    movement_size >= min_movement_pips and close > open and volume_balance()
+
+strong_bearish_movement() =>
+    // Movimento de baixa com pelo menos X pips e volume confirmado
+    movement_size = (high - low) / syminfo.mintick
+    movement_size >= min_movement_pips and close < open and volume_balance()
+
+// Função para detectar o último candle antes do movimento forte
+last_bearish_candle_before_bullish() =>
+    // Último candle de baixa antes de movimento forte de alta
+    close < open and strong_bullish_movement[1]
+
+last_bullish_candle_before_bearish() =>
+    // Último candle de alta antes de movimento forte de baixa
+    close > open and strong_bearish_movement[1]
+
+// Função para detectar mitigação (retorno do preço ao order block)
+mitigation_bullish(ob_high, ob_low) =>
+    // Preço retorna ao order block e reage positivamente
+    low <= ob_high and low >= ob_low and close > open
+
+mitigation_bearish(ob_high, ob_low) =>
+    // Preço retorna ao order block e reage negativamente
+    high >= ob_low and high <= ob_high and close < open
+
+// ============================================================================
+// DETECÇÃO DE ORDER BLOCKS - SMART MONEY CONCEPTS
+// ============================================================================
+
+// PASSO 1: Identificar movimento forte de preço
+strong_bullish_move = strong_bullish_movement()
+strong_bearish_move = strong_bearish_movement()
+
+// PASSO 2: Identificar o candle que precedeu o movimento forte
+// Bullish Order Block: último candle de baixa antes do movimento forte de alta
+bullish_order_block_candle = last_bearish_candle_before_bullish()
+// Bearish Order Block: último candle de alta antes do movimento forte de baixa  
+bearish_order_block_candle = last_bullish_candle_before_bearish()
+
+// PASSO 3: Verificar quebra de estrutura (BOS)
+bos_bullish_confirm = bos_bullish()
+bos_bearish_confirm = bos_bearish()
+
+// PASSO 4: Detectar ineficiência/desequilíbrio
+inefficiency_bullish = fvg_bullish() or volume_balance()
+inefficiency_bearish = fvg_bearish() or volume_balance()
+
+// PASSO 5: Sistema de Qualidade dos Order Blocks
+// Qualidade 1: Apenas candle correto identificado
+// Qualidade 2: Candle + BOS confirmado
+// Qualidade 3: Candle + BOS + Ineficiência confirmados
+
+// Order Block Bullish de Qualidade 1
+ob_bullish_q1 = bullish_order_block_candle
+
+// Order Block Bullish de Qualidade 2
+ob_bullish_q2 = ob_bullish_q1 and bos_bullish_confirm
+
+// Order Block Bullish de Qualidade 3 (máxima qualidade)
+ob_bullish_q3 = ob_bullish_q2 and inefficiency_bullish
+
+// Order Block Bearish de Qualidade 1
+ob_bearish_q1 = bearish_order_block_candle
+
+// Order Block Bearish de Qualidade 2
+ob_bearish_q2 = ob_bearish_q1 and bos_bearish_confirm
+
+// Order Block Bearish de Qualidade 3 (máxima qualidade)
+ob_bearish_q3 = ob_bearish_q2 and inefficiency_bearish
+
+// Selecionar Order Blocks baseado na qualidade mínima configurada
+order_block_bullish = quality_threshold == 1 ? ob_bullish_q1 : 
+                     quality_threshold == 2 ? ob_bullish_q2 : ob_bullish_q3
+
+order_block_bearish = quality_threshold == 1 ? ob_bearish_q1 : 
+                     quality_threshold == 2 ? ob_bearish_q2 : ob_bearish_q3
+
+// Determinar a qualidade atual do Order Block para exibição
+current_bullish_quality = ob_bullish_q3 ? 3 : ob_bullish_q2 ? 2 : ob_bullish_q1 ? 1 : 0
+current_bearish_quality = ob_bearish_q3 ? 3 : ob_bearish_q2 ? 2 : ob_bearish_q1 ? 1 : 0
+
+// ============================================================================
+// PLOTAGEM NO GRÁFICO
+// ============================================================================
+
+// Limitar plotagem apenas ao conteúdo visível na tela
+is_visible = bar_index >= (bar_index - visible_range)
+
+// Filtrar Order Blocks muito próximos
+bullish_distance_ok = (bar_index - last_bullish_ob_bar) >= min_distance_bars
+bearish_distance_ok = (bar_index - last_bearish_ob_bar) >= min_distance_bars
+
+// Debug: mostrar informações sobre detecção
+if debug_mode and barstate.islast
+    label.new(bar_index, high, "Debug: OB Bullish Q" + str.tostring(current_bullish_quality) + " = " + str.tostring(order_block_bullish), color=color.new(color.blue, 0), textcolor=color.white, size=size.small)
+
+// Order Blocks Bullish
+if order_block_bullish and show_bullish_ob and is_visible and bullish_distance_ok and array.size(bullish_ob_boxes) < max_order_blocks
+    // Determinar cor baseada na qualidade
+    quality_color = current_bullish_quality == 3 ? color.new(color.green, 60) : 
+                   current_bullish_quality == 2 ? color.new(color.green, 70) : 
+                   color.new(color.green, 80)
+    
+    quality_text = "OB Q" + str.tostring(current_bullish_quality)
+    
+    ob_box = box.new(bar_index - 1, low, bar_index + 1, high, 
+                     border_color=color.new(color.green, 0), 
+                     bgcolor=quality_color,
+                     border_width=border_width,
+                     text=quality_text,
+                     text_color=color.white,
+                     text_size=size.small,
+                     extend=extend.right)
+    array.push(bullish_ob_boxes, ob_box)
+    last_bullish_ob_bar := bar_index
+    
+    // Plotar elementos de validação se ativado
+    if show_validation_labels
+        if bos_bullish_confirm
+            label.new(bar_index, low, "BOS✓", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+        if inefficiency_bullish
+            label.new(bar_index, high, "INEQ✓", color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+        if volume_balance()
+            label.new(bar_index, low + (high - low) * 0.5, "VOL✓", color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+
+// Order Blocks Bearish
+if order_block_bearish and show_bearish_ob and is_visible and bearish_distance_ok and array.size(bearish_ob_boxes) < max_order_blocks
+    // Determinar cor baseada na qualidade
+    quality_color = current_bearish_quality == 3 ? color.new(color.red, 60) : 
+                   current_bearish_quality == 2 ? color.new(color.red, 70) : 
+                   color.new(color.red, 80)
+    
+    quality_text = "OB Q" + str.tostring(current_bearish_quality)
+    
+    ob_box = box.new(bar_index - 1, low, bar_index + 1, high, 
+                     border_color=color.new(color.red, 0), 
+                     bgcolor=quality_color,
+                     border_width=border_width,
+                     text=quality_text,
+                     text_color=color.white,
+                     text_size=size.small,
+                     extend=extend.right)
+    array.push(bearish_ob_boxes, ob_box)
+    last_bearish_ob_bar := bar_index
+    
+    // Plotar elementos de validação se ativado
+    if show_validation_labels
+        if bos_bearish_confirm
+            label.new(bar_index, high, "BOS✓", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+        if inefficiency_bearish
+            label.new(bar_index, low, "INEQ✓", color=color.new(color.blue, 0), textcolor=color.white, size=size.tiny)
+        if volume_balance()
+            label.new(bar_index, low + (high - low) * 0.5, "VOL✓", color=color.new(color.orange, 0), textcolor=color.white, size=size.tiny)
+
+// ============================================================================
+// LIMPEZA DE ELEMENTOS ANTIGOS
+// ============================================================================
+
+// Limpeza para evitar sobrecarga
+if array.size(bullish_ob_boxes) > max_order_blocks
+    old_box = array.shift(bullish_ob_boxes)
+    box.delete(old_box)
+
+if array.size(bearish_ob_boxes) > max_order_blocks
+    old_box = array.shift(bearish_ob_boxes)
+    box.delete(old_box)
+
+// Limpeza adicional: remover Order Blocks muito antigos
+if barstate.islast
+    for i = array.size(bullish_ob_boxes) - 1 to 0
+        if i >= 0 and i < array.size(bullish_ob_boxes)
+            old_box = array.get(bullish_ob_boxes, i)
+            if not na(old_box)
+                box.delete(old_box)
+                array.remove(bullish_ob_boxes, i)
+    
+    for i = array.size(bearish_ob_boxes) - 1 to 0
+        if i >= 0 and i < array.size(bearish_ob_boxes)
+            old_box = array.get(bearish_ob_boxes, i)
+            if not na(old_box)
+                box.delete(old_box)
+                array.remove(bearish_ob_boxes, i)
+
+// ============================================================================
+// ALERTAS
+// ============================================================================
+
+// Alertas para Order Blocks de diferentes qualidades
+alertcondition(order_block_bullish and current_bullish_quality == 3, "Order Block Bullish Q3", "Order Block Bullish de Qualidade 3 detectado!")
+alertcondition(order_block_bullish and current_bullish_quality == 2, "Order Block Bullish Q2", "Order Block Bullish de Qualidade 2 detectado!")
+alertcondition(order_block_bullish and current_bullish_quality == 1, "Order Block Bullish Q1", "Order Block Bullish de Qualidade 1 detectado!")
+
+alertcondition(order_block_bearish and current_bearish_quality == 3, "Order Block Bearish Q3", "Order Block Bearish de Qualidade 3 detectado!")
+alertcondition(order_block_bearish and current_bearish_quality == 2, "Order Block Bearish Q2", "Order Block Bearish de Qualidade 2 detectado!")
+alertcondition(order_block_bearish and current_bearish_quality == 1, "Order Block Bearish Q1", "Order Block Bearish de Qualidade 1 detectado!")
+
+// ============================================================================
+// TABELA DE INFORMAÇÕES
+// ============================================================================
+
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 8, bgcolor=color.new(color.white, 80), border_width=1)
+    
+    table.cell(info_table, 0, 0, "Order Blocks SMC", text_color=color.black, text_size=size.normal)
+    table.cell(info_table, 1, 0, "Status", text_color=color.black, text_size=size.normal)
+    
+    table.cell(info_table, 0, 1, "Bullish OB", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 1, str.tostring(array.size(bullish_ob_boxes)), text_color=color.green, text_size=size.small)
+    
+    table.cell(info_table, 0, 2, "Bearish OB", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 2, str.tostring(array.size(bearish_ob_boxes)), text_color=color.red, text_size=size.small)
+    
+    table.cell(info_table, 0, 3, "Qualidade Mín.", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 3, str.tostring(quality_threshold), text_color=color.black, text_size=size.small)
+    
+    table.cell(info_table, 0, 4, "Movimento Min.", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 4, str.tostring(min_movement_pips) + " pips", text_color=color.black, text_size=size.small)
+    
+    table.cell(info_table, 0, 5, "Volume Threshold", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 5, str.tostring(volume_threshold) + "x", text_color=color.black, text_size=size.small)
+    
+    table.cell(info_table, 0, 6, "ATR", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 6, str.tostring(atr_value, "#.##"), text_color=color.black, text_size=size.small)
+    
+    table.cell(info_table, 0, 7, "Debug", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 7, debug_mode ? "Ativo" : "Inativo", text_color=debug_mode ? color.orange : color.gray, text_size=size.small)

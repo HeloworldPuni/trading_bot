@@ -1,0 +1,141 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © YourTradingName
+
+//@version=5
+indicator("BTC/ETH Pairs Trading Z-Score & RSI/MACD", overlay=false, shorttitle="BTC/ETH Correl") // Updated shorttitle for clarity
+
+// Input Parameters
+int myzScoreLookback = input.int(30, "Z-Score Lookback Period", minval=1)
+float upperThreshold = input.float(2.6, "Upper Z-Score Threshold (Sell)", step=0.1)
+float lowerThreshold = input.float(-2.6, "Lower Z-Score Threshold (Buy)", step=0.1)
+float signalOffset = input.float(0.1, "Signal Plot Offset", step=0.01)
+string btcSymbol = input.symbol("COINBASE:BTCUSD", "Bitcoin Symbol")
+string ethSymbol = input.symbol("COINBASE:ETHUSD", "Ethereum Symbol")
+
+// --- RSI Input Parameters ---
+int rsiLength = input.int(14, "RSI Lookback Period", minval=1)
+float rsiUpper = input.float(70, "RSI Overbought Level", minval=0, maxval=100)
+float rsiLower = input.float(30, "RSI Oversold Level", minval=0, maxval=100)
+
+// --- MACD Input Parameters ---
+int macdFastLength = input.int(12, "MACD Fast Length", minval=1)
+int macdSlowLength = input.int(26, "MACD Slow Length", minval=1)
+int macdSignalLength = input.int(9, "MACD Signal Length", minval=1)
+
+float btcLotSize = input.float(1.0, "BTC Lot Size", minval=0.01, step=0.01)
+float btcSpreadPerLot = input.float(60.0, "BTC Spread per Lot ($)", minval=0, step=0.1)
+float ethSpreadPerLot = input.float(4.9, "ETH Spread per Lot ($)", minval=0, step=0.1)
+
+
+// Fetch BTC and ETH prices using request.security
+float btcPrice = request.security(btcSymbol, timeframe.period, close)
+float ethPrice = request.security(ethSymbol, timeframe.period, close)
+
+float ethLotSize = (btcLotSize * (btcPrice + btcSpreadPerLot)) / (ethPrice - ethSpreadPerLot)
+
+// log.info("Bar: " + str.tostring(time) + " - BTC: " + str.tostring(btcPrice) + ", ETH: " + str.tostring(ethPrice))
+
+// Calculate the BTC/ETH price ratio
+float priceRatio = btcPrice / ethPrice
+
+// --- Plot Price Ratio (still useful for context) ---
+// log.info("priceratio: "+ str.tostring(priceRatio))
+// log.info("Bar: " + str.tostring(time) + " - priceRatio: " + str.tostring(priceRatio))
+
+
+plot(priceRatio, title="BTC/ETH Ratio", color=color.rgb(255, 255, 255))
+
+// Calculate moving average and standard deviation of the price ratio
+float maRatio = ta.sma(priceRatio, myzScoreLookback)
+// plot(maRatio, title="MA Ratio", color=color.rgb(56, 42, 42))
+float stdevRatio = ta.stdev(priceRatio, myzScoreLookback)
+// log.info("Bar: " + str.tostring(time) + " - stdevRatio: " + str.tostring(stdevRatio)) // Log its value on every bar
+plot(stdevRatio, title="StDev Ratio", color=color.rgb(255, 255, 255), linewidth = 4)
+
+// --- NEW DEBUG LOGS FOR STDEV RATIO ---
+// log.info("DEBUG - Bar: " + str.tostring(time) + " - stdevRatio (before Z-Score check): " + str.tostring(stdevRatio))
+// log.info("DEBUG - Bar: " + str.tostring(time) + " - (stdevRatio != 0) condition result: " + str.tostring(stdevRatio != 0))
+
+// Calculate Z-Score
+float myzScore = (priceRatio - maRatio) / (stdevRatio+0.00000012345)
+// if stdevRatio!= 0
+//     myzScore = (priceRatio - maRatio) / stdevRatio
+//     // zScore = 3.0
+//     log.info("Zscore is coming out to be: " + str.tostring(myzScore))
+// else
+//     log.warning("stdevRatio is coming out zero")
+
+// --- NEW DEBUG LOG FOR FINAL Z-SCORE VALUE ---
+// log.info("DEBUG - Bar: " + str.tostring(time) + " - zScore (final value for bar): " + str.tostring(myzScore))
+
+
+// --- Plot Z-Score and thresholds ---
+
+
+// plot(zScore, title="Z-Score", color=color.rgb(255, 255, 255), linewidth=8) // Reduced linewidth back to normal
+plot(myzScore, title="Z-Score", color=color.fuchsia, linewidth=4) // Reduced linewidth back to normal
+
+hline(upperThreshold, "Upper Threshold", color=color.red, linestyle=hline.style_dashed, linewidth=1)
+hline(lowerThreshold, "Lower Threshold", color=color.green, linestyle=hline.style_dashed, linewidth=1)
+hline(0, "Zero Line (Mean)", color=color.gray, linestyle=hline.style_dotted, linewidth=1)
+
+
+// --- RSI Calculations ---
+float rsiValue = ta.rsi(priceRatio, rsiLength) // RSI applied to the priceRatio
+// plot(rsiValue, title="RSI", color=color.orange, linewidth=1)
+hline(rsiUpper, "RSI Overbought", color=color.red, linestyle=hline.style_dotted, linewidth=1)
+hline(rsiLower, "RSI Oversold", color=color.green, linestyle=hline.style_dotted, linewidth=1)
+
+
+// --- MACD Calculations ---
+// MACD components: macdLine, signalLine, hist
+// Source for MACD is also the priceRatio
+[macdLine, signalLine, hist] = ta.macd(priceRatio, macdFastLength, macdSlowLength, macdSignalLength)
+
+// Plot MACD components
+plot(macdLine, title="MACD Line", color=color.purple, linewidth=1)
+plot(signalLine, title="Signal Line", color=color.fuchsia, linewidth=1)
+plot(hist, title="MACD Histogram", color=(hist >= 0 ? color.new(color.teal, 50) : color.new(color.red, 50)), style=plot.style_columns, linewidth=1)
+hline(0, "MACD Zero Line", color=color.gray, linestyle=hline.style_dotted, linewidth=1)
+
+
+// Generate and plot buy/sell signals (Z-Score based, can be expanded with RSI/MACD)
+// Current logic is only based on Z-score. You can add RSI/MACD conditions here if desired.
+bool buySignal = ta.crossunder(myzScore, lowerThreshold)
+bool sellSignal = ta.crossover(myzScore, upperThreshold)
+
+// Calculate Predicted Profit at Signal Time
+float buyPredictedProfitPct = (maRatio - priceRatio) / priceRatio * 100
+float sellPredictedProfitPct = (priceRatio - maRatio) / priceRatio * 100
+
+
+// Plot shapes for signals. location.absolute is used to plot at the Z-score value.
+// The signalOffset helps ensure the arrows are clearly visible.
+plotshape(buySignal ? myzScore - signalOffset : na, title="Buy Signal", style=shape.triangleup, location=location.absolute, color=color.new(color.green, 0), size=size.small, text="BUY BTC", textcolor=color.green)
+plotshape(sellSignal ? myzScore + signalOffset : na, title="Sell Signal", style=shape.triangledown, location=location.absolute, color=color.new(color.red, 0), size=size.small, text="SELL BTC", textcolor=color.red)
+
+
+// --- NEW: Plot Predicted Profit Percentage as a Histogram ---
+var float predictedProfitHistogramValue = na // Initialize with na
+
+if buySignal // Only assign value if a buy signal is strictly triggered
+    predictedProfitHistogramValue := buyPredictedProfitPct
+else if sellSignal // Only assign value if a sell signal is strictly triggered
+    predictedProfitHistogramValue := sellPredictedProfitPct
+else
+    predictedProfitHistogramValue := na // Otherwise, no histogram bar
+
+// Plot as columns (similar to histogram)
+plot(predictedProfitHistogramValue, title="Predicted Profit % (at Signal)", color=color.new(color.fuchsia, 0), linewidth=2, style=plot.style_columns, display=display.pane)
+
+
+
+// --- Lot Size Table ---
+var table lotTable = table.new(position.top_right, 1, 2, bgcolor=color.new(color.blue, 90), border_color=color.blue, border_width=1)
+table.cell(lotTable, 0, 0, "BTC Lots: " + str.tostring(btcLotSize), text_color=color.white)
+table.cell(lotTable, 0, 1, "ETH Lots: " + str.tostring(ethLotSize), text_color=color.white)
+
+// --- Alert Conditions ---
+alertcondition(buySignal, title="Buy Signal Alert", message="Z-Score triggered Buy Signal on BTC/ETH Ratio!: Buy BTC / Sell ETH!")
+alertcondition(sellSignal, title="Sell Signal Alert", message="Z-Score triggered Sell Signal on BTC/ETH Ratio!: Sell BTC / Buy ETH! ")
+// You can add more alertconditions here based on RSI/MACD if you integrate them into the signal logic.

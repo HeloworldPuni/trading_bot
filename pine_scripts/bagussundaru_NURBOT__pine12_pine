@@ -1,0 +1,572 @@
+//@version=5
+strategy("ACSS Auto-Adapt Scalper + Wunder DCA", overlay=true, margin_long=100, margin_short=100, initial_capital=500,
+     commission_type=strategy.commission.percent, commission_value=0.06, calc_on_every_tick=true, calc_on_order_fills=true, pyramiding=0, process_orders_on_close=true)
+
+// ================= INPUTS =================
+use_htf_flag  = input.bool(true, "Aktifkan HTF Trend Filter (EMA)", inline="htf")
+htf_tf        = input.timeframe("15", "", inline="htf")
+atrLen        = input.int(14, "ATR Length", minval=1)
+atrMinPct     = input.float(0.05, "ATR% min (filter volatilitas)", step=0.01, minval=0.01)
+atrMaxPct     = input.float(1.50, "ATR% max (filter volatilitas)", step=0.01, minval=0.01)
+
+tpPerc        = input.float(0.25, "Target Profit % (fallback ATR)", step=0.05, minval=0.01)
+slATRmult     = input.float(1.2,  "Stop ATR x (fallback)", step=0.1, minval=0.1)
+
+moveToBE      = input.bool(true,  "Pindah ke Break-Even saat +0.10%")
+beTrigger     = input.float(0.10, "Trigger BE %", step=0.05, minval=0.01)
+
+useTrail      = input.bool(true,  "Aktifkan Trailing saat profit")
+trailPct      = input.float(0.20, "Trail % setelah profit", step=0.05, minval=0.01)
+
+riskPct       = input.float(5.0,  "Risk per trade % equity", step=0.5, minval=1.0, maxval=20.0)  // Much higher default
+
+showEarly     = input.bool(true,  "Tampilkan Early Signals")
+showConfirmed = input.bool(true,  "Tampilkan Confirmed Signals")
+
+// ========= Advanced SR TP/SL =========
+use_sr_tpsl       = input.bool(true, "Gunakan TP/SL Otomatis dari S/R (Advanced)")
+sr_len            = input.int(10, "Pivot Length per TF", minval=2, maxval=50)
+sr_bars_lookback  = input.int(300, "Scan Bars (per TF)", minval=50, maxval=2000)
+sr_max_levels     = input.int(30, "Max Levels per jenis", minval=5, maxval=100)
+sr_cluster_tol_pc = input.float(0.20, "Cluster Tolerance %", step=0.05, minval=0.01, maxval=5.0, tooltip="Gabungkan level-level yang berdekatan (persen dari harga level)")
+sr_use_tfs        = input.string("5,15,60", "TF S/R (menit, comma-separated)", tooltip="Contoh: 5,15,60 (menit)")
+
+sl_buffer_pc      = input.float(0.05, "Stop Buffer % dari level S/R", step=0.01, minval=0.01, maxval=1.0)
+tp_buffer_pc      = input.float(0.05, "TP Buffer % dari level S/R", step=0.01, minval=0.01, maxval=1.0)
+
+enforce_min_rr    = input.bool(false, "Wajibkan minimal Risk/Reward saat pakai S/R?")
+min_rr            = input.float(1.2, "Minimal RR", step=0.1, minval=0.5, maxval=10.0)
+
+// WunderTrading: BINANCE FUTURES ETHUSDT CONFIGURATION
+enterLongCode = input.string(defval = "ENTER-LONG_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Enter Long Signal Code", group="WunderTrading")
+enterShortCode = input.string(defval = "ENTER-SHORT_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Enter Short Signal Code", group="WunderTrading")
+exitAllCode = input.string(defval = "EXIT-ALL_BINANCE_ETHUSDT_Clurut_1M_a54bed34cce532b676d0b112", title="Exit All Signal Code", group="WunderTrading")
+
+// BINANCE FUTURES ETHUSDT SPECIFIC REQUIREMENTS
+wunder_amount_type = input.string(defval = "quote", title="Amount type", options=["quote", "percentage", "portfolio_percent"], group="WunderTrading")
+wunder_amount = input.float(defval = 20.0, title="Amount per trade (USDT)", step=1.0, minval=5.0, group="WunderTrading")
+// BINANCE FUTURES ETHUSDT: Min notional ~5 USDT, Min qty = 0.001 ETH
+wunder_min_usdt = input.float(defval = 6.0, title="Min USDT per order (Futures)", step=0.1, minval=5.0, group="WunderTrading")  
+wunder_min_eth = input.float(defval = 0.001, title="Min ETH qty (Futures)", step=0.001, minval=0.001, group="WunderTrading")
+wunder_dca_min_usdt = input.float(defval = 12.0, title="Min USDT per DCA order", step=1.0, minval=6.0, group="WunderTrading") 
+wunder_leverage = input.int(defval = 5, title="Leverage (1-20x)", minval=1, maxval=20, group="WunderTrading")
+wunder_force_min = input.bool(defval = true, title="Force minimum order sizes", group="WunderTrading")
+
+// ================= TF detection & indicators =================
+tf_sec  = timeframe.in_seconds(timeframe.period)
+is1m    = tf_sec == 60
+is3m    = tf_sec == 180
+is5m    = tf_sec == 300
+tf_name = is1m ? "1m" : is3m ? "3m" : is5m ? "5m" : "other"
+
+// ========= Indikator inti per TF =========
+ema13   = ta.ema(close, 13)
+ema26   = ta.ema(close, 26)
+stK     = ta.sma(ta.stoch(close, high, low, 5), 3)
+stD     = ta.sma(stK, 3)
+
+emaFast3 = ta.ema(close, 12)
+emaSlow3 = ta.ema(close, 24)
+rsi3     = ta.rsi(close, 14)
+roc3     = ta.roc(close, 9)
+
+ema10  = ta.ema(close, 10)
+ema21  = ta.ema(close, 21)
+ema50  = ta.ema(close, 50)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+
+// ========= ATR% filter (pada TF aktif) =========
+atr     = ta.atr(atrLen)
+atrPct  = math.abs(atr / close) * 100.0
+vol_ok  = (atrPct >= atrMinPct) and (atrPct <= atrMaxPct)
+
+// ========= HTF trend filter (EMA fast/slow di HTF) =========
+ht_emaF  = request.security(syminfo.tickerid, htf_tf, ta.ema(close, 9),  lookahead=barmerge.lookahead_off)
+ht_emaS  = request.security(syminfo.tickerid, htf_tf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+ht_bull  = ht_emaF > ht_emaS
+ht_bear  = ht_emaF < ht_emaS
+ok_long_htf  = use_htf_flag ? ht_bull : true
+ok_short_htf = use_htf_flag ? ht_bear : true
+
+// ========= RULES per timeframe =========
+long_1m  = (ema13 > ema26) and ta.crossover(stK, stD) and (stK < 50)
+short_1m = (ema13 < ema26) and ta.crossunder(stK, stD) and (stK > 50)
+
+long_3m  = (emaFast3 > emaSlow3) and (rsi3 > 50) and (roc3 > 0)
+short_3m = (emaFast3 < emaSlow3) and (rsi3 < 50) and (roc3 < 0)
+
+long_5m  = (close > ema50) and (ema10 > ema21) and (macdHist > 0)
+short_5m = (close < ema50) and (ema10 < ema21) and (macdHist < 0)
+
+base_long  = is1m ? long_1m  : is3m ? long_3m  : is5m ? long_5m  : false
+base_short = is1m ? short_1m : is3m ? short_3m : is5m ? short_5m : false
+
+long_early  = vol_ok and ok_long_htf  and base_long
+short_early = vol_ok and ok_short_htf and base_short
+
+long_conf   = barstate.isconfirmed and long_early
+short_conf  = barstate.isconfirmed and short_early
+
+// ================= Utility: clustering & helpers =================
+array_has_close(arr, val, tolPc) =>
+    found = false
+    if array.size(arr) > 0
+        for i = 0 to array.size(arr) - 1
+            v = array.get(arr, i)
+            pc = math.abs(val - v) / v * 100.0
+            if pc <= tolPc
+                found := true
+                break
+    found
+
+cluster_levels(src, tolPc) =>
+    out = array.new_float()
+    if array.size(src) == 0
+        out
+    else
+        s = array.copy(src)
+        array.sort(s, order.ascending)
+        acc = array.get(s, 0)
+        cnt = 1.0
+        if array.size(s) > 1
+            for i = 1 to array.size(s) - 1
+                cur = array.get(s, i)
+                avg = acc / cnt
+                pc  = math.abs(cur - avg) / avg * 100.0
+                if pc <= tolPc
+                    acc += cur
+                    cnt += 1.0
+                else
+                    array.push(out, acc / cnt)
+                    acc := cur
+                    cnt := 1.0
+        array.push(out, acc / cnt)
+        out
+
+// global arrays to hold clustered SR
+var float[] resC_global = array.new_float()
+var float[] supC_global = array.new_float()
+
+tf_selected(tf_label) =>
+    str.contains(sr_use_tfs, tf_label)
+
+// PRECOMPUTE pivots
+ph1  = request.security(syminfo.tickerid, "1",  ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl1  = request.security(syminfo.tickerid, "1",  ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph3  = request.security(syminfo.tickerid, "3",  ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl3  = request.security(syminfo.tickerid, "3",  ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph5  = request.security(syminfo.tickerid, "5",  ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl5  = request.security(syminfo.tickerid, "5",  ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph15 = request.security(syminfo.tickerid, "15", ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl15 = request.security(syminfo.tickerid, "15", ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph30 = request.security(syminfo.tickerid, "30", ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl30 = request.security(syminfo.tickerid, "30", ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph60 = request.security(syminfo.tickerid, "60", ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl60 = request.security(syminfo.tickerid, "60", ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+ph240= request.security(syminfo.tickerid, "240",ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+pl240= request.security(syminfo.tickerid, "240",ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+phD  = request.security(syminfo.tickerid, "D",  ta.pivothigh(high, sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+plD  = request.security(syminfo.tickerid, "D",  ta.pivotlow (low , sr_len, sr_len), lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+// Build SR from the precomputed pivot series
+build_sr_from_precomputed(barsLook, maxLvls, tolPc) =>
+    array.clear(resC_global)
+    array.clear(supC_global)
+    maxScan = math.min(barsLook - 1, 1000)
+    tmpR = array.new_float()
+    tmpS = array.new_float()
+
+    for i = 0 to maxScan
+        if tf_selected("1")
+            v = ph1[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl1[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("3")
+            v = ph3[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl3[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("5")
+            v = ph5[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl5[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("15")
+            v = ph15[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl15[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("30")
+            v = ph30[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl30[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("60")
+            v = ph60[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl60[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("240")
+            v = ph240[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = pl240[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+        if tf_selected("D")
+            v = phD[i]
+            if not na(v) and array.size(tmpR) < maxLvls
+                if not array_has_close(tmpR, v, tolPc)
+                    array.push(tmpR, v)
+            u = plD[i]
+            if not na(u) and array.size(tmpS) < maxLvls
+                if not array_has_close(tmpS, u, tolPc)
+                    array.push(tmpS, u)
+
+    rC = cluster_levels(tmpR, tolPc)
+    sC = cluster_levels(tmpS, tolPc)
+    if array.size(rC) > 0
+        for i = 0 to array.size(rC) - 1
+            array.push(resC_global, array.get(rC, i))
+    if array.size(sC) > 0
+        for i = 0 to array.size(sC) - 1
+            array.push(supC_global, array.get(sC, i))
+
+nearest_sr(price, rC, sC) =>
+    float nearR = na
+    float nearS = na
+    float bestR = 1e30
+    float bestS = 1e30
+    if array.size(rC) > 0
+        for i = 0 to array.size(rC) - 1
+            v = array.get(rC, i)
+            if v >= price
+                d = v - price
+                if d < bestR
+                    bestR := d
+                    nearR := v
+    if array.size(sC) > 0
+        for i = 0 to array.size(sC) - 1
+            v = array.get(sC, i)
+            if v <= price
+                d = price - v
+                if d < bestS
+                    bestS := d
+                    nearS := v
+    [nearR, nearS]
+
+// Execute SR build
+build_sr_from_precomputed(sr_bars_lookback, sr_max_levels, sr_cluster_tol_pc)
+[nearRes_tmp, nearSup_tmp] = nearest_sr(close, resC_global, supC_global)
+float nearRes = na
+float nearSup = na
+nearRes := nearRes_tmp
+nearSup := nearSup_tmp
+
+// ================= Risk & fallback ATR levels =================
+equity = strategy.equity
+sl_long_fallback  = close - (atr * slATRmult)
+sl_short_fallback = close + (atr * slATRmult)
+tp_long_fallback  = close * (1 + tpPerc/100.0)
+tp_short_fallback = close * (1 - tpPerc/100.0)
+
+// BINANCE FUTURES: Optimized quantity calculation for ETHUSDT
+qty_by_risk(price, sl_price) =>
+    risk_val = equity * (riskPct/100.0)
+    stop_pts = math.abs(price - sl_price)
+    float qty = 0.001  // Start with minimum ETH quantity
+    
+    if wunder_force_min
+        // BINANCE FUTURES ETHUSDT: Ensure minimum notional value (~6 USDT)
+        min_qty_usdt = wunder_min_usdt / price        // Convert USDT to ETH
+        min_qty_eth = wunder_min_eth                  // Direct ETH minimum  
+        qty := math.max(min_qty_usdt, min_qty_eth)
+        
+        // Also consider risk if it produces larger quantity
+        if stop_pts > 0
+            calculated_qty = risk_val / stop_pts
+            qty := math.max(qty, calculated_qty)
+    else
+        // Standard risk calculation with futures minimums
+        if stop_pts > 0
+            calculated_qty = risk_val / stop_pts
+            min_qty_usdt = wunder_min_usdt / price
+            min_qty_eth = wunder_min_eth
+            min_qty = math.max(min_qty_usdt, min_qty_eth)
+            qty := math.max(calculated_qty, min_qty)
+        else
+            qty := math.max(wunder_min_usdt / price, wunder_min_eth)
+    
+    // Round to 3 decimal places (standard for ETH on Binance Futures)
+    math.round(qty, 3)
+
+// compute SR-based TP/SL (with buffer)
+sr_tp_long  = not na(nearRes) ? nearRes * (1 - tp_buffer_pc/100.0) : na
+sr_sl_long  = not na(nearSup) ? nearSup * (1 - sl_buffer_pc/100.0) : na
+sr_tp_short = not na(nearSup) ? nearSup * (1 + tp_buffer_pc/100.0) : na
+sr_sl_short = not na(nearRes) ? nearRes * (1 + sl_buffer_pc/100.0) : na
+
+adj_sr_levels_long(tp_in, sl_in, entry) =>
+    tp_r = tp_in
+    sl_r = sl_in
+    if enforce_min_rr and not na(tp_in) and not na(sl_in)
+        risk = entry - sl_in
+        reward = tp_in - entry
+        if risk > 0 and reward / risk < min_rr
+            tp_r := entry + risk * min_rr
+    out = array.new_float()
+    array.push(out, tp_r)
+    array.push(out, sl_r)
+    out
+
+adj_sr_levels_short(tp_in, sl_in, entry) =>
+    tp_r = tp_in
+    sl_r = sl_in
+    if enforce_min_rr and not na(tp_in) and not na(sl_in)
+        risk = sl_in - entry
+        reward = entry - tp_in
+        if risk > 0 and reward / risk < min_rr
+            tp_r := entry - risk * min_rr
+    out = array.new_float()
+    array.push(out, tp_r)
+    array.push(out, sl_r)
+    out
+
+final_levels_long(entry) =>
+    tp_sel = na(sr_tp_long) ? tp_long_fallback : sr_tp_long
+    sl_sel = na(sr_sl_long) ? sl_long_fallback : sr_sl_long
+    adj_sr_levels_long(tp_sel, sl_sel, entry)
+
+final_levels_short(entry) =>
+    tp_sel = na(sr_tp_short) ? tp_short_fallback : sr_tp_short
+    sl_sel = na(sr_sl_short) ? sl_short_fallback : sr_sl_short
+    adj_sr_levels_short(tp_sel, sl_sel, entry)
+
+// Enhanced validation for BINANCE FUTURES
+valid_sl_distance(entry, sl) =>
+    math.abs(entry - sl) / entry * 100.0 >= 0.2  // 0.2% minimum for futures
+
+// BINANCE FUTURES: Enhanced WunderTrading function for ETHUSDT
+send_wunder_dca(signalCode, side, slPrice, tpPrice) =>
+    // Calculate amount based on type
+    float quoteAmount = wunder_amount
+    
+    if wunder_amount_type == "percentage" or wunder_amount_type == "portfolio_percent"
+        quoteAmount := equity * (wunder_amount / 100.0)
+    
+    // BINANCE FUTURES minimums: ~6 USDT notional, 0.001 ETH quantity
+    futures_min_usdt = math.max(wunder_dca_min_usdt, 6.0)
+    quoteAmount := math.max(quoteAmount, futures_min_usdt)
+    
+    // Round to 2 decimals for USDT
+    quoteAmount := math.round(quoteAmount, 2)
+    
+    // Build TP/SL with absolute prices (better for futures)
+    tpPart = ''
+    slPart = ''
+    
+    if not na(tpPrice)
+        tpPrice_rounded = math.round(tpPrice, 2)  // 2 decimals for ETHUSDT futures
+        tpPart := '"takeProfits":[{"price":' + str.tostring(tpPrice_rounded) + ',"portfolio":1}],'
+    else
+        tpPart := '"takeProfits":[{"priceDeviation":0.015,"portfolio":1}],'  // 1.5% fallback
+    
+    if not na(slPrice)
+        slPrice_rounded = math.round(slPrice, 2)  // 2 decimals for ETHUSDT futures
+        slPart := '"stopLoss":{"price":' + str.tostring(slPrice_rounded) + '},'
+    else
+        slPart := '"stopLoss":{"priceDeviation":0.02},'  // 2% fallback
+    
+    // FUTURES DCA: More conservative settings
+    dcaPart = '"dca":{"extraOrderCount":1,"extraOrderDeviation":0.025,"extraOrderVolumeMultiplier":1.5,"takeProfitsBasedOn":"average_price"}'
+    
+    // Add leverage for futures (WunderTrading specific)
+    leveragePart = '"leverage":' + str.tostring(wunder_leverage) + ','
+    
+    json = '{"secret":"clurut_webhook_2025","message":"' + signalCode + 
+           '","side":"' + side + 
+           '","orderType":"market"' + 
+           ',"amountPerTradeType":"quote"' + 
+           ',"amountPerTrade":' + str.tostring(quoteAmount) + ',' + 
+           leveragePart + 
+           tpPart + slPart + dcaPart + '}'
+    
+    alert(json)
+    json
+
+// ================= STRATEGY LOGIC =================
+// Entry long
+if long_conf and strategy.position_size == 0
+    tmpLevels = final_levels_long(close)
+    float tp_price = na
+    float sl_price = na
+    
+    if array.size(tmpLevels) >= 2
+        tp_price := array.get(tmpLevels, 0)
+        sl_price := array.get(tmpLevels, 1)
+    else
+        tp_price := tp_long_fallback
+        sl_price := sl_long_fallback
+    
+    if valid_sl_distance(close, sl_price) and tp_price > close and sl_price < close
+        qty = qty_by_risk(close, sl_price)
+        
+        // BINANCE FUTURES validation: minimum 6 USDT notional + 0.001 ETH
+        order_value = qty * close
+        min_usdt_required = 6.0
+        min_eth_required = 0.001
+        
+        if order_value >= min_usdt_required and qty >= min_eth_required
+            strategy.entry("LONG", strategy.long, qty=qty, comment="CONF LONG")
+            strategy.exit("L-EXIT", "LONG", stop=sl_price, limit=tp_price)
+            send_wunder_dca(enterLongCode, "long", sl_price, tp_price)
+
+// Entry short
+if short_conf and strategy.position_size == 0
+    tmpLevels = final_levels_short(close)
+    float tp_price = na
+    float sl_price = na
+    
+    if array.size(tmpLevels) >= 2
+        tp_price := array.get(tmpLevels, 0)
+        sl_price := array.get(tmpLevels, 1)
+    else
+        tp_price := tp_short_fallback
+        sl_price := sl_short_fallback
+    
+    if valid_sl_distance(close, sl_price) and tp_price < close and sl_price > close
+        qty = qty_by_risk(close, sl_price)
+        
+        // BINANCE FUTURES validation: minimum 6 USDT notional + 0.001 ETH
+        order_value = qty * close
+        min_usdt_required = 6.0
+        min_eth_required = 0.001
+        
+        if order_value >= min_usdt_required and qty >= min_eth_required
+            strategy.entry("SHORT", strategy.short, qty=qty, comment="CONF SHORT")
+            strategy.exit("S-EXIT", "SHORT", stop=sl_price, limit=tp_price)
+            send_wunder_dca(enterShortCode, "short", sl_price, tp_price)
+
+// ========= Break-even & trailing =========
+if strategy.position_size > 0
+    avg = strategy.position_avg_price
+    if moveToBE and close >= avg * (1 + beTrigger/100.0)
+        strategy.exit("L-EXIT-BE", "LONG", stop=avg, comment="BE Long")
+    else if useTrail and close > avg
+        trail_stop = close * (1 - trailPct/100.0)
+        current_sl = use_sr_tpsl and not na(sr_sl_long) ? sr_sl_long : sl_long_fallback
+        final_trail = math.max(trail_stop, current_sl)
+        strategy.exit("L-EXIT-TRAIL", "LONG", stop=final_trail, comment="Trail Long")
+
+if strategy.position_size < 0
+    avg = strategy.position_avg_price
+    if moveToBE and close <= avg * (1 - beTrigger/100.0)
+        strategy.exit("S-EXIT-BE", "SHORT", stop=avg, comment="BE Short")
+    else if useTrail and close < avg
+        trail_stop = close * (1 + trailPct/100.0)
+        current_sl = use_sr_tpsl and not na(sr_sl_short) ? sr_sl_short : sl_short_fallback
+        final_trail = math.min(trail_stop, current_sl)
+        strategy.exit("S-EXIT-TRAIL", "SHORT", stop=final_trail, comment="Trail Short")
+
+// ========= Exit Alerts =========
+if bar_index > 0 and strategy.position_size[1] > 0 and strategy.position_size == 0
+    jsonExit = '{"secret":"clurut_webhook_2025","code":"' + exitAllCode + '","orderType":"market","reduceOnly":true}'
+    alert(jsonExit)
+
+if bar_index > 0 and strategy.position_size[1] < 0 and strategy.position_size == 0
+    jsonExit = '{"secret":"clurut_webhook_2025","code":"' + exitAllCode + '","orderType":"market","reduceOnly":true}'
+    alert(jsonExit)
+
+// ========= Strategy Alerts (using alert() instead of alertcondition for strategies) =========
+if long_early
+    alert("EARLY LONG | " + syminfo.ticker + " | Close=" + str.tostring(close))
+if short_early
+    alert("EARLY SHORT | " + syminfo.ticker + " | Close=" + str.tostring(close))
+if long_conf
+    alert("CONFIRMED LONG | " + syminfo.ticker + " | Close=" + str.tostring(close))
+if short_conf
+    alert("CONFIRMED SHORT | " + syminfo.ticker + " | Close=" + str.tostring(close))
+
+// ========= Visuals =========
+plot(ema13, "EMA13 (1m)", color=color.new(color.teal, 70))
+plot(ema26, "EMA26 (1m)", color=color.new(color.orange, 70))
+plot(ema10, "EMA10 (5m)", color=color.new(color.green, 70))
+plot(ema21, "EMA21 (5m)", color=color.new(color.red,   70))
+plot(ema50, "EMA50 (5m)", color=color.new(color.blue,  70))
+
+plotshape(showEarly and long_early,  title="Early Long",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.blue,0), size=size.tiny,  text="E")
+plotshape(showEarly and short_early, title="Early Short", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,0),  size=size.tiny,  text="E")
+plotshape(showConfirmed and long_conf,  title="Confirmed Long",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime,0), size=size.large, text="C")
+plotshape(showConfirmed and short_conf, title="Confirmed Short", style=shape.triangledown, location=location.abovebar, color=color.new(color.maroon,0), size=size.large, text="C")
+
+bgcolor(vol_ok ? na : color.new(color.gray, 90))
+
+plot(na(nearSup) ? na : nearSup, "Nearest Support", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+plot(na(nearRes) ? na : nearRes, "Nearest Resistance", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+
+// ========= Info Panel =========
+tblCols = 1
+tblRows = 10
+var table tbl = table.new(position.top_right, tblCols, tblRows, frame_color=color.new(color.white, 80), frame_width=1, border_width=1)
+
+if barstate.islast
+    table.clear(tbl, 0, 0, tblCols - 1, tblRows - 1)
+
+    sigTxt = long_early ? "EARLY LONG" : short_early ? "EARLY SHORT" : long_conf ? "CONF LONG" : short_conf ? "CONF SHORT" : "NO TRADE"
+    sigClr = (long_conf or long_early) ? color.new(color.lime, 0) : (short_conf or short_early) ? color.new(color.red, 0) : color.new(color.gray, 0)
+    modeTxt = use_sr_tpsl ? "TP/SL: S/R-ADV" : "TP/SL: ATR"
+    activeStrat = is1m ? "1m: EMA(13,26)+Stoch" : is3m ? "3m: EMA+RSI/ROC" : is5m ? "5m: EMA(10,21,50)+MACD" : "Other TF"
+
+    // Calculate estimated order size for display (FUTURES)
+    test_sl = use_sr_tpsl and not na(sr_sl_long) ? sr_sl_long : sl_long_fallback
+    est_qty = qty_by_risk(close, test_sl)
+    est_value = est_qty * close
+    
+    // Futures-specific validation colors
+    futures_valid = est_value >= 6.0 and est_qty >= 0.001
+    leverage_info = "LEV: " + str.tostring(wunder_leverage) + "x"
+
+    table.cell(tbl, 0, 0, "ACSS Futures Scalper", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(tbl, 0, 1, "ETHUSDT Futures • " + modeTxt, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(tbl, 0, 2, leverage_info + " • " + activeStrat, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(tbl, 0, 3, "Signal: " + sigTxt, text_color=color.white, bgcolor=sigClr)
+    table.cell(tbl, 0, 4, "ATR%: " + str.tostring(atrPct, "#.##"), text_color=color.white, bgcolor=vol_ok ? color.new(color.green, 80) : color.new(color.red, 80))
+    table.cell(tbl, 0, 5, "Est: $" + str.tostring(est_value, "#.##") + " | " + str.tostring(est_qty, "#.###") + " ETH", text_color=color.white, bgcolor=futures_valid ? color.new(color.green, 80) : color.new(color.red, 80))
+    table.cell(tbl, 0, 6, "Risk%: " + str.tostring(riskPct) + "%", text_color=color.white, bgcolor=color.new(color.blue, 80))
+    table.cell(tbl, 0, 7, "Nearest S: " + (na(nearSup) ? "—" : str.tostring(nearSup, format.mintick)), text_color=color.white, bgcolor=color.new(color.green, 80))
+    table.cell(tbl, 0, 8, "Nearest R: " + (na(nearRes) ? "—" : str.tostring(nearRes, format.mintick)), text_color=color.white, bgcolor=color.new(color.red, 80))
+    table.cell(tbl, 0, 9, "Min: 6 USDT | 0.001 ETH", text_color=color.white, bgcolor=color.new(color.gray, 80))

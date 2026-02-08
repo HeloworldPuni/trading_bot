@@ -1,0 +1,437 @@
+//@version=6
+indicator("CISD Hybrid Master Engine", overlay=true, max_labels_count=100, max_lines_count=100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📖 README — ALL-IN-ONE CISD SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+// PURPOSE:
+//   Complete timeframe alignment system with modular confirmations:
+//   ✅ CISD (Change in State of Delivery) structure detection
+//   ✅ Higher-timeframe bias alignment (macro ↔ micro)
+//   ✅ VWAP bias confirmation (toggle)
+//   ✅ MACD multi-timeframe confluence (toggle)
+//   ✅ EMA 9/21/50 stack confirmation (toggle)
+//   ✅ Movable HUD with all status indicators
+//
+// HOW TO USE:
+//   1. Select timeframe pair preset (e.g., 1H ↔ 5M)
+//   2. Enable/disable confirmation modules via toggles
+//   3. Watch for "GO NOW ✅" when all enabled conditions align
+//   4. CISD lines show structure breaks in real-time
+//   5. Adjust HUD position as needed
+//
+// SIGNAL LOGIC:
+//   - Base: Bias TF direction must match Structure TF CISD direction
+//   - If VWAP enabled: price must be above/below VWAP per bias
+//   - If MACD enabled: both TFs must show momentum alignment
+//   - If EMA enabled: EMA stack must align with bias direction
+//   - GO NOW = all enabled checks pass + base alignment true
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎛️  USER INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TIMEFRAME SELECTION
+// ─────────────────────────────────────────────────────────────────────────────
+tfPairPreset = input.string("1H ↔ 5M", "Timeframe Pair Preset", 
+     options=["Weekly ↔ 4H", "Daily ↔ 1H", "4H ↔ 15M", "1H ↔ 5M", "30M ↔ 3M", "15M ↔ 1M", "Custom"],
+     tooltip="Select preset or choose Custom to manually adjust timeframes", group="Timeframes")
+
+bias_tf = input.timeframe("60", "Bias Timeframe (High)", tooltip="Higher TF for macro bias (e.g., 1H, 4H, Daily)", group="Timeframes")
+structure_tf = input.timeframe("5", "Structure Timeframe (Mid)", tooltip="Mid TF for CISD detection (e.g., 5M, 15M, 1H)", group="Timeframes")
+entry_tf = input.timeframe("1", "Entry Timeframe (Low)", tooltip="Lowest TF for VWAP and entry timing (e.g., 1M, 3M, 5M)", group="Timeframes")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFIRMATION MODULE TOGGLES
+// ─────────────────────────────────────────────────────────────────────────────
+useVWAP = input.bool(true, "✅ Enable VWAP Confirmation", group="Confirmations", tooltip="Require price above/below VWAP on entry TF")
+useMACD = input.bool(true, "✅ Enable MACD Confluence", group="Confirmations", tooltip="Require MACD alignment on both structure and bias TFs")
+useEMA = input.bool(true, "✅ Enable EMA Stack", group="Confirmations", tooltip="Require EMA 9>21>50 stack alignment on structure TF")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISUAL OPTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+showCISDLines = input.bool(true, "Show CISD Lines", group="Visuals")
+showHUD = input.bool(true, "Show HUD", group="Visuals")
+hudPosition = input.string("Top Right", "HUD Position", options=["Top Left", "Top Center", "Top Right", "Middle Left", "Middle Center", "Middle Right", "Bottom Left", "Bottom Center", "Bottom Right"], group="Visuals")
+lineColorBull = input.color(color.new(#00ff88, 0), "Bullish Line Color", group="Visuals")
+lineColorBear = input.color(color.new(#ff3366, 0), "Bearish Line Color", group="Visuals")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE PARAMETERS
+// ─────────────────────────────────────────────────────────────────────────────
+// MACD Parameters
+macd_fast = input.int(6, "MACD Fast", minval=1, group="MACD Settings")
+macd_slow = input.int(13, "MACD Slow", minval=1, group="MACD Settings")
+macd_signal = input.int(5, "MACD Signal", minval=1, group="MACD Settings")
+
+// EMA Parameters
+ema_fast_len = input.int(9, "EMA Fast", minval=1, group="EMA Settings")
+ema_mid_len = input.int(21, "EMA Mid", minval=1, group="EMA Settings")
+ema_slow_len = input.int(50, "EMA Slow", minval=1, group="EMA Settings")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊  MODULE 1: BIAS DIRECTION (HIGHER TIMEFRAME)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Detect macro trend using EMA momentum (faster than swing structure)
+
+// Calculate EMAs on higher timeframe for bias detection
+bias_ema_fast = request.security(syminfo.tickerid, bias_tf, ta.ema(close, 9), lookahead=barmerge.lookahead_off)
+bias_ema_slow = request.security(syminfo.tickerid, bias_tf, ta.ema(close, 21), lookahead=barmerge.lookahead_off)
+
+// Get previous EMA value for slope filter
+bias_ema_fast_prev = request.security(syminfo.tickerid, bias_tf, ta.ema(close[1], 9), lookahead=barmerge.lookahead_off)
+
+// Determine bias direction from EMA cross
+bias_bullish = bias_ema_fast > bias_ema_slow
+bias_bearish = bias_ema_fast < bias_ema_slow
+
+// Calculate slope for momentum filter (optional - filters out flat conditions)
+slope_fast = bias_ema_fast - bias_ema_fast_prev
+slope_threshold = 0.01 // Adjust for sensitivity: lower = more responsive, higher = fewer signals
+
+// Final bias determination (responsive EMA-based momentum)
+// Bias responds immediately to EMA cross, slope filter can be used for refinement
+bias_direction = bias_bullish ? 1 : bias_bearish ? -1 : 0
+
+// Optional: filter out very flat conditions (uncomment if needed)
+// if math.abs(slope_fast) < slope_threshold
+//     bias_direction := 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🏗️  MODULE 2: CISD DETECTION (STRUCTURE TIMEFRAME)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Change in State of Delivery: Detect contiguous sequences and breakouts
+
+[struct_open, struct_high, struct_low, struct_close] = request.security(syminfo.tickerid, structure_tf, [open, high, low, close], lookahead=barmerge.lookahead_off)
+
+// Sequence tracking variables
+var int cisd_state = 0 // 0=none, 1=building_down, -1=building_up
+var int cisd_count = 0
+var float cisd_extreme = na
+var int cisd_start_bar = na
+var float cisd_start_price = na
+
+// Current bar classification
+bool is_down_close = struct_close < struct_open
+bool is_up_close = struct_close > struct_open
+
+// Store last confirmed CISD direction
+var int last_cisd_direction = 0 // 1=bullish, -1=bearish
+var int last_cisd_bar = na
+
+bool cisd_bullish_trigger = false
+bool cisd_bearish_trigger = false
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build DOWN sequence (potential bullish CISD)
+// ─────────────────────────────────────────────────────────────────────────────
+if is_down_close
+    if cisd_state == 1 or cisd_state == 0
+        if cisd_state == 0 or cisd_count == 0
+            // Start new down sequence
+            cisd_state := 1
+            cisd_count := 1
+            cisd_start_bar := bar_index
+            cisd_extreme := struct_high
+            cisd_start_price := struct_close
+        else
+            // Continue down sequence
+            cisd_count += 1
+            cisd_extreme := math.max(cisd_extreme, struct_high)
+    else if cisd_state == -1
+        // Reset from up sequence to down sequence
+        cisd_state := 1
+        cisd_count := 1
+        cisd_start_bar := bar_index
+        cisd_extreme := struct_high
+        cisd_start_price := struct_close
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build UP sequence (potential bearish CISD)
+// ─────────────────────────────────────────────────────────────────────────────
+else if is_up_close
+    if cisd_state == -1 or cisd_state == 0
+        if cisd_state == 0 or cisd_count == 0
+            // Start new up sequence
+            cisd_state := -1
+            cisd_count := 1
+            cisd_start_bar := bar_index
+            cisd_extreme := struct_low
+            cisd_start_price := struct_close
+        else
+            // Continue up sequence
+            cisd_count += 1
+            cisd_extreme := math.min(cisd_extreme, struct_low)
+    else if cisd_state == 1
+        // Reset from down sequence to up sequence
+        cisd_state := -1
+        cisd_count := 1
+        cisd_start_bar := bar_index
+        cisd_extreme := struct_low
+        cisd_start_price := struct_close
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check for BULLISH CISD breakout (break above down-sequence high)
+// ─────────────────────────────────────────────────────────────────────────────
+if cisd_state == 1 and cisd_count >= 2 and not is_down_close
+    if struct_close > cisd_extreme
+        cisd_bullish_trigger := true
+        last_cisd_direction := 1
+        last_cisd_bar := bar_index
+        // Draw CISD line and label
+        if showCISDLines
+            line.new(cisd_start_bar, cisd_extreme, bar_index, struct_close, color=lineColorBull, width=2, style=line.style_solid)
+            label.new(bar_index, struct_close, "CISD ↑ (" + structure_tf + ")", color=lineColorBull, textcolor=color.white, style=label.style_label_up, size=size.small)
+        // Reset state
+        cisd_state := 0
+        cisd_count := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check for BEARISH CISD breakout (break below up-sequence low)
+// ─────────────────────────────────────────────────────────────────────────────
+if cisd_state == -1 and cisd_count >= 2 and not is_up_close
+    if struct_close < cisd_extreme
+        cisd_bearish_trigger := true
+        last_cisd_direction := -1
+        last_cisd_bar := bar_index
+        // Draw CISD line and label
+        if showCISDLines
+            line.new(cisd_start_bar, cisd_extreme, bar_index, struct_close, color=lineColorBear, width=2, style=line.style_solid)
+            label.new(bar_index, struct_close, "CISD ↓ (" + structure_tf + ")", color=lineColorBear, textcolor=color.white, style=label.style_label_down, size=size.small)
+        // Reset state
+        cisd_state := 0
+        cisd_count := 0
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ✅  BASE ALIGNMENT: Bias + Structure Agreement
+// ═══════════════════════════════════════════════════════════════════════════════
+// Expansion occurs when macro bias matches structure CISD direction
+
+bool alignment_active = (bias_direction == 1 and last_cisd_direction == 1) or (bias_direction == -1 and last_cisd_direction == -1)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📈  MODULE 3: VWAP CONFIRMATION (Optional)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Calculate VWAP values (always, for plotting)
+entry_vwap = request.security(syminfo.tickerid, entry_tf, ta.vwap(hlc3), lookahead=barmerge.lookahead_off)
+entry_close = request.security(syminfo.tickerid, entry_tf, close, lookahead=barmerge.lookahead_off)
+
+var bool vwap_pass = true
+var string vwap_status = "Disabled"
+
+if useVWAP
+    vwap_bull = entry_close > entry_vwap
+    vwap_bear = entry_close < entry_vwap
+    
+    // Check if VWAP aligns with bias direction
+    vwap_aligned = (bias_direction == 1 and vwap_bull) or (bias_direction == -1 and vwap_bear)
+    vwap_pass := vwap_aligned or bias_direction == 0
+    vwap_status := vwap_aligned ? (vwap_bull ? "Bullish ✅" : "Bearish ✅") : (vwap_bull ? "Bull ❌" : "Bear ❌")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊  MODULE 4: MACD CONFLUENCE (Optional)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// MACD calculation function (must be defined at script level)
+f_macd(_src, _fast, _slow, _signal) =>
+    macd_line = ta.ema(_src, _fast) - ta.ema(_src, _slow)
+    signal_line = ta.ema(macd_line, _signal)
+    [macd_line, signal_line]
+
+var bool macd_pass = true
+var string macd_status = "Disabled"
+
+if useMACD
+    // Calculate MACD on structure TF
+    [macd_struct, signal_struct] = request.security(syminfo.tickerid, structure_tf, f_macd(close, macd_fast, macd_slow, macd_signal), lookahead=barmerge.lookahead_off)
+    
+    // Calculate MACD on bias TF
+    [macd_bias, signal_bias] = request.security(syminfo.tickerid, bias_tf, f_macd(close, macd_fast, macd_slow, macd_signal), lookahead=barmerge.lookahead_off)
+    
+    // Both MACDs must align
+    macd_confluence_bull = macd_struct > signal_struct and macd_bias > signal_bias
+    macd_confluence_bear = macd_struct < signal_struct and macd_bias < signal_bias
+    
+    // Check if MACD aligns with bias direction
+    macd_aligned = (bias_direction == 1 and macd_confluence_bull) or (bias_direction == -1 and macd_confluence_bear)
+    macd_pass := macd_aligned or bias_direction == 0
+    macd_status := macd_aligned ? "Aligned ✅" : "Not Aligned ❌"
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📉  MODULE 5: EMA STACK CONFIRMATION (Optional)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Calculate EMAs on structure TF (always, for plotting)
+ema9_struct = request.security(syminfo.tickerid, structure_tf, ta.ema(close, ema_fast_len), lookahead=barmerge.lookahead_off)
+ema21_struct = request.security(syminfo.tickerid, structure_tf, ta.ema(close, ema_mid_len), lookahead=barmerge.lookahead_off)
+ema50_struct = request.security(syminfo.tickerid, structure_tf, ta.ema(close, ema_slow_len), lookahead=barmerge.lookahead_off)
+
+var bool ema_pass = true
+var string ema_status = "Disabled"
+
+if useEMA
+    // Determine stack alignment
+    ema_stack_bull = ema9_struct > ema21_struct and ema21_struct > ema50_struct
+    ema_stack_bear = ema9_struct < ema21_struct and ema21_struct < ema50_struct
+    
+    // Check if EMA stack aligns with bias direction
+    ema_aligned = (bias_direction == 1 and ema_stack_bull) or (bias_direction == -1 and ema_stack_bear)
+    ema_pass := ema_aligned or bias_direction == 0
+    ema_status := ema_aligned ? (ema_stack_bull ? "Bull ✅" : "Bear ✅") : "Not Aligned ❌"
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🚀  FINAL DECISION: GO NOW SIGNAL
+// ═══════════════════════════════════════════════════════════════════════════════
+// All enabled confirmations must pass + base alignment must be active
+
+bool go_now = alignment_active and vwap_pass and macd_pass and ema_pass
+
+// Build failure reason string
+string failure_reason = ""
+if not alignment_active
+    failure_reason += "No Expansion "
+if useVWAP and not vwap_pass
+    failure_reason += "VWAP "
+if useMACD and not macd_pass
+    failure_reason += "MACD "
+if useEMA and not ema_pass
+    failure_reason += "EMA "
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📊  PLOT INDICATORS (GLOBAL SCOPE)
+// ═══════════════════════════════════════════════════════════════════════════════
+// All plot() calls must be at global scope - conditionally display using na
+
+// VWAP Plot (show only when enabled)
+plot(useVWAP ? entry_vwap : na, "Entry VWAP", color=color.new(#ffeb3b, 0), linewidth=1, style=plot.style_circles)
+
+// EMA Plots (show only when enabled)
+plot(useEMA ? ema9_struct : na, "EMA 9", color=color.new(#00bcd4, 0), linewidth=1)
+plot(useEMA ? ema21_struct : na, "EMA 21", color=color.new(#ff9800, 0), linewidth=1)
+plot(useEMA ? ema50_struct : na, "EMA 50", color=color.new(#9e9e9e, 0), linewidth=2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 📺  HUD DISPLAY (MOVABLE)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if showHUD
+    // Determine HUD position
+    string hud_pos = position.top_right
+    if hudPosition == "Top Left"
+        hud_pos := position.top_left
+    else if hudPosition == "Top Center"
+        hud_pos := position.top_center
+    else if hudPosition == "Top Right"
+        hud_pos := position.top_right
+    else if hudPosition == "Middle Left"
+        hud_pos := position.middle_left
+    else if hudPosition == "Middle Center"
+        hud_pos := position.middle_center
+    else if hudPosition == "Middle Right"
+        hud_pos := position.middle_right
+    else if hudPosition == "Bottom Left"
+        hud_pos := position.bottom_left
+    else if hudPosition == "Bottom Center"
+        hud_pos := position.bottom_center
+    else if hudPosition == "Bottom Right"
+        hud_pos := position.bottom_right
+    
+    var table hud = table.new(hud_pos, 2, 11, bgcolor=color.new(#000000, 15), border_width=2, border_color=color.new(#00ff88, 30))
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Header
+    // ─────────────────────────────────────────────────────────────────────────
+    table.cell(hud, 0, 0, "⚡ CISD HYBRID MASTER", text_color=color.new(#00ff88, 0), text_size=size.normal, bgcolor=color.new(#1a1a1a, 0))
+    table.merge_cells(hud, 0, 0, 1, 0)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 1: Bias TF
+    // ─────────────────────────────────────────────────────────────────────────
+    bias_text = bias_direction == 1 ? "Bullish ✅" : bias_direction == -1 ? "Bearish ❌" : "Neutral ⚪"
+    bias_color = bias_direction == 1 ? color.green : bias_direction == -1 ? color.red : color.gray
+    table.cell(hud, 0, 1, "Bias TF: " + bias_tf, text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 1, bias_text, text_color=bias_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 2: Structure TF (CISD)
+    // ─────────────────────────────────────────────────────────────────────────
+    cisd_text = last_cisd_direction == 1 ? "Bullish ✅" : last_cisd_direction == -1 ? "Bearish ❌" : "None ⚪"
+    cisd_color = last_cisd_direction == 1 ? color.green : last_cisd_direction == -1 ? color.red : color.gray
+    table.cell(hud, 0, 2, "Structure: " + structure_tf, text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 2, cisd_text, text_color=cisd_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 3: Alignment Status
+    // ─────────────────────────────────────────────────────────────────────────
+    align_text = alignment_active ? "EXPANSION ✅" : "Waiting ⚪"
+    align_color = alignment_active ? color.new(#00ff88, 0) : color.gray
+    table.cell(hud, 0, 3, "Alignment", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 3, align_text, text_color=align_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Separator
+    // ─────────────────────────────────────────────────────────────────────────
+    table.cell(hud, 0, 4, "───────────────", text_color=color.new(#00ff88, 50), text_size=size.tiny)
+    table.merge_cells(hud, 0, 4, 1, 4)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 5: VWAP Status
+    // ─────────────────────────────────────────────────────────────────────────
+    vwap_display_color = useVWAP ? (vwap_pass ? color.green : color.red) : color.gray
+    vwap_display_text = useVWAP ? vwap_status : "Disabled ⚪"
+    table.cell(hud, 0, 5, "VWAP (" + entry_tf + ")", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 5, vwap_display_text, text_color=vwap_display_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 6: MACD Status
+    // ─────────────────────────────────────────────────────────────────────────
+    macd_display_color = useMACD ? (macd_pass ? color.green : color.red) : color.gray
+    macd_display_text = useMACD ? macd_status : "Disabled ⚪"
+    table.cell(hud, 0, 6, "MACD " + structure_tf + "/" + bias_tf, text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 6, macd_display_text, text_color=macd_display_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 7: EMA Stack Status
+    // ─────────────────────────────────────────────────────────────────────────
+    ema_display_color = useEMA ? (ema_pass ? color.green : color.red) : color.gray
+    ema_display_text = useEMA ? ema_status : "Disabled ⚪"
+    table.cell(hud, 0, 7, "EMA Stack (" + structure_tf + ")", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 7, ema_display_text, text_color=ema_display_color, text_size=size.small)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Separator
+    // ─────────────────────────────────────────────────────────────────────────
+    table.cell(hud, 0, 8, "═══════════════", text_color=color.new(#00ff88, 30), text_size=size.tiny)
+    table.merge_cells(hud, 0, 8, 1, 8)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 9: FINAL SIGNAL
+    // ─────────────────────────────────────────────────────────────────────────
+    go_text = go_now ? "🟢 GO NOW ✅" : "🔴 WAIT ❌"
+    go_color = go_now ? color.new(#00ff88, 0) : color.new(#ff3366, 0)
+    go_bg = go_now ? color.new(#00ff88, 90) : color.new(#1a1a1a, 0)
+    table.cell(hud, 0, 9, "FINAL SIGNAL", text_color=color.gray, text_size=size.small)
+    table.cell(hud, 1, 9, go_text, text_color=go_color, text_size=size.large, bgcolor=go_bg)
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Row 10: Failure Reason (if applicable)
+    // ─────────────────────────────────────────────────────────────────────────
+    fail_display = failure_reason == "" ? "All Checks Pass ✅" : "Failed: " + failure_reason
+    fail_color = failure_reason == "" ? color.green : color.orange
+    table.cell(hud, 0, 10, "Status", text_color=color.gray, text_size=size.tiny)
+    table.cell(hud, 1, 10, fail_display, text_color=fail_color, text_size=size.tiny)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎨  VISUAL ENHANCEMENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Background highlight when GO NOW is active
+bgcolor(go_now ? color.new(#00ff88, 97) : alignment_active ? color.new(#ffeb3b, 98) : na, title="Signal Background")
+
+// Sequence building indicator (optional subtle bar color)
+barcolor(cisd_state == 1 ? color.new(color.teal, 90) : cisd_state == -1 ? color.new(color.orange, 90) : na, title="CISD Building")
+

@@ -1,0 +1,25 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// BANKNIFTY 30 minutes
+
+//@version=4
+strategy("MACD with crossover Long and short sell", overlay=true)
+fast = 12, slow = 26
+fastMA = ema(close, fast)
+slowMA = ema(close, slow)
+macd = fastMA - slowMA
+signal = sma(macd, 9)
+longCondition = crossover(macd, signal)
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+shortCondition = crossunder(macd, signal)
+if (shortCondition)
+    strategy.entry("Short", strategy.short)
+
+threeGreenCandles = (close[2] > open[2]) and (close[1] > open[1])
+     and (close > open)
+    
+longExitCondition = crossunder(macd, signal)
+shortExitCondition = crossover(macd, signal)
+
+strategy.close("Long", when = longExitCondition)
+strategy.close("Short", when = shortExitCondition)

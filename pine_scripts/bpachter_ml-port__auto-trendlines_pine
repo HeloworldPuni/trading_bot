@@ -1,0 +1,249 @@
+//@version=5
+indicator("📈 Auto Trendline Detector",
+         shorttitle="Auto Trends",
+         overlay=true,
+         max_lines_count=500)
+
+// 🔧 INPUT PARAMETERS
+lookback_period = input.int(20, "Pivot Lookback", minval=5, maxval=50,
+                           tooltip="Number of bars for pivot detection")
+min_touches = input.int(2, "Minimum Touches", minval=2, maxval=5, tooltip="Minimum pivot points to form a trendline")
+max_trendlines = input.int(8, "Max Trendlines", minval=2, maxval=15,
+                          tooltip="Maximum number of trendlines to display")
+line_extension = input.int(50, "Line Extension", minval=10, maxval=100,
+                          tooltip="How far to extend trendlines to the right")
+slope_tolerance = input.float(0.001, "Slope Tolerance", minval=0.0001, maxval=0.01,
+                             tooltip="Tolerance for trendline slope validation")
+
+// 🎨 STYLING
+uptrend_color = input.color(color.new(color.green, 20), "Uptrend Color")
+downtrend_color = input.color(color.new(color.red, 20), "Downtrend Color")
+strong_trend_color = input.color(color.new(color.blue, 10), "Strong Trend Color")
+show_labels = input.bool(true, "Show Labels")
+show_breaks = input.bool(true, "Show Trendline Breaks")
+
+// 📊 DETECTION LOGIC
+// Detect pivot highs and lows for trendline construction
+pivot_high = ta.pivothigh(high, lookback_period, lookback_period)
+pivot_low = ta.pivotlow(low, lookback_period, lookback_period)
+
+// Storage for pivot points
+var array<int> high_bars = array.new<int>()
+var array<float> high_prices = array.new<float>()
+var array<int> low_bars = array.new<int>()
+var array<float> low_prices = array.new<float>()
+
+// Maximum pivot points to store
+max_pivots = 50
+
+// 📈 COLLECT PIVOT POINTS
+if not na(pivot_high)
+    if array.size(high_bars) >= max_pivots
+        array.shift(high_bars)
+        array.shift(high_prices)
+    array.push(high_bars, bar_index[lookback_period])
+    array.push(high_prices, pivot_high)
+
+if not na(pivot_low)
+    if array.size(low_bars) >= max_pivots
+        array.shift(low_bars)
+        array.shift(low_prices)
+    array.push(low_bars, bar_index[lookback_period])
+    array.push(low_prices, pivot_low)
+
+// 🔍 TRENDLINE CALCULATION FUNCTIONS
+calculate_slope(x1, y1, x2, y2) =>
+    (y2 - y1) / (x2 - x1)
+
+calculate_y_at_x(x1, y1, slope, target_x) =>
+    y1 + slope * (target_x - x1)
+
+// Check if a point is near a line (within tolerance)
+point_near_line(x1, y1, x2, y2, test_x, test_y, tolerance) =>
+    if x1 == x2
+        false
+    else
+        slope = calculate_slope(x1, y1, x2, y2)
+        expected_y = calculate_y_at_x(x1, y1, slope, test_x)
+        math.abs(test_y - expected_y) / test_y <= tolerance
+
+// 📊 FIND TRENDLINES
+find_trendlines(bars, prices, min_points, is_uptrend) =>
+    var array<line> trendlines = array.new<line>()
+
+    // Clear previous trendlines
+    if array.size(trendlines) > 0
+        for i = 0 to array.size(trendlines) - 1
+            line.delete(array.get(trendlines, i))
+        array.clear(trendlines)
+
+    size = array.size(bars)
+    if size < min_points
+        trendlines
+
+    trendline_count = 0
+
+    // Try different combinations of pivot points
+    for i = 0 to size - 2
+        if trendline_count >= max_trendlines
+            break
+
+        for j = i + 1 to size - 1
+            if trendline_count >= max_trendlines
+                break
+
+            bar1 = array.get(bars, i)
+            price1 = array.get(prices, i)
+            bar2 = array.get(bars, j)
+            price2 = array.get(prices, j)
+
+            // Calculate slope
+            slope = calculate_slope(bar1, price1, bar2, price2)
+
+            // Validate slope direction
+            valid_slope = is_uptrend ? slope > slope_tolerance : slope < -slope_tolerance
+
+            if valid_slope
+                // Count how many other points are near this line
+                touches = 2 // Starting with the two anchor points
+
+                for k = 0 to size - 1
+                    if k != i and k != j
+                        test_bar = array.get(bars, k)
+                        test_price = array.get(prices, k)
+
+                        if test_bar > bar1 and test_bar < bar2
+                            if point_near_line(bar1, price1, bar2, price2, test_bar, test_price, 0.01)
+                                touches += 1
+
+                // Create trendline if it has enough touches
+                if touches >= min_touches
+                    end_bar = bar_index + line_extension
+                    end_price = calculate_y_at_x(bar1, price1, slope, end_bar)
+
+                    line_color = touches >= 3 ? strong_trend_color : (is_uptrend ? uptrend_color : downtrend_color)
+                    line_style = touches >= 3 ? line.style_solid : line.style_dashed
+
+                    trendline = line.new(bar1, price1, end_bar, end_price,
+                                       color=line_color, style=line_style, width=2)
+
+                    array.push(trendlines, trendline)
+
+                    // Add label
+                    if show_labels
+                        mid_bar = math.round((bar1 + bar2) / 2)
+                        mid_price = calculate_y_at_x(bar1, price1, slope, mid_bar)
+
+                        trend_text = is_uptrend ? "📈 UP" : "📉 DOWN"
+                        touch_text = " (" + str.tostring(touches) + ")"
+                        strength_text = touches >= 3 ? " STRONG" : ""
+
+                        label.new(mid_bar, mid_price, trend_text + strength_text + touch_text, style=label.style_label_center, color=line_color, textcolor=color.white, size=size.small)
+
+                    trendline_count += 1
+
+    trendlines
+
+// 🎨 DRAW TRENDLINES
+if barstate.islast
+    // Find uptrend lines (connecting lows)
+    if array.size(low_bars) >= min_touches
+        uptrend_lines = find_trendlines(low_bars, low_prices, min_touches, true)
+
+    // Find downtrend lines (connecting highs)
+    if array.size(high_bars) >= min_touches
+        downtrend_lines = find_trendlines(high_bars, high_prices, min_touches, false)
+
+// 🚨 TRENDLINE BREAK DETECTION
+var array<line> active_uptrends = array.new<line>()
+var array<line> active_downtrends = array.new<line>()
+
+// Check for trendline breaks
+check_trendline_breaks() =>
+    current_price = close
+    current_bar = bar_index
+
+    // Check uptrend breaks (price breaking below uptrend line)
+    if array.size(low_bars) >= 2
+        for i = math.max(0, array.size(low_bars) - 5) to array.size(low_bars) - 2
+            for j = i + 1 to array.size(low_bars) - 1
+                bar1 = array.get(low_bars, i)
+                price1 = array.get(low_prices, i)
+                bar2 = array.get(low_bars, j)
+                price2 = array.get(low_prices, j)
+
+                slope = calculate_slope(bar1, price1, bar2, price2)
+
+                if slope > 0 // Valid uptrend
+                    expected_price = calculate_y_at_x(bar1, price1, slope, current_bar)
+
+                    if current_price < expected_price and close[1] >= expected_price
+                        if show_breaks
+                            label.new(bar_index, low, "💥 UPTREND BREAK", style=label.style_label_up, color=color.red, textcolor=color.white, size=size.small)
+
+                        alert("📉 UPTREND BREAK: " + syminfo.ticker + " broke below uptrend line at " + str.tostring(current_price, "#.##"), alert.freq_once_per_bar)
+
+    // Check downtrend breaks (price breaking above downtrend line)
+    if array.size(high_bars) >= 2
+        for i = math.max(0, array.size(high_bars) - 5) to array.size(high_bars) - 2
+            for j = i + 1 to array.size(high_bars) - 1
+                bar1 = array.get(high_bars, i)
+                price1 = array.get(high_prices, i)
+                bar2 = array.get(high_bars, j)
+                price2 = array.get(high_prices, j)
+
+                slope = calculate_slope(bar1, price1, bar2, price2)
+
+                if slope < 0 // Valid downtrend
+                    expected_price = calculate_y_at_x(bar1, price1, slope, current_bar)
+
+                    if current_price > expected_price and close[1] <= expected_price
+                        if show_breaks
+                            label.new(bar_index, high, "🚀 DOWNTREND BREAK", style=label.style_label_down, color=color.green, textcolor=color.white, size=size.small)
+
+                        alert("📈 DOWNTREND BREAK: " + syminfo.ticker + " broke above downtrend line at " + str.tostring(current_price, "#.##"), alert.freq_once_per_bar)
+
+// Run break detection
+if show_breaks
+    check_trendline_breaks()
+
+// 📊 TREND STRENGTH INDICATOR
+plot_trend_strength = input.bool(false, "Show Trend Strength")
+
+// Calculate overall trend strength based on number of valid trendlines
+uptrend_count = 0
+downtrend_count = 0
+
+// This is a simplified version - in practice you'd count actual valid trendlines
+if array.size(low_bars) >= min_touches
+    uptrend_count := math.min(3, array.size(low_bars) / 5)
+if array.size(high_bars) >= min_touches
+    downtrend_count := math.min(3, array.size(high_bars) / 5)
+
+trend_strength = uptrend_count - downtrend_count
+
+// Plot trend strength as histogram - must be at global scope
+bgcolor(plot_trend_strength ? (trend_strength > 0 ? color.new(color.green, 90) : trend_strength < 0 ? color.new(color.red, 90) : color.new(color.gray, 95)) : na)
+
+// 📋 SUMMARY TABLE
+if show_labels and barstate.islast
+    var table trend_table = table.new(position.top_left, 2, 5, bgcolor=color.new(color.black, 80), border_width=1)
+
+    table.cell(trend_table, 0, 0, "Trendline Analysis", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(trend_table, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.gray, 50))
+
+    uptrend_status = array.size(low_bars) >= min_touches ? "✅ Active" : "❌ None"
+    downtrend_status = array.size(high_bars) >= min_touches ? "✅ Active" : "❌ None"
+
+    table.cell(trend_table, 0, 1, "📈 Uptrends", text_color=color.green)
+    table.cell(trend_table, 1, 1, uptrend_status, text_color=color.white)
+
+    table.cell(trend_table, 0, 2, "📉 Downtrends", text_color=color.red)
+    table.cell(trend_table, 1, 2, downtrend_status, text_color=color.white)
+
+    overall_trend = array.size(low_bars) > array.size(high_bars) ? "🟢 Bullish" :
+                   array.size(high_bars) > array.size(low_bars) ? "🔴 Bearish" :
+                   "🟡 Neutral"
+
+    table.cell(trend_table, 0, 3, "Overall Bias", text_color=color.yellow)
+    table.cell(trend_table, 1, 3, overall_trend, text_color=color.white)

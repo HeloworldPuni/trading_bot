@@ -1,0 +1,79 @@
+// {
+// "symbol":"BCHUSDT",
+// "quantity":"{{strategy.position_size}}",
+// "enter_price":"{{strategy.order.price}}",
+// "side":"{{strategy.order.action}}"
+// }
+//@version=4
+strategy("ICHI_STRATEGY", overlay=true, margin_long=3, margin_short=3,initial_capital=100, 
+     commission_type=strategy.commission.percent, 
+     commission_value=0.1,currency=currency.USD,pyramiding=1)
+
+
+// Date 
+start_date =  input(title="Start Date", type=input.time,  group="TIME RANGE", defval=timestamp("01 Mar 2021 00:00 +0300"))
+end_date =  input(title="End Date", type=input.time, group="TIME RANGE", defval=timestamp("01 Jan 2022 00:00 +0300"))
+isDate = time >= start_date and time <= end_date  
+
+
+// ORDER SIZE SETTINGS
+order_size = input(title="Order Size", group="ORDER SIZE SETTINGS", type=input.integer, defval=100)
+leverage = input(title="Leverage", group="ORDER SIZE SETTINGS", type=input.integer, defval=1)
+
+// POSITION EXIT SETTINGS
+take_profit_multiple = input(title="Take Profit Multiplier (Reward)", group="POSITION EXIT SETTINGS", type=input.integer, defval=12) 
+stop_loss_multiple = input(title="Stop Loss Multiplier (Risk)", group="POSITION EXIT SETTINGS", type=input.integer, defval=10) 
+
+conversionPeriods = input(9, minval=1, title="Conversion Line Length")
+basePeriods = input(26, minval=1, title="Base Line Length")
+laggingSpan2Periods = input(52, minval=1, title="Lagging Span 2 Length")
+displacement = input(26, minval=1, title="Displacement")
+donchian(len) => avg(lowest(len), highest(len))
+conversionLine = donchian(conversionPeriods)
+baseLine = donchian(basePeriods)
+leadLine1 = avg(conversionLine, baseLine)
+leadLine2 = donchian(laggingSpan2Periods)
+// plot(conversionLine, color=#2962ff,linewidth=2, title="Conversion Line")
+// plot(baseLine, color=#ffeb3b,linewidth=2, title="Base Line")
+// plot(close, offset = -displacement + 1,linewidth=3, color=#9c27b0, title="Lagging Span")
+// p1 = plot(leadLine1, offset = displacement - 1, color=color.green,
+	//  title="Lead 1")
+// p2 = plot(leadLine2, offset = displacement - 1, color=color.red,
+	//  title="Lead 2")
+// fill(p1, p2, color = leadLine1 > leadLine2 ? color.green : color.red)
+mul = take_profit_multiple/stop_loss_multiple
+stopLoss = (baseLine + leadLine1[displacement - 1]  + leadLine2[displacement - 1])/3
+tp = stopLoss < close ? close *  (1+((close/stopLoss-1)*mul)) : close * (1 - ((stopLoss/close - 1)*mul))
+plot(stopLoss,color=color.red)
+plot(tp)
+// LONG 
+goLongCondition1 = leadLine1 > leadLine2
+goLongCondition2 = conversionLine > baseLine
+goLongCondition3 = close > leadLine1[displacement - 1] and close > leadLine2[displacement - 1]
+goLongCondition4 = close > leadLine1[displacement + displacement - 1] and close > leadLine2[displacement + displacement - 1]
+buySignal = goLongCondition1 and goLongCondition2 and goLongCondition3 and goLongCondition4  
+// plotshape(buySignal,location=location.belowbar,style=shape.triangleup,color=color.green)
+// alertcondition(buySignal,title="ichikomo buy signal",message="ichikomo buy signal")
+inLongTrade = strategy.position_size > 0
+noLongTrade = strategy.position_size <= 0
+if(isDate and buySignal and noLongTrade)
+	strategy.exit("exit","short", limit=close)
+    strategy.entry("long",strategy.long, when= noLongTrade, qty=order_size/close*leverage)
+    strategy.exit("exit","long", limit=tp, stop=stopLoss)
+
+
+// SHORT 
+goShortCondition1 = leadLine1 < leadLine2
+goShortCondition2 = conversionLine < baseLine
+goShortCondition3 = close < leadLine1[displacement - 1] and close < leadLine2[displacement - 1]
+goShortCondition4 = close < leadLine1[displacement + displacement - 1] and close < leadLine2[displacement + displacement - 1]
+sellSignal = goShortCondition1 and goShortCondition2 and goShortCondition3 and goShortCondition4  
+// plotshape(sellSignal,location=location.abovebar,style=shape.triangledown,color=color.red)
+// alertcondition(sellSignal,title="ichikomo sell signal",message="ichikomo sell signal")
+
+inShortTrade = strategy.position_size < 0
+noShortTrade = strategy.position_size >= 0
+if(isDate and sellSignal and noShortTrade)
+    strategy.exit("exit","long", limit=close)
+    strategy.entry("short",strategy.short, when= noShortTrade, qty=order_size/close*leverage)
+    strategy.exit("exit","short", limit=tp, stop=stopLoss)

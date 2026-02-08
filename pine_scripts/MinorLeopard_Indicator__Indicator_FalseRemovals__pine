@@ -1,0 +1,332 @@
+//@version=5
+indicator(shorttitle = "Hardy", title = "{Hardy}Bollinger Bands + MACD Angle + RSI with Risk factor", overlay=true)
+
+// Bollinger Bands
+length = input(20, "BB Length")
+mult = input(1.7, "BB Multiplier")
+basis = ta.sma(close, length)
+dev = mult * ta.stdev(close, length)
+upperBB = basis + dev
+lowerBB = basis - dev
+middle = basis
+
+// MACD
+macdShort = input(24, "MACD Short")
+macdLong = input(52, "MACD Long")
+macdSignal = input(18, "MACD Signal")
+
+[macdLine, signalLine, _] = ta.macd(close, macdShort, macdLong, macdSignal)
+
+// Calculate MACD angle
+macdAngle = ta.change(macdLine) / ta.change(bar_index)
+
+// ADX indicator for strength
+adxLength = input(50, title="ADX Length")
+
+[plusDI, minusDI, adx] = ta.dmi(adxLength, adxSmoothing = 50)
+
+highestAdx = 30
+adxStrength = math.round((adx / highestAdx) * 100)
+
+// Plotting the ADX line
+plot(adx, color = color.blue, title = "ADX")
+
+// Calculate the angle between the lower Bollinger band and upper Bollinger band
+bbAngle = ta.change(upperBB - lowerBB) / ta.change(bar_index)
+
+// Buy condition
+// Plot the buy signal with modified conditions
+var label buyLabel = na
+
+// Buy signal condition
+buyCondition = ta.crossover(close, lowerBB) and macdAngle < 5 and bbAngle < 0
+buySignal = buyCondition ? true : false
+
+// Short signal condition
+shortCondition = ta.crossunder(close, upperBB) and macdAngle > -5 and bbAngle > 0
+shortSignal = shortCondition ? true : false
+plot(bbAngle,color=color.yellow)
+// Modify the signals based on Bollinger Band angle
+if buySignal and bbAngle >= 0
+    buySignal := false
+
+if shortSignal and bbAngle <= 0
+    shortSignal := false
+
+
+
+
+
+// Plotting the Buy and Short signals
+plotshape(buySignal, title = "Buy Signal", color = color.green, style = shape.labelup, location = location.belowbar, size = size.small, text = "Buy", textcolor = color.white)
+alertcondition(buySignal, title = "Buy Signal", message = "Buy Signal")
+
+plotshape(shortSignal, title = "Short Signal", color = color.purple, style = shape.labeldown, size = size.small, text = "Short", textcolor = color.white)
+alertcondition(shortSignal, title = "Sell Signal", message = "Sell Signal")
+
+
+// Plot the short signal with ADX strength
+if buyCondition or shortCondition
+    label.new(bar_index, high, text = str.tostring(adxStrength), color = color.yellow, textcolor = color.black, style = label.style_text_outline)
+
+// Stop loss variables
+var bool stopLossBuy = false
+var bool stopLossSell = false
+var float stopLossLevelBuy = na
+var float stopLossLevelSell = na
+
+// Calculate stop loss levels and trigger stop loss signals
+
+// Plot Bollinger Bands with fill
+p1 = plot(upperBB, color=color.blue, title="Upper Bollinger Band")
+p2 = plot(lowerBB, color=color.blue, title="Lower Bollinger Band")
+plot(middle, title="Middle Band", color=color.red)
+fill(p1, p2, color=color.new(color.blue, 90))
+
+// Check previous three candles' open and close range
+prevOpenCloseInRange = (open[1] > middle[1] and close[1] < middle[1] and open[2] < middle[2] and close[2] > middle[2] and open[3] > middle[3] and close[3] < middle[3]) or
+                       (open[1] < middle[1] and close[1] > middle[1] and open[2] > middle[2] and close[2] < middle[2] and open[3] < middle[3] and close[3] > middle[3])
+
+// Check current candle's favorability
+currentCandleFavorsPrevious = (open > middle[1] and close < middle[1]) or (open < middle[1] and close > middle[1])
+
+float vwapValue = na
+float vwapLowerBand= na
+float vwapUpperBand= na
+
+// Calculate VWAP with anchor period session and source HLC3
+[_vwap, _stdevUpper, _] = ta.vwap(hlc3, timeframe.change("D"), 1)
+vwapValue := _vwap
+stdevAbs = _stdevUpper - _vwap
+vwapUpperBand := _vwap + stdevAbs * 1.0
+vwapLowerBand := _vwap - stdevAbs * 1.0
+
+//plot(vwapUpperBand,title = "Upper VWAP")
+//plot(vwapLowerBand,title = "Lower VWAP")
+
+var bool showRiskSignalBuy = false
+var bool showRiskSignalSell = false
+
+if shortCondition
+    showRiskSignalSell := true
+    showRiskSignalBuy := false
+
+if buyCondition
+    showRiskSignalBuy := true
+    showRiskSignalSell := false
+
+if showRiskSignalSell and not shortCondition and close > vwapUpperBand and open < vwapUpperBand
+    label.new(bar_index, na, "Risk", color=color.white, textcolor=color.black, style=label.style_text_outline, yloc=yloc.abovebar)
+    showRiskSignalSell := false
+    alert("Chance of Reversal in Short")
+
+if showRiskSignalBuy and not buyCondition and close < vwapLowerBand and open > vwapLowerBand
+    label.new(bar_index, na, "Risk", color=color.white, textcolor=color.black, style=label.style_text_outline, yloc=yloc.belowbar)
+    alert("Chance of Reversal in Buy")
+    showRiskSignalBuy := false
+
+// Plot MACD Angle
+plot(macdAngle, title="MACD Angle")
+
+
+//Integration of RSI + MACD
+
+
+len = input(title="RSI Period", defval=7)
+src = input(title="RSI Source", defval=close)
+lbR = input(title="Pivot Lookback Right", defval=5)
+lbL = input(title="Pivot Lookback Left", defval=3)
+
+rangeUpper = input(title="Max of Lookback Range", defval=60)
+rangeLower = input(title="Min of Lookback Range", defval=5)
+plotBull = input(title="Plot Bullish", defval=true)
+plotHiddenBull = input(title="Plot Hidden Bullish", defval=true)
+plotBear = input(title="Plot Bearish", defval=true)
+plotHiddenBear = input(title="Plot Hidden Bearish", defval=false)
+
+bearColor = color.purple
+bullColor = color.green
+hiddenBullColor = color.new(color.green, 80)
+hiddenBearColor = color.new(color.red, 80)
+textColor = color.white
+noneColor = color.new(color.white, 100)
+
+osc = ta.rsi(src, len)
+
+plot(osc, title="RSI", linewidth=2, color=color.new(#8D1699, 100))
+
+hline(50, title="Middle Line", linestyle=hline.style_dotted)
+obLevel = hline(60, title="Overbought", linestyle=hline.style_dotted)
+osLevel = hline(40, title="Oversold", linestyle=hline.style_dotted)
+fill(obLevel, osLevel, title="Background", color=color.new(#9915FF, 90))
+
+plFound = na(ta.pivotlow(osc, lbL, lbR)) ? false : true
+phFound = na(ta.pivothigh(osc, lbL, lbR)) ? false : true
+
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    rangeLower <= bars and bars <= rangeUpper
+
+//------------------------------------------------------------------------------
+// Regular Bullish
+
+// Osc: Higher Low
+oscHL = osc[lbR] > ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Lower Low
+priceLL = low[lbR] < ta.valuewhen(plFound, low[lbR], 1)
+
+bullCond = plotBull and priceLL and oscHL and plFound
+bullSignal = bullCond ? osc[lbR] : na
+
+plotshape(bullCond ? osc[lbR] : na, offset=-lbR, title="Regular Bullish", text="Buy", style=shape.labelup, location=location.belowbar, size=size.small,color=bullColor, textcolor=textColor)
+if bullCond
+    alert("Buy")
+//------------------------------------------------------------------------------
+// Hidden Bullish
+
+// Osc: Lower Low
+oscLL = osc[lbR] < ta.valuewhen(plFound, osc[lbR], 1) and _inRange(plFound[1])
+
+// Price: Higher Low
+priceHL = low[lbR] > ta.valuewhen(plFound, low[lbR], 1)
+
+hiddenBullCond = plotHiddenBull and priceHL and oscLL and plFound
+hiddenBullSignal = hiddenBullCond ? osc[lbR] : na
+
+plotshape(hiddenBullCond ? osc[lbR] : na, offset=-lbR, title="Hidden Bullish", text="Buy", style=shape.labelup, size=size.small, location=location.belowbar, color=bullColor, textcolor=textColor)
+
+longCondition = bullCond or hiddenBullCond
+if hiddenBullCond
+    alert("Hidden Buy")
+
+//------------------------------------------------------------------------------
+// Regular Bearish
+
+// Osc: Lower High
+oscLH = osc[lbR] < ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Higher High
+priceHH = high[lbR] > ta.valuewhen(phFound, high[lbR], 1)
+
+bearCond = plotBear and priceHH and oscLH and phFound
+bearSignal = bearCond ? osc[lbR] : na
+
+plotshape(bearCond ? osc[lbR] : na, offset=-lbR, title="Regular Bearish", text="Short", style=shape.labeldown, location=location.abovebar, size=size.small, color=bearColor, textcolor=textColor)
+if bearCond
+    alert("Short")
+//------------------------------------------------------------------------------
+// Hidden Bearish
+
+// Osc: Higher High
+oscHH = osc[lbR] > ta.valuewhen(phFound, osc[lbR], 1) and _inRange(phFound[1])
+
+// Price: Lower High
+priceLH = high[lbR] < ta.valuewhen(phFound, high[lbR], 1)
+
+hiddenBearCond = plotHiddenBear and priceLH and oscHH and phFound
+hiddenBearSignal = hiddenBearCond ? osc[lbR] : na
+
+plotshape(hiddenBearCond ? osc[lbR] : na, offset=-lbR, title="Hidden Bearish", text="Short", style=shape.labeldown,  size=size.small,location=location.abovebar, color=bearColor, textcolor=textColor)
+if hiddenBearCond
+    alert("Hidden Short")
+//------------------------------------------------------------------------------
+
+
+// Prediction of Next Day's Gap
+lastSignal = nz(bullSignal) > nz(hiddenBullSignal) ? nz(bullSignal) : nz(hiddenBullSignal) > nz(bearSignal) ? nz(bearSignal) : nz(hiddenBearSignal)
+isGapUp = lastSignal < close
+isGapDown = lastSignal > close
+
+// Display signal at the start of the 3:00 candle
+targetTime = timestamp(year, month, dayofmonth, 15, 00)
+isTargetCandle = barstate.isconfirmed and time == targetTime
+
+signalColor = isTargetCandle ? color.green : color.red
+daySignal=isGapUp ? "Gap Up" :"Gap Down"
+label.new(x=isTargetCandle?bar_index:na,y=high,yloc=yloc.abovebar,style=label.style_flag, text=str.tostring(daySignal),textcolor = color.white,color=isGapUp ? color.green : color.red)
+
+// Bollinger Band expansion Criteria
+
+upperBand = basis + mult * dev
+lowerBand = basis - mult * dev
+
+angle = math.atan((upperBand - lowerBand) / length) * (180 / math.pi)
+
+plot(angle, color=color.blue, title="Bollinger Band Angle")
+
+threshold=85
+isExpansion = math.abs(angle) >= threshold
+var bool prevIsExpansion = false
+if isExpansion
+    prevIsExpansion := true
+
+isExpansionCross = isExpansion and not prevIsExpansion
+
+// Determine the signal to display
+var string signal = ""
+if isExpansionCross
+    signal := "Con"
+else if isExpansion and prevIsExpansion
+    signal := "Exp"
+
+// Update the previous expansion state
+if isExpansion
+    prevIsExpansion := true
+else
+    prevIsExpansion := false
+
+plot(angle, color=color.blue, title="Bollinger Band Angle")
+
+// Define label variables
+var label signalLabel = na
+var label prevSignalLabel = na
+
+// Remove previous signal label
+label.delete(prevSignalLabel)
+
+// Display the signal label at the specified location
+if isExpansionCross or isExpansion
+    signalLabel := label.new(x=bar_index, y=high,yloc = yloc.abovebar,color=color.white, textcolor=color.blue, style=label.style_text_outline,text=signal)
+
+// Update previous signal label
+prevSignalLabel := signalLabel
+
+
+//Expansion Contracrtion signal
+bandWidth = (upperBand - lowerBand) / basis * 100
+previousBandWidth = ta.valuewhen(ta.change(basis), bandWidth, 1)
+
+expansionThreshold = input(0.5, "Expansion Threshold")
+contractionThreshold = input(0.3, "Contraction Threshold")
+
+expansionSignal = bandWidth > previousBandWidth * (1 + expansionThreshold)
+contractionSignal = bandWidth < previousBandWidth * (1 - contractionThreshold)
+
+plot(bandWidth, color=color.blue, title="Band Width")
+plotshape(expansionSignal, title="Expansion Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(contractionSignal, title="Contraction Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+
+//Sideways .Tradeable code
+middleBand = basis
+slope = (middleBand - middleBand[length]) / length
+
+prev_slope = ta.valuewhen(slope, slope[1], 1)
+
+Mangle = math.atan(slope) * (180 / math.pi)
+prev_angle = math.atan(prev_slope) * (180 / math.pi)
+
+tradeSign = Mangle < prev_angle ? "TR" : "SW"
+
+var label tradeLabel = na
+
+if not na(tradeLabel)
+    label.delete(tradeLabel)
+
+tradeLabel := label.new(x=bar_index, y=ta.highest(high, length + 10),yloc=yloc.abovebar, text=tradeSign, color=color.green ,textcolor=color.white, style=label.style_text_outline,size=size.small)
+
+
+
+
+///TREND LINES CONCEPT

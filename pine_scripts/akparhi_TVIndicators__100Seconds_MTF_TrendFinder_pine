@@ -1,0 +1,70 @@
+//@version=4
+study(title="100Seconds MTF_TrendFinder", shorttitle = "100Seconds_MTF_TrendFinder")
+
+
+
+colorGrey = #9598a1
+
+//////////////////////////////////////////////////////////////////////////
+// MTF Guppy
+//////////////////////////////////////////////////////////////////////////
+guppyColor(src, anchor) =>
+    //Fast EMA
+    ema1 = ema(src, 3 * anchor)
+    ema2 = ema(src, 5 * anchor)
+    ema3 = ema(src, 8 * anchor)
+    ema4 = ema(src, 10 * anchor)
+    ema5 = ema(src, 12 * anchor)
+    ema6 = ema(src, 15 * anchor)
+    emafast = (ema1 + ema2 + ema3 + ema4 + ema5 + ema6)
+    //Slow EMA
+    ema7 = ema(src, 30 * anchor)
+    ema8 = ema(src, 35 * anchor)
+    ema9 = ema(src, 40 * anchor)
+    ema10 = ema(src, 45 * anchor)
+    ema11 = ema(src, 50 * anchor)
+    ema12 = ema(src, 60 * anchor)
+    emaslow = (ema7 + ema8 + ema9 + ema10 + ema11 + ema12)
+
+    //Fast EMA Color Rules
+    colfastL = (ema1 > ema2 and ema2 > ema3 and ema3 > ema4 and ema4 > ema5 and ema5 > ema6)
+    colfastS = (ema1 < ema2 and ema2 < ema3 and ema3 < ema4 and ema4 < ema5 and ema5 < ema6)
+    //Slow EMA Color Rules
+    colslowL = ema7 > ema8 and ema8 > ema9 and ema9 > ema10 and ema10 > ema11 and ema11 > ema12 
+    colslowS = ema7 < ema8 and ema8 < ema9 and ema9 < ema10 and ema10 < ema11 and ema11 < ema12 
+    //Fast EMA Final Color Rules
+    colFinal = colfastL and ema7 > ema12 ? color.aqua : colfastS and ema7 < ema12 ? color.orange : color.new(color.gray, 80)
+    //Slow EMA Final Color Rules
+    colFinal2 = colslowL  ? color.lime : colslowS ? color.red : color.new(color.gray, 80)
+    [colFinal, colFinal2]
+
+
+
+// === ALT TIMEFRAME ===
+anchor1 = input(1, minval=1, title="Main anchor")
+anchor2 = input(2, minval=2, title="Anchor 2")
+anchor3 = input(3, minval=2, title="Anchor 3")
+
+// PLOT Anchor 1
+[A1ColFinal, A1ColFinal2] = guppyColor(close, anchor1)
+a1TopLine = plot(5, title = 'A1 Guppy TOP Line', transp = 100)
+a1MidLine = plot(2, title = 'A1 Guppy TOP Line', transp = 100)
+a1BottomLine = plot(0, title = 'A1 Guppy BOTTOM Line', transp = 100)
+fill(a1TopLine, a1MidLine, title = 'A1 Guppy Bar Primary Colors', color = A1ColFinal2, transp = 35)
+fill(a1MidLine, a1BottomLine, title = 'A1 Guppy Bar Secondary Colors', color = A1ColFinal, transp = 35)
+
+// PLOT Anchor 2
+[A2ColFinal, A2ColFinal2] = guppyColor(close, anchor2)
+a2TopLine = plot(13, title = 'A2 Guppy TOP Line', transp = 100)
+a2MidLine = plot(10, title = 'A2 Guppy TOP Line', transp = 100)
+a2BottomLine = plot(8, title = 'A2 Guppy BOTTOM Line', transp = 100)
+fill(a2TopLine, a2MidLine, title = 'A2 Guppy Bar Primary Colors', color = A2ColFinal2, transp = 35)
+fill(a2MidLine, a2BottomLine, title = 'A2 Guppy Bar Secondary Colors', color = A2ColFinal, transp = 35)
+
+// PLOT Anchor 3
+[A3ColFinal, A3ColFinal2] = guppyColor(close, anchor3)
+a3TopLine = plot(21, title = 'A3 Guppy TOP Line', transp = 100)
+a3MidLine = plot(18, title = 'A3 Guppy TOP Line', transp = 100)
+a3BottomLine = plot(16, title = 'A3 Guppy BOTTOM Line', transp = 100)
+fill(a3TopLine, a3MidLine, title = 'A3 Guppy Bar Primary Colors', color = A3ColFinal2, transp = 35)
+fill(a3MidLine, a3BottomLine, title = 'A3 Guppy Bar Secondary Colors', color = A3ColFinal, transp = 35)

@@ -1,0 +1,238 @@
+//@version=5
+// ══════════════════════════════════════════════════════════════════════════════
+// Momentum Scalper Pro Strategy
+// ══════════════════════════════════════════════════════════════════════════════
+// Description: RSI divergence + volume analysis scalping strategy
+// Optimized for: 5-minute charts on high liquidity instruments
+// Target Win Rate: ~65%
+// Best for: High liquidity stocks and major forex pairs
+// Author: Pine Script Collection
+// Version: 1.0
+// ══════════════════════════════════════════════════════════════════════════════
+
+strategy("Momentum Scalper Pro",
+         overlay=true,
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=100,
+         commission_type=strategy.commission.percent,
+         commission_value=0.1,
+         slippage=2,
+         calc_on_every_tick=false)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === RSI Divergence Settings ===
+rsiLength = input.int(14, "RSI Length", minval=5, maxval=50, group="RSI Divergence")
+rsiOverbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="RSI Divergence")
+rsiOversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="RSI Divergence")
+pivotLookback = input.int(5, "Pivot Lookback", minval=3, maxval=20, group="RSI Divergence", tooltip="Bars to look left/right for pivot detection")
+
+// === Volume Settings ===
+volumeMALength = input.int(20, "Volume MA Length", minval=10, maxval=100, group="Volume Analysis")
+volumeMultiplier = input.float(1.5, "Volume Surge Multiplier", minval=1.0, maxval=5.0, step=0.1, group="Volume Analysis", tooltip="Volume must be X times the average")
+
+// === Risk Management ===
+atrLength = input.int(14, "ATR Length", minval=5, maxval=30, group="Risk Management")
+atrStopMultiplier = input.float(1.5, "Stop Loss (ATR Multiplier)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+riskRewardRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.1, group="Risk Management")
+useTrailingStop = input.bool(true, "Use Trailing Stop", group="Risk Management")
+trailingStopATR = input.float(2.0, "Trailing Stop (ATR Multiplier)", minval=1.0, maxval=5.0, step=0.1, group="Risk Management")
+
+// === Filter Settings ===
+useTrendFilter = input.bool(true, "Use EMA Trend Filter", group="Filters")
+emaLength = input.int(50, "EMA Length for Filter", minval=20, maxval=200, group="Filters")
+requireVolumeConfirmation = input.bool(true, "Require Volume Confirmation", group="Filters")
+
+// === Visual Settings ===
+showDivergenceLabels = input.bool(true, "Show Divergence Labels", group="Visual")
+showEntryLabels = input.bool(true, "Show Entry/Exit Labels", group="Visual")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === RSI ===
+rsi = ta.rsi(close, rsiLength)
+
+// === Volume Analysis ===
+volumeMA = ta.sma(volume, volumeMALength)
+volumeSurge = volume > (volumeMA * volumeMultiplier)
+
+// === ATR for Risk Management ===
+atr = ta.atr(atrLength)
+
+// === Trend Filter ===
+ema = ta.ema(close, emaLength)
+bullishTrend = useTrendFilter ? close > ema : true
+bearishTrend = useTrendFilter ? close < ema : true
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DIVERGENCE DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Pivot Detection ===
+pricePivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+pricePivotLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+rsiPivotHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
+rsiPivotLow = ta.pivotlow(rsi, pivotLookback, pivotLookback)
+
+// === Store Pivot Values and Bars ===
+var float lastPriceHigh = na
+var float lastPriceLow = na
+var float lastRSIHigh = na
+var float lastRSILow = na
+var int lastPriceHighBar = na
+var int lastPriceLowBar = na
+
+if not na(pricePivotHigh)
+    lastPriceHigh := pricePivotHigh
+    lastPriceHighBar := bar_index - pivotLookback
+
+if not na(pricePivotLow)
+    lastPriceLow := pricePivotLow
+    lastPriceLowBar := bar_index - pivotLookback
+
+if not na(rsiPivotHigh)
+    lastRSIHigh := rsiPivotHigh
+
+if not na(rsiPivotLow)
+    lastRSILow := rsiPivotLow
+
+// === Bullish Divergence (Price lower low, RSI higher low) ===
+bullishDivergence = false
+if not na(pricePivotLow) and not na(lastPriceLow) and not na(lastRSILow) and not na(rsiPivotLow)
+    if pricePivotLow < lastPriceLow and rsiPivotLow > lastRSILow and rsi < rsiOversold
+        bullishDivergence := true
+        if showDivergenceLabels
+            label.new(bar_index - pivotLookback, low[pivotLookback], "Bull Div",
+                     color=color.new(color.green, 0), textcolor=color.white,
+                     style=label.style_label_up, size=size.small)
+
+// === Bearish Divergence (Price higher high, RSI lower high) ===
+bearishDivergence = false
+if not na(pricePivotHigh) and not na(lastPriceHigh) and not na(lastRSIHigh) and not na(rsiPivotHigh)
+    if pricePivotHigh > lastPriceHigh and rsiPivotHigh < lastRSIHigh and rsi > rsiOverbought
+        bearishDivergence := true
+        if showDivergenceLabels
+            label.new(bar_index - pivotLookback, high[pivotLookback], "Bear Div",
+                     color=color.new(color.red, 0), textcolor=color.white,
+                     style=label.style_label_down, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === Long Setup ===
+volumeConfirmLong = requireVolumeConfirmation ? volumeSurge : true
+longCondition = bullishDivergence and bullishTrend and volumeConfirmLong and strategy.position_size == 0
+
+// === Short Setup ===
+volumeConfirmShort = requireVolumeConfirmation ? volumeSurge : true
+shortCondition = bearishDivergence and bearishTrend and volumeConfirmShort and strategy.position_size == 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// POSITION MANAGEMENT
+// ══════════════════════════════════════════════════════════════════════════════
+
+var float entryPrice = na
+var float stopLoss = na
+var float takeProfit = na
+
+// === Long Entry ===
+if longCondition
+    entryPrice := close
+    stopLoss := close - (atr * atrStopMultiplier)
+    stopDistance = entryPrice - stopLoss
+    takeProfit := entryPrice + (stopDistance * riskRewardRatio)
+
+    strategy.entry("Long", strategy.long)
+
+    if showEntryLabels
+        label.new(bar_index, low, "🟢 LONG\nEntry: " + str.tostring(entryPrice, format.mintick) +
+                 "\nSL: " + str.tostring(stopLoss, format.mintick) +
+                 "\nTP: " + str.tostring(takeProfit, format.mintick),
+                 color=color.new(color.green, 0), textcolor=color.white,
+                 style=label.style_label_up, size=size.small)
+
+// === Short Entry ===
+if shortCondition
+    entryPrice := close
+    stopLoss := close + (atr * atrStopMultiplier)
+    stopDistance = stopLoss - entryPrice
+    takeProfit := entryPrice - (stopDistance * riskRewardRatio)
+
+    strategy.entry("Short", strategy.short)
+
+    if showEntryLabels
+        label.new(bar_index, high, "🔴 SHORT\nEntry: " + str.tostring(entryPrice, format.mintick) +
+                 "\nSL: " + str.tostring(stopLoss, format.mintick) +
+                 "\nTP: " + str.tostring(takeProfit, format.mintick),
+                 color=color.new(color.red, 0), textcolor=color.white,
+                 style=label.style_label_down, size=size.small)
+
+// === Exit Management ===
+if strategy.position_size > 0  // Long position
+    if useTrailingStop
+        trailStop = close - (atr * trailingStopATR)
+        strategy.exit("Long Exit", "Long", stop=trailStop, limit=takeProfit, trail_offset=atr * trailingStopATR, trail_points=atr * trailingStopATR / syminfo.mintick)
+    else
+        strategy.exit("Long Exit", "Long", stop=stopLoss, limit=takeProfit)
+
+if strategy.position_size < 0  // Short position
+    if useTrailingStop
+        trailStop = close + (atr * trailingStopATR)
+        strategy.exit("Short Exit", "Short", stop=trailStop, limit=takeProfit, trail_offset=atr * trailingStopATR, trail_points=atr * trailingStopATR / syminfo.mintick)
+    else
+        strategy.exit("Short Exit", "Short", stop=stopLoss, limit=takeProfit)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === EMA Trend Filter ===
+plot(useTrendFilter ? ema : na, "EMA", color=color.new(color.yellow, 0), linewidth=2)
+
+// === RSI Levels (in separate pane) ===
+hline(rsiOverbought, "Overbought", color=color.red, linestyle=hline.style_dotted)
+hline(rsiOversold, "Oversold", color=color.green, linestyle=hline.style_dotted)
+hline(50, "Midline", color=color.gray, linestyle=hline.style_dotted)
+plot(rsi, "RSI", color=color.new(color.blue, 0), linewidth=2)
+
+// === Volume Bars ===
+volumeColor = volume > volumeMA ? color.new(color.green, 50) : color.new(color.gray, 70)
+plot(volume, "Volume", color=volumeColor, style=plot.style_columns)
+plot(volumeMA, "Volume MA", color=color.new(color.orange, 0), linewidth=1)
+
+// === Active Position Lines ===
+longActive = strategy.position_size > 0
+shortActive = strategy.position_size < 0
+
+plot(longActive ? stopLoss : na, "Long SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(longActive ? takeProfit : na, "Long TP", color=color.green, linewidth=2, style=plot.style_circles)
+plot(shortActive ? stopLoss : na, "Short SL", color=color.red, linewidth=2, style=plot.style_circles)
+plot(shortActive ? takeProfit : na, "Short TP", color=color.green, linewidth=2, style=plot.style_circles)
+
+// === Background for Trend ===
+bgcolor(bullishTrend and useTrendFilter ? color.new(color.green, 95) :
+        bearishTrend and useTrendFilter ? color.new(color.red, 95) : na)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(bullishDivergence, "Bullish Divergence", "Bullish RSI Divergence Detected - Potential Long Setup")
+alertcondition(bearishDivergence, "Bearish Divergence", "Bearish RSI Divergence Detected - Potential Short Setup")
+alertcondition(longCondition, "Long Entry", "Momentum Scalper Pro - LONG Entry Signal")
+alertcondition(shortCondition, "Short Entry", "Momentum Scalper Pro - SHORT Entry Signal")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PERFORMANCE NOTES
+// ══════════════════════════════════════════════════════════════════════════════
+// Optimized for 5-minute charts
+// Target win rate: ~65%
+// Best performance on high liquidity instruments with good volume
+// Adjust RSI length and ATR multipliers based on instrument volatility
+// ══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,720 @@
+//@version=6
+strategy(
+     title              = "ILM V1",
+     overlay            = true,
+     initial_capital    = 100000,
+     pyramiding         = 0,
+     margin_long        = 0,
+     margin_short       = 0,
+     commission_type    = strategy.commission.cash_per_contract,
+     commission_value   = 0.05,
+     process_orders_on_close = true,
+     use_bar_magnifier  = true,
+     fill_orders_on_standard_ohlc = false
+)
+
+// ----------------------------------------------------------------------------------------
+// Inputs
+// ----------------------------------------------------------------------------------------
+// Risk Management
+riskUsd       = input.float(1000, "Risk per trade ($)", step=50)
+rr            = input.float(2.0, "Reward/Risk", step=0.25)
+tp1Ratio      = input.float(0.5, "Partial TP & BE Level (0.5 = 50% of target)", step=0.1, minval=0.1, maxval=0.9)
+minQty        = input.float(1.0, "Min Qty", step=0.1)
+qtyStep       = input.float(1.0, "Qty Step", step=0.1)
+beOffsetTicks = input.int(4, "BE Offset (ticks)", step=1, tooltip="Ticks above/below entry for BE stop")
+
+// Session Windows
+entryWindow   = input.session("0830-1130", "Entry window (NY time)")
+flatWindow    = input.session("1550-1600", "Flat window (NY time)")
+
+// Killzone Sessions
+asiaSession   = input.session("2000-0000", "Asia KZ (NY time)")
+londonSession = input.session("0200-0500", "London KZ (NY time)")
+
+// Strategy Settings
+maxBarsAfterSweep = input.int(30, "Max bars after sweep", minval=1, maxval=50, tooltip="Setup expires if no entry within this many bars")
+minGapPts         = input.float(5.0, "Min Gap Size (pts)", step=1.0, minval=0, tooltip="Minimum gap size in points to qualify as valid")
+gapWindowBars     = input.int(10, "Gap Window (bars)", minval=1, maxval=50, tooltip="Only use gaps formed within this many bars before/after the sweep candle")
+
+// ----------------------------------------------------------------------------------------
+// Timeframe check (works on any intraday timeframe)
+// ----------------------------------------------------------------------------------------
+isIntraday = timeframe.isintraday
+barClosed = barstate.isconfirmed
+
+// ----------------------------------------------------------------------------------------
+// Session Detection
+// ----------------------------------------------------------------------------------------
+tz = "America/New_York"
+
+inAsia      = not na(time(timeframe.period, asiaSession, tz))
+inAsiaPrev  = not na(time(timeframe.period, asiaSession, tz)[1])
+asiaJustEnded = not inAsia and inAsiaPrev
+
+inLondon      = not na(time(timeframe.period, londonSession, tz))
+inLondonPrev  = not na(time(timeframe.period, londonSession, tz)[1])
+londonJustEnded = not inLondon and inLondonPrev
+
+inEntryWin = not na(time(timeframe.period, entryWindow, tz))
+inEntryWinPrev = not na(time(timeframe.period, entryWindow, tz)[1])
+entryWinJustStarted = inEntryWin and not inEntryWinPrev
+
+inFlatWin  = not na(time(timeframe.period, flatWindow, tz))
+
+afterCutoff = not inEntryWin
+
+// New trading day
+newDay = ta.change(time("D")) != 0
+
+// ----------------------------------------------------------------------------------------
+// Killzone Level Tracking (most recent killzone only)
+// ----------------------------------------------------------------------------------------
+// Temporary tracking during session
+var float tempKzHigh = na
+var float tempKzLow  = na
+var int   tempKzHighBar = na  // Bar index where high was made
+var int   tempKzLowBar  = na  // Bar index where low was made
+var bool  inKzSession = false
+
+// Active killzone levels (locked after session ends)
+var float kzHigh = na
+var float kzLow  = na
+var int   kzHighBar = na  // Bar index where high was made
+var int   kzLowBar  = na  // Bar index where low was made
+var string kzSource = na  // "asia" or "london"
+
+// Sweep and trade tracking
+var bool kzHighSwept  = false
+var bool kzLowSwept   = false
+var bool kzHighTraded = false
+var bool kzLowTraded  = false
+
+
+// Track H/L during Asia session
+if inAsia
+    inKzSession := true
+    if na(tempKzHigh) or high > tempKzHigh
+        tempKzHigh := high
+        tempKzHighBar := bar_index
+    if na(tempKzLow) or low < tempKzLow
+        tempKzLow := low
+        tempKzLowBar := bar_index
+
+// Track H/L during London session
+if inLondon
+    inKzSession := true
+    if na(tempKzHigh) or high > tempKzHigh
+        tempKzHigh := high
+        tempKzHighBar := bar_index
+    if na(tempKzLow) or low < tempKzLow
+        tempKzLow := low
+        tempKzLowBar := bar_index
+
+// Lock Asia levels when session ends
+if asiaJustEnded and not na(tempKzHigh) and not na(tempKzLow)
+    kzHigh := tempKzHigh
+    kzLow  := tempKzLow
+    kzHighBar := tempKzHighBar
+    kzLowBar := tempKzLowBar
+    kzSource := "asia"
+    kzHighSwept := false
+    kzLowSwept := false
+    kzHighTraded := false
+    kzLowTraded := false
+    tempKzHigh := na
+    tempKzLow := na
+    tempKzHighBar := na
+    tempKzLowBar := na
+    inKzSession := false
+
+// Lock London levels when session ends (replaces Asia)
+if londonJustEnded and not na(tempKzHigh) and not na(tempKzLow)
+    kzHigh := tempKzHigh
+    kzLow  := tempKzLow
+    kzHighBar := tempKzHighBar
+    kzLowBar := tempKzLowBar
+    kzSource := "london"
+    kzHighSwept := false
+    kzLowSwept := false
+    kzHighTraded := false
+    kzLowTraded := false
+    tempKzHigh := na
+    tempKzLow := na
+    tempKzHighBar := na
+    tempKzLowBar := na
+    inKzSession := false
+
+// ----------------------------------------------------------------------------------------
+// Previous Day High/Low Tracking
+// ----------------------------------------------------------------------------------------
+var float pdh = na
+var float pdl = na
+var int   pdhBar = na
+var int   pdlBar = na
+var bool  pdhSwept = false
+var bool  pdlSwept = false
+var bool  pdhTraded = false
+var bool  pdlTraded = false
+var int   pdhSourceTime = na  // Timestamp when PDH/PDL was set (to ensure we only use previous day)
+
+// Track current day's high/low
+var float currentDayHigh = na
+var float currentDayLow = na
+var int   currentDayHighBar = na
+var int   currentDayLowBar = na
+var int   currentDayStartTime = na  // Track current day start timestamp
+
+if newDay
+    // Lock previous day's levels
+    pdh := currentDayHigh
+    pdl := currentDayLow
+    pdhBar := currentDayHighBar
+    pdlBar := currentDayLowBar
+    pdhSwept := false
+    pdlSwept := false
+    pdhTraded := false
+    pdlTraded := false
+    pdhSourceTime := currentDayStartTime  // Remember when these levels are from
+    // Reset current day tracking
+    currentDayHigh := high
+    currentDayLow := low
+    currentDayHighBar := bar_index
+    currentDayLowBar := bar_index
+    currentDayStartTime := time
+else
+    if na(currentDayStartTime)
+        currentDayStartTime := time
+    if na(currentDayHigh) or high > currentDayHigh
+        currentDayHigh := high
+        currentDayHighBar := bar_index
+    if na(currentDayLow) or low < currentDayLow
+        currentDayLow := low
+        currentDayLowBar := bar_index
+
+// Check if PDH/PDL is from the previous day (not older)
+// Previous day means the source time is within 2 calendar days (accounts for weekends)
+msPerDay = 24 * 60 * 60 * 1000
+daysSincePdh = na(pdhSourceTime) ? na : (time - pdhSourceTime) / msPerDay
+isPdhFromPreviousDay = not na(daysSincePdh) and daysSincePdh >= 0 and daysSincePdh < 4  // Allow up to 4 days for weekends
+
+// ----------------------------------------------------------------------------------------
+// Setup State Machine
+// ----------------------------------------------------------------------------------------
+var bool  waitingForGap       = false
+var bool  waitingForInversion = false
+var string sweepType          = na      // "bullish" (for long after low sweep) or "bearish" (for short after high sweep)
+var string sweepSource        = na      // "kzHigh", "kzLow", "pdh", "pdl"
+var int   sweepBar            = na
+var int   barsAfterSweep      = 0
+
+// Track actual sweep bar indices (when price first trades through level)
+var int kzHighSweepBar = na
+var int kzLowSweepBar = na
+var int pdhSweepBar = na
+var int pdlSweepBar = na
+
+// Gap storage
+var float gapTop    = na
+var float gapBottom = na
+var bool  gapIsBullish = false
+var int   gapBar    = na
+var float gapImpulseLow  = na  // Low of the impulse candle (for long stop)
+var float gapImpulseHigh = na  // High of the impulse candle (for short stop)
+
+// Position tracking
+var float longStopStored     = na
+var float longTargetStored   = na
+var float longHalfwayStored  = na
+var float longEntryStored    = na
+var float longQtyStored      = na
+var float longHalfQty        = na
+var bool  longBEActive       = false
+var bool  longSingleContract = false
+var float longFilledEntry    = na
+
+var float shortStopStored     = na
+var float shortTargetStored   = na
+var float shortHalfwayStored  = na
+var float shortEntryStored    = na
+var float shortQtyStored      = na
+var float shortHalfQty        = na
+var bool  shortBEActive       = false
+var bool  shortSingleContract = false
+var float shortFilledEntry    = na
+
+
+// ----------------------------------------------------------------------------------------
+// Daily Reset
+// ----------------------------------------------------------------------------------------
+if newDay
+    // Reset killzone levels
+    kzHigh := na
+    kzLow := na
+    kzHighBar := na
+    kzLowBar := na
+    kzSource := na
+    kzHighSwept := false
+    kzLowSwept := false
+    kzHighTraded := false
+    kzLowTraded := false
+    tempKzHigh := na
+    tempKzLow := na
+    tempKzHighBar := na
+    tempKzLowBar := na
+    inKzSession := false
+
+    // Note: PDH/PDL are updated in the PDH/PDL tracking section above
+    // Only reset the swept/traded flags here (levels are set from previous day)
+    // pdhSwept, pdlSwept, pdhTraded, pdlTraded are reset in the PDH/PDL section
+
+    // Reset sweep bar tracking
+    kzHighSweepBar := na
+    kzLowSweepBar := na
+    pdhSweepBar := na
+    pdlSweepBar := na
+
+    // Reset setup state
+    waitingForGap := false
+    waitingForInversion := false
+    sweepType := na
+    sweepSource := na
+    sweepBar := na
+    barsAfterSweep := 0
+
+    // Reset gap storage
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+    gapImpulseLow := na
+    gapImpulseHigh := na
+
+    // Reset position tracking
+    longStopStored := na
+    longTargetStored := na
+    longHalfwayStored := na
+    longEntryStored := na
+    longQtyStored := na
+    longHalfQty := na
+    longBEActive := false
+    longSingleContract := false
+    longFilledEntry := na
+
+    shortStopStored := na
+    shortTargetStored := na
+    shortHalfwayStored := na
+    shortEntryStored := na
+    shortQtyStored := na
+    shortHalfQty := na
+    shortBEActive := false
+    shortSingleContract := false
+    shortFilledEntry := na
+
+    strategy.cancel_all()
+
+// ----------------------------------------------------------------------------------------
+// Sweep Detection
+// ----------------------------------------------------------------------------------------
+// Detect when levels are actually swept (anytime, not just entry window)
+// This is used for visualization and timing validation
+if barClosed and isIntraday
+    if not na(kzHigh) and not kzHighSwept and high > kzHigh
+        kzHighSwept := true
+        kzHighSweepBar := bar_index
+    if not na(kzLow) and not kzLowSwept and low < kzLow
+        kzLowSwept := true
+        kzLowSweepBar := bar_index
+    if not na(pdh) and not pdhSwept and high > pdh
+        pdhSwept := true
+        pdhSweepBar := bar_index
+    if not na(pdl) and not pdlSwept and low < pdl
+        pdlSwept := true
+        pdlSweepBar := bar_index
+
+// Only start setups during entry window when not already in a setup
+canDetectSweepBase = isIntraday and barClosed and inEntryWin and strategy.position_size == 0 and not waitingForGap and not waitingForInversion
+
+// Killzone level sweeps - check if sweep happened recently enough (within gapWindowBars)
+canDetectKzSweep = canDetectSweepBase and not na(kzHigh) and not na(kzLow)
+
+// KZ High sweep -> bearish setup (looking for short)
+// Only valid if swept AND the sweep bar is within the gap window from current bar
+if canDetectKzSweep and kzHighSwept and not kzHighTraded and not na(kzHighSweepBar) and (bar_index - kzHighSweepBar) <= gapWindowBars
+    kzHighTraded := true  // Mark as traded to prevent re-entry
+    sweepType := "bearish"
+    sweepSource := "kzHigh"
+    sweepBar := kzHighSweepBar  // Use actual sweep bar, not current bar
+    barsAfterSweep := bar_index - kzHighSweepBar  // Account for bars already passed
+    waitingForGap := true
+    // Reset any prior gap data
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+
+// KZ Low sweep -> bullish setup (looking for long)
+if canDetectKzSweep and kzLowSwept and not kzLowTraded and not na(kzLowSweepBar) and (bar_index - kzLowSweepBar) <= gapWindowBars
+    kzLowTraded := true  // Mark as traded to prevent re-entry
+    sweepType := "bullish"
+    sweepSource := "kzLow"
+    sweepBar := kzLowSweepBar  // Use actual sweep bar, not current bar
+    barsAfterSweep := bar_index - kzLowSweepBar  // Account for bars already passed
+    waitingForGap := true
+    // Reset any prior gap data
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+
+// PDH/PDL sweeps (only use levels from previous day, not older)
+canDetectPdSweep = canDetectSweepBase and not na(pdh) and not na(pdl) and isPdhFromPreviousDay
+
+// PDH sweep -> bearish setup (looking for short)
+if canDetectPdSweep and pdhSwept and not pdhTraded and not na(pdhSweepBar) and (bar_index - pdhSweepBar) <= gapWindowBars
+    pdhTraded := true  // Mark as traded to prevent re-entry
+    sweepType := "bearish"
+    sweepSource := "pdh"
+    sweepBar := pdhSweepBar  // Use actual sweep bar, not current bar
+    barsAfterSweep := bar_index - pdhSweepBar  // Account for bars already passed
+    waitingForGap := true
+    // Reset any prior gap data
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+
+// PDL sweep -> bullish setup (looking for long)
+if canDetectPdSweep and pdlSwept and not pdlTraded and not na(pdlSweepBar) and (bar_index - pdlSweepBar) <= gapWindowBars
+    pdlTraded := true  // Mark as traded to prevent re-entry
+    sweepType := "bullish"
+    sweepSource := "pdl"
+    sweepBar := pdlSweepBar  // Use actual sweep bar, not current bar
+    barsAfterSweep := bar_index - pdlSweepBar  // Account for bars already passed
+    waitingForGap := true
+    // Reset any prior gap data
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+
+// ----------------------------------------------------------------------------------------
+// Gap Detection (3-candle pattern)
+// ----------------------------------------------------------------------------------------
+// Bullish Gap: gap between bar[2] high and bar[0] low
+bullishGapSize = low - high[2]
+bullishGapDetected = high[2] < low and high[2] < high[1] and low[2] < low and bullishGapSize >= minGapPts
+bullishGapTop = low         // top of gap (current bar low)
+bullishGapBottom = high[2]  // bottom of gap (bar[2] high)
+
+// Bearish Gap: gap between bar[2] low and bar[0] high
+bearishGapSize = low[2] - high
+bearishGapDetected = low[2] > high and low[2] > low[1] and high[2] > high and bearishGapSize >= minGapPts
+bearishGapTop = low[2]      // top of gap (bar[2] low)
+bearishGapBottom = high     // bottom of gap (current bar high)
+
+// Detect Gap after sweep
+// Gap is formed at the impulse candle (bar[1]), so check if that bar is within the window
+if waitingForGap and barClosed and isIntraday
+    // The impulse bar (bar[1]) is where the gap is created
+    impulseBar = bar_index - 1
+    gapWithinWindow = not na(sweepBar) and math.abs(impulseBar - sweepBar) <= gapWindowBars
+
+    // For bearish setup (after high sweep): wait for BULLISH Gap
+    if sweepType == "bearish" and bullishGapDetected and gapWithinWindow
+        gapTop := bullishGapTop
+        gapBottom := bullishGapBottom
+        gapIsBullish := true
+        gapBar := bar_index
+        gapImpulseLow := low[1]   // Store impulse candle low
+        gapImpulseHigh := high[1] // Store impulse candle high
+        waitingForGap := false
+        waitingForInversion := true
+
+    // For bullish setup (after low sweep): wait for BEARISH Gap
+    if sweepType == "bullish" and bearishGapDetected and gapWithinWindow
+        gapTop := bearishGapTop
+        gapBottom := bearishGapBottom
+        gapIsBullish := false
+        gapBar := bar_index
+        gapImpulseLow := low[1]   // Store impulse candle low
+        gapImpulseHigh := high[1] // Store impulse candle high
+        waitingForGap := false
+        waitingForInversion := true
+
+// ----------------------------------------------------------------------------------------
+// Setup Expiration (12 bars after sweep)
+// ----------------------------------------------------------------------------------------
+if (waitingForGap or waitingForInversion) and barClosed and isIntraday
+    barsAfterSweep += 1
+
+if barsAfterSweep >= maxBarsAfterSweep
+    waitingForGap := false
+    waitingForInversion := false
+    sweepType := na
+    sweepSource := na
+    sweepBar := na
+    barsAfterSweep := 0
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+    gapImpulseLow := na
+    gapImpulseHigh := na
+
+// ----------------------------------------------------------------------------------------
+// Qty Rounding Helper
+// ----------------------------------------------------------------------------------------
+floorToStep(x, step) =>
+    step <= 0 ? x : math.floor(x / step) * step
+
+// BE offset calculation
+beOffset = beOffsetTicks * syminfo.mintick
+
+// ----------------------------------------------------------------------------------------
+// Inversion Detection & Entry
+// ----------------------------------------------------------------------------------------
+// Also check barsAfterSweep to ensure we don't enter after setup should have expired
+if waitingForInversion and barClosed and isIntraday and inEntryWin and strategy.position_size == 0 and barsAfterSweep < maxBarsAfterSweep
+    // Bullish Gap inversion (SHORT entry): candle closes BELOW the bullish gap
+    if gapIsBullish and close < gapBottom
+        // Entry calculation
+        entry = close
+        stop = gapTop  // Stop at high of gap
+        riskPts = stop - entry
+
+        if riskPts > 0
+            qtyRaw = riskUsd / (riskPts * syminfo.pointvalue)
+            qty = floorToStep(qtyRaw, qtyStep)
+            isSingleContract = qty <= minQty
+            halfQty = isSingleContract ? qty : floorToStep(qty / 2, qtyStep)
+            halfQty := math.max(halfQty, minQty)
+
+            if qty >= minQty
+                shortStopStored := stop
+                shortTargetStored := entry - rr * riskPts
+                shortHalfwayStored := entry - (rr * riskPts * tp1Ratio)
+                shortEntryStored := entry
+                shortQtyStored := qty
+                shortHalfQty := halfQty
+                shortSingleContract := isSingleContract
+                shortBEActive := false
+                shortFilledEntry := na
+
+                strategy.entry("S", strategy.short, qty=qty)
+
+                // Mark the swept level as traded
+                if sweepSource == "kzHigh"
+                    kzHighTraded := true
+                else if sweepSource == "pdh"
+                    pdhTraded := true
+                waitingForInversion := false
+                sweepType := na
+                sweepSource := na
+                gapTop := na
+                gapBottom := na
+                gapIsBullish := false
+
+    // Bearish Gap inversion (LONG entry): candle closes ABOVE the bearish gap
+    if not gapIsBullish and close > gapTop
+        // Entry calculation
+        entry = close
+        stop = gapImpulseLow  // Stop at low of impulse candle
+        riskPts = entry - stop
+
+        if riskPts > 0
+            qtyRaw = riskUsd / (riskPts * syminfo.pointvalue)
+            qty = floorToStep(qtyRaw, qtyStep)
+            isSingleContract = qty <= minQty
+            halfQty = isSingleContract ? qty : floorToStep(qty / 2, qtyStep)
+            halfQty := math.max(halfQty, minQty)
+
+            if qty >= minQty
+                longStopStored := stop
+                longTargetStored := entry + rr * riskPts
+                longHalfwayStored := entry + (rr * riskPts * tp1Ratio)
+                longEntryStored := entry
+                longQtyStored := qty
+                longHalfQty := halfQty
+                longSingleContract := isSingleContract
+                longBEActive := false
+                longFilledEntry := na
+
+                strategy.entry("L", strategy.long, qty=qty)
+
+                // Mark the swept level as traded
+                if sweepSource == "kzLow"
+                    kzLowTraded := true
+                else if sweepSource == "pdl"
+                    pdlTraded := true
+                waitingForInversion := false
+                sweepType := na
+                sweepSource := na
+                gapTop := na
+                gapBottom := na
+                gapIsBullish := false
+
+// ----------------------------------------------------------------------------------------
+// Track Actual Entry Fill Price
+// ----------------------------------------------------------------------------------------
+if strategy.position_size > 0 and na(longFilledEntry)
+    longFilledEntry := strategy.opentrades.entry_price(0)
+if strategy.position_size < 0 and na(shortFilledEntry)
+    shortFilledEntry := strategy.opentrades.entry_price(0)
+
+// ----------------------------------------------------------------------------------------
+// Breakeven State Update
+// ----------------------------------------------------------------------------------------
+if strategy.position_size > 0
+    if longSingleContract
+        if not na(longHalfwayStored) and high >= longHalfwayStored
+            longBEActive := true
+    else
+        positionReduced = strategy.position_size < longQtyStored and longQtyStored > 0 and not na(longFilledEntry)
+        if (not na(longHalfwayStored) and high >= longHalfwayStored) or positionReduced
+            longBEActive := true
+
+if strategy.position_size < 0
+    if shortSingleContract
+        if not na(shortHalfwayStored) and low <= shortHalfwayStored
+            shortBEActive := true
+    else
+        positionReduced = math.abs(strategy.position_size) < shortQtyStored and shortQtyStored > 0 and not na(shortFilledEntry)
+        if (not na(shortHalfwayStored) and low <= shortHalfwayStored) or positionReduced
+            shortBEActive := true
+
+// ----------------------------------------------------------------------------------------
+// Exit Orders
+// ----------------------------------------------------------------------------------------
+if strategy.position_size > 0
+    beStopPrice = (not na(longFilledEntry) ? longFilledEntry : longEntryStored) + beOffset
+    finalStop = longBEActive ? beStopPrice : longStopStored
+
+    if longSingleContract
+        strategy.exit("L-F", from_entry="L", stop=finalStop, limit=longTargetStored, comment_loss=longBEActive ? "l-be" : "l-sl", comment_profit="l-tp2")
+    else
+        strategy.exit("L-P", from_entry="L", qty=longHalfQty, stop=longStopStored, limit=longHalfwayStored, comment_loss="l-sl", comment_profit="l-tp1")
+        strategy.exit("L-F", from_entry="L", stop=finalStop, limit=longTargetStored, comment_loss=longBEActive ? "l-be" : "l-sl", comment_profit="l-tp2")
+
+if strategy.position_size < 0
+    beStopPrice = (not na(shortFilledEntry) ? shortFilledEntry : shortEntryStored) - beOffset
+    finalStop = shortBEActive ? beStopPrice : shortStopStored
+
+    if shortSingleContract
+        strategy.exit("S-F", from_entry="S", stop=finalStop, limit=shortTargetStored, comment_loss=shortBEActive ? "s-be" : "s-sl", comment_profit="s-tp2")
+    else
+        strategy.exit("S-P", from_entry="S", qty=shortHalfQty, stop=shortStopStored, limit=shortHalfwayStored, comment_loss="s-sl", comment_profit="s-tp1")
+        strategy.exit("S-F", from_entry="S", stop=finalStop, limit=shortTargetStored, comment_loss=shortBEActive ? "s-be" : "s-sl", comment_profit="s-tp2")
+
+// ----------------------------------------------------------------------------------------
+// Cancel Setups After Cutoff
+// ----------------------------------------------------------------------------------------
+if afterCutoff
+    waitingForGap := false
+    waitingForInversion := false
+    sweepType := na
+    sweepSource := na
+    sweepBar := na
+    barsAfterSweep := 0
+    gapTop := na
+    gapBottom := na
+    gapIsBullish := false
+    gapBar := na
+    gapImpulseLow := na
+    gapImpulseHigh := na
+
+// ----------------------------------------------------------------------------------------
+// Flat at 15:50
+// ----------------------------------------------------------------------------------------
+if inFlatWin and strategy.position_size != 0
+    if strategy.position_size > 0
+        strategy.close("L", comment="eod-flat")
+    if strategy.position_size < 0
+        strategy.close("S", comment="eod-flat")
+
+// ----------------------------------------------------------------------------------------
+// Visualization - Killzone Levels (like ICT Killzones indicator)
+// ----------------------------------------------------------------------------------------
+// Max sessions to display
+var int maxSessions = 30
+
+// Arrays for storing multiple sessions
+var array<line>  kzHighLines  = array.new_line()
+var array<line>  kzLowLines   = array.new_line()
+var array<label> kzHighLabels = array.new_label()
+var array<label> kzLowLabels  = array.new_label()
+var array<bool>  kzHighValids = array.new_bool()
+var array<bool>  kzLowValids  = array.new_bool()
+
+// Transparent color for label background
+var transparent = color.new(color.white, 100)
+
+// Helper function to add new killzone visuals
+addKzVisuals(int highBar, float highPrice, int lowBar, float lowPrice, string source, bool highAlreadySwept, bool lowAlreadySwept) =>
+    // Create high line starting from the bar where the high was made
+    hiLine = line.new(highBar, highPrice, bar_index, highPrice, xloc=xloc.bar_index,
+         style=line.style_solid, color=color.red, width=1)
+    hiLabel = label.new(highBar, highPrice, str.upper(source) + ".H",
+         xloc=xloc.bar_index, style=label.style_label_down, color=transparent, textcolor=color.red, size=size.small)
+
+    // Create low line starting from the bar where the low was made
+    loLine = line.new(lowBar, lowPrice, bar_index, lowPrice, xloc=xloc.bar_index,
+         style=line.style_solid, color=color.green, width=1)
+    loLabel = label.new(lowBar, lowPrice, str.upper(source) + ".L",
+         xloc=xloc.bar_index, style=label.style_label_up, color=transparent, textcolor=color.green, size=size.small)
+
+    // Add to arrays (at beginning) - mark as invalid if already swept
+    array.unshift(kzHighLines, hiLine)
+    array.unshift(kzLowLines, loLine)
+    array.unshift(kzHighLabels, hiLabel)
+    array.unshift(kzLowLabels, loLabel)
+    array.unshift(kzHighValids, not highAlreadySwept)
+    array.unshift(kzLowValids, not lowAlreadySwept)
+
+    // Remove old entries if exceeding max
+    if array.size(kzHighLines) > maxSessions
+        line.delete(array.pop(kzHighLines))
+        line.delete(array.pop(kzLowLines))
+        label.delete(array.pop(kzHighLabels))
+        label.delete(array.pop(kzLowLabels))
+        array.pop(kzHighValids)
+        array.pop(kzLowValids)
+
+// Detect when Asia session ends and create lines
+if asiaJustEnded and not na(kzHigh) and not na(kzLow)
+    addKzVisuals(kzHighBar, kzHigh, kzLowBar, kzLow, "asia", kzHighSwept, kzLowSwept)
+
+// Detect when London session ends and create lines
+if londonJustEnded and not na(kzHigh) and not na(kzLow)
+    addKzVisuals(kzHighBar, kzHigh, kzLowBar, kzLow, "ldn", kzHighSwept, kzLowSwept)
+
+// Create PDH/PDL lines on new day when levels are locked
+if newDay and not na(pdh) and not na(pdl)
+    addKzVisuals(pdhBar, pdh, pdlBar, pdl, "pd", pdhSwept, pdlSwept)
+
+// Update all lines - extend valid ones, check for mitigation
+if array.size(kzHighLines) > 0
+    for i = 0 to array.size(kzHighLines) - 1
+        // High lines
+        if array.get(kzHighValids, i)
+            hiLine = array.get(kzHighLines, i)
+            hiPrice = line.get_y1(hiLine)
+            // Check if traded through
+            if high > hiPrice
+                array.set(kzHighValids, i, false)
+                // Set line end to the bar that traded through it
+                line.set_x2(hiLine, bar_index)
+            else
+                line.set_x2(hiLine, bar_index)
+
+        // Low lines
+        if array.get(kzLowValids, i)
+            loLine = array.get(kzLowLines, i)
+            loPrice = line.get_y1(loLine)
+            // Check if traded through
+            if low < loPrice
+                array.set(kzLowValids, i, false)
+                // Set line end to the bar that traded through it
+                line.set_x2(loLine, bar_index)
+            else
+                line.set_x2(loLine, bar_index)

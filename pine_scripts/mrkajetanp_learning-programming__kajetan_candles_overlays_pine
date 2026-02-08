@@ -1,0 +1,436 @@
+//@version=4
+study(title="Kajetan's Candles & Overlays", overlay=true)
+
+// *** SNAPBACK ***
+
+hps = input(true, title="High Probability Setup")
+
+// Inputs
+src = ohlc4
+len1 = 7
+len2 = 14
+len3 = 21
+
+// Moving Average (Mid Point Fair Value)
+ma1 = sma(src, len1)
+ma2 = sma(src, len2)
+ma3 = sma(src, len3)
+
+// ATR (Dynamic Volatility Units)
+rng1 = sma(tr, len1)
+rng2 = sma(tr, len2)
+rng3 = sma(tr, len3)
+
+// ATR deviation or Secret Sauce of the promoter
+up1 = ma1 + rng1 * 1.6
+up2 = ma2 + rng2 * 2.4
+up3 = ma2 + rng3 * 3.2
+
+dn1 = ma1 - rng1 * 1.6
+dn2 = ma2 - rng2 * 2.4
+dn3 = ma2 - rng2 * 3.2
+
+// High Probability Trade Setup
+ERhigh3 = high > up1 and high > up2 and high > up3 ? 1 : 0
+ERlow3 = low < dn1 and low < dn2 and low < dn3 ? 1 : 0
+
+// Plots Based on Selection
+HiPERh = hps and ERhigh3[1] != 1 and ERhigh3 ? 1 : 0
+HiPERl = hps and ERlow3[1] != 1 and ERlow3 ? 1 : 0
+
+// PLOT
+plotshape(HiPERh, style=shape.diamond, location=location.abovebar, color=#ff5d00, transp=0, size=size.tiny, title="High Probability Setup")
+plotshape(HiPERl, style=shape.diamond, location=location.belowbar, color=#ff5d00, transp=0, size=size.tiny, title="High Probability Setup")
+
+// *** Tops & Bottoms ***
+
+a = input(5, "Percent K Length")
+b = input(3, "Percent D Length")
+
+// Range Calculation
+ll = lowest(low, a)
+hh = highest(high, a)
+diff = hh - ll
+rdiff = close - (hh + ll) / 2
+
+// Nested Moving Average for smoother curves
+avgrel = ema(ema(rdiff, b), b)
+avgdiff = ema(ema(diff, b), b)
+
+// Momentum
+mom = (close - close[b]) / close[b] * 1000
+
+
+// SMI calculations
+SMI = avgdiff != 0 ? avgrel / (avgdiff / 2) * 100 : 0
+SMIsignal = ema(SMI, b)
+
+// Strategy Signals
+// Buy Setup
+long = SMI < -35 and mom > 0 and mom[1] < 0 ? 1 : 0
+
+plotshape(long, style=shape.circle, location=location.belowbar, color=color.yellow, transp=0, size=size.tiny)
+// Short Setup
+short = SMI > 35 and mom < 0 and mom[1] > 0 ? 1 : 0
+plotshape(short, style=shape.xcross, location=location.abovebar, color=color.yellow, transp=0, size=size.tiny)
+
+// *** UT Bot ***
+//CREDITS to HPotter for the orginal code. The guy trying to sell this as his own is a scammer lol. 
+
+// Inputs
+ut_a = input(15, title = "UT Bot Key Value")
+c = input(10, title = "UT Bot ATR Period")
+h = input(false, title = "UT Bot Signals from Heikin Ashi")
+
+xATR  = atr(c)
+nLoss = ut_a * xATR
+
+ut_src = h ? security(heikinashi(syminfo.tickerid), timeframe.period, close, lookahead = false) : close
+
+xATRTrailingStop = 0.0
+xATRTrailingStop := iff(ut_src > nz(xATRTrailingStop[1], 0) and ut_src[1] > nz(xATRTrailingStop[1], 0), max(nz(xATRTrailingStop[1]), ut_src - nLoss),
+   iff(ut_src < nz(xATRTrailingStop[1], 0) and ut_src[1] < nz(xATRTrailingStop[1], 0), min(nz(xATRTrailingStop[1]), ut_src + nLoss), 
+   iff(ut_src > nz(xATRTrailingStop[1], 0), ut_src - nLoss, ut_src + nLoss)))
+ 
+pos = 0   
+pos :=	iff(ut_src[1] < nz(xATRTrailingStop[1], 0) and ut_src > nz(xATRTrailingStop[1], 0), 1,
+   iff(ut_src[1] > nz(xATRTrailingStop[1], 0) and ut_src < nz(xATRTrailingStop[1], 0), -1, nz(pos[1], 0))) 
+   
+xcolor = pos == -1 ? color.red: pos == 1 ? color.green : color.blue 
+
+ema   = ema(ut_src,1)
+above = crossover(ema, xATRTrailingStop)
+below = crossover(xATRTrailingStop, ema)
+
+buy  = ut_src > xATRTrailingStop and above 
+sell = ut_src < xATRTrailingStop and below
+//
+plotshape(buy,  title = "UT Buy",  text = 'Buy',  style = shape.labelup,   location = location.belowbar, color= color.green, textcolor = color.white, transp = 0, size = size.tiny)
+plotshape(sell, title = "UT Sell", text = 'Sell', style = shape.labeldown, location = location.abovebar, color= color.red,   textcolor = color.white, transp = 0, size = size.tiny)
+
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////// TREND DIRECTION /////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+TD= input(title="== TREND DIRECTION ==", defval=true)
+RISK= input(title="Risk", type=input.integer, defval=30)
+SIZE = input(title="Size", type=input.string, defval=size.small, options=[size.small, size.tiny,size.normal,size.large])
+text_up = input(title="TEXT Buy", defval="Long", type=input.string)
+text_dn = input(title="TEXT Sell", defval="Short", type=input.string)
+
+range(length) =>
+	sum = 0.0
+	for i = 1 to length-1
+		sum := sum + abs(high[i]-low[i])
+	sum / length
+
+MRO1(length, range) =>
+	true_count = 0
+	counter = 0
+	for i = 1 to length-1
+		if abs(open[i]-close[i+1]) >= range*2.0
+			true_count := true_count + 1
+			counter = i
+			break
+	mro = if true_count >= 1
+		counter
+	else
+		-1	
+	mro
+
+MRO2(length, range) =>
+	true_count = 0.0
+	counter = 0
+	for i = 1 to length-1
+		if abs(close[i+3]-close[i]) >= range*4.6
+			true_count := true_count + 1
+			counter = i
+			break
+	mro = if true_count >= 1
+		counter
+	else
+		-1	
+	mro
+
+wpr(length) =>
+	upper = highest(length)
+	lower = lowest(length)
+	out = 100 * (close - upper) / (upper - lower)
+	out
+
+
+TS(RISK) =>
+    value10=3+RISK*2
+    value11=value10
+    x1=67+RISK
+    x2=33-RISK
+    
+    rng = range(10)
+    mro1=MRO1(10,rng)
+    mro2=MRO2(7,rng)
+    
+    rez = if mro1>-1
+    	3
+    else
+    	value10
+    	
+    value11:=rez
+    rez1 = if mro2>-1
+    	4
+    else
+    	value10
+    value11:=rez1
+    
+    value2 = 100-abs(wpr(value10))
+    
+    Table_value2=value2
+    
+    notset=false
+    ii1 = 1
+    for i1 = 1 to 300
+        if ((Table_value2[i1] < x2 or Table_value2[i1] > x1) and notset==false)
+            notset:=true
+            ii1 := i1
+    
+    z=Table_value2[ii1]
+    
+    dn = if value2 < x2
+        if Table_value2[ii1] > x1
+            ii1
+    	else
+    	    0
+    else
+        0
+    
+    up = if value2 > x1
+        if Table_value2[ii1] < x2
+            ii1
+    	else
+    	    0
+    else
+        0
+    
+    [up, dn]
+
+[up, dn] = TS(RISK)
+
+
+text_label = up ? text_up : text_dn
+color_label = up ? color.new(color.aqua, 20) : color.new(color.red, 20)
+textcolor_label = up ? color.new(color.white, 20) : color.new(color.white, 20)
+style_label = up ? label.style_labelup : label.style_labeldown
+y_label = up ? yloc.belowbar : yloc.abovebar
+x_pos = up ? up : dn
+
+_up = 0, _dn = 0
+_up := barssince(up)
+_dn := barssince(dn)
+
+//plot(_up, title='Debug _up', transp=100)
+
+var label TS_UP_Label = na
+var label TS_DN_Label = na
+
+//label.delete(TS_Label)
+
+var AVG_RANGE = range(RISK)
+var pos_y_up = low - (AVG_RANGE * low)
+var pos_y_dn = high + (AVG_RANGE * high)
+
+var oblique_up = line(na)
+var oblique_dn = line(na)
+
+if up
+
+    TS_UP_Label := label.new(x=bar_index - _up, y=pos_y_up, text=text_label, color=color_label,
+     textcolor=textcolor_label, style=style_label, xloc=xloc.bar_index, 
+     yloc=yloc.belowbar ,size=SIZE)
+
+if dn
+
+    //pos_y_dn := close[bar_index - _dn] + AVG_RANGE * SHIFT
+
+    TS_DN_Label := label.new(x=bar_index - _dn, y=pos_y_dn, text=text_label, color=color_label,
+     textcolor=textcolor_label, style=style_label, xloc=xloc.bar_index, 
+     yloc=yloc.abovebar ,size=SIZE)
+
+
+//SHIFT = input(title="SHIFT", type=input.integer, defval=50)/100
+
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+//////////////////////////////// HH / LL //////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+
+showHHLL = input(title="Show Higher/Highs and Lower Lows labels", defval=false)
+//filterBW    = input(false, title="Filter Bill Williams Fractals")
+
+// isRegularFractal(mode) =>
+//     ret = mode == 1 ? high[4] < high[3] and high[3] < high[2] and high[2] > high[1] and high[1] > high[0] : mode == 2 ? low[4] > low[3] and low[3] > low[2] and low[2] < low[1] and low[1] < low[0] : false
+
+isBWFractal(mode) =>
+    ret = mode == 1 ? high[4] < high[2] and high[3] <= high[2] and high[2] >= high[1] and high[2] > high[0] : mode == 2 ? low[4] > low[2] and low[3] >= low[2] and low[2] <= low[1] and low[2] < low[0] : false
+
+filteredtopf = isBWFractal(1)
+filteredbotf = isBWFractal(2)
+
+higherhigh = filteredtopf == false ? false : ( valuewhen(filteredtopf == true, high[2], 1) < valuewhen(filteredtopf == true, high[2], 0) and valuewhen(filteredtopf == true, high[2], 2) < valuewhen(filteredtopf == true, high[2], 0))
+lowerhigh = filteredtopf == false ? false : ( valuewhen(filteredtopf == true, high[2], 1) > valuewhen(filteredtopf == true, high[2], 0) and valuewhen(filteredtopf == true, high[2], 2) > valuewhen(filteredtopf == true, high[2], 0))
+higherlow = filteredbotf == false ? false : ( valuewhen(filteredbotf == true, low[2], 1) < valuewhen(filteredbotf == true, low[2], 0) and valuewhen(filteredbotf == true, low[2], 2) < valuewhen(filteredbotf == true, low[2], 0))
+lowerlow = filteredbotf == false ? false : ( valuewhen(filteredbotf == true, low[2], 1) > valuewhen(filteredbotf == true, low[2], 0) and valuewhen(filteredbotf == true, low[2], 2) > valuewhen(filteredbotf == true, low[2], 0))
+
+plotshape((showHHLL) ? higherhigh : na, title='Higher High', style=shape.square, location=location.abovebar, color=color.green, text="[HH]", offset=-2)
+plotshape((showHHLL) ? lowerhigh : na, title='Lower High', style=shape.square, location=location.abovebar, color=color.red, text="[LH]", offset=-2)
+plotshape((showHHLL) ? higherlow : na, title='High Low', style=shape.square, location=location.belowbar, color=color.green, text="[HL]", offset=-2)
+plotshape((showHHLL) ? lowerlow : na, title='Lower Low', style=shape.square, location=location.belowbar, color=color.red, text="[LL]", offset=-2)
+
+// *** Death to Bear ***
+// © Dreadblitz
+//@version=4
+//
+TA=input(title = "══════════ Type Of Attack ══════════", defval = true, type = input.bool)
+A1=input(true, "💣 BOMB")
+A2=input(true, "🔪 KNIFE")
+A3=input(true, "🧨 DYNAMITE")
+A4=input(true, "🗡 DAGGER")
+A5=input(true, "🔫 GUN")
+A6=input(true, "🧪 CHEMICAL")
+min_level=input(defval=0, title="🔹 Minimum Level = ", minval=-100)
+
+EX= input(title = "═════════ Extra ══════════", defval = true, type = input.bool)
+
+on_symb= input(title = "Activate weapon symbols", defval = true, type = input.bool)
+mod_symb= input(defval= "EMOJI", title="🔹 Type of symbol = ", options=["EMOJI", "TEXT"])
+//
+length = 8
+mult = 2.0
+maj_qual = 6
+maj_len = 30
+min_qual = 5
+min_len = 5
+maj = true
+min = true
+buy_1 = 0.0
+buy_2 = 0.0
+buy_3 = 0.0
+buy_4 = 0.0
+buy_5 = 0.0
+buy_6 = 0.0
+// 
+upper_s = sum(volume * (change(hlc3) <= 0 ? 0 : hlc3), 14)
+lower_s = sum(volume * (change(hlc3) >= 0 ? 0 : hlc3), 14)
+xmf = rsi(upper_s, lower_s)
+basis = sma(ohlc4, 25)
+dev = mult * stdev(ohlc4, 25)
+upper = basis + dev
+lower = basis - dev
+OB1 = (upper + lower) / 2.0
+OB2 = upper - lower
+BollOsc = (ohlc4 - OB1) / OB2 * 100
+xrsi = rsi(ohlc4, 14)
+calc_stoch(dtb_src, length, smoothFastD) =>
+    ll = lowest(low, length)
+    hh = highest(high, length)
+    k = 100 * (dtb_src - ll) / (hh - ll)
+    sma(k, smoothFastD)
+stoc = calc_stoch(ohlc4, 21, 3)
+trend = (xrsi + xmf + BollOsc + stoc / 3) / 2
+//
+dtb_x = bar_index
+dtb_y = trend
+dtb_x_ = ema(dtb_x, length)
+dtb_y_ = ema(dtb_y, length)
+mx = stdev(dtb_x, length)
+my = stdev(dtb_y, length)
+dtb_c = correlation(dtb_x, dtb_y, length)
+dtb_slope = dtb_c * (my / mx)
+inter = dtb_y_ - dtb_slope * dtb_x_
+reg_trend = dtb_x * dtb_slope + inter
+//
+lele(qual, len) =>
+    bindex = 0.0
+    sindex = 0.0
+    bindex := nz(bindex[1], 0)
+    sindex := nz(sindex[1], 0)
+    ret = 0
+    if close > close[4]
+        bindex := bindex + 1
+        bindex
+    if close < close[4]
+        sindex := sindex + 1
+        sindex
+    if bindex > qual and close < open and high >= highest(high, len)
+        bindex := 0
+        ret := -1
+        ret
+    if sindex > qual and close > open and low <= lowest(low, len)
+        sindex := 0
+        ret := 1
+        ret
+    return = ret
+    return
+
+major = lele(maj_qual, maj_len)
+minor = lele(min_qual, min_len)
+//
+dtb_a = 1
+dtb_cc = 10
+dtb_xATR  = atr(dtb_cc)
+dtb_nLoss = dtb_a * dtb_xATR
+dtb_src = close
+dtb_xATRTrailingStop = 0.0
+dtb_xATRTrailingStop := iff(dtb_src > nz(dtb_xATRTrailingStop[1], 0) and dtb_src[1] > nz(dtb_xATRTrailingStop[1], 0), max(nz(dtb_xATRTrailingStop[1]), dtb_src - dtb_nLoss),
+   iff(dtb_src < nz(dtb_xATRTrailingStop[1], 0) and dtb_src[1] < nz(dtb_xATRTrailingStop[1], 0), min(nz(dtb_xATRTrailingStop[1]), dtb_src + dtb_nLoss), 
+   iff(dtb_src > nz(dtb_xATRTrailingStop[1], 0), dtb_src - dtb_nLoss, dtb_src + dtb_nLoss)))
+dtb_pos = 0   
+dtb_pos :=	iff(dtb_src[1] < nz(dtb_xATRTrailingStop[1], 0) and dtb_src > nz(dtb_xATRTrailingStop[1], 0), 1,
+   iff(dtb_src[1] > nz(dtb_xATRTrailingStop[1], 0) and dtb_src < nz(dtb_xATRTrailingStop[1], 0), -1, nz(dtb_pos[1], 0))) 
+dtb_xcolor = dtb_pos == -1 ? color.red: dtb_pos == 1 ? color.green : color.blue 
+dtb_ema   = ema(dtb_src,1)
+dtb_above = crossover(dtb_ema, dtb_xATRTrailingStop)
+dtb_below = crossover(dtb_xATRTrailingStop, dtb_ema)
+dtb_buy_a  = dtb_src > dtb_xATRTrailingStop and dtb_above 
+//
+if (minor == 1 and min == true and reg_trend <= min_level and A1) or (major == 1 and maj == true and reg_trend <= min_level and A1) or  (major == 1 and maj == true and minor == 1 and min == true and reg_trend <= min_level and A1)
+    buy_1 := 1
+if  reg_trend[0] > reg_trend[1] and reg_trend[1] > reg_trend[2] and reg_trend <= min_level and A3
+    buy_2 := 1
+if  crossover(trend, min_level)  and A2
+    buy_3 := 1
+if  crossunder(reg_trend, trend) and reg_trend <= min_level and trend <= min_level  and A6
+    buy_4 := 1
+if  reg_trend[0] < min_level and reg_trend[1] < min_level and reg_trend[2] < min_level and reg_trend <= min_level and reg_trend[0] > reg_trend[1] and trend <= min_level and A4
+    buy_5 := 1   
+if  (reg_trend[0] <= min_level or reg_trend[1] <= min_level or reg_trend[2] <= min_level or trend[0] <= min_level or trend[1] <= min_level or trend[2] <= min_level) and dtb_buy_a and A5
+    buy_6 := 1  
+//
+plotshape(buy_1 == 1 and on_symb and mod_symb == "EMOJI", text='💣', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+plotshape(buy_2 == 1 and on_symb and mod_symb == "EMOJI", text='🧨', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+plotshape(buy_3 == 1 and on_symb and mod_symb == "EMOJI", text='🔪 ', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+plotshape(buy_4 == 1 and on_symb and mod_symb == "EMOJI", text='🧪  ', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+plotshape(buy_5 == 1 and on_symb and mod_symb == "EMOJI", text='🗡  ', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+plotshape(buy_6 == 1 and on_symb and mod_symb == "EMOJI", text='🔫  ', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0)
+
+plotshape(buy_1 == 1 and on_symb and mod_symb == "TEXT", text='BOMB', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+plotshape(buy_2 == 1 and on_symb and mod_symb == "TEXT", text='DYNAMITE', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+plotshape(buy_3 == 1 and on_symb and mod_symb == "TEXT", text='KNIFE', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+plotshape(buy_4 == 1 and on_symb and mod_symb == "TEXT", text='CHEMICAL', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+plotshape(buy_5 == 1 and on_symb and mod_symb == "TEXT", text='DAGGER', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+plotshape(buy_6 == 1 and on_symb and mod_symb == "TEXT", text='GUN', style=shape.triangleup, location=location.belowbar, color=#32CD32, textcolor=color.black, offset=0, transp=0, size =size.tiny)
+
+
+// ALERTS
+
+alertcondition(buy_1 == 1,title="BOMB",message="BOMB")
+alertcondition(buy_2 == 1,title="DYNAMITE",message="DYNAMITE")
+alertcondition(buy_3 == 1,title="KNIFE",message="KNIFE")
+alertcondition(buy_4 == 1,title="CHEMICAL",message="CHEMICAL")
+alertcondition(buy_5 == 1,title="DAGGER",message="DAGGER")
+alertcondition(buy_6 == 1,title="GUN",message="GUN")
+alertcondition(buy_1 == 1 or buy_2 == 1 or buy_3 == 1 or buy_4 == 1 or buy_5 == 1 or buy_6 == 1,title="ANY WEAPON",message="ANY WEAPON")

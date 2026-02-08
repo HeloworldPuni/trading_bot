@@ -1,0 +1,50 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © budinweig
+// This script signals DI crossings to provide a simple LONG/ SHORT signal and provides a value to the distance with multiple coloring options.
+
+//@version=5
+indicator(title="Colored ADX & DI Crossings w/ Options - Llipe", shorttitle="Colored ADX & DI Crossing", format=format.price, precision=4)
+
+solidADX            = input.bool(false, "Use solid color ADX?")
+adxLineColor        = input.color(color.white, "ADX Line Color")
+
+coloredBgColor      = input.bool(true, "Colored BG Color?")
+WASHEDRED           = color.new(color.red, 60)
+WASHEDGREEN         = color.new(color.green, 60)
+longBgColor         = input.color(WASHEDGREEN, "DI+ > DI- BG Color - Long")
+shortBgColor        = input.color(WASHEDRED, "DI+ < DI- BG Color - Short")
+
+showVerticalLines   = input.bool(true, "Show Vertical Lines?")
+vlineLongColor      = input.color(#006400, "Vertical Line - Long")
+vlineShortColor     = input.color(#8B0000, "Vertical Line - Short")
+
+showSignals         = input.bool(true, "Show Signals?")
+
+len                 = input.int(17, minval=1, title="DI Length")
+lensig              = input.int(14, title="ADX Smoothing", minval=1, maxval=50)
+adxBaseLevel        = input.int(23, title="ADX Base Level", minval=1, maxval=100)
+
+[diplus, diminus, adx] = ta.dmi(len, lensig)
+
+didiff = diplus > diminus ? diplus - diminus : diminus - diplus
+diLongSignal = ta.crossover(diplus, diminus)
+diShortSignal = ta.crossunder(diplus, diminus)
+
+// Background
+activeBgColor = diplus >= diminus ? longBgColor : shortBgColor
+bgcolor(coloredBgColor ? activeBgColor : na)
+
+// Vertical Lines
+if (diLongSignal and showVerticalLines)
+    line.new(bar_index, adxBaseLevel, bar_index, adxBaseLevel * 1.01, extend = extend.both, color = vlineLongColor, style = line.style_solid, width = 2)
+if (diShortSignal and showVerticalLines)
+    line.new(bar_index, adxBaseLevel, bar_index, adxBaseLevel * 1.01, extend = extend.both, color = vlineShortColor, style = line.style_solid, width = 2)
+
+// ADX Line
+adxColor = diplus >= diminus ? color.green : color.red
+plot(adx, color=(solidADX ? adxLineColor : adxColor), title="Colored ADX", linewidth=3)
+plot(adxBaseLevel, color = color.silver, title="Base Level", linewidth=1)
+
+// Signal Shapes
+plotshape(diLongSignal and showSignals, title="Long", location = location.bottom, style = shape.triangleup, size = size.tiny, color = color.green, textcolor = color.white)
+plotshape(diShortSignal and showSignals, title="Short", location = location.top, style = shape.triangledown, size = size.tiny, color = color.red, textcolor = color.white)

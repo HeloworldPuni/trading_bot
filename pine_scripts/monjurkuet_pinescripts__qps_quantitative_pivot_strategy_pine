@@ -1,0 +1,391 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Quantitative Pivot Strategy (QPS)
+// Author: monjurkuet
+// Version: 1.0.0
+// Type: Indicator (Overlay)
+// Description:
+// Liquidity sweep + Fibonacci + proprietary CC levels with
+// reclaim confirmation, volume validation, and MTF alignment.
+//
+// Educational use only. Not financial advice.
+// ─────────────────────────────────────────────────────────────────────────────
+//@version=6
+indicator("Quantitative Pivot Strategy [QPS]", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INPUT GROUPS
+// ══════════════════════════════════════════════════════════════════════════════
+string GRP_FIB     = "══════ Fibonacci Settings ══════"
+string GRP_CC      = "══════ CC Levels (Proprietary) ══════"
+string GRP_SWEEP   = "══════ Liquidity Sweep Settings ══════"
+string GRP_RECLAIM = "══════ SR Reclaim Protocol ══════"
+string GRP_VOL     = "══════ Volume Analysis ══════"
+string GRP_MTF     = "══════ Multi-Timeframe ══════"
+string GRP_VISUAL  = "══════ Visual Settings ══════"
+
+// ==================== FIBONACCI INPUTS ====================
+bool   showFibLevels    = input.bool(true, "Show Fibonacci Levels", group=GRP_FIB)
+int    swingLookback    = input.int(20, "Swing Detection Lookback", minval=5, maxval=100, group=GRP_FIB)
+int    fibLookback      = input.int(100, "Fibonacci Calculation Period", minval=20, maxval=500, group=GRP_FIB)
+
+bool   showFib0382      = input.bool(true, "Show 0.382 Level", group=GRP_FIB)
+bool   showFib050       = input.bool(true, "Show 0.500 Level", group=GRP_FIB)
+bool   showFib0618      = input.bool(true, "Show 0.618 (Golden Pocket)", group=GRP_FIB)
+bool   showFib0786      = input.bool(true, "Show 0.786 Level", group=GRP_FIB)
+
+// ==================== CC LEVELS (PROPRIETARY) ====================
+bool   showCCLevels     = input.bool(true, "Show CC Levels", group=GRP_CC)
+float  ccLevel1         = input.float(0.66, "CC Level 1", minval=0.5, maxval=0.8, step=0.01, group=GRP_CC)
+float  ccLevel2         = input.float(0.71, "CC Level 2 (CC 3.0)", minval=0.6, maxval=0.9, step=0.01, group=GRP_CC)
+bool   highlightCC      = input.bool(true, "Highlight CC Zones", group=GRP_CC)
+
+// ==================== LIQUIDITY SWEEP SETTINGS ====================
+bool   detectSweeps     = input.bool(true, "Detect Liquidity Sweeps", group=GRP_SWEEP)
+float  sweepBuffer      = input.float(0.15, "Sweep Buffer %", minval=0.01, maxval=1.0, step=0.01, group=GRP_SWEEP)
+int    sweepWickMin     = input.int(50, "Min Wick % of Candle", minval=10, maxval=90, group=GRP_SWEEP)
+bool   showSweepZones   = input.bool(true, "Show Sweep Zones", group=GRP_SWEEP)
+
+// ==================== SR RECLAIM PROTOCOL ====================
+bool   reclaimMode      = input.bool(true, "Enable Reclaim Confirmation", group=GRP_RECLAIM)
+int    reclaimBars      = input.int(2, "Confirmation Candles Required", minval=1, maxval=5, group=GRP_RECLAIM)
+bool   strictReclaim    = input.bool(true, "Strict Close Requirement", group=GRP_RECLAIM)
+
+// ==================== VOLUME ANALYSIS ====================
+bool   useVolume        = input.bool(true, "Use Volume Confirmation", group=GRP_VOL)
+int    volMAPeriod      = input.int(20, "Volume MA Period", minval=5, maxval=100, group=GRP_VOL)
+float  volThreshold     = input.float(1.5, "Volume Threshold Multiplier", minval=1.0, maxval=5.0, step=0.1, group=GRP_VOL)
+bool   showPOC          = input.bool(true, "Show Approx. POC", group=GRP_VOL)
+int    pocLookback      = input.int(50, "POC Lookback Bars", minval=10, maxval=200, group=GRP_VOL)
+
+// ==================== MULTI-TIMEFRAME ====================
+bool   useMTF           = input.bool(true, "Enable MTF Analysis", group=GRP_MTF)
+string htfTrend         = input.timeframe("240", "Higher TF for Trend", group=GRP_MTF)
+bool   requireHTFAlign  = input.bool(true, "Require HTF Alignment", group=GRP_MTF)
+
+// ==================== VISUAL SETTINGS ====================
+color  bullColor        = input.color(color.new(#00E676, 0), "Bullish Color", group=GRP_VISUAL)
+color  bearColor        = input.color(color.new(#FF5252, 0), "Bearish Color", group=GRP_VISUAL)
+color  fibColor         = input.color(color.new(#FFD700, 50), "Fibonacci Color", group=GRP_VISUAL)
+color  ccColor          = input.color(color.new(#FF6D00, 30), "CC Level Color", group=GRP_VISUAL)
+color  sweepColor       = input.color(color.new(#E040FB, 40), "Sweep Zone Color", group=GRP_VISUAL)
+color  pocColor         = input.color(color.new(#2196F3, 50), "POC Color", group=GRP_VISUAL)
+int    lineWidth        = input.int(2, "Line Width", minval=1, maxval=5, group=GRP_VISUAL)
+bool   showLabels       = input.bool(true, "Show Level Labels", group=GRP_VISUAL)
+bool   showSignals      = input.bool(true, "Show Entry Signals", group=GRP_VISUAL)
+bool   showTable        = input.bool(true, "Show Info Table", group=GRP_VISUAL)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CORE CALCULATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Get highest/lowest for Fibonacci calculation
+float highestHigh = ta.highest(high, fibLookback)
+float lowestLow   = ta.lowest(low, fibLookback)
+float fibRange    = highestHigh - lowestLow
+
+// Determine trend for Fibonacci direction
+float sma50 = ta.sma(close, 50)
+bool upTrend = close > sma50
+
+// Real-time Fibonacci calculations
+float rt_fib0382 = upTrend ? highestHigh - (fibRange * 0.382) : lowestLow + (fibRange * 0.382)
+float rt_fib050  = upTrend ? highestHigh - (fibRange * 0.5) : lowestLow + (fibRange * 0.5)
+float rt_fib0618 = upTrend ? highestHigh - (fibRange * 0.618) : lowestLow + (fibRange * 0.618)
+float rt_fib066  = upTrend ? highestHigh - (fibRange * ccLevel1) : lowestLow + (fibRange * ccLevel1)
+float rt_fib071  = upTrend ? highestHigh - (fibRange * ccLevel2) : lowestLow + (fibRange * ccLevel2)
+float rt_fib0786 = upTrend ? highestHigh - (fibRange * 0.786) : lowestLow + (fibRange * 0.786)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LIQUIDITY SWEEP DETECTION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Calculate wick percentages
+float bodyHigh    = math.max(open, close)
+float bodyLow     = math.min(open, close)
+float upperWick   = high - bodyHigh
+float lowerWick   = bodyLow - low
+float totalRange  = high - low
+float wickPercent = totalRange > 0 ? (math.max(upperWick, lowerWick) / totalRange) * 100 : 0
+
+// Sweep detection at key levels
+bool sweepBelow0618 = low < rt_fib0618 * (1 - sweepBuffer/100) and close > rt_fib0618
+bool sweepBelowCC   = low < rt_fib066 * (1 - sweepBuffer/100) and close > rt_fib066
+bool sweepBelowCC3  = low < rt_fib071 * (1 - sweepBuffer/100) and close > rt_fib071
+
+bool sweepAbove0618 = high > rt_fib0618 * (1 + sweepBuffer/100) and close < rt_fib0618
+bool sweepAboveCC   = high > rt_fib066 * (1 + sweepBuffer/100) and close < rt_fib066
+bool sweepAboveCC3  = high > rt_fib071 * (1 + sweepBuffer/100) and close < rt_fib071
+
+// Valid sweep with sufficient wick
+bool validBullSweep = (sweepBelow0618 or sweepBelowCC or sweepBelowCC3) and wickPercent >= sweepWickMin and detectSweeps
+bool validBearSweep = (sweepAbove0618 or sweepAboveCC or sweepAboveCC3) and wickPercent >= sweepWickMin and detectSweeps
+
+// Track sweep states
+var bool bullSweepActive = false
+var bool bearSweepActive = false
+var float sweepLowLevel  = na
+var float sweepHighLevel = na
+
+if validBullSweep
+    bullSweepActive := true
+    sweepLowLevel   := low
+
+if validBearSweep
+    bearSweepActive := true
+    sweepHighLevel  := high
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SR RECLAIM CONFIRMATION PROTOCOL
+// ══════════════════════════════════════════════════════════════════════════════
+
+var int bullReclaimCount = 0
+var int bearReclaimCount = 0
+
+// Bullish reclaim logic
+if bullSweepActive
+    if strictReclaim
+        if close > rt_fib0618 and low > rt_fib0618 * 0.999
+            bullReclaimCount += 1
+        else
+            bullReclaimCount := 0
+    else
+        if close > rt_fib0618
+            bullReclaimCount += 1
+        else
+            bullReclaimCount := 0
+
+// Bearish reclaim logic
+if bearSweepActive
+    if strictReclaim
+        if close < rt_fib0618 and high < rt_fib0618 * 1.001
+            bearReclaimCount += 1
+        else
+            bearReclaimCount := 0
+    else
+        if close < rt_fib0618
+            bearReclaimCount += 1
+        else
+            bearReclaimCount := 0
+
+// Confirmed reclaims
+bool bullReclaimConfirmed = bullReclaimCount >= reclaimBars and bullSweepActive
+bool bearReclaimConfirmed = bearReclaimCount >= reclaimBars and bearSweepActive
+
+// Reset sweep states after confirmation
+if bullReclaimConfirmed
+    bullSweepActive  := false
+    bullReclaimCount := 0
+
+if bearReclaimConfirmed
+    bearSweepActive  := false
+    bearReclaimCount := 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VOLUME ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+
+float volMA       = ta.sma(volume, volMAPeriod)
+bool  highVolume  = volume > volMA * volThreshold
+bool  volConfirm  = not useVolume or highVolume
+
+// Weighted POC calculation
+float typicalPrice = hlc3
+float volumePrice  = ta.sma(typicalPrice * volume, pocLookback) / ta.sma(volume, pocLookback)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MULTI-TIMEFRAME ANALYSIS
+// ══════════════════════════════════════════════════════════════════════════════
+
+float htfClose = request.security(syminfo.tickerid, htfTrend, close)
+float htfMA50  = request.security(syminfo.tickerid, htfTrend, ta.sma(close, 50))
+bool  htfBull  = htfClose > htfMA50
+bool  htfBear  = htfClose < htfMA50
+
+// MTF alignment check
+bool mtfLongAlign  = not requireHTFAlign or not useMTF or htfBull
+bool mtfShortAlign = not requireHTFAlign or not useMTF or htfBear
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENTRY SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+bool longEntry  = bullReclaimConfirmed and volConfirm and mtfLongAlign and reclaimMode
+bool shortEntry = bearReclaimConfirmed and volConfirm and mtfShortAlign and reclaimMode
+
+bool sweepLongSignal  = validBullSweep and volConfirm and not reclaimMode
+bool sweepShortSignal = validBearSweep and volConfirm and not reclaimMode
+
+bool goLong  = longEntry or sweepLongSignal
+bool goShort = shortEntry or sweepShortSignal
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTTING - FIBONACCI LEVELS (using plot for always-visible levels)
+// ══════════════════════════════════════════════════════════════════════════════
+
+plot(showFibLevels and showFib0382 ? rt_fib0382 : na, "Fib 0.382", color=fibColor, linewidth=1, style=plot.style_linebr)
+plot(showFibLevels and showFib050 ? rt_fib050 : na, "Fib 0.500", color=fibColor, linewidth=1, style=plot.style_linebr)
+plot(showFibLevels and showFib0618 ? rt_fib0618 : na, "Fib 0.618 GP", color=color.new(#FFD700, 20), linewidth=2, style=plot.style_linebr)
+plot(showFibLevels and showFib0786 ? rt_fib0786 : na, "Fib 0.786", color=fibColor, linewidth=1, style=plot.style_linebr)
+
+// CC Levels
+plot(showCCLevels ? rt_fib066 : na, "CC Level", color=ccColor, linewidth=2, style=plot.style_linebr)
+plot(showCCLevels ? rt_fib071 : na, "CC 3.0 Level", color=color.red, linewidth=3, style=plot.style_linebr)
+
+// POC Level
+plot(showPOC ? volumePrice : na, "Volume POC", color=pocColor, linewidth=2, style=plot.style_circles)
+
+// Range boundaries
+plot(highestHigh, "Range High", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
+plot(lowestLow, "Range Low", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
+
+// 50 SMA for trend
+plot(sma50, "SMA 50", color=color.new(color.white, 70), linewidth=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PLOTTING - SIGNALS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Sweep markers
+plotshape(validBullSweep and showSweepZones, title="Bull Sweep", style=shape.circle, location=location.belowbar, color=sweepColor, size=size.small)
+plotshape(validBearSweep and showSweepZones, title="Bear Sweep", style=shape.circle, location=location.abovebar, color=sweepColor, size=size.small)
+
+// Entry signals
+plotshape(goLong and showSignals, title="Long Entry", style=shape.triangleup, location=location.belowbar, color=bullColor, size=size.large, text="LONG")
+plotshape(goShort and showSignals, title="Short Entry", style=shape.triangledown, location=location.abovebar, color=bearColor, size=size.large, text="SHORT")
+
+// Sweep pending (waiting for reclaim)
+plotshape(bullSweepActive and not goLong and showSweepZones, title="Awaiting Bull Reclaim", style=shape.diamond, location=location.belowbar, color=color.new(bullColor, 50), size=size.tiny)
+plotshape(bearSweepActive and not goShort and showSweepZones, title="Awaiting Bear Reclaim", style=shape.diamond, location=location.abovebar, color=color.new(bearColor, 50), size=size.tiny)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BACKGROUND COLORS
+// ══════════════════════════════════════════════════════════════════════════════
+
+bgcolor(bullSweepActive ? color.new(bullColor, 95) : na, title="Bull Sweep Active BG")
+bgcolor(bearSweepActive ? color.new(bearColor, 95) : na, title="Bear Sweep Active BG")
+bgcolor(goLong ? color.new(bullColor, 85) : na, title="Long Entry BG")
+bgcolor(goShort ? color.new(bearColor, 85) : na, title="Short Entry BG")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BAR COLORING
+// ══════════════════════════════════════════════════════════════════════════════
+
+barcolor(goLong ? bullColor : goShort ? bearColor : na)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CC ZONE HIGHLIGHTING (Box Drawing)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var box ccZoneBox = na
+
+if barstate.islast and highlightCC and showCCLevels
+    box.delete(ccZoneBox)
+    ccZoneBox := box.new(bar_index - 50, rt_fib066, bar_index + 10, rt_fib071, bgcolor=color.new(ccColor, 90), border_color=ccColor, border_width=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LABELS FOR KEY LEVELS
+// ══════════════════════════════════════════════════════════════════════════════
+
+var label lbl0618 = na
+var label lblCC1  = na
+var label lblCC2  = na
+var label lblPOC  = na
+
+if barstate.islast and showLabels
+    label.delete(lbl0618)
+    label.delete(lblCC1)
+    label.delete(lblCC2)
+    label.delete(lblPOC)
+    
+    if showFibLevels and showFib0618
+        lbl0618 := label.new(bar_index + 5, rt_fib0618, "0.618 GP: " + str.tostring(rt_fib0618, "#.##"), color=color.new(color.black, 70), textcolor=color.new(#FFD700, 0), style=label.style_label_left, size=size.small)
+    
+    if showCCLevels
+        lblCC1 := label.new(bar_index + 5, rt_fib066, str.tostring(ccLevel1, "#.##") + " CC: " + str.tostring(rt_fib066, "#.##"), color=color.new(color.black, 70), textcolor=ccColor, style=label.style_label_left, size=size.small)
+        lblCC2 := label.new(bar_index + 5, rt_fib071, str.tostring(ccLevel2, "#.##") + " CC3.0: " + str.tostring(rt_fib071, "#.##"), color=color.new(color.black, 70), textcolor=color.red, style=label.style_label_left, size=size.small)
+    
+    if showPOC
+        lblPOC := label.new(bar_index + 5, volumePrice, "POC: " + str.tostring(volumePrice, "#.##"), color=color.new(color.black, 70), textcolor=pocColor, style=label.style_label_left, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INFORMATION TABLE
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table infoTable = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast and showTable
+    table.cell(infoTable, 0, 0, "QPS STATUS", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+    table.cell(infoTable, 1, 0, "VALUES", text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 60))
+    
+    table.cell(infoTable, 0, 1, "Current Trend", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, upTrend ? "▲ BULLISH" : "▼ BEARISH", text_color=upTrend ? bullColor : bearColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 2, "HTF Trend (" + htfTrend + ")", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, htfBull ? "▲ BULLISH" : "▼ BEARISH", text_color=htfBull ? bullColor : bearColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 3, "0.618 Golden Pocket", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(rt_fib0618, "#.##"), text_color=color.new(#FFD700, 0), text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 4, "CC (" + str.tostring(ccLevel1, "#.##") + ")", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, str.tostring(rt_fib066, "#.##"), text_color=ccColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 5, "CC 3.0 (" + str.tostring(ccLevel2, "#.##") + ")", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(rt_fib071, "#.##"), text_color=color.red, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 6, "Volume POC", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, str.tostring(volumePrice, "#.##"), text_color=pocColor, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 7, "Bull Sweep Active", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 7, bullSweepActive ? "● YES" : "○ NO", text_color=bullSweepActive ? bullColor : color.gray, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 8, "Bear Sweep Active", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 8, bearSweepActive ? "● YES" : "○ NO", text_color=bearSweepActive ? bearColor : color.gray, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 9, "Reclaim Progress", text_color=color.gray, text_size=size.tiny)
+    int currentCount = math.max(bullReclaimCount, bearReclaimCount)
+    table.cell(infoTable, 1, 9, str.tostring(currentCount) + " / " + str.tostring(reclaimBars), text_color=currentCount > 0 ? color.yellow : color.gray, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 10, "Volume Status", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 10, highVolume ? "⬆ HIGH" : "— NORMAL", text_color=highVolume ? bullColor : color.gray, text_size=size.tiny)
+    
+    table.cell(infoTable, 0, 11, "SIGNAL", text_color=color.gray, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
+    string signalText = goLong ? "⬆ LONG ENTRY" : goShort ? "⬇ SHORT ENTRY" : validBullSweep ? "◐ BULL SWEEP" : validBearSweep ? "◑ BEAR SWEEP" : bullSweepActive ? "◔ AWAIT BULL RECLAIM" : bearSweepActive ? "◕ AWAIT BEAR RECLAIM" : "○ WAITING"
+    color signalColor = goLong ? bullColor : goShort ? bearColor : (validBullSweep or validBearSweep or bullSweepActive or bearSweepActive) ? sweepColor : color.gray
+    table.cell(infoTable, 1, 11, signalText, text_color=signalColor, text_size=size.tiny, bgcolor=color.new(color.gray, 80))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STOP LOSS LEVELS (drawn as lines when signal triggers)
+// ══════════════════════════════════════════════════════════════════════════════
+
+var line slLine = na
+var label slLabel = na
+
+if goLong and not na(sweepLowLevel)
+    line.delete(slLine)
+    label.delete(slLabel)
+    float slLevel = sweepLowLevel * 0.998
+    slLine := line.new(bar_index - 5, slLevel, bar_index + 20, slLevel, color=bearColor, width=2, style=line.style_dashed)
+    slLabel := label.new(bar_index + 20, slLevel, "SL: " + str.tostring(slLevel, "#.##"), color=color.new(bearColor, 50), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+if goShort and not na(sweepHighLevel)
+    line.delete(slLine)
+    label.delete(slLabel)
+    float slLevel = sweepHighLevel * 1.002
+    slLine := line.new(bar_index - 5, slLevel, bar_index + 20, slLevel, color=bearColor, width=2, style=line.style_dashed)
+    slLabel := label.new(bar_index + 20, slLevel, "SL: " + str.tostring(slLevel, "#.##"), color=color.new(bearColor, 50), textcolor=color.white, style=label.style_label_left, size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(validBullSweep, title="Bullish Liquidity Sweep", message="QPS: Bullish liquidity sweep detected at {{close}} - Await reclaim confirmation")
+alertcondition(validBearSweep, title="Bearish Liquidity Sweep", message="QPS: Bearish liquidity sweep detected at {{close}} - Await reclaim confirmation")
+alertcondition(bullReclaimConfirmed, title="Bullish Reclaim Confirmed", message="QPS: Bullish SR reclaim confirmed at {{close}}")
+alertcondition(bearReclaimConfirmed, title="Bearish Reclaim Confirmed", message="QPS: Bearish SR reclaim confirmed at {{close}}")
+alertcondition(goLong, title="Long Entry Signal", message="QPS: ⬆ LONG ENTRY at {{close}}")
+alertcondition(goShort, title="Short Entry Signal", message="QPS: ⬇ SHORT ENTRY at {{close}}")
+alertcondition(goLong or goShort, title="Any Entry Signal", message="QPS: Entry signal triggered at {{close}}")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// END OF INDICATOR
+// ══════════════════════════════════════════════════════════════════════════════

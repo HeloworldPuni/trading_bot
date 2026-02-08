@@ -1,0 +1,132 @@
+//@version=5
+// =============================================================================
+// INDICATOR: Intraday reversals (gpt)
+// FILENAME: intraday-reversals-gpt_v1.0.1.pine
+// Version: v1.0.1
+// DATE:     2026-01-09
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.1 - much improved
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+indicator("Reversal Probabilities (VWAP + Slope) v3", overlay=true, max_labels_count=500)
+
+bandMult = input.float(1.5, "VWAP Band Multiplier (σ)", step=0.1)
+rsiLen = input.int(14, "RSI Length", minval=2)
+rsiOB = input.int(70, "RSI Overbought", minval=50, maxval=95)
+rsiOS = input.int(35, "RSI Oversold", minval=5, maxval=50)
+slopeLen = input.int(20, "VWAP Slope Lookback", minval=5, maxval=200)
+slopeThrBps = input.float(2.0, "Slope Threshold (bps/bar)", step=0.5)
+slopePenalty = input.float(0.35, "Trend Penalty Factor", minval=0.0, maxval=1.0, step=0.05)
+
+showLabels = input.bool(true, "Show Probability Labels")
+probThresh = input.float(60.0, "Event Threshold (prob %)", minval=0.0, maxval=100.0, step=1.0)
+dominanceMargin = input.float(10.0, "Dominance Margin (%)", minval=0.0, maxval=100.0, step=1.0)
+cooldownBars = input.int(8, "Cooldown Bars Between Events", minval=0, maxval=200)
+maxLabelsPerDay = input.int(80, "Max Labels Per Day", minval=0, maxval=500)
+
+// ───── Session VWAP + σ bands ─────
+var float cumTPV = 0.0
+var float cumVol = 0.0
+var float cumVar = 0.0
+newDay = ta.change(time("D"))
+if newDay
+    cumTPV := 0.0
+if newDay
+    cumVol := 0.0
+if newDay
+    cumVar := 0.0
+
+tp = (high + low + close) / 3.0
+cumTPV := cumTPV + tp * volume
+cumVol := cumVol + volume
+vwap = cumVol > 0 ? cumTPV / cumVol : na
+if cumVol > 0 and not na(vwap)
+    cumVar := cumVar + math.pow(tp - vwap, 2) * volume
+
+std = cumVol > 0 ? math.sqrt(cumVar / cumVol) : na
+upperBand = (not na(vwap) and not na(std)) ? vwap + bandMult * std : na
+lowerBand = (not na(vwap) and not na(std)) ? vwap - bandMult * std : na
+
+plot(vwap, "VWAP", color=color.yellow)
+plot(upperBand, "VWAP +σ", color=color.red)
+plot(lowerBand, "VWAP -σ", color=color.green)
+
+// ───── Indicators ─────
+rsi = ta.rsi(close, rsiLen)
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+
+// ───── Raw scores (0–4) ─────
+downScore = 0
+downScore := downScore + ((not na(rsi) and rsi > rsiOB) ? 1 : 0)
+downScore := downScore + ((not na(upperBand) and high >= upperBand) ? 1 : 0)
+downScore := downScore + ((not na(emaFast) and not na(emaSlow) and emaFast < emaSlow) ? 1 : 0)
+downScore := downScore + (close < open ? 1 : 0)
+
+upScore = 0
+upScore := upScore + ((not na(rsi) and rsi < rsiOS) ? 1 : 0)
+upScore := upScore + ((not na(lowerBand) and low <= lowerBand) ? 1 : 0)
+upScore := upScore + ((not na(emaFast) and not na(emaSlow) and emaFast > emaSlow) ? 1 : 0)
+upScore := upScore + (close > open ? 1 : 0)
+
+baseDown = downScore * 25.0
+baseUp = upScore * 25.0
+
+// ───── VWAP slope (bps per bar) ─────
+rawSlope = (not na(vwap) and not na(vwap[slopeLen])) ? (vwap - vwap[slopeLen]) / slopeLen : na
+slopeBps = (not na(rawSlope) and not na(vwap) and vwap != 0) ? rawSlope / vwap * 10000.0 : na
+
+trendUp = not na(slopeBps) and slopeBps > slopeThrBps
+trendDown = not na(slopeBps) and slopeBps < -slopeThrBps
+
+downProb = nz(trendUp ? baseDown * slopePenalty : baseDown, 0.0)
+upProb = nz(trendDown ? baseUp * slopePenalty : baseUp, 0.0)
+
+// ───── Dominance gating (optional but cuts spam a lot) ─────
+upDominant = upProb >= probThresh and (upProb - downProb) >= dominanceMargin
+downDominant = downProb >= probThresh and (downProb - upProb) >= dominanceMargin
+
+// ───── “Event” = crosses above threshold (not continuous) ─────
+upEventRaw = upDominant and not upDominant[1]
+downEventRaw = downDominant and not downDominant[1]
+
+// ───── Cooldown + per-day label budget ─────
+var int lastEventBar = na
+var int labelsToday = 0
+if newDay
+    labelsToday := 0
+   
+coolOk = na(lastEventBar) ? true : (bar_index - lastEventBar > cooldownBars)
+canLabel = showLabels and (labelsToday < maxLabelsPerDay) and coolOk
+
+upEvent = upEventRaw and coolOk
+downEvent = downEventRaw and coolOk
+
+// ───── Markers ─────
+plotshape(upEvent, title="Up Reversal Event", style=shape.triangleup, location=location.belowbar, size=size.small, color=color.lime)
+plotshape(downEvent, title="Down Reversal Event", style=shape.triangledown, location=location.abovebar, size=size.small, color=color.red)
+
+// ───── Probability labels on events only ─────
+txt = "↑" + str.tostring(upProb, "#0") + " ↓" + str.tostring(downProb, "#0")
+
+if upEvent and canLabel
+    label.new(bar_index, low, txt, style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0))
+if upEvent and canLabel
+    lastEventBar := bar_index
+if upEvent and canLabel
+    labelsToday := labelsToday + 1
+
+if downEvent and canLabel
+    label.new(bar_index, high, txt, style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0))
+if downEvent and canLabel
+    lastEventBar := bar_index
+if downEvent and canLabel
+    labelsToday := labelsToday + 1
+
+// ───── Data window visibility (optional) ─────
+plot(upProb, "UpProb (%)", display=display.data_window)
+plot(downProb, "DownProb (%)", display=display.data_window)
+plot(slopeBps, "VWAP slope (bps/bar)", display=display.data_window)

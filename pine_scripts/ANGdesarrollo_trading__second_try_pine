@@ -1,0 +1,117 @@
+//@version=5
+strategy("Bollinger Bands Strategy with EMA", overlay=true)
+
+//**
+//*ENVOLVENTE BAJISTA Y ALCISTA
+//*
+C_DownTrend = true
+C_UpTrend = true
+var trendRule1 = "SMA50"
+var trendRule2 = "SMA50, SMA200"
+var trendRule = input.string(trendRule1, "Detect Trend Based On", options=[trendRule1, trendRule2, "No detection"])
+
+if trendRule == trendRule1
+	priceAvg = ta.sma(close, 50)
+	C_DownTrend := close < priceAvg
+	C_UpTrend := close > priceAvg
+
+if trendRule == trendRule2
+	sma200 = ta.sma(close, 200)
+	sma50 = ta.sma(close, 50)
+	C_DownTrend := close < sma50 and sma50 < sma200
+	C_UpTrend := close > sma50 and sma50 > sma200
+C_Len = 14 // ta.ema depth for bodyAvg
+C_ShadowPercent = 5.0 // size of shadows
+C_ShadowEqualsPercent = 100.0
+C_DojiBodyPercent = 5.0
+C_Factor = 2.0 // shows the number of times the shadow dominates the candlestick body
+
+C_BodyHi = math.max(close, open)
+C_BodyLo = math.min(close, open)
+C_Body = C_BodyHi - C_BodyLo
+C_BodyAvg = ta.ema(C_Body, C_Len)
+C_SmallBody = C_Body < C_BodyAvg
+C_LongBody = C_Body > C_BodyAvg
+C_UpShadow = high - C_BodyHi
+C_DnShadow = C_BodyLo - low
+C_HasUpShadow = C_UpShadow > C_ShadowPercent / 100 * C_Body
+C_HasDnShadow = C_DnShadow > C_ShadowPercent / 100 * C_Body
+C_WhiteBody = open < close
+C_BlackBody = open > close
+C_Range = high-low
+C_IsInsideBar = C_BodyHi[1] > C_BodyHi and C_BodyLo[1] < C_BodyLo
+C_BodyMiddle = C_Body / 2 + C_BodyLo
+C_ShadowEquals = C_UpShadow == C_DnShadow or (math.abs(C_UpShadow - C_DnShadow) / C_DnShadow * 100) < C_ShadowEqualsPercent and (math.abs(C_DnShadow - C_UpShadow) / C_UpShadow * 100) < C_ShadowEqualsPercent
+C_IsDojiBody = C_Range > 0 and C_Body <= C_Range * C_DojiBodyPercent / 100
+C_Doji = C_IsDojiBody and C_ShadowEquals
+
+patternLabelPosLow = low - (ta.atr(30) * 0.6)
+patternLabelPosHigh = high + (ta.atr(30) * 0.6)
+
+label_color_bearish = input(color.red, "Label Color Bearish")
+show_engulfing = input(title='Show Engulfing candles', defval=true)
+
+C_EngulfingBullish = show_engulfing and C_DownTrend and C_WhiteBody and C_LongBody and C_BlackBody[1] and C_SmallBody[1] and close >= open[1] and open <= close[1] and ( close > open[1] or open < close[1] )
+C_EngulfingBearish = show_engulfing and C_UpTrend and C_BlackBody and C_LongBody and C_WhiteBody[1] and C_SmallBody[1] and close <= open[1] and open >= close[1] and ( close < open[1] or open > close[1] )
+
+// Etiquetas para los patrones
+label_B = "B"
+label_R = "R"
+label_H = "H"
+
+plotshape(C_EngulfingBearish, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text=label_B, textcolor=color.new(color.black, 0))
+plotshape(C_EngulfingBullish, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), text=label_B, textcolor=color.new(color.black, 0))
+
+//**
+//* FIN DE ENVOLVENTE BAJISTA
+//*
+
+//**
+//* Hammer and Shooting star detector
+//**
+HamStar = input(title='Hammer and ShootingStar candles (color is not important)', defval=true)
+ColorHamStar = input(title='Only Green Hammer and Red Star', defval=false)
+
+bodySize = math.abs(open - close)
+HlowerShadow = math.abs(low - open)
+HupperShadow = math.abs(high - close)
+
+SlowerShadow = math.abs(low - close)
+SupperShadow = math.abs(high - open)
+
+Hammer = HamStar and HlowerShadow > bodySize * 2 and low <= ta.lowest(low, 10) and HlowerShadow > HupperShadow * 2 and close <= open[1]
+Star = HamStar and SupperShadow > bodySize * 2 and high >= ta.highest(high, 10) and SupperShadow > SlowerShadow * 2 and open <= close[1]
+GreenHammer = ColorHamStar and HlowerShadow > bodySize * 2 and low <= ta.lowest(low, 10) and HlowerShadow > HupperShadow * 2 and close <= open[1] and close > open
+RedStar = ColorHamStar and SupperShadow > bodySize * 2 and high >= ta.highest(high, 10) and SupperShadow > SlowerShadow * 2 and open <= close[1] and close < open
+
+plotshape(Hammer, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), text=label_H, textcolor=color.new(color.black, 0))
+plotshape(Star, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text=label_R, textcolor=color.new(color.black, 0))
+plotshape(GreenHammer, style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), text=label_H, textcolor=color.new(color.black, 0))
+plotshape(RedStar, style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text=label_R, textcolor=color.new(color.black, 0))
+
+alertcondition(Hammer or Star, title='Hammer or Shooting star candle detected for ', message='{{ticker}}')
+alertcondition(GreenHammer or RedStar, title='Green Hammer or Red Star candle detected for ', message='{{ticker}}')
+//**
+//* END OF HAMMER AND SHOTING DETECTOR
+//**
+
+//**
+//* 3EMA
+//** 
+// len4 = input.int(10, minval=1, title='Length')
+// src4 = input(close, title='Source')
+// out4 = ta.ema(src4, len4)
+// plot(out4, color=color.new(color.red, 0), title='10')
+
+len5 = input.int(54, minval=1, title='Length')
+src5 = input(close, title='Source')
+out5 = ta.ema(src5, len5)
+plot(out5, color=color.new(color.blue, 0), title='54', linewidth = 3)
+
+len6 = input.int(200, minval=1, title='Length')
+src6 = input(close, title='Source')
+out6 = ta.ema(src6, len6)
+plot(out6, color=color.new(color.white, 0), title='200', linewidth = 3)
+//**
+//* END OF 3EMA
+//** 

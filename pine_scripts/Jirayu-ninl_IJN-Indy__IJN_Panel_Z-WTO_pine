@@ -1,0 +1,276 @@
+//@version=5
+indicator('IJN Panel Z', 'Pn-Z WTO', format=format.volume, timeframe='', timeframe_gaps=true)
+
+// ------------------------------------------------
+//                     Constants
+// ------------------------------------------------
+
+color CLEAR = color.rgb(0,0,0,100)
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+//# *
+//# * Module : WaveTrend Oscillator (WTO)
+//# *
+//# * ══════════════════════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════════════════════════ //
+
+// Assembled by @ClassicScott
+// original author @LazyBear
+
+// I'm guessing most of you are familiar with LazyBear's adaptation of the Wavetrend Oscillator; it's one of the most popular indicators on
+// TradingView.
+
+// I know others have done adaptations of it, but I thought I might as well, because that's kind of a thing I like doing. 
+
+// In this version I've added a second Wavetrend plot. This is a thing I like to do. The slower plot gives you a slower momentum bias, while the
+// faster plot can give you entries and/or exits.
+
+// With the traditional Wavetrend Oscillator there is a simple moving average on the oscillator that is to help provide entry and exit signals.
+// I've done away with this as there are already two plots, and I felt more would just clutter the indicator. Instead of plotting the moving
+// average I've plotted the crosses along the bottom and top of the indicator. Also, as is not the case in LazyBear's version, this SMA period
+// is adjustable. By default it is set to 4, which is the default setting on the original indicator. Also, while I'm mentioning default settings
+// they are 10 and 21 for the channel and average on Lazybear's indicator. Mine are very obviously different. Change things around and see what
+// you like.
+
+// I've also plotted background colors for when there is what I call a momentum shift. Basically if one or the other oscillators crosses the
+// centerline a colored bar is plotted. By default it is turned on for both WTOs, though in practice you might only want it on for the longer
+// one.
+
+// I would say use of the indicator is similar to the original WTO and many other oscillators. Buying oversold and selling overbought, while
+// being mindful of the momentum of the market. If the slower WTO is above the centerline it's best to be looking for dips to the centerline, or
+// for an overbought signal by the faster WTO, and vice versa if the slower WTO is below the centerline. That said, you can also adjust the
+// lookback of the signal line on the faster WTO to fine tune entries or exits, which is kind of how you would trade LazyBear's version.
+// In this case you have that additional confirmation of market momentum.
+
+// I will also say that crosses of the faster and slower oscillator plots may provide you signals as well.
+// You can set bar coloring to either of the WTO plots via a dropdown menu.
+// There are alerts for overbought and oversold situations, centerline crosses, and Wavetrend crosses.
+// That's about it. Hope you enjoy this particular implementation of LazyBear's well known indicator.
+
+// Ah yes, last thing: Original version the source is set to hlc3. I've given you the opportunity to change that, so if you prefer using close
+// you can.
+
+string g_MainOpt = 'Main Options'
+bool show_wt1 = input.bool(true, 'Show Primary WaveTrend', group=g_MainOpt)
+bool show_wt2 = input.bool(true, 'Show Secondary WaveTrend', group=g_MainOpt)
+bool show_obos_zone = input.bool(true, 'Show OB/OS Zone', group=g_MainOpt)
+bool show_mom_change = input.bool(true, 'Show Momentum Change', group=g_MainOpt)
+bool show_sig_wto_cross = input.bool(true, 'Show Signal Line Cross', group=g_MainOpt)
+bool show_wto_div = input.bool(false, title='Show WTO Divergences', group=g_MainOpt)
+bool bar_color = input.bool(true, title='Paint Bar colors', group=g_MainOpt)
+
+// -----------------------------------------------------------------------------------------------
+//   Define User Input Variables
+// -----------------------------------------------------------------------------------------------
+
+string g_WTO = 'WaveTrend Oscillator (WTO)'
+series float src = input(defval=hlc3, title='Source', group=g_WTO)
+color fill_upper = input.color(color.new(#ff5252, 90), title='Overbought Zone', group=g_WTO)
+color fill_lower = input.color(color.new(#2196f3, 90), title='Oversold Zone', group=g_WTO)
+
+string g_WTO_Wt = 'WaveTrend'
+//WAVETREND PLOT ONE
+int wt_1_channel_lkbk = input.int(defval=8, title='WT 1 Channel Lookback', group=g_WTO_Wt)
+int wt_1_average_lkbk = input.int(defval=13, title='WT 1 Average Lookback', group=g_WTO_Wt)
+int wt_1_ma_lkbk = input.int(defval=4, title='WT 1 Signal Line Lookback', group=g_WTO_Wt)
+color wt_1_up = input.color(color.new(#ff9800, 0), title='Bullish Wavetrend', inline='wt 1 color', group=g_WTO_Wt)
+color wt_1_down = input.color(color.new(#2962ff, 0), title='Bearish Wavetrend', inline='wt 1 color', group=g_WTO_Wt)
+color mom_long_color_1 = input.color(color.new(color.blue, 85), title='Bullish Centerline Crosses', inline='1', group=g_WTO_Wt)
+color mom_short_color_1 = input.color(color.new(color.red, 85), title='Bearish Centerline Crosses', inline='1', group=g_WTO_Wt)
+string sig_wto_cross_location = input.string('on wavetrend', 'Signal Line Cross Location', options=['top/bottom', 'on wavetrend'], group=g_WTO_Wt)
+//WAVETREND PLOT TWO
+int wt_2_channel_lkbk = input.int(defval=13, title='WT 2 Channel Lookback', group=g_WTO_Wt)
+int wt_2_average_lkbk = input.int(defval=34, title='WT 2 Average Lookback', group=g_WTO_Wt)
+color wt_2_up = input.color(color.new(#00bcd4, 0), title='Bullish Wavetrend', inline='wt 2 color', group=g_WTO_Wt)
+color wt_2_down = input.color(color.new(#e91e63, 0), title='Bearish Wavetrend', inline='wt 2 color', group=g_WTO_Wt)
+color mom_long_color_2 = input.color(color.new(color.blue, 85), title='Bullish Centerline Crosses', inline='2', group=g_WTO_Wt)
+color mom_short_color_2 = input.color(color.new(color.red, 85), title='Bearish Centerline Crosses', inline='2', group=g_WTO_Wt)
+
+string g_WTO_Div = 'WaveTrend Divergences'
+string i_div_select = input.string(defval='Wavetrend 1', options=['Wavetrend 1', 'Wavetrend 2'], title='Source for Divergences', group=g_WTO_Div)
+int lkbk_right = input.int(title='Pivot Lookback Right', defval=5, group=g_WTO_Div)
+int lkbk_left = input.int(title='Pivot Lookback Left', defval=5, group=g_WTO_Div)
+int max_range = input.int(title='Max of Lookback Range', defval=60, group=g_WTO_Div)
+int min_range = input.int(title='Min of Lookback Range', defval=5, group=g_WTO_Div)
+bool wto_div_bull = input.bool(true, 'Bull', group=g_WTO_Div)
+bool wto_div_hdn_bull = input.bool(true, 'Hidden Bull', group=g_WTO_Div)
+bool wto_div_bear = input.bool(true, 'Bear', group=g_WTO_Div)
+bool wto_div_hdn_bear = input.bool(true, 'Hidden Bear', group=g_WTO_Div)
+color c_wto_bull = input.color(color.new(color.blue, 0), 'WTO Bull', inline='bull div', group=g_WTO_Div)
+color c_wto_hdn_bull = input.color(color.new(color.yellow, 0), 'WTO Hidden Bull', inline='bull div', group=g_WTO_Div)
+color c_wto_bear = input.color(color.new(color.red, 0), 'WTO Bear', inline='bear div', group=g_WTO_Div)
+color c_wto_hdn_bear = input.color(color.new(color.fuchsia, 0), 'WTO Hidden Bear', inline='bear div', group=g_WTO_Div)
+color c_text = input.color(color.new(color.white, 0), 'WTO Text', inline='text', group=g_WTO_Div)
+
+string g_barColor = 'Bar Colors'
+string i_bc_selection = input.string('WT 1 Gradient', 'Bar Colors Type', options=['WT 1 Gradient', 'WT 1 Centerline', 'WT 1 Extremes', 'WT 2 Gradient', 'WT 2 Centerline', 'KVO | Centerline', 'KVO | Signal Line', 'KVO | Gradient', 'Smoothed KVO | Centerline', 'Smoothed KVO | Secondary Signal Line', 'Smoothed KVO | Gradient'], group=g_MainOpt)
+string i_high_extreme = input.string('60', 'High Extreme', options=['0', '10', '20', '30', '40', '50', '60', '70', '80'], group=g_barColor)
+string i_low_extreme = input.string('-60', 'Low Extreme', options=['0', '-10', '-20', '-30', '-40', '-50', '-60', '-70', '-80'], group=g_barColor)
+color bc_1_up = input.color(color.new(#ff9800, 0), title='WT 1 Up', group=g_barColor)
+color bc_1_down = input.color(color.new(#2962ff, 0), title='WT 1 Down', group=g_barColor)
+color bc_1_neut = input.color(color.new(#787b86, 0), title='WT 1 Neutral', group=g_barColor)
+color bc_2_up = input.color(color.new(#00bcd4, 0), title='WT 2 Up', group=g_barColor)
+color bc_2_down = input.color(color.new(#e91e63, 0), title='WT 2 Down', group=g_barColor)
+color bc_kvo_up = input.color(color.new(#ff9800, 0), 'KVO Bullish', inline='bc_kvo', group=g_barColor)
+color bc_kvo_down = input.color(color.new(#2962ff, 0), 'KVO Bearish', inline='bc_kvo', group=g_barColor)
+color bc_sig_up = input.color(color.new(#00bcd4, 0), 'KVO Signal Bullish', inline='bc_sig', group=g_barColor)
+color bc_sig_down = input.color(color.new(#e91e63, 0), 'KVO Signal Bearish', inline='bc_sig', group=g_barColor)
+color bc_neut = input.color(color.new(#787b86, 0), 'Neutral', inline='bc', group=g_barColor)
+
+// -----------------------------------------------------------------------------------------------
+//   Calculations
+// -----------------------------------------------------------------------------------------------
+
+// WAVETREND PLOT ONE
+esa = ta.ema(src, wt_1_channel_lkbk)
+d = ta.ema(math.abs(src - esa), wt_1_channel_lkbk)
+ci = (src - esa) / (0.015 * d)
+tci = ta.ema(ci, wt_1_average_lkbk)
+wt_1 = tci
+wt_1_ma = ta.sma(wt_1, wt_1_ma_lkbk)
+wt_1_color = color.from_gradient(wt_1, -80, 80, wt_1_down, wt_1_up)
+mom_change_long_1 = ta.crossover(wt_1, 0)
+mom_change_short_1 = ta.crossunder(wt_1, 0)
+
+// WAVETREND PLOT TWO
+esa2 = ta.ema(src, wt_2_channel_lkbk)
+d2 = ta.ema(math.abs(src - esa2), wt_2_channel_lkbk)
+ci2 = (src - esa2) / (0.015 * d2)
+tci2 = ta.ema(ci2, wt_2_average_lkbk)
+wt_2 = tci2
+wt_2_color = color.from_gradient(wt_2, -60, 60, wt_2_down, wt_2_up)
+mom_change_long_2 = show_wt2 and ta.crossover(wt_2, 0)
+mom_change_short_2 = show_wt2 and ta.crossunder(wt_2, 0)
+
+// WAVETREND - RANGE EXTREMES
+os_80 = wt_1 <= -80
+os_70 = wt_1 <= -70
+os_60 = wt_1 <= -60
+os_50 = wt_1 <= -50
+os_40 = wt_1 <= -40
+os_30 = wt_1 <= -30
+os_20 = wt_1 <= -20
+os_10 = wt_1 <= -10
+os_0 = wt_1 <= 0
+ob_0 = wt_1 >= 0
+ob_10 = wt_1 >= 10
+ob_20 = wt_1 >= 20
+ob_30 = wt_1 >= 30
+ob_40 = wt_1 >= 40
+ob_50 = wt_1 >= 50
+ob_60 = wt_1 >= 60
+ob_70 = wt_1 >= 70
+ob_80 = wt_1 >= 80
+
+low_extreme = i_low_extreme == '0' ? os_0 : i_low_extreme == '-10' ? os_10 : i_low_extreme == '-20' ? os_20 : i_low_extreme == '-30' ? os_30 : i_low_extreme == '-40' ? os_40 : i_low_extreme == '-50' ? os_50 : i_low_extreme == '-60' ? os_60 : i_low_extreme == '-70' ? os_70 : i_low_extreme == '-80' ? os_80 : na
+high_extreme = i_high_extreme == '0' ? ob_0 : i_high_extreme == '10' ? ob_10 : i_high_extreme == '20' ? ob_20 : i_high_extreme == '30' ? ob_30 : i_high_extreme == '40' ? ob_40 : i_high_extreme == '50' ? ob_50 : i_high_extreme == '60' ? ob_60 : i_high_extreme == '70' ? ob_70 : i_high_extreme == '80' ? ob_80 : na
+
+// DIVERGENCES
+div_select = i_div_select == 'Wavetrend 1' ? wt_1 : i_div_select == 'Wavetrend 2' ? wt_2 : na
+c_na = color.new(color.white, 100)
+pl_found = na(ta.pivotlow(div_select, lkbk_left, lkbk_right)) ? false : true
+ph_found = na(ta.pivothigh(div_select, lkbk_left, lkbk_right)) ? false : true
+
+_inRange(cond) =>
+    bars = ta.barssince(cond == true)
+    min_range <= bars and bars <= max_range
+
+// -- Bullish
+bool plot_wto_bull = wto_div_bull and show_wto_div
+osc_hl = div_select[lkbk_right] > ta.valuewhen(pl_found, div_select[lkbk_right], 1) and _inRange(pl_found[1])
+price_ll = low[lkbk_right] < ta.valuewhen(pl_found, low[lkbk_right], 1)
+bull_cond = plot_wto_bull and price_ll and osc_hl and pl_found
+// -- Hidden Bullish
+bool plot_wto_hdn_bull = wto_div_hdn_bull and show_wto_div
+osc_ll = div_select[lkbk_right] < ta.valuewhen(pl_found, div_select[lkbk_right], 1) and _inRange(pl_found[1])
+price_hl = low[lkbk_right] > ta.valuewhen(pl_found, low[lkbk_right], 1)
+hdn_bull_cond = plot_wto_hdn_bull and price_hl and osc_ll and pl_found
+// -- Bearish
+bool plot_wto_bear = wto_div_bear and show_wto_div
+osc_lh = div_select[lkbk_right] < ta.valuewhen(ph_found, div_select[lkbk_right], 1) and _inRange(ph_found[1])
+price_hh = high[lkbk_right] > ta.valuewhen(ph_found, high[lkbk_right], 1)
+bear_cond = plot_wto_bear and price_hh and osc_lh and ph_found
+// -- Hidden Bearish
+bool plot_wto_hdn_bear = wto_div_hdn_bear and show_wto_div
+osc_hh = div_select[lkbk_right] > ta.valuewhen(ph_found, div_select[lkbk_right], 1) and _inRange(ph_found[1])
+price_lh = high[lkbk_right] < ta.valuewhen(ph_found, high[lkbk_right], 1)
+hdn_bear_cond = plot_wto_hdn_bear and price_lh and osc_hh and ph_found
+
+
+// -----------------------------------------------------------------------------------------------
+//   Drawing
+// -----------------------------------------------------------------------------------------------
+
+// HORIZONTAL LINES AND OVERBOUGHT/OVERSOLD REGIONS
+zero = hline(0, color=color.new(color.white, 60), linestyle=hline.style_solid, title='Zero')
+line_upper = hline(100, color=color.new(color.white, 45), linestyle=hline.style_solid, title='Upper')
+line_lower = hline(-100, color=color.new(color.white, 45), linestyle=hline.style_solid, title='Lower')
+wto_1_overbought = hline(60, color=#ef5350, linestyle=hline.style_dotted, title='60', display=display.none)
+wto_1_oversold = hline(-60, color=#2196f3, linestyle=hline.style_dotted, title='-60', display=display.none)
+wto_2_overbought = hline(80, color=color.new(#ffffff, 80), linestyle=hline.style_dashed, title='80')
+wto_2_oversold = hline(-80, color=color.new(#ffffff, 80), linestyle=hline.style_dashed, title='-80')
+
+// PLOTS, FILLS, BACKGROUND COLORS, BAR COLORS
+plot(show_wt1 ? wt_1: na, color=wt_1_color, title='Primary Wavetrend')
+plot(show_wt2 ? wt_2 : na, color=wt_2_color, title='Secondary Wavetrend')
+
+bgcolor(show_wt1 and show_mom_change and mom_change_long_1 ? mom_long_color_1 : na, title='Bullish Centerline Cross')
+bgcolor(show_wt1 and show_mom_change and mom_change_short_1 ? mom_short_color_1 : na, title='Bearish Centerline Cross')
+bgcolor(show_wt2 and show_mom_change and mom_change_long_2 ? mom_long_color_2 : na, title='Bullish Centerline Cross - Secondary WTO')
+bgcolor(show_wt2 and show_mom_change and mom_change_short_2 ? mom_short_color_2 : na, title='Bearish Centerline Cross - Secondary WTO')
+
+bool sig_cross_onWT = sig_wto_cross_location != 'top/bottom'
+sig_wto_crossOver = show_sig_wto_cross and ta.crossover(wt_1, wt_1_ma)
+sig_wto_crossUnder = show_sig_wto_cross and ta.crossunder(wt_1, wt_1_ma)
+plotshape(sig_wto_crossOver and sig_cross_onWT ? wt_1 : sig_wto_crossOver ? 99 : na, title='Bullish Signal Line Cross', style=shape.circle, color=color.new(#00ff62, 0), location=location.absolute)
+plotshape(sig_wto_crossUnder and sig_cross_onWT ? wt_1 : sig_wto_crossUnder ? -99 : na, title='Bearish Signal Line Cross', style=shape.circle, color=color.new(#ff3a3a, 0), location=location.absolute)
+
+fill(line_upper, wto_2_overbought, color=show_obos_zone ? fill_upper : na, title='Overbought Region')
+fill(line_upper, wto_1_overbought, color=show_obos_zone ? fill_upper : na, title='Overbought Region Extreme')
+fill(line_lower, wto_2_oversold, color=show_obos_zone ? fill_lower : na, title='Oversold Region')
+fill(line_lower, wto_1_oversold, color=show_obos_zone ? fill_lower : na, title='Oversold Region Extreme')
+
+
+// DIVERGENCES
+plot(pl_found ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Bull', linewidth=1, color=bull_cond ? c_wto_bull : c_na)
+plotshape(bull_cond ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Bullish Label', text=' Bull ', style=shape.labelup, location=location.absolute, color=c_wto_bull, textcolor=c_text, display=display.none)
+plot(pl_found ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Hidden Bull', linewidth=1, color=hdn_bull_cond ? c_wto_hdn_bull : c_na)
+plotshape(hdn_bull_cond ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Hidden Bullish Label', text=' H. Bull ', style=shape.labelup, location=location.absolute, color=c_wto_bull, textcolor=c_text, display=display.none)
+plot(ph_found ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Bear', linewidth=1, color=bear_cond ? c_wto_bear : c_na)
+plotshape(bear_cond ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Bearish Label', text=' Bear ', style=shape.labeldown, location=location.absolute, color=c_wto_bear, textcolor=c_text, display=display.none)
+plot(ph_found ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Hidden Bear', linewidth=1, color=hdn_bear_cond ? c_wto_hdn_bear : c_na)
+plotshape(hdn_bear_cond ? div_select[lkbk_right] : na, offset=-lkbk_right, title='Hidden Bearish Label', text=' H. Bear ', style=shape.labeldown, location=location.absolute, color=c_wto_bear, textcolor=c_text, display=display.none)
+
+
+
+// -----------------------------------------------------------------------------------------------
+//   Transforms
+// -----------------------------------------------------------------------------------------------
+
+bc_1_color = color.from_gradient(wt_1, -60, 60, bc_1_down, bc_1_up)
+bc_2_color = wt_1 > 0 ? bc_1_up : bc_1_down
+bc_3_color = high_extreme ? bc_1_up : low_extreme ? bc_1_down : bc_1_neut
+bc_4_color = color.from_gradient(wt_2, -60, 60, bc_2_down, bc_2_up)
+bc_5_color = wt_2 > 0 ? bc_2_up : bc_2_down
+bc_selection = i_bc_selection == 'WT 1 Gradient' ? bc_1_color : i_bc_selection == 'WT 1 Centerline' ? bc_2_color : i_bc_selection == 'WT 1 Extremes' ? bc_3_color : i_bc_selection == 'WT 2 Gradient' ? bc_4_color : i_bc_selection == 'WT 2 Centerline' ? bc_5_color : na
+barcolor(bar_color ? bc_selection : na, title='Colored Bars')
+
+
+// -----------------------------------------------------------------------------------------------
+//   Alerts
+// -----------------------------------------------------------------------------------------------
+
+alertcondition(ta.crossunder(wt_1, -80), title='Primary WTO Cross Below -80', message='Primary WTO has crossed -80.')
+alertcondition(ta.crossunder(wt_1, -60), title='Primary WTO Cross into Oversold Zone', message='Primary WTO has crossed into oversold zone.')
+alertcondition(ta.crossover(wt_1, 80), title='Primary WTO Cross Above 80', message='Primary WTO has crossed 80.')
+alertcondition(ta.crossover(wt_1, 60), title='Primary WTO Cross into Overbought Zone', message='Primary WTO has crossed into overbought zone.')
+alertcondition(ta.cross(wt_1, wt_2), title='Primary WTO Crossing Secondary WTO', message='Primary WTO has crossed Secondary WTO.')
+alertcondition(ta.cross(wt_1, 0), title='Primary WTO Centerline Cross', message='Primary WTO has crossed the centerline.')
+alertcondition(ta.cross(wt_2, 0), title='Secondary WTO Centerline Cross', message='Secondary WTO has crossed the centerline.')
+alertcondition(ta.cross(wt_1, wt_1_ma), title='Primary WTO Crossing Moving Average', message='Primary WTO has crossed its Moving Average')
+alertcondition(bull_cond, title='Bull Div', message='Wavetrend Oscillator bull div')
+alertcondition(hdn_bull_cond, title='Hidden Bull Div', message='Wavetrend Oscillator hidden bull div')
+alertcondition(bear_cond, title='Bear Div', message='Wavetrend Oscillator bear div')
+alertcondition(hdn_bear_cond, title='Hidden Bear Div', message='Wavetrend Oscillator hidden bear div')

@@ -1,0 +1,237 @@
+//@version=4
+study("MJ - Sweet Spot", overlay=true)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== SWEET SPOT ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+groupConfig = 'Config'
+groupExtend = 'Extend'
+groupSwitches = 'Switches'
+groupLinesAndLabels = 'Lines and Labels'
+groupColors = 'Colors'
+
+ssLineExtendWhole = input(extend.both, 'Extend - Whole', options=[extend.none, extend.left, extend.right, extend.both], group=groupExtend)
+ssLineExtendHalf = input(extend.none, 'Extend - Half', options=[extend.none, extend.left, extend.right, extend.both], group=groupExtend)
+ssLineExtendQuarter = input(extend.none, 'Extend - Quarter', options=[extend.none, extend.left, extend.right, extend.both], group=groupExtend)
+
+ssActive = input(true, 'Sweet Spot Active', group=groupSwitches)
+showPercentageAwayFromPrice = input(true, 'Show Deviation Percentages', group=groupSwitches, tooltip='Show the percentage distance away from price in the label')
+ssShowLabels = input(true, 'Show Labels?', group=groupSwitches)
+ssShowWhole = input(true, 'Show Whole', group=groupSwitches)
+ssShowHalf = input(true, 'Show Half', group=groupSwitches)
+ssShowQuarter = input(false, 'Show Quarter', group=groupSwitches)
+
+
+ssMaxTimeframe = input(15, 'Max Timeframe', group=groupConfig, minval=1, maxval=240, tooltip='Hidden if above this timeframe')
+
+ssPlotRangeInMultiplesOfWhole = input(6, 'Plot Range (in multiples of the whole)', 
+ minval=0,
+ tooltip='Example:  plotRange=2.  open = 31,795.  This would plot a line at each whole level between 30k (32-2) and 34k (32+2).', 
+ group=groupConfig)
+
+ssWholeLevelOverride = input(0, 'Whole Level Override', minval=0, tooltip='Only active if greater than 0.  You shouldn\'t need to use this, but just in case.', group=groupConfig, step=0.01)
+
+ssLineOffset = input(43, 'Line Offset (in bars)', group=groupLinesAndLabels)
+ssLineLength = input(20, 'Line Length (in bars)', group=groupLinesAndLabels)
+ssLabelOffset = input(-4, 'Label Offset (in bars)', group=groupLinesAndLabels)
+
+ssLineWidth = input(2, 'Line Width', options=[1,2,3,4], group=groupLinesAndLabels)
+ssLineStyle = input(line.style_dotted, 'Line Style', options=[line.style_solid, line.style_dashed, line.style_dotted], group=groupLinesAndLabels)
+
+ssLabelStyle = input(label.style_none, 'Label Style', options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle], group=groupLinesAndLabels)
+ssLabelTextColor = input(color.white, 'Label Text Color', group=groupLinesAndLabels)
+ssLabelSize = input(size.large, 'Label Size', options=[size.auto, size.tiny, size.small, size.normal, size.large], group=groupLinesAndLabels)
+
+COLOR_PEACH = #e57373
+
+ssUseSingleColor = input(true, 'Use Single Color?', group=groupColors)
+masterColor = input(color.new(#434651, 30), 'Master Color', group=groupColors, tooltip='This is the color that will be used if Use Single Color is checked.')
+wholeColor = input(color.new(COLOR_PEACH, 30), 'Whole Color', group=groupColors)
+halfColor = input(color.new(COLOR_PEACH, 50), 'Half Color', group=groupColors)
+quarterColor = input(color.new(COLOR_PEACH, 70), 'Quarter Color', group=groupColors)
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+
+_getTimeNBarsFromNow(numBars) => numBars > 0 ? _getFutureTimeNBarsFromNow(numBars) : _getPastTimeNBarsBackFromNow(numBars * -1)
+
+_getSweetSpotLevels() => 
+    wholeLevel = 
+         ssWholeLevelOverride > 0 ? ssWholeLevelOverride :
+         open > 1000000 ? na :
+         open > 27500 ? 1000 :
+         open > 5000 ? 500 :
+         open > 500 ? 100 :
+         open > 250 ? 50 :
+         open > 50 ? 10 :
+         open > 25 ? 5 :
+         open > 20 ? 1 : 
+         open > 7 ? 0.5 :
+         open > 2 ? 0.1 :
+         open > 1.5 ? 0.1 : 
+         open > 0.15 ? 0.05 :
+         open > 0.1 ? 0.01 :
+         open > 0.075 ? 0.005 :
+         open > 0.0275 ? 0.001 :
+         open > 0.01 ? 0.0005 :
+         open > 0.00275 ? 0.0001 :
+         0.00001
+    halfLevel = wholeLevel / 2
+    quarterLevel = wholeLevel / 4
+    [wholeLevel, halfLevel, quarterLevel]
+
+_getNearestWhole(wholeLevel) => 
+    currentPrice = open[0]
+    wholeLevel == 0 ? currentPrice : currentPrice - (currentPrice % wholeLevel)
+
+_getRange(wholeLevel, nearestWhole) => 
+    _min = nearestWhole - (wholeLevel * ssPlotRangeInMultiplesOfWhole)
+    _max = nearestWhole + (wholeLevel * ssPlotRangeInMultiplesOfWhole)
+    [_min, _max]    
+
+ 
+_getItemAtIndex(arrayId, index) => 
+    array.size(arrayId) >= index + 1 ? array.get(arrayId, index) : na   
+
+[wholeLevel, halfLevel, quarterLevel] = _getSweetSpotLevels()
+nearestWhole = _getNearestWhole(wholeLevel)
+[_min, _max] = _getRange(wholeLevel[0], nearestWhole)
+
+var float[] wholeValues = array.new_float(0)
+var float[] halfValues = array.new_float(0)
+var float[] quarterValues = array.new_float(0)
+
+_buildSweetSpotArrays() => 
+    array.clear(wholeValues)
+    array.clear(halfValues)
+    array.clear(quarterValues)
+
+    wholeLoopSize = 1 + (2 * ssPlotRangeInMultiplesOfWhole * 1)
+    halfLoopSize = 1 + (2 * ssPlotRangeInMultiplesOfWhole * 2)
+    quarterLoopSize = 1 + (2 * ssPlotRangeInMultiplesOfWhole * 4)
+
+    for _i = 1 to wholeLoopSize
+        valueToPush = _min + (_i * wholeLevel)
+        isValid = true
+        if isValid
+            array.push(wholeValues, valueToPush)
+
+    for _i = 1 to halfLoopSize
+        valueToPush = _min + (_i * halfLevel)
+        isValid = not array.includes(wholeValues, valueToPush)
+        if isValid
+            array.push(halfValues, valueToPush)
+
+    for _i = 1 to quarterLoopSize
+        valueToPush = _min + (_i * quarterLevel)
+        isValid = not array.includes(wholeValues, valueToPush) and not array.includes(halfValues, valueToPush)
+        if isValid
+            array.push(quarterValues, valueToPush)
+
+
+_buildSweetSpotArrays()
+
+_getSweetSpotLinePlotValues(ssLineOffset, ssLineLength, ssLabelOffset) => 
+    x1 = _getTimeNBarsFromNow(ssLineOffset)
+    x2 = _getTimeNBarsFromNow(ssLineOffset + ssLineLength)
+    timePerBar = time[0] - time[1]
+    labelTime = x2 + (ssLabelOffset * timePerBar)
+    [x1, x2, labelTime]
+
+_toDecimalPlaces(numDecimals, value) =>
+    // truncates a given number to a certain number of decimals
+    factor = pow(10, numDecimals)
+    int(value * factor) / factor
+
+_deviationDisplay(_price) => 
+    difference = _price - close
+    higherVal = max(_price, close)
+    percentage = _toDecimalPlaces(2, abs((difference) / higherVal) * 100)    
+    priceDisplay = tostring(_price) + ' (' + tostring(percentage) + '%)'
+
+
+var line[] wholeLines = array.new_line(0)
+var line[] halfLines = array.new_line(0)
+var line[] quarterLines = array.new_line(0)
+var label[] wholeLabels = array.new_label(0)
+var label[] halfLabels = array.new_label(0)
+var label[] quarterLabels = array.new_label(0)
+
+[x1, x2, labelTime] = _getSweetSpotLinePlotValues(ssLineOffset, ssLineLength, ssLabelOffset)
+
+_drawSweetSpotLinesAndLabels(linesArray, labelsArray, valuesArray, _color, lineExtend) => 
+    isNew = array.size(linesArray) == 0
+    size = array.size(valuesArray)
+
+    for _i = 0 to (size -1)
+        _price = array.get(valuesArray, _i)
+        
+        line lineId = line.new(
+             x1=x1, 
+             y1=_price, 
+             x2=x2, 
+             y2=_price, 
+             xloc=xloc.bar_time, 
+             extend=lineExtend, 
+             color=_color, 
+             style=ssLineStyle, 
+             width=ssLineWidth)
+        line.set_xy1(lineId, x1, _price)
+        line.set_xy2(lineId, x2, _price)
+        array.push(linesArray, lineId)
+        
+        // create a label on the last bar (aka the current bar)
+        // the `var` keyword will make it only create once
+        // set_xy, and set_text will update the label
+        labelId = label.new(
+             x=labelTime,
+             y=_price,
+             text=showPercentageAwayFromPrice ? _deviationDisplay(_price) : tostring(_price),
+             textcolor=ssLabelTextColor,
+             style=ssLabelStyle,
+             size=ssLabelSize,
+             xloc=xloc.bar_time,
+             color=_color)
+
+        // label.set_xy(labelId, x1, _price)
+        // label.set_text(labelId, tostring(_price))
+        array.push(labelsArray, labelId)
+
+        // cleanup
+        if not isNew 
+            lineToDelete = array.shift(linesArray)
+            line.delete(lineToDelete)
+            labelToDelete = array.shift(labelsArray)
+            label.delete(labelToDelete)
+
+if barstate.islast and ssActive and timeframe.isintraday and timeframe.multiplier <= ssMaxTimeframe
+    if ssShowWhole
+        _drawSweetSpotLinesAndLabels(
+             wholeLines, 
+             wholeLabels, 
+             wholeValues, 
+             ssUseSingleColor ? masterColor : wholeColor, 
+             ssLineExtendWhole
+             )
+    
+    if ssShowHalf
+        _drawSweetSpotLinesAndLabels(
+             halfLines, 
+             halfLabels, 
+             halfValues, 
+             ssUseSingleColor ? masterColor : halfColor, 
+             ssLineExtendHalf
+             )
+    
+    if ssShowQuarter
+        _drawSweetSpotLinesAndLabels(
+             quarterLines, 
+             quarterLabels, 
+             quarterValues, 
+             ssUseSingleColor ? masterColor : quarterColor, 
+             ssLineExtendQuarter
+             )

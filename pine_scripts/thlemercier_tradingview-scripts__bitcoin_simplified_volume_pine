@@ -1,0 +1,79 @@
+//@version=4
+study("MY:Simplified Bitcoin Volume")
+
+getVolumeSym(symbolPair) => security(symbolPair, '', volume)
+getVolumeSymNz(symbolPair) => nz(getVolumeSym(symbolPair))
+getOrZero(val, cond) => cond ? val : 0
+getOrNA(v, c) => c ? v : na
+
+//
+// Color Palette
+//
+color_13 = #b78d00 // Light Brown --
+color_15 = #3e2a00 // Dark brown --
+
+//
+// Spot Exchange Volume
+//
+totalExchanges = 0
+binanceUSD = getOrZero(getVolumeSymNz("BINANCE:BTCUSD"), true)
+binanceUSDT = getOrZero(getVolumeSymNz("BINANCE:BTCUSDT"), true)
+binanceUSDC = getOrZero(getVolumeSymNz("BINANCE:BTCUSDC"), true)
+binanceEUR = getOrZero(getVolumeSymNz("BINANCE:BTCEUR"), true)
+totalBinance = round(binanceUSD + binanceUSDT + binanceUSDC + binanceEUR)
+totalExchanges := totalExchanges + totalBinance
+
+coinbaseUSD = getOrZero(getVolumeSymNz("COINBASE:BTCUSD"), true)
+coinbaseUSDT = getOrZero(getVolumeSymNz("COINBASE:BTCUSDT"), true)
+coinbaseUSDC = getOrZero(getVolumeSymNz("COINBASE:BTCUSDC"), true)
+coinbaseEUR = getOrZero(getVolumeSymNz("COINBASE:BTCEUR"), true)
+totalCoinbase = round(coinbaseUSD + coinbaseUSDT + coinbaseUSDC + coinbaseEUR)
+totalExchanges := totalExchanges + totalCoinbase
+
+krakenUSD = getOrZero(getVolumeSymNz("KRAKEN:XBTUSD"), true)
+krakenUSDT = getOrZero(getVolumeSymNz("KRAKEN:XBTUSDT"), true)
+krakenEUR = getOrZero(getVolumeSymNz("KRAKEN:XBTEUR"), true)
+totalKraken = round(krakenUSD + krakenUSDT + krakenEUR)
+totalExchanges := totalExchanges + totalKraken
+
+huobiUSDT = getOrZero(getVolumeSymNz("HUOBI:BTCUSDC"), true)
+huobiUSDC = getOrZero(getVolumeSymNz("OKEX:BTCUSDC"), true)
+totalHuobi = round(huobiUSDT + huobiUSDC)
+totalExchanges := totalExchanges + totalHuobi
+
+okexUSDT = getOrZero(getVolumeSymNz("OKEX:BTCUSDT"), true)
+okexUSDC = getOrZero(getVolumeSymNz("OKEX:BTCUSDC"), true)
+totalOkex = round(okexUSDT + okexUSDC)
+totalExchanges := totalExchanges + totalOkex
+
+ftxUSD = getOrZero(getVolumeSymNz("FTX:BTCUSD"), true)
+ftxUSDT = getOrZero(getVolumeSymNz("FTX:BTCUSDT"), true)
+totalFtx = round(ftxUSD + ftxUSDT)
+totalExchanges := totalExchanges + totalFtx
+
+phemexUSDT = getOrZero(getVolumeSymNz("PHEMEX:BTCUSDT"), true)
+totalPhemex = round(phemexUSDT)
+totalExchanges := totalExchanges + totalPhemex
+
+kucoinUSDT = getOrZero(getVolumeSymNz("KUCOIN:BTCUSDT"), true)
+kucoinUSDC = getOrZero(getVolumeSymNz("KUCOIN:BTCUSDC"), true)
+totalKucoin = round(kucoinUSDT + kucoinUSDC)
+totalExchanges := totalExchanges + totalKucoin
+
+ftxBTC_PERP = getOrZero(getVolumeSymNz("FTX:BTCPERP"), true)
+totalFtxPerp = round(ftxBTC_PERP)
+totalExchanges := totalExchanges + totalFtxPerp
+
+bitmexBTC_PERP = getOrZero(getVolumeSymNz("BITMEX:XBTUSD"), true)
+totalBitmexPerp = round(bitmexBTC_PERP)
+totalExchanges := totalExchanges + totalBitmexPerp
+
+phemexBTC_PERP = getOrZero(getVolumeSymNz("PHEMEX:BTCUSD"), true)
+totalPhemexPerp = round(phemexBTC_PERP)
+totalExchanges := totalExchanges + totalPhemexPerp
+
+
+total = totalExchanges / 100000000
+plot(total, "Trading Volume", color=close > close[1] ? color_13 : color_15, style=plot.style_columns)
+plot(165, "Liquidation", color=color.red, style=plot.style_line)
+plot(280, "Capitulation", color=color.green, style=plot.style_line)

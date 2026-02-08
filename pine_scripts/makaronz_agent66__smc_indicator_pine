@@ -1,0 +1,101 @@
+//@version=5
+indicator("SMC Signals by Manus", "SMC", overlay=true)
+
+// ----------------------------------------------------------------------------
+// INPUTS
+// ----------------------------------------------------------------------------
+
+// Swing Detection
+swing_lookback = input.int(15, "Swing Lookback", minval=2)
+
+// Structure
+structure_lookback = input.int(30, "Structure Lookback", minval=2)
+
+// Order Blocks
+ob_atr_multiplier = input.float(1.5, "OB ATR Multiplier", minval=0.1)
+ob_mitigation_percent = input.float(50.0, "OB Mitigation %", minval=0.0, maxval=100.0)
+
+// Fair Value Gaps
+fvg_atr_multiplier = input.float(1.0, "FVG ATR Multiplier", minval=0.1)
+
+// ----------------------------------------------------------------------------
+// LIBS & FUNCTIONS
+// ----------------------------------------------------------------------------
+
+// Swing High/Low Detection
+pivot_high = ta.pivothigh(high, swing_lookback, swing_lookback)
+pivot_low = ta.pivotlow(low, swing_lookback, swing_lookback)
+
+// ----------------------------------------------------------------------------
+// STRUCTURE (BOS/CHOCH)
+// ----------------------------------------------------------------------------
+
+var float last_swing_high = na
+var float last_swing_low = na
+var int last_swing_high_bar = na
+var int last_swing_low_bar = na
+
+if not na(pivot_high)
+    last_swing_high := pivot_high
+    last_swing_high_bar := bar_index - swing_lookback
+
+if not na(pivot_low)
+    last_swing_low := pivot_low
+    last_swing_low_bar := bar_index - swing_lookback
+
+bos = high > last_swing_high and close > last_swing_high
+choch = low < last_swing_low and close < last_swing_low
+
+if bos
+    label.new(bar_index, high, "BOS", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_down)
+
+if choch
+    label.new(bar_index, low, "CHOCH", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_up)
+
+// ----------------------------------------------------------------------------
+// FAIR VALUE GAPS (FVG)
+// ----------------------------------------------------------------------------
+
+bullish_fvg = high[2] < low
+bearish_fvg = low[2] > high
+
+if bullish_fvg
+    box.new(bar_index - 2, high[2], bar_index, low, border_color=color.new(color.green, 50), bgcolor=color.new(color.green, 80))
+
+if bearish_fvg
+    box.new(bar_index - 2, low[2], bar_index, high, border_color=color.new(color.red, 50), bgcolor=color.new(color.red, 80))
+
+// ----------------------------------------------------------------------------
+// ORDER BLOCKS (OB)
+// ----------------------------------------------------------------------------
+
+// Bullish OB: Last down candle before a strong up move that breaks structure
+bullish_ob_candle = close[1] < open[1] and close > open and high > high[1]
+bullish_ob = bullish_ob_candle and bos
+
+// Bearish OB: Last up candle before a strong down move that breaks structure
+bearish_ob_candle = close[1] > open[1] and close < open and low < low[1]
+bearish_ob = bearish_ob_candle and choch
+
+if bullish_ob
+    box.new(bar_index - 1, high[1], bar_index, low[1], border_color=color.new(color.blue, 50), bgcolor=color.new(color.blue, 80))
+
+if bearish_ob
+    box.new(bar_index - 1, low[1], bar_index, high[1], border_color=color.new(color.purple, 50), bgcolor=color.new(color.purple, 80))
+
+// ----------------------------------------------------------------------------
+// SUMMARY TABLE
+// ----------------------------------------------------------------------------
+
+var table summary_table = table.new(position.top_right, 5, 2, border_width=1)
+
+if barstate.islast
+    table.cell(summary_table, 0, 0, "Last Signal")
+    table.cell(summary_table, 1, 0, "Time")
+
+    if bos
+        table.cell(summary_table, 0, 1, "BOS")
+        table.cell(summary_table, 1, 1, str.tostring(time))
+    if choch
+        table.cell(summary_table, 0, 1, "CHOCH")
+        table.cell(summary_table, 1, 1, str.tostring(time))

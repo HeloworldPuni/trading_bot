@@ -1,0 +1,443 @@
+//@version=5
+indicator("False Breakout Strategy with Market Structure", shorttitle="FBSMS", overlay=true)
+
+// === INPUTS ===
+
+// Section 1 & 5: Market Structure
+lookbackVHVL = input.int(500, title="Lookback for Valid High/Low", minval=10)
+
+// Section 2 & 5: False Breakout
+maxCandlesVShape = input.int(100, title="Max Candles for V-Shape Movement", minval=5)
+maxCandlesReturn = input.int(20, title="Max Candles for Return into Zone", minval=1)
+minReturnPercent = input.float(20.0, title="Minimum Return Percentage", minval=1.0, maxval=100.0, step=1.0) / 100.0
+
+// Section 3 & 5: 3 Candle Reversal Filter
+enable3CRFilter = input.bool(true, title="Enable 3CR Filter")
+cr3CompareCandle = input.string("First", title="3CR Trigger Candle (High/Low)", options=["First", "Second"])
+
+// Section 4 & 5: Entry Logic
+rrRatio = input.float(1.5, title="Risk:Reward Ratio (Take Profit)", minval=0.1, step=0.1)
+
+// === LOGIC ===
+
+// Section 1: Market Structure
+var float lastValidHigh = na
+var int lastValidHighBar = na
+var float lastValidLow = na
+var int lastValidLowBar = na
+
+// Store the *previous* confirmed VH/VL to check sequence
+var float prevValidHigh = na
+var int prevValidHighBar = na
+var float prevValidLow = na
+var int prevValidLowBar = na
+
+var float protectedHigh = na
+var int protectedHighBar = na
+var float protectedLow = na
+var int protectedLowBar = na
+
+var bool isUptrend = na // na = undetermined, true = uptrend, false = downtrend
+
+// Flags to track the sequence state
+var bool lookingForVL = false // After a VH, we look for a VL
+var bool lookingForVH = false // After a VL, we look for a VH
+
+// Iterative tracking for confirmations (no ta.lowest/highest allowed)
+var float lowestCloseSinceLastVH = na // For Protected High confirmation
+var float highestCloseSinceLastVL = na // For Protected Low confirmation
+var float lowestCloseBetweenVH = na // For Uptrend confirmation (between prevVH and new VH)
+
+// Downtrend confirmation state
+var bool potentialDowntrendSignal = false // Set true when a Lower High is formed
+var float lowToBreakForDowntrend = na // The VL that needs to be broken after a LH
+
+// Conditions for potential Valid High/Low based on pullback
+bool isPullbackDown = close < low[1]
+bool isPullbackUp = close > high[1]
+
+// Track potential VH/VL points (Need to confirm with trend sequence)
+// Store potential VH/VL candidates. We need to look back and confirm the sequence.
+// This requires a more complex state management than simple variable assignment.
+// Let's use arrays to store recent potential pivots.
+
+var float[] potentialHighs = array.new_float(0)
+var int[] potentialHighBars = array.new_int(0)
+var float[] potentialLows = array.new_float(0)
+var int[] potentialLowBars = array.new_int(0)
+
+// Example check (will be refined based on trend logic)
+if isPullbackDown
+    array.push(potentialHighs, high[1])
+    array.push(potentialHighBars, bar_index[1])
+
+if isPullbackUp
+    array.push(potentialLows, low[1])
+    array.push(potentialLowBars, bar_index[1])
+
+// --- Trend and VH/VL Confirmation Logic ---
+
+// Temporary variables for the current bar's potential points
+float potentialVH = isPullbackDown ? high[1] : na
+int potentialVHBar = isPullbackDown ? bar_index[1] : na
+float potentialVL = isPullbackUp ? low[1] : na
+int potentialVLBar = isPullbackUp ? bar_index[1] : na
+
+bool confirmedVHThisBar = false
+bool confirmedVLThisBar = false
+
+// Update lowest/highest close trackers
+if not na(lowestCloseSinceLastVH)
+    lowestCloseSinceLastVH := math.min(lowestCloseSinceLastVH, close)
+if not na(highestCloseSinceLastVL)
+    highestCloseSinceLastVL := math.max(highestCloseSinceLastVL, close)
+if not na(lowestCloseBetweenVH)
+    lowestCloseBetweenVH := math.min(lowestCloseBetweenVH, close)
+
+// State Machine for VH/VL confirmation and Trend
+if na(isUptrend) and na(lastValidHigh) and na(lastValidLow) // Initial State
+    if not na(potentialVH)
+        lastValidHigh := potentialVH
+        lastValidHighBar := potentialVHBar
+        confirmedVHThisBar := true
+        lookingForVL := true
+        lookingForVH := false
+        lowestCloseSinceLastVH := close // Start tracking for PH
+    else if not na(potentialVL)
+        lastValidLow := potentialVL
+        lastValidLowBar := potentialVLBar
+        confirmedVLThisBar := true
+        lookingForVH := true
+        lookingForVL := false
+        highestCloseSinceLastVL := close // Start tracking for PL
+else
+    // Look for a Valid Low after a Valid High
+    if lookingForVL and not na(lastValidHigh) and not na(potentialVL) and potentialVLBar > lastValidHighBar
+        prevValidLow := lastValidLow
+        prevValidLowBar := lastValidLowBar
+        lastValidLow := potentialVL
+        lastValidLowBar := potentialVLBar
+        confirmedVLThisBar := true
+        lookingForVL := false
+        lookingForVH := true
+        highestCloseSinceLastVL := close // Reset tracker for new VL
+        // Reset downtrend signal if a VL forms
+        potentialDowntrendSignal := false
+        lowToBreakForDowntrend := na
+
+    // Look for a Valid High after a Valid Low
+    if lookingForVH and not na(lastValidLow) and not na(potentialVH) and potentialVHBar > lastValidLowBar
+        prevValidHigh := lastValidHigh
+        prevValidHighBar := lastValidHighBar
+        lastValidHigh := potentialVH
+        lastValidHighBar := potentialVHBar
+        confirmedVHThisBar := true
+        lookingForVH := false
+        lookingForVL := true
+        lowestCloseSinceLastVH := close // Reset tracker for new VH
+        lowestCloseBetweenVH := close // Start tracking close between previous VH and this new one
+
+        // --- Trend Confirmation Logic ---
+        if not na(prevValidHigh)
+            // Uptrend Check: New VH is higher than previous VH
+            if lastValidHigh > prevValidHigh
+                // AND price did not close below lastValidLow between prevVH and new VH
+                // (Check lowestCloseBetweenVH which tracks from the bar *after* prevVH until *before* new VH confirmed)
+                // Note: lowestCloseBetweenVH reset above, needs update before this check, requires slight restructuring or delay.
+                // Let's check the condition on the *next* bar after VH confirmation for simplicity for now.
+                // Or, check if the lowest close since the *last Valid Low* remained above it.
+                // --> Refined Check: Check if the lowest close since the previous VH bar stayed >= last VL bar
+                // We need lowestCloseBetweenVH to be tracked correctly *before* confirming VH.
+                // Let's track it continuously when lookingForVH is true.
+                // **Correction:** The requirement is "Price must not close below the Valid Low between the two Valid Highs."
+                // We need to track the lowest close *after* the first VH and ensure it's >= the VL formed *between* them.
+
+                // Simpler check: Check if the lowest close since the *last VL* is >= last VL
+                // This is implicitly checked by Protected Low confirmation logic.
+                // If the previous VL becomes protected, it implies price stayed above it.
+
+                isUptrend := true
+                potentialDowntrendSignal := false // Cancel any downtrend signal
+                lowToBreakForDowntrend := na
+
+            // Downtrend Signal Check: New VH is lower than previous VH
+            elif lastValidHigh < prevValidHigh
+                isUptrend := na // Trend becomes undetermined, waiting for break
+                potentialDowntrendSignal := true
+                lowToBreakForDowntrend := lastValidLow // This is the low that needs to break
+
+// --- Downtrend Confirmation ---
+// Must happen *after* the Lower High is established (potentialDowntrendSignal is true)
+// Condition: Close below the critical low (lowToBreakForDowntrend)
+if potentialDowntrendSignal and not na(lowToBreakForDowntrend) and close < lowToBreakForDowntrend
+    isUptrend := false
+    potentialDowntrendSignal := false // Reset signal
+    // lowToBreakForDowntrend := na // Keep this value? Maybe needed for PH later?
+
+// --- Protected High/Low Logic ---
+// Protected Low: Confirmed when an uptrend (Higher High) is confirmed.
+// The VL *before* the latest VH becomes the Protected Low.
+if isUptrend == true and confirmedVHThisBar and lastValidHigh > prevValidHigh
+    // Ensure the lowest close since this VL was formed is still >= VL itself
+    // Using the tracked highestCloseSinceLastVL (which should be for the *previous* VL)
+    // Need to access the correct VL's tracker. Let's store tracker values with the VL/VH.
+    // --> Simpler: Assume the VL just confirmed (`lastValidLow`) is the one to protect.
+    // MD: "A Valid Low becomes a Protected Low if, after its formation, the price does not close above the nearest Valid High." - This check seems reversed?
+    // MD: "Protected High: A Valid High becomes a Protected High if, after its formation, the price does not close below the nearest Valid Low."
+    // MD: "Protected Low: A Valid Low becomes a Protected Low if, after its formation, the price does not close above the nearest Valid High."
+    // Let's follow the MD text:
+    // Check if highest close since lastValidLow <= lastValidHigh
+    if not na(highestCloseSinceLastVL) and highestCloseSinceLastVL <= lastValidHigh // Requires lastValidHigh to exist
+        protectedLow := lastValidLow
+        protectedLowBar := lastValidLowBar
+
+// Protected High: Confirmed when a downtrend (Lower High + Break of Low) is confirmed.
+// The Lower High becomes the Protected High.
+if isUptrend == false and not na(prevValidHigh) and lastValidHigh < prevValidHigh // Lower High condition
+   // MD: "A Valid High becomes a Protected High if, after its formation, the price does not close below the nearest Valid Low."
+   // Check if lowest close since this Lower High (lastValidHigh) >= nearest VL (lastValidLow)
+   if not na(lowestCloseSinceLastVH) and lowestCloseSinceLastVH >= lastValidLow // Requires lastValidLow to exist
+        protectedHigh := lastValidHigh // The Lower High is protected
+        protectedHighBar := lastValidHighBar
+
+// --- Zone Definition ---
+var box currentZone = na
+
+// Create/Update Zone when both PH and PL are defined and change
+bool zoneUpdated = false
+if not na(protectedHigh) and protectedHighBar != nz(protectedHighBar[1])
+    zoneUpdated := true
+if not na(protectedLow) and protectedLowBar != nz(protectedLowBar[1])
+    zoneUpdated := true
+
+if zoneUpdated and not na(protectedHigh) and not na(protectedLow)
+    // Delete previous box
+    if not na(currentZone)
+        box.delete(currentZone)
+    // Draw new box
+    top = math.max(protectedHigh, protectedLow) // Should always be PH > PL if logic is correct
+    bottom = math.min(protectedHigh, protectedLow)
+    boxLeft = math.min(protectedHighBar, protectedLowBar) // Start box from the older of the two points
+    boxRight = bar_index + 100 // Extend 100 bars future
+    if boxLeft < boxRight // Ensure left is before right
+        currentZone := box.new(boxLeft, top, boxRight, bottom,
+             bgcolor=color.new(color.gray, 85),
+             border_color=na,
+             extend=extend.right)
+
+// Section 2: False Breakout with V-Shape Movement
+var bool inBreakoutBelow = false
+var bool inBreakoutAbove = false
+var int breakoutStartBar = na
+var float breakoutExtremePrice = na
+var int candlesSinceBreakout = 0
+
+var bool returnedIntoZone = false // Flag to track if price has returned after a breakout
+var int returnBar = na
+var bool falseBreakoutConfirmed = false // True when breakout + return sequence completes
+var bool breakoutDirectionIsUp = false // Track direction of the confirmed false breakout
+
+// Reset flags at the start of each bar unless condition holds
+returnedIntoZone := false
+falseBreakoutConfirmed := false
+
+// Check for breakouts only if a zone exists
+if not na(protectedLow) and not na(protectedHigh)
+    // Detect initial breakout
+    if not inBreakoutAbove and not inBreakoutBelow // Only trigger if not already in a breakout
+        if ta.crossunder(low, protectedLow)
+            inBreakoutBelow := true
+            inBreakoutAbove := false
+            breakoutStartBar := bar_index
+            breakoutExtremePrice := low
+            candlesSinceBreakout := 0
+            returnedIntoZone := false
+            falseBreakoutConfirmed := false
+        else if ta.crossover(high, protectedHigh)
+            inBreakoutAbove := true
+            inBreakoutBelow := false
+            breakoutStartBar := bar_index
+            breakoutExtremePrice := high
+            candlesSinceBreakout := 0
+            returnedIntoZone := false
+            falseBreakoutConfirmed := false
+
+    // Track state while in a breakout
+    if inBreakoutBelow or inBreakoutAbove
+        candlesSinceBreakout += 1
+
+        // Update extreme price (iteratively)
+        if inBreakoutBelow
+            breakoutExtremePrice := math.min(breakoutExtremePrice, low)
+        else // inBreakoutAbove
+            breakoutExtremePrice := math.max(breakoutExtremePrice, high)
+
+        // Calculate V-Shape Amplitude and Return Level
+        float vShapeAmplitude = na
+        float minReturnLevel = na
+        if inBreakoutBelow and not na(protectedHigh)
+            vShapeAmplitude := protectedHigh - breakoutExtremePrice
+            minReturnLevel := breakoutExtremePrice + vShapeAmplitude * minReturnPercent
+        else if inBreakoutAbove and not na(protectedLow)
+            vShapeAmplitude := breakoutExtremePrice - protectedLow
+            minReturnLevel := breakoutExtremePrice - vShapeAmplitude * minReturnPercent
+
+        // Check for Return into Zone
+        bool returnConditionMet = false
+        if inBreakoutBelow and not na(minReturnLevel)
+            // Return up: cross above minReturnLevel AND close back within the original zone
+            returnConditionMet := ta.crossover(high, minReturnLevel) and high >= protectedLow // simplification: check high >= PL
+        else if inBreakoutAbove and not na(minReturnLevel)
+            // Return down: cross below minReturnLevel AND close back within the original zone
+            returnConditionMet := ta.crossunder(low, minReturnLevel) and low <= protectedHigh // simplification: check low <= PH
+
+        // Process Return or Timeout
+        if returnConditionMet and candlesSinceBreakout <= maxCandlesReturn
+            returnedIntoZone := true
+            returnBar := bar_index
+            falseBreakoutConfirmed := true // Sequence complete
+            breakoutDirectionIsUp := inBreakoutAbove // Store direction
+            // Reset breakout state
+            inBreakoutBelow := false
+            inBreakoutAbove := false
+            candlesSinceBreakout := 0
+        else if candlesSinceBreakout > maxCandlesVShape // Timeout for V-Shape
+            // Reset breakout state without confirmation
+            inBreakoutBelow := false
+            inBreakoutAbove := false
+            candlesSinceBreakout := 0
+
+// TODO: Add True Breakout logic (Section 2.3) - if price breaks opposite side after return.
+
+// Section 3: 3 Candle Reversal (3CR) Pattern Filter
+bool use3CR = enable3CRFilter
+
+bool bullish3CR = false
+bool bearish3CR = false
+
+if barstate.isconfirmed and use3CR
+    // Bullish 3CR: Prev 2 red, Current green, Close > High of selected prev candle
+    bool prev2Red = close[1] < open[1] and close[2] < open[2]
+    bool currentGreen = close > open
+    bool closeAboveHigh = false
+    if cr3CompareCandle == "First"
+        closeAboveHigh := close > high[2] // Compare with High of the first red candle (index [2])
+    else // "Second"
+        closeAboveHigh := close > high[1] // Compare with High of the second red candle (index [1])
+
+    if prev2Red and currentGreen and closeAboveHigh
+        bullish3CR := true
+
+    // Bearish 3CR: Prev 2 green, Current red, Close < Low of selected prev candle
+    bool prev2Green = close[1] > open[1] and close[2] > open[2]
+    bool currentRed = close < open
+    bool closeBelowLow = false
+    if cr3CompareCandle == "First"
+        closeBelowLow := close < low[2] // Compare with Low of the first green candle (index [2])
+    else // "Second"
+        closeBelowLow := close < low[1] // Compare with Low of the second green candle (index [1])
+
+    if prev2Green and currentRed and closeBelowLow
+        bearish3CR := true
+
+// Section 4: Entry Logic
+
+// Conditions for Entry
+bool buySetup = na(isUptrend) ? false : isUptrend == true // Trend condition
+buySetup := buySetup and falseBreakoutConfirmed and not breakoutDirectionIsUp // False breakout below zone and returned
+buySetup := buySetup and (not use3CR or bullish3CR) // 3CR filter (optional)
+
+bool sellSetup = na(isUptrend) ? false : isUptrend == false // Trend condition
+sellSetup := sellSetup and falseBreakoutConfirmed and breakoutDirectionIsUp // False breakout above zone and returned
+sellSetup := sellSetup and (not use3CR or bearish3CR) // 3CR filter (optional)
+
+// Ensure setup occurs only on the bar the return is confirmed or 3CR appears (if enabled)
+// We need to check if the setup condition *becomes true* on the current bar.
+bool buySignal = buySetup and not buySetup[1]
+bool sellSignal = sellSetup and not sellSetup[1]
+
+// Variables to store active trade levels
+var float entryLevel = na
+var float stopLoss = na
+var float takeProfit = na
+var bool inTrade = false
+var bool tradeIsLong = false
+
+// Reset levels if not in trade
+if not inTrade
+    entryLevel := na
+    stopLoss := na
+    takeProfit := na
+
+// Calculate and Store Levels on Signal
+if (buySignal or sellSignal) and not inTrade and not na(protectedHigh) and not na(protectedLow)
+    entryLevel := protectedLow + 0.5 * (protectedHigh - protectedLow)
+    float risk = 0.0
+
+    if buySignal
+        stopLoss := protectedLow
+        risk := entryLevel - stopLoss
+        takeProfit := entryLevel + risk * rrRatio
+        inTrade := true
+        tradeIsLong := true
+
+    if sellSignal
+        stopLoss := protectedHigh
+        risk := stopLoss - entryLevel
+        takeProfit := entryLevel - risk * rrRatio
+        inTrade := true
+        tradeIsLong := false
+
+// Simple Trade Management (Exit on SL/TP hit - for visualization)
+// Note: This is basic, real strategy would need order management.
+if inTrade
+    if tradeIsLong
+        if low <= stopLoss or high >= takeProfit
+            inTrade := false
+    else // Short trade
+        if high >= stopLoss or low <= takeProfit
+            inTrade := false
+
+// === PLOTTING ===
+
+// Plot confirmed Valid High/Low
+plotshape(confirmedVHThisBar, title="Valid High", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+plotshape(confirmedVLThisBar, title="Valid Low", location=location.belowbar, color=color.blue, style=shape.triangleup, size=size.small)
+
+// Plot Protected High/Low (Plot when they are updated)
+plotshape(protectedHighBar == bar_index, title="Protected High", location=location.abovebar, color=color.maroon, style=shape.circle, size=size.small)
+plotshape(protectedLowBar == bar_index, title="Protected Low", location=location.belowbar, color=color.navy, style=shape.circle, size=size.small)
+
+// Plot Trend State
+bgcolor(isUptrend == true ? color.new(color.green, 90) : isUptrend == false ? color.new(color.red, 90) : na)
+
+// Remove placeholder plots for pullbacks
+// plotshape(isPullbackDown, title="Potential VH Pullback", location=location.abovebar, color=color.new(color.gray, 50), style=shape.triangledown, size=size.tiny)
+// plotshape(isPullbackUp, title="Potential VL Pullback", location=location.belowbar, color=color.new(color.gray, 50), style=shape.triangleup, size=size.tiny)
+
+// Plot False Breakout Signals (Section 2.3)
+// Plot breakout trigger point
+plotshape(inBreakoutBelow[1] and not inBreakoutBelow, title="Breakout Below Start", location=location.belowbar, color=color.new(color.red, 50), style=shape.triangleup, size=size.tiny)
+plotshape(inBreakoutAbove[1] and not inBreakoutAbove, title="Breakout Above Start", location=location.abovebar, color=color.new(color.blue, 50), style=shape.triangledown, size=size.tiny)
+
+// Plot return confirmation point
+plotshape(returnedIntoZone and not breakoutDirectionIsUp, title="Return Up into Zone", location=location.belowbar, color=color.green, style=shape.circle, size=size.small)
+plotshape(returnedIntoZone and breakoutDirectionIsUp, title="Return Down into Zone", location=location.abovebar, color=color.orange, style=shape.circle, size=size.small)
+
+// Plot 3CR Signals (Section 3.2)
+plotshape(bullish3CR, title="Bullish 3CR", location=location.belowbar, color=color.blue, style=shape.diamond, size=size.small)
+plotshape(bearish3CR, title="Bearish 3CR", location=location.abovebar, color=color.red, style=shape.diamond, size=size.small)
+
+// Plot Entry, Stop Loss, Take Profit (Section 4.3)
+// Use plot() for levels to extend them until the trade ends
+plot(inTrade ? entryLevel : na, title="Entry Level", color=tradeIsLong ? color.green : color.red, style=plot.style_linebr)
+plot(inTrade ? stopLoss : na, title="Stop Loss", color=color.red, style=plot.style_linebr)
+plot(inTrade ? takeProfit : na, title="Take Profit", color=color.green, style=plot.style_linebr)
+
+// Plot Buy/Sell Signal Labels
+plotshape(buySignal, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY", textcolor=color.white, size=size.normal)
+plotshape(sellSignal, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL", textcolor=color.white, size=size.normal)
+
+// TODO: Add plotting for True Breakout (larger arrow) - Section 2.3
+
+// (Plotting logic will be added here) 

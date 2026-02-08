@@ -1,0 +1,29 @@
+//@version=5
+strategy("Bollinger Band Breakout Strategy", overlay=true)
+
+// Define Bollinger Bands
+length = input(20, title="Length")
+stdDev = input(2, title="Standard Deviation")
+basis = ta.sma(close, length)
+dev = stdDev * ta.stdev(close, length)
+upper = basis + dev
+lower = basis - dev
+
+// Plot Bollinger Bands
+plot(basis, color=color.blue, title="Basis")
+plot(upper, color=color.green, title="Upper Band")
+plot(lower, color=color.red, title="Lower Band")
+
+// Define trading conditions
+longCondition = close > upper
+shortCondition = close < lower
+
+// Set alerts
+alertcondition(longCondition, title="Enter Long", message="Price closed above the upper Bollinger Band")
+alertcondition(shortCondition, title="Enter Short", message="Price closed below the lower Bollinger Band")
+
+// Trading logic
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+if (shortCondition)
+    strategy.entry("Short", strategy.short)

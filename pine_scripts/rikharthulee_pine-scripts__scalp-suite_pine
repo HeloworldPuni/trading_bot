@@ -1,0 +1,188 @@
+//@version=6
+indicator("ScalpSuite — Cloud + HUD", overlay=true, max_labels_count=1, max_lines_count=500)
+
+// ===== Inputs =====
+emaFast   = input.int(9,  "Fast EMA", minval=1)
+emaSlow   = input.int(21, "Slow EMA", minval=1)
+rvolLen   = input.int(20, "Relative Volume Lookback", minval=1)
+rvolMin   = input.float(1.0, "Min RVOL (HUD only)", step=0.1)
+atrPctMin = input.float(0.08, "Min ATR% (HUD only)", step=0.01)
+useHeikin = input.bool(false, "Use Heikin Ashi for ALL calcs")
+useSession= input.bool(true, "Use session time filter")
+sess1     = input.session("0700-1100", "Session 1 (HHMM-HHMM)")
+sess2     = input.session("1200-1600", "Session 2 (HHMM-HHMM)")
+showVWAP  = input.bool(true, "Show Session VWAP")
+shadeSess = input.bool(true, "Shade active sessions")
+
+hudGroup = "HUD"
+hudMode  = input.string("Full", "HUD Mode", options=["Full","Mini"], group=hudGroup)
+
+// ===== Squeeze Inputs (LazyBear-style helper) =====
+sqz_group = "Squeeze"
+bbLen   = input.int(20,  "BB Length",       minval=1, group=sqz_group)
+bbMult  = input.float(2.0, "BB Mult",       step=0.1, group=sqz_group)
+kcLen   = input.int(20,  "KC Length",       minval=1, group=sqz_group)
+kcMult  = input.float(1.5, "KC Mult",       step=0.1, group=sqz_group)
+momLen  = input.int(34,  "Momentum Length", minval=1, group=sqz_group)
+fireLookback = input.int(3, "Fire Lookback Bars", minval=1, group=sqz_group)
+showSqzPanel = input.bool(false, "Show Squeeze Panel", group=sqz_group)
+
+// --- NEW: choose a higher timeframe for the HUD bias
+biasTF    = input.timeframe("15", "Bias timeframe for HUD")  // <<< NEW
+
+// ===== Unified source (chart timeframe) =====
+haClose = request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close)
+src = useHeikin ? haClose : close
+
+// ===== EMA cloud (chart timeframe plot) =====
+emaF = ta.ema(src, emaFast)
+emaS = ta.ema(src, emaSlow)
+aboveCloud = src > emaF and emaF > emaS
+belowCloud = src < emaF and emaF < emaS
+
+// ===== MACD (state only, chart timeframe) =====
+macd   = ta.ema(src, 12) - ta.ema(src, 26)
+signal = ta.ema(macd, 9)
+macdBull = macd > signal
+
+// ===== Squeeze Momentum (BB inside KC + momentum linreg on src) =====
+// Bollinger Bands on src
+sqz_basis = ta.sma(src, bbLen)
+sqz_dev   = ta.stdev(src, bbLen)
+sqz_bbUp  = sqz_basis + bbMult * sqz_dev
+sqz_bbDn  = sqz_basis - bbMult * sqz_dev
+
+// Keltner Channels on src (EMA + ATR)
+sqz_emaMid = ta.ema(src, kcLen)
+sqz_atrKC  = ta.atr(kcLen)
+sqz_kcUp   = sqz_emaMid + kcMult * sqz_atrKC
+sqz_kcDn   = sqz_emaMid - kcMult * sqz_atrKC
+
+// Squeeze state
+sqz_in     = (sqz_bbUp < sqz_kcUp) and (sqz_bbDn > sqz_kcDn)
+sqz_released = not sqz_in and sqz_in[1]
+sqz_firedRecently = ta.barssince(sqz_released) <= fireLookback
+
+// Momentum proxy (linreg of detrended src)
+sqz_val    = src - ta.sma(src, momLen)
+sqz_mom    = ta.linreg(sqz_val, momLen, 0)
+sqz_momUp  = sqz_mom > sqz_mom[1]
+sqz_momDn  = sqz_mom < sqz_mom[1]
+
+// Convenience filters you can AND into entries (if/when you add entries)
+squeezeOK_long  = (sqz_in or sqz_firedRecently) and sqz_mom >= 0 and sqz_momUp
+squeezeOK_short = (sqz_in or sqz_firedRecently) and sqz_mom <= 0 and sqz_momDn
+sqz_firedUp     = sqz_firedRecently and sqz_mom > 0 and sqz_momUp
+sqz_firedDown   = sqz_firedRecently and sqz_mom < 0 and sqz_momDn
+
+// Optional visual (kept off by default)
+// Histogram on price chart (overlay), minimal by default
+sqz_col = sqz_mom > 0 ? (sqz_momUp ? color.new(color.lime, 0) : color.new(color.green, 0))
+                      : (sqz_momDn ? color.new(color.red, 0)  : color.new(color.maroon, 0))
+plot(sqz_mom, style=plot.style_columns, title="SQZ Momentum", color=sqz_col, linewidth=2, display=showSqzPanel ? display.all : display.none)
+// Dots: black=in squeeze, gray=released
+plotshape(sqz_in,      title="SQZ In",  style=shape.circle, location=location.bottom, color=color.black, size=size.tiny, display=showSqzPanel ? display.all : display.none)
+plotshape(sqz_released, title="SQZ Out", style=shape.circle, location=location.bottom, color=color.gray,  size=size.tiny, display=showSqzPanel ? display.all : display.none)
+
+// ===== RVOL & ATR% (for HUD only, chart timeframe) =====
+rvol   = volume / ta.sma(volume, rvolLen)
+atr    = ta.atr(10)
+atrPct = atr / src * 100.0
+volOK  = rvol >= rvolMin
+chopOK = atrPct >= atrPctMin
+
+// ===== Session & VWAP (chart timeframe) =====
+inSess1 = not na(time(timeframe.period, sess1))
+inSess2 = not na(time(timeframe.period, sess2))
+inSession = not useSession or inSess1 or inSess2
+vwap = ta.vwap
+
+// ===== Plots (chart timeframe) =====
+pF = plot(emaF, title="EMA Fast", color=color.new(color.gray, 0))
+pS = plot(emaS, title="EMA Slow", color=color.new(color.gray, 0))
+fill(pF, pS, color=emaF > emaS ? color.new(color.green, 85) : color.new(color.red, 85))
+plot(showVWAP ? vwap : na, title="Session VWAP", linewidth=2, color=color.new(color.blue, 0))
+
+// Optional session shading
+bgcolor(shadeSess and inSession ? color.new(color.teal, 92) : na)
+
+// ===== HUD bias using HIGHER TIMEFRAME EMAs =====
+// Build symbol respecting Heikin setting
+symForHUD = useHeikin ? ticker.heikinashi(syminfo.tickerid) : syminfo.tickerid  // <<< NEW
+// Pull HTF EMAs
+emaF_htf = request.security(symForHUD, biasTF, ta.ema(close, emaFast))           // <<< NEW
+emaS_htf = request.security(symForHUD, biasTF, ta.ema(close, emaSlow))           // <<< NEW
+aboveCloud_htf = emaF_htf > emaS_htf                                             // <<< NEW
+belowCloud_htf = emaF_htf < emaS_htf                                             // <<< NEW
+
+// ===== HUD (table with descriptions) =====
+// Toggleable via `showHUD`, plus Mode & Auto-hide controls
+var table hud = na  // lazily create when needed
+
+// Use HTF bias for the HUD text/color (from earlier in your script)
+biasTxt = aboveCloud_htf ? "UP" : belowCloud_htf ? "DOWN" : "CHOP"
+biasClr = aboveCloud_htf ? color.lime : belowCloud_htf ? color.red : color.orange
+
+if barstate.islast
+    if hudMode == "Full"
+        // FULL: 4 cols x 7 rows
+        if na(hud)
+            hud := table.new(position.bottom_center, 4, 7, border_width=1)
+        table.clear(hud, 0, 0)
+
+        // Row 0 — Bias
+        table.cell(hud, 1, 0, "Bias (EMA 9/21)", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 0, biasTxt, text_color=biasClr)
+        table.cell(hud, 3, 0, "HTF trend via EMA 9/21", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 1 — MACD
+        table.cell(hud, 1, 1, "MACD", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 1, macdBull ? "Bullish" : "Bearish", text_color=macdBull ? color.lime : color.red)
+        table.cell(hud, 3, 1, "Momentum (12/26/9) on chart TF", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 2 — RVOL
+        table.cell(hud, 1, 2, "RVOL", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 2, str.tostring(rvol, format.mintick), text_color=volOK ? color.lime : color.orange)
+        table.cell(hud, 3, 2, "Vol vs 20-bar avg (>1 = high)", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 3 — ATR%
+        table.cell(hud, 1, 3, "ATR%", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 3, str.tostring(atrPct, format.mintick), text_color=chopOK ? color.lime : color.orange)
+        table.cell(hud, 3, 3, "Volatility as % of price", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 4 — VWAP side
+        table.cell(hud, 1, 4, "VWAP side", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 4, src >= vwap ? "Above" : "Below", text_color=src >= vwap ? color.lime : color.red)
+        table.cell(hud, 3, 4, "Position vs session mean", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 5 — Squeeze
+        sqzState = sqz_in ? "IN" : sqz_released ? "FIRE" : "OUT"
+        sqzDir   = sqz_mom > 0 ? "Up" : sqz_mom < 0 ? "Down" : "Flat"
+        sqzTxt   = sqzState + " / " + sqzDir
+        sqzClr   = sqz_mom > 0 ? color.lime : sqz_mom < 0 ? color.red : color.orange
+        table.cell(hud, 1, 5, "Squeeze", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 5, sqzTxt, text_color=sqzClr)
+        table.cell(hud, 3, 5, "BB in KC = IN; FIRE within lookback", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+        // Row 6 — Session
+        table.cell(hud, 1, 6, "Session", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 2, 6, inSession ? "Active" : "Closed", text_color=inSession ? color.lime : color.orange)
+        table.cell(hud, 3, 6, "Within trading hours filter", text_color=color.white, bgcolor=color.new(color.silver, 20))
+
+    else
+        // MINI: compact single-row status bar
+        if na(hud)
+            hud := table.new(position.bottom_center, 8, 1, border_width=1)
+        table.clear(hud, 0, 0)
+
+        // Cells: Bias | MACD | RVOL | ATR% | VWAP | SQZ | Sess
+        table.cell(hud, 0, 0, "HUD", text_color=color.white, bgcolor=color.new(color.silver, 20))
+        table.cell(hud, 1, 0, biasTxt, text_color=biasClr)
+        table.cell(hud, 2, 0, macdBull ? "MACD↑" : "MACD↓", text_color=macdBull ? color.lime : color.red)
+        table.cell(hud, 3, 0, "RVOL " + str.tostring(rvol, format.mintick), text_color=volOK ? color.lime : color.orange)
+        table.cell(hud, 4, 0, "ATR% " + str.tostring(atrPct, format.mintick), text_color=chopOK ? color.lime : color.orange)
+        table.cell(hud, 5, 0, src >= vwap ? "VWAP▲" : "VWAP▼", text_color=src >= vwap ? color.lime : color.red)
+        sqzMini  = (sqz_in ? "SQZ IN" : sqz_released ? "SQZ FIRE" : "SQZ OUT")
+        sqzMiniC = sqz_mom > 0 ? color.lime : sqz_mom < 0 ? color.red : color.orange
+        table.cell(hud, 6, 0, sqzMini, text_color=sqzMiniC)
+        table.cell(hud, 7, 0, inSession ? "Sess ON" : "Sess OFF", text_color=inSession ? color.lime : color.orange)

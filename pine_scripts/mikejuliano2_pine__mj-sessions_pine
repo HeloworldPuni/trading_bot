@@ -1,0 +1,518 @@
+//@version=4
+
+study("MJ - Sessions", overlay=true)
+
+// ------------------------------------------------------------------------------
+// showHorizontalRangeLines = true // TODO
+// showVerticalLines = true // TODO
+// numVerticalLinesBack = 5 // TODO
+// numVerticalLinesForward = 5 // TODO
+// ------------------------------------------------------------------------------
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== DATE UTILS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+int MS_PER_MINUTE = 1000 * 60
+int MS_PER_HOUR = MS_PER_MINUTE * 60
+int MS_PER_DAY = MS_PER_HOUR * 24
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+
+_currentBarTime() => time(timeframe.period)
+
+_calcBarsPerHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+
+_calcBarsPerDay() => _calcBarsPerHour() * 24
+
+_timeElapsedTodayInMs() => (MS_PER_HOUR * hour) - (MS_PER_MINUTE * minute) - (1000 * second)
+_timeElapsedThisHourInMs() => (MS_PER_MINUTE * minute) + (1000 * second)
+
+_getTimeAtBeginningOfToday() => timenow - _timeElapsedTodayInMs()
+    
+_getTimeAtStartOfHourNHoursAgo(numHours) => 
+    timeElapsedSinceStartInMs = _timeElapsedThisHourInMs() + (numHours * MS_PER_HOUR)
+    timenow - timeElapsedSinceStartInMs
+
+
+// *** TOOD ***
+// _getBarIndexAtTime() => 
+// _getBarIndexForTimestamp(_timestamp) => 
+
+_getBarsElapsedAndRemainingForCurrentHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+    int barsRemainingThisHour = barsPerHour - barsElapsedThisHour
+    [barsElapsedThisHour, barsRemainingThisHour]
+
+_getStartTimeNDaysBack(numDays) => 
+    // int barsPerDay = _calcBarsPerDay()
+    // int numBarsElapsedToday = 0
+    // int barsElapsedSinceCutoff = numBarsElapsedToday + (barsPerDay * numDays)
+    // _getPastTimeNBarsBackFromNow(barsElapsedSinceCutoff)
+    _getTimeAtBeginningOfToday() - (numDays * MS_PER_DAY)    
+
+_isCurrentDay() => 
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - MS_PER_DAY)   
+
+_isInSession(timeRange) =>
+    not na(time(timeframe.period, timeRange))
+
+_isFirstOrLastFiveMinOfAnyHour() => 
+    _isInSession('2355-0005') or _isInSession('0055-0105') or _isInSession('0155-0205') or _isInSession('0255-0305') or _isInSession('0355-0405') or _isInSession('0455-0505') or _isInSession('0555-0605') or _isInSession('0655-0705') or _isInSession('0755-0805') or _isInSession('0855-0905') or _isInSession('0955-1005') or _isInSession('1055-1105') or _isInSession('1155-1205') or _isInSession('1255-1305') or _isInSession('1355-1405') or _isInSession('1455-1505') or _isInSession('1555-1605') or _isInSession('1655-1705') or _isInSession('1755-1805') or _isInSession('1855-1905') or _isInSession('1955-2005') or _isInSession('2055-2105') or _isInSession('2155-2205') or _isInSession('2255-2305')    
+
+_isLastBarForCurrentTimeframeAtResolution(Resolution) =>
+    t = time(Resolution, session.regular) // e.g. "1440" = Daily Resolution
+    not na(t[1]) and na(t) or t[1] < t
+
+_isFirstBarForCurrentTimeframeAtResolution(Resolution) =>
+    // e.g. current timeframe: 1min, resolution: '60' => return true for the first minute of the hour
+    // e.g. current timeframe: 5min, resolution: '60' => return true for the first 5 minutes of the hour
+    t = time(Resolution)
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and ( na(previousBar) or currentBar > previousBar)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== SESSION LEVELS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// -----------------------
+// dependencies: dateUtils
+// -----------------------
+
+groupSessionLevels = 'Session Levels'
+
+// ----------------------------------------------------------------------------------
+// tooltips
+string TT_PR = "Final time to which the High and Low of the session will be held"
+string TT_TZ = "Offsets all time inputs together to help align to preferred timezone"
+string TT_LB = "The number of days back to plot the session levels"
+// switches
+asianOpenPlotActive = input(true, 'Plot Asian Open?', group=groupSessionLevels)
+asianHighLowPlotActive = input(true, 'Plot Asian HighLow?', group=groupSessionLevels)
+londonHighLowPlotActive = input(false, 'Plot London HighLow?', group=groupSessionLevels)
+londonOpenPlotActive = input(true, 'Plot London Open?', group=groupSessionLevels)
+nyOpenPlotActive = input(true, 'Plot New York Open?', group=groupSessionLevels)
+nyHighLowPlotActive = input(false, 'Plot New York HighLow?', group=groupSessionLevels)
+// asian
+asianMasterColor = input(#00897b, 'Asian Color', input.color, group=groupSessionLevels)
+asianOpenPlotStyle = input(plot.style_cross, 'Asian Open Plot Style', group=groupSessionLevels, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+asianStartHour = input(20, 'Asian Start Hour', minval=0, maxval=23, group=groupSessionLevels)
+asianEndHour = input(4, 'Asian End Hour', minval=0, maxval=23, group=groupSessionLevels)
+asianHoldTimeInHours = input(16, "Asian Holding Time", input.integer, minval=0, maxval = 23, tooltip = TT_PR, group=groupSessionLevels)
+asianTimeRange = input('0000-0600:1234567', 'Asian Session Time', group=groupSessionLevels, type=input.session)
+// london
+londonMasterColor = input(#ff851a, 'London Color', input.color, group=groupSessionLevels)
+londonOpenPlotStyle = input(plot.style_circles, 'London Open Plot Style', group=groupSessionLevels, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+londonStartHour = input(4, 'London Start Hour', minval=0, maxval=23, group=groupSessionLevels)
+londonEndHour = input(13, 'London End Hour', minval=0, maxval=23, group=groupSessionLevels)
+londonHoldTimeInHours = input(0, "London Holding Time", input.integer, minval=0, maxval = 23, tooltip = TT_PR, group=groupSessionLevels)
+londonTimeRange = input('0800-1630:1234567', 'London Session Time', group=groupSessionLevels, type=input.session)
+// new york
+nyMasterColor = input(#fff176, 'New York Color', input.color, group=groupSessionLevels)
+nyOpenPlotStyle = input(plot.style_cross, 'New York Open Plot Style', group=groupSessionLevels, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+nyStartHour = input(9, 'New York Start Hour', minval=0, maxval=23, group=groupSessionLevels)
+nyEndHour = input(17, 'New York End Hour', minval=0, maxval=23, group=groupSessionLevels)
+nyHoldTimeInHours = input(0, "New York Holding Time", input.integer, minval=0, maxval = 23, tooltip = TT_PR, group=groupSessionLevels)
+nyTimeRange = input('1330-2000:1234567', 'New York Session Time', group=groupSessionLevels, type=input.session)
+// opacity
+sessionLevelsSessionHighLowLineOpacity = input(30, 'Opacity - Session H/L', minval=0, maxval=100, group=groupSessionLevels)
+sessionLevelsSessionFillOpacity = input(97, 'Opacity - Session Fill', minval=0, maxval=100, group=groupSessionLevels)
+sessionLevelsHoldingHighLowLineOpacity = input(60, 'Opacity - Hold H/L', minval=0, maxval=100, group=groupSessionLevels)
+sessionLevelsHoldFillOpacity = input(100, 'Opacity - Hold Fill', minval=0, maxval=100, group=groupSessionLevels)
+sessionLevelsOpenLineOpacity = input(10, 'Opacity - Open Line', minval=0, maxval=100, group=groupSessionLevels)
+// line style
+sessionLevelsHighLowLineStyle = input(plot.style_linebr, 'Plot Style - H/L', group=groupSessionLevels, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+sessionLevelsLineWidth = input(2, 'Line Width', group=groupSessionLevels, options=[1,2,3,4])
+sessionLevelsLinesJoined = input(false, 'Join points?')
+// labels
+sessionLabelOffsetInBars = input(25, 'Session Label Offset (bars)', group=groupSessionLevels)
+sessionLabelStyle = input(label.style_label_lower_left, 'Session Label Style', group=groupSessionLevels, options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle])
+sessionLabelOpacity = input(70, 'Label Opacity', group=groupSessionLevels, minval=0, maxval=100)
+// days
+sessionLevelsLookbackHours = input(6, 'Lookback Hours', input.integer, minval=0, maxval=24, tooltip=TT_LB, group=groupSessionLevels)
+sessionLevelsTZShiftHours  = input( 4, "Timezone Adjust (in hours)", input.integer, minval = -12, maxval = 14, tooltip = TT_TZ, group=groupSessionLevels)
+
+f_timeShift24( _input, _offset ) =>
+    int _shift = _input + _offset
+    _return = _shift > 23 ? _shift - 24 :
+              _shift < 0  ? 24 + _shift : _shift
+
+f_isTime( _input ) => int( hour ) == _input
+
+f_captureSessionHL(_inSession,_inHolding) =>
+    var float _sessionHigh = na
+    var float _sessionLow = na
+    var float _sessionOpen = na
+
+    if _inSession //  if we are in session...
+        if not _inSession[1] //  if it just started, set the initial values
+            _sessionHigh := high
+            _sessionLow  := low
+            _sessionOpen := open
+        else //  otherwise we are checking for higher highs and lower lows to update with and remembering the new levels
+            _sessionHigh := high > _sessionHigh ? high : _sessionHigh
+            _sessionLow  := low  < _sessionLow  ? low  : _sessionLow
+    
+    else if _inHolding //  else if we're in holding state... just reference self to maintain the same levels
+        _sessionHigh := _sessionHigh
+        _sessionLow  := _sessionLow
+        _sessionOpen := _sessionOpen
+    
+    else //  not in session or holding, so we can reset.
+        _sessionHigh := na
+        _sessionLow  := na
+        _sessionOpen := na
+
+    [_sessionHigh, _sessionLow, _sessionOpen]
+    
+_isWithinSessionLevelsLookbackPeriod() => 
+    // the session start time must be after the lookback time
+    lookbackTimeInMs = MS_PER_HOUR * sessionLevelsLookbackHours
+    _currentBarTime() > (timenow - lookbackTimeInMs)
+    
+    // lookbackHours = (24 * sessionLevelsLookbackDays) + hour
+    // timeOfSessionBeginning = _getTimeAtStartOfHourNHoursAgo(lookbackHours)
+    // timeAtBeginningOfLookbackDay = _getStartTimeNDaysBack(sessionLevelsLookbackDays)
+    // timeAtBeginningOfLookbackDay < timeOfSessionBeginning
+
+_calcInSessionAndInHold(isSessionStart, isSessionEnd, isSessionHold, timeRange) =>
+    var bool inSession = false
+    var bool inHolding = false
+
+    inSession  := isSessionStart and not isSessionStart[1] ? true  :
+              isSessionEnd[1] and not isSessionEnd     ? false : inSession
+    
+    inHolding := isSessionEnd[1] and not isSessionEnd     ? true  :
+              isSessionHold[1] and not isSessionHold   ? false : inHolding
+    
+    [inSession, inHolding]
+
+_getLevelsColors(masterColor, inSession, inHolding, openPlotActive, highLowPlotActive) => 
+    openLineColor = openPlotActive and (inSession or inHolding) ? color.new(masterColor, sessionLevelsOpenLineOpacity) : na
+    
+    highLowLineColor = not highLowPlotActive ? na : 
+              inSession ? color.new(masterColor, sessionLevelsSessionHighLowLineOpacity ) :
+              inHolding ? color.new(masterColor, sessionLevelsHoldingHighLowLineOpacity) : na
+            
+    fillColor = not highLowPlotActive ? na : 
+              inSession ? color.new(masterColor, sessionLevelsSessionFillOpacity ) :
+              inHolding ? color.new(masterColor, sessionLevelsHoldFillOpacity) : na
+
+    [openLineColor, highLowLineColor, fillColor]
+
+
+_getValuesToPlotSessionLevels(timeRange, startHour, endHour, holdHour, hourShift, masterColor, openPlotActive, highLowPlotActive) => 
+    bool isStart = f_isTime( f_timeShift24( startHour, hourShift ) )
+    bool isEnd   = f_isTime( f_timeShift24( endHour,   hourShift ) )
+    bool isHold  = f_isTime( f_timeShift24( holdHour,  hourShift ) )
+    
+    // [isInSession, isInHolding] = _calcInSessionAndInHold(isStart, isEnd, isHold, timeRange)
+    isInSession = _isInSession(timeRange)
+    isInHolding = not isInSession
+
+    [sessionHigh, sessionLow, sessionOpen] = f_captureSessionHL( isInSession, isInHolding )
+
+    // color lineColor = isInSession ? sessionLineColor : isInHolding ? holdingLineColor : na
+    // color fillColor = isInSession ? sessionFillColor : isInHolding ? holdingFillColor : na
+
+    [openLineColor, highLowLineColor, fillColor] = _getLevelsColors(masterColor, isInSession, isInHolding, openPlotActive, highLowPlotActive)
+
+    conditionsMet = _isWithinSessionLevelsLookbackPeriod()
+
+    if conditionsMet
+        [sessionHigh, sessionLow, sessionOpen, openLineColor, highLowLineColor, fillColor]
+    else 
+        [na, na, na, na, na, na]
+
+// ------------------
+// Plot Lines
+// ------------------
+
+[asianHigh, asianLow, asianOpen, asianOpenLineColor, asianHighLowLineColor, asianFillColor] = _getValuesToPlotSessionLevels(asianTimeRange, asianStartHour, asianEndHour, asianHoldTimeInHours, sessionLevelsTZShiftHours, asianMasterColor, asianOpenPlotActive, asianHighLowPlotActive)
+asianPlotHigh = plot(asianHigh, "Asian Session High", asianHighLowLineColor, sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+asianPlotLow  = plot(asianLow,  "Asian Session Low",  asianHighLowLineColor,  sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+asianPlotOpen  = plot(asianOpen,  "Asian Session Low",  asianOpenLineColor,  sessionLevelsLineWidth, asianOpenPlotStyle, join=sessionLevelsLinesJoined)
+fill(asianPlotHigh, asianPlotLow, asianFillColor)
+
+[londonHigh, londonLow, londonOpen, londonOpenLineColor, londonHighLowLineColor, londonFillColor] = _getValuesToPlotSessionLevels(londonTimeRange, londonStartHour, londonEndHour, londonHoldTimeInHours, sessionLevelsTZShiftHours, londonMasterColor, londonOpenPlotActive, londonHighLowPlotActive)
+londonPlotHigh = plot(londonHigh, "London Session High", londonHighLowLineColor, sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+londonPlotLow  = plot(londonLow,  "London Session Low",  londonHighLowLineColor,  sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+londonPlotOpen  = plot(londonOpen,  "London Session Low",  londonOpenLineColor,  sessionLevelsLineWidth, londonOpenPlotStyle, join=sessionLevelsLinesJoined)
+fill(londonPlotHigh, londonPlotLow, londonFillColor)
+
+[nyHigh, nyLow, nyOpen, nyOpenLineColor, nyHighLowLineColor, nyFillColor] = _getValuesToPlotSessionLevels(nyTimeRange, nyStartHour, nyEndHour, nyHoldTimeInHours, sessionLevelsTZShiftHours, nyMasterColor, nyOpenPlotActive, nyHighLowPlotActive)
+nyPlotHigh = plot(nyHigh, "New York Session High", nyHighLowLineColor, sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+nyPlotLow  = plot(nyLow,  "New York Session Low",  nyHighLowLineColor,  sessionLevelsLineWidth, sessionLevelsHighLowLineStyle, join=sessionLevelsLinesJoined)
+nyPlotOpen  = plot(nyOpen,  "New York Session Low",  nyOpenLineColor,  sessionLevelsLineWidth, nyOpenPlotStyle, join=sessionLevelsLinesJoined)
+fill(nyPlotHigh, nyPlotLow, nyFillColor)
+
+// ------------------
+// Labels
+// ------------------
+
+_drawSessionnLabel(x, y, text, style, size, Color, textColor) => 
+    x and y ? label.new(x, y, text, style=style, textcolor=textColor, color=color.new(Color, sessionLabelOpacity), size=size, xloc=xloc.bar_time) : na
+
+
+
+sessionLabelTime = _getFutureTimeNBarsFromNow(sessionLabelOffsetInBars)
+
+asianHighlabelId = _drawSessionnLabel(sessionLabelTime, asianHigh, 'Asian Session High', sessionLabelStyle, size.normal, asianMasterColor, color.white)
+label.delete(asianHighlabelId[1])
+
+asianLowlabelId = _drawSessionnLabel(sessionLabelTime, asianLow, 'Asian Session Low', sessionLabelStyle, size.normal, asianMasterColor, color.white)
+label.delete(asianLowlabelId[1])
+
+asianOpenLabelId = _drawSessionnLabel(sessionLabelTime, asianOpen, 'Daily Open', sessionLabelStyle, size.normal, asianMasterColor, color.white)
+label.delete(asianOpenLabelId[1])
+
+londonOpenLabelId = _drawSessionnLabel(sessionLabelTime, londonOpen, 'London Open', sessionLabelStyle, size.normal, londonMasterColor, color.white)
+label.delete(londonOpenLabelId[1])
+
+nyOpenLabelId = _drawSessionnLabel(sessionLabelTime, nyOpen, 'New York Open', sessionLabelStyle, size.normal, nyMasterColor, color.white)
+label.delete(nyOpenLabelId[1])
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== CURRENT HOUR RANGE ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// -----------------------
+// dependencies: dateUtils
+// -----------------------
+
+// ------------------
+// VARIABLES
+// ------------------
+groupCurrentHourRange = 'Current Hour Range'
+_defaultHourRangeColor = color.new(#fbc02d, 40)
+rangeLineColor = input(_defaultHourRangeColor, 'Current Hour Range Line Color', group=groupCurrentHourRange)
+rangeLineWidth = input(1, 'Current Hour Range Line Width', options=[1,2,3,4], group=groupCurrentHourRange)
+rangeLineStyle = input(line.style_dashed, 'Current Hour Range Line Style', options=[line.style_solid, line.style_dashed, line.style_dotted], group=groupCurrentHourRange)
+rangeLineExtend = extend.none
+rangeLabelColor = input(_defaultHourRangeColor, 'Range Label Color', group=groupCurrentHourRange)
+rangeLabelTextColor = input(color.new(color.black, 0), 'Range Label Text Color', group=groupCurrentHourRange)
+rangeOpenLabelStyle = input(label.style_cross, 'Range Open Label Style', group=groupCurrentHourRange, options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle])
+rangeHighLabelStyle = input(label.style_triangledown, 'Range High Label Style', group=groupCurrentHourRange, options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle])
+rangeLowLabelStyle = input(label.style_triangleup, 'Range Low Label Style', group=groupCurrentHourRange, options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle])
+rangeLabelRightJustified = input(true, 'Range Label Right-Justified?', group=groupCurrentHourRange)
+rangeLabelSize = input(size.tiny, 'Range Label Size', group=groupCurrentHourRange, options=[size.auto, size.tiny, size.small, size.normal, size.large])
+showOpenHighLowLabels = input(true, 'Show Open/High/Low Labels?', group=groupCurrentHourRange)
+showOpenHighLowValueInLabel = input(false, 'Show Open/High/Low Values in Label?', group=groupCurrentHourRange)
+
+// ------------------
+// FUNCTIONS
+// ------------------
+
+var line hourlyHighLineId = na
+var line hourlyLowLineId = na
+var line hourlyOpenLineId = na
+
+_getHighAndLow (fromIndex, toIndex) =>
+    float pT = 0
+    float pB = high
+
+    for i = fromIndex to toIndex
+        pT := max(high[i], pT)
+        pB := min(low[i], pB)
+
+    [pT, pB]
+
+_drawHourlyRangeHorizontalLine(lineId, x1, x2, y, _color, _width, _style, labelText, labelStyle) => 
+    _lineId = lineId
+    
+    if na(_lineId)
+        _lineId := line.new(x1, y, x2, y, xloc.bar_time, rangeLineExtend)
+
+    line.set_xy1(_lineId, x1, y)
+    line.set_xy2(_lineId, x2, y)
+    line.set_color(_lineId, _color)
+    line.set_width(_lineId, _width)
+    line.set_style(_lineId, _style)
+
+    // ----------------
+    // draw the label
+    // ----------------
+
+    if showOpenHighLowLabels
+        labelPosition = rangeLabelRightJustified ? x2 : x1
+        labelId = label.new(labelPosition, y, labelText, textcolor=rangeLabelTextColor, style=labelStyle, size=rangeLabelSize, xloc=xloc.bar_time, color=rangeLabelColor)
+        label.delete(labelId[1])
+
+    _lineId
+
+_plotTheRangeOfTheCurrentHour(_color, _width, _style) => 
+    [barsElapsedThisHour, barsRemainingThisHour] = _getBarsElapsedAndRemainingForCurrentHour()
+    [hourlyHigh, hourlyLow] = _getHighAndLow(0, barsElapsedThisHour)
+    hourlyOpen = open[barsElapsedThisHour]
+    
+    x1 = time[barsElapsedThisHour]
+    x2 = _getFutureTimeNBarsFromNow(barsRemainingThisHour)
+
+    highValueDisplay = ': ' + tostring(hourlyHigh[0])
+    highLabel = 'H' + (showOpenHighLowValueInLabel ? highValueDisplay : '')
+    
+    lowValueDisplay = ': ' +  tostring(hourlyLow[0])
+    lowLabel = 'L' + (showOpenHighLowValueInLabel ? lowValueDisplay : '')
+    
+    openValueDisplay = ': ' + tostring(hourlyOpen[0])
+    openLabel = 'O' + (showOpenHighLowValueInLabel ? openValueDisplay : '')
+    
+    _highLineId = _drawHourlyRangeHorizontalLine(hourlyHighLineId, x1, x2, hourlyHigh, _color, _width, _style, highLabel, rangeHighLabelStyle)
+    _lowLineId = _drawHourlyRangeHorizontalLine(hourlyLowLineId, x1, x2, hourlyLow, _color, _width, _style, lowLabel, rangeLowLabelStyle)
+    _openLineId = _drawHourlyRangeHorizontalLine(hourlyOpenLineId, x1, x2, hourlyOpen, _color, _width, _style, openLabel, rangeOpenLabelStyle)
+
+    [_highLineId, _lowLineId, _openLineId]
+
+
+[_highLineId, _lowLineId, _openLineId] = _plotTheRangeOfTheCurrentHour(rangeLineColor, rangeLineWidth, rangeLineStyle)
+
+if na(hourlyHighLineId) or na(hourlyLowLineId) or na (hourlyOpenLineId)
+    hourlyHighLineId := _highLineId
+    hourlyLowLineId := _lowLineId
+    hourlyOpenLineId := _openLineId
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== VERTICAL HOUR LINES ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// -----------------------
+// dependencies: dateUtils
+// -----------------------
+
+groupVerticalHourLInes = 'Vertical Hour Lines'
+verticalHourLinesActive = input(false, 'Show Vertical Hour Lines', group=groupVerticalHourLInes)
+maxTimeFrameToShowVerticalLines = input(title='Max timeframe to show hourly vertical lines', defval=5, maxval=60, minval=1, group=groupVerticalHourLInes)
+hourLineColor = input(color.new(#fbc02d, 40), 'Vertical Hour Line Color', group=groupVerticalHourLInes)
+hourLineStyle = input(line.style_dashed, 'Vertical Hour Line Style', group=groupVerticalHourLInes, options=[line.style_solid, line.style_dashed, line.style_dotted])
+hourLineWidth = input(1, 'Vertical Hour Line Width', group=groupVerticalHourLInes, options=[1, 2, 3, 4])
+numVerticalLinesBackward = input(6, 'Number of previous hour vertical lines to show', group=groupVerticalHourLInes, minval=0, maxval=100)
+
+_isWithinVerticalHourLineLookbackPeriod() => 
+    lookbackTimeInMs = MS_PER_DAY * numVerticalLinesBackward / 24
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - lookbackTimeInMs)
+
+    // the start of the bar
+
+_plotVerticalLineAtIndex(BarIndex, Color, LineStyle, LineWidth) => // Verticle Line Function, ≈50-54 lines maximum allowable per indicator
+    return = line.new(BarIndex, low - tr, BarIndex, high + tr, xloc.bar_index, extend.both, Color, LineStyle, LineWidth) // Suitable for study(overlay=true)
+
+_isAtOrBelowMaxTimeframe() => timeframe.multiplier <= maxTimeFrameToShowVerticalLines
+
+_plotVerticalLineForNewBarsAtResolution(Resolution, Color, LineStyle, LineWidth, conditionsMet) =>
+    isNewBar = _isFirstBarForCurrentTimeframeAtResolution(Resolution)
+    barIndex = isNewBar and conditionsMet ? bar_index : na
+    _plotVerticalLineAtIndex(barIndex, hourLineColor, hourLineStyle, hourLineWidth)
+
+_plotHourLines() =>
+    conditionsMet = _isAtOrBelowMaxTimeframe() and verticalHourLinesActive and _isWithinVerticalHourLineLookbackPeriod()
+    _plotVerticalLineForNewBarsAtResolution('60', hourLineColor, hourLineStyle, hourLineWidth, conditionsMet)
+
+_plotHourLines()
+
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== BRINKS BOX ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// dependencies: dateUtils
+
+groupBrinks = 'Brinks Box'
+// -----
+maxTimeFrameToShowBrinks = input(title='Max timeframe to show Brinks', defval=15, maxval=60, minval=1, group=groupBrinks)
+// -----
+brinksBgColor = input(color.new(color.white, 95), 'Brinks Color', group=groupBrinks)
+dailyLast15MinColor = input(color.new(color.orange, 85), 'Daily Last 15min Color', group=groupBrinks)
+hourlyFirstLastFewMinColor = input(color.new(color.yellow, 85), 'Hourly First/Last Few min Color', group=groupBrinks)
+// -----
+nyBrinksActive = input(true, 'New York Brinks Active', group=groupBrinks)
+londonBrinksActive = input(true, 'London Brinks Active', group=groupBrinks)
+dailyLast15minActive = input(true, 'Last 15min of Day Active', group=groupBrinks)
+onlyShowBrinksForCurrentDay = input(true, 'Only show Brinks for current day?', group=groupBrinks)
+// -----
+nyBrinksTimeRange = input('1300-1400:23456', 'New York Session Time', group=groupBrinks, type=input.session)
+londonBrinksTimeRange = input('0700-0800:23456', 'London Session Time', group=groupBrinks, type=input.session)
+dailyLast15MinTimeRange = input('2345-0000:1234567', 'Last 15min Time', group=groupBrinks, type=input.session)
+
+// ---------------
+// FUNCTIONS
+// ---------------
+
+_isValdBrinksTimeframe() => timeframe.multiplier <= maxTimeFrameToShowBrinks
+
+_getBrinksBgColorForTimeRange(timeRange, isActive, _color) => 
+    isGoodTimeframe = _isValdBrinksTimeframe()
+    passesDayRestriction = onlyShowBrinksForCurrentDay ? _isCurrentDay() : true
+    isInSession = _isInSession(timeRange)
+    bgColor = isInSession and isActive and isGoodTimeframe and passesDayRestriction ? _color : na
+
+_getBrinksLabel(timeRange, isActive, text) => 
+    isGoodTimeframe = _isValdBrinksTimeframe()
+    isInSession = _isInSession(timeRange)
+    isFirstBar = _isFirstBarForCurrentTimeframeAtResolution('30')
+    labelPosition = time(timeframe.period, timeRange)
+    label.new(labelPosition, high, text, textcolor=color.white, color=color.red, style=label.style_flag, size=size.large, xloc=xloc.bar_time)
+
+// ---------------
+// PLOTTING
+// --------------
+
+// London Brinks
+bgcolor(_getBrinksBgColorForTimeRange(londonBrinksTimeRange, londonBrinksActive, brinksBgColor))
+// londonBrinksLabel = _getBrinksLabel(londonBrinksTimeRange, londonBrinksActive, 'London Brinks Box')
+
+// New York Brinks
+bgcolor(_getBrinksBgColorForTimeRange(nyBrinksTimeRange, nyBrinksActive, brinksBgColor))
+
+// Daily Last 15min
+bgcolor(_getBrinksBgColorForTimeRange(dailyLast15MinTimeRange, dailyLast15minActive, dailyLast15MinColor))
+
+// Hourly First/Last 5min
+// bgcolor(_getBgColorForFirstLastFiveMinutesOfEachHour())
+
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== DAILY OPEN ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+groupDailyOpen = 'Daily Open'
+bool dailyOpenActive = input(false, "Daily Open Active", group=groupDailyOpen)
+bool showPrev = input(false, "Print Previous Daily Open Alongside Next", group=groupDailyOpen)
+bool showMore = input(false, "Print Daily Open From Two Days Ago", group=groupDailyOpen)
+bool showAvg  = input(false, "Show Average of Current and Previous", group=groupDailyOpen)
+
+_color = input(#196ae7, "Daily Open Color", type=input.color)
+dailyOpenColor = color.new(_color, 20)
+previousDayColor = color.new(_color, 60)
+size = 3
+plotStyle = plot.style_circles
+
+daily_open(x) => 
+    trigger = na(time("D")) or change(time("D"))
+    valuewhen(trigger, open, x)
+
+plot(dailyOpenActive ? daily_open(0) : na, "Daily Open", dailyOpenColor, size, plot.style_circles)
+plot(dailyOpenActive and showPrev ? daily_open(1) : na, "Previous Daily Open", previousDayColor, size, plotStyle)
+plot(dailyOpenActive and showMore ? daily_open(2) : na, "Previously Previous Daily Open", previousDayColor, 2, plotStyle)
+plot(dailyOpenActive and showAvg ? avg(daily_open(0), daily_open(1)) : na, "Avg.", color.silver, size, plotStyle)

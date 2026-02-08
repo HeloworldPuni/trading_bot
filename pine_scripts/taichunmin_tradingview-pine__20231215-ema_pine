@@ -1,0 +1,20 @@
+//@version=5
+// 沒有賺錢
+strategy("RSI快慢金叉死叉-20231215", overlay=true)
+
+rsiFast = ta.rsi(close, 30)
+rsiSlow = ta.rsi(close, 40)
+
+emaFast = ta.ema(close, 7)
+emaSlow = ta.ema(close, 14)
+
+entryLong = ta.crossover(rsiFast, rsiSlow) and emaFast < emaSlow
+entryShort = ta.crossunder(rsiFast, rsiSlow) and emaFast > emaSlow
+
+if (entryLong)
+    strategy.close_all()
+    strategy.entry("long", strategy.long)
+
+if (entryShort)
+    strategy.close_all()
+    strategy.entry("short", strategy.short)

@@ -1,0 +1,45 @@
+//==============================
+// Example: have an if statement calculate loop values
+//==============================
+//@version=5
+indicator(title='If statement example', overlay=true)
+
+// Create two counting variables
+closeSum = 0.0
+count = 0
+
+// Loop over the last 10 bars, and sum all closes
+// with volume above the 20-bar SMA
+for i = 0 to 9 by 1
+    if volume[i] > ta.sma(volume[i], 20)
+        closeSum += close[i]
+        count += 1
+        count
+
+// Calculate and plot the average closing price
+avgClose = closeSum / count
+
+plot(series=avgClose, color=color.new(color.fuchsia, 0), linewidth=2)
+//==============================
+
+//==============================
+// Example: submit strategy orders with if statements
+//==============================
+//@version=5
+strategy(title='If statement example strategy', overlay=true)
+
+// Calculate moving averages
+quickMA = ta.sma(close, 20)
+slowMA = ta.sma(close, 60)
+
+// Plot averages
+plot(series=quickMA, color=color.new(color.blue, 0))
+plot(series=slowMA, color=color.new(color.orange, 0), linewidth=2)
+
+// Submit strategy orders with if statements
+if ta.crossover(quickMA, slowMA)
+    strategy.entry(id='EL', direction=strategy.long, qty=5)
+
+if ta.crossunder(quickMA, slowMA)
+    strategy.entry(id='ES', direction=strategy.short, qty=5)
+//==============================

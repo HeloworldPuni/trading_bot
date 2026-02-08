@@ -1,0 +1,54 @@
+//@version=6
+strategy("MACD Simplified", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=90)
+
+// === INPUTS ===
+macd_fast = input.int(12, "MACD Fast", minval=1)
+macd_slow = input.int(26, "MACD Slow", minval=1) 
+macd_signal = input.int(9, "MACD Signal", minval=1)
+profit_mult = input.float(1.5, "Profit Multiplier", minval=1.0, step=0.1)
+trail_pct = input.float(5.0, "Trail Stop %", minval=1.0, step=0.5)
+
+// === INDICATORS ===
+[macd_line, signal_line, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// === STATE VARIABLES ===
+var float entry_price = na
+var float trail_stop = na
+var bool trail_active = false
+
+// === ENTRY LOGIC ===
+macd_bullish = macd_line > signal_line and macd_line > macd_line[1]
+
+if macd_bullish and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    entry_price := close
+    trail_stop := na
+    trail_active := false
+
+// === TRAILING STOP LOGIC ===
+if strategy.position_size > 0
+    // Activate trailing stop after profit target hit
+    if not trail_active and close >= entry_price * profit_mult
+        trail_active := true
+        trail_stop := high * (1 - trail_pct / 100)
+    
+    // Update trailing stop (only moves up)
+    if trail_active
+        new_stop = high * (1 - trail_pct / 100)
+        if new_stop > trail_stop
+            trail_stop := new_stop
+
+// === EXIT LOGIC ===
+if strategy.position_size > 0 and trail_active and close <= trail_stop
+    strategy.close_all()
+    entry_price := na
+    trail_stop := na
+    trail_active := false
+
+// === VISUALIZATION ===
+plot(strategy.position_size > 0 ? entry_price : na, "Entry", color=color.blue, linewidth=2)
+plot(strategy.position_size > 0 ? entry_price * profit_mult : na, "Target", color=color.green, linewidth=1)
+plot(trail_active ? trail_stop : na, "Trail Stop", color=color.red, linewidth=2)
+
+// Entry signal
+plotshape(macd_bullish and strategy.position_size == 0, title="Buy", location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.normal) 

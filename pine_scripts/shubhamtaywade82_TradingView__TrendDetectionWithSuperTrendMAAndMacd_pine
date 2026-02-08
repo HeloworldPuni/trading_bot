@@ -1,0 +1,58 @@
+//@version=5
+indicator("Trend Detection with Supertrend, MA Crossover & MACD", overlay=true)
+
+// === INPUTS ===
+// Supertrend Inputs
+st_length = input.int(10, title="Supertrend ATR Length")
+st_mult = input.float(3.0, title="Supertrend Multiplier")
+
+// Moving Average Inputs
+ma_fast_length = input.int(9, title="Fast MA Length")
+ma_slow_length = input.int(21, title="Slow MA Length")
+
+// MACD Inputs
+macd_fast_length = input.int(12, title="MACD Fast Length")
+macd_slow_length = input.int(26, title="MACD Slow Length")
+macd_signal_length = input.int(9, title="MACD Signal Length")
+
+// === SUPERTRAND CALCULATION ===
+[supertrend, trend_direction] = ta.supertrend(st_mult, st_length)
+
+// === MOVING AVERAGES CALCULATION ===
+ma_fast = ta.sma(close, ma_fast_length)
+ma_slow = ta.sma(close, ma_slow_length)
+
+// === MACD CALCULATION ===
+[macd_line, signal_line, _] = ta.macd(close, macd_fast_length, macd_slow_length, macd_signal_length)
+
+// === PLOTTING INDICATORS ===
+// Plot Supertrend
+plot(supertrend, color=(trend_direction == 1 ? color.green : color.red), linewidth=2, title="Supertrend")
+
+// Plot Moving Averages
+plot(ma_fast, color=color.blue, linewidth=1, title="Fast MA")
+plot(ma_slow, color=color.red, linewidth=1, title="Slow MA")
+
+// Plot MACD and Signal Line in a separate pane
+plot(macd_line, color=color.blue, title="MACD Line")
+plot(signal_line, color=color.red, title="Signal Line")
+hline(0, "Zero Line", color=color.gray)
+
+// === SIGNAL LOGIC ===
+// Supertrend Buy/Sell Labels
+if (ta.change(trend_direction) > 0)
+    label.new(bar_index, low, text="Buy", style=label.style_label_up, color=color.green, textcolor=color.white)
+if (ta.change(trend_direction) < 0)
+    label.new(bar_index, high, text="Sell", style=label.style_label_down, color=color.red, textcolor=color.white)
+
+// MA Crossover Buy/Sell Labels
+if (ta.crossover(ma_fast, ma_slow))
+    label.new(bar_index, low, text="MA Buy", style=label.style_label_up, color=color.green, textcolor=color.white)
+if (ta.crossunder(ma_fast, ma_slow))
+    label.new(bar_index, high, text="MA Sell", style=label.style_label_down, color=color.red, textcolor=color.white)
+
+// MACD Crossover/Reversal Labels
+if (ta.crossover(macd_line, signal_line))
+    label.new(bar_index, low, text="MACD Bull", style=label.style_label_up, color=color.green, textcolor=color.white)
+if (ta.crossunder(macd_line, signal_line))
+    label.new(bar_index, high, text="MACD Bear", style=label.style_label_down, color=color.red, textcolor=color.white)

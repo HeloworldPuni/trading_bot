@@ -1,0 +1,172 @@
+// ══════════════════════════════════════════════════════════════════════════════
+// MACD MONEY MAP - REVERSAL SYSTEM (SYSTEM 2)
+// ══════════════════════════════════════════════════════════════════════════════
+// Version: 1.0.0 (Placeholder - To Be Implemented in Phase 3)
+// Description: Reversal detection with divergence and histogram patterns
+// ══════════════════════════════════════════════════════════════════════════════
+
+//@version=6
+indicator("MACD Money Map - Reversal System", shorttitle="MACD-MM Reversal", overlay=true)
+
+// ════════════════════════════════
+// 1. INPUTS
+// ════════════════════════════════
+
+// MACD Settings
+fastLength   = input.int(12, "Fast Length", group="MACD")
+slowLength   = input.int(26, "Slow Length", group="MACD")
+signalLength = input.int(9, "Signal Length", group="MACD")
+src          = input.source(close, "Source", group="MACD")
+
+// Divergence Settings
+lbL          = input.int(5, "Pivot Lookback Left", minval=1, group="Divergence")
+lbR          = input.int(5, "Pivot Lookback Right", minval=1, group="Divergence")
+rangeUpper   = input.int(60, "Max Lookback Range", minval=5, group="Divergence")
+plotLines    = input.bool(true, "Draw Divergence Lines", group="Visuals")
+
+// ════════════════════════════════
+// 2. CALCULATIONS
+// ════════════════════════════════
+
+// 2.1 Core MACD
+[macdLine, signalLine, histLine] = ta.macd(src, fastLength, slowLength, signalLength)
+
+// 2.2 Pivot Detection
+// Usage: macdLine for structural divergence
+pl = ta.pivotlow(macdLine, lbL, lbR)
+ph = ta.pivothigh(macdLine, lbL, lbR)
+
+// 2.3 Divergence Engine
+var pivot_lows_price = array.new_float(0)
+var pivot_lows_macd  = array.new_float(0)
+var pivot_lows_idx   = array.new_int(0)
+
+var pivot_highs_price = array.new_float(0)
+var pivot_highs_macd  = array.new_float(0)
+var pivot_highs_idx   = array.new_int(0)
+
+// Helper variables
+bool detected_bullish = false
+bool detected_bearish = false
+
+// --- BULLISH DIVERGENCE LOGIC ---
+if not na(pl) // A new Pivot Low is confirmed
+    // Add to history
+    array.push(pivot_lows_price, low[lbR])
+    array.push(pivot_lows_macd, macdLine[lbR])
+    array.push(pivot_lows_idx, bar_index[lbR])
+    
+    // Trim arrays
+    if array.size(pivot_lows_price) > 5
+        array.shift(pivot_lows_price)
+        array.shift(pivot_lows_macd)
+        array.shift(pivot_lows_idx)
+        
+    // Check against previous pivots
+    if array.size(pivot_lows_price) >= 2
+        current_price_low = array.get(pivot_lows_price, -1)
+        current_macd_low  = array.get(pivot_lows_macd, -1)
+        current_idx       = array.get(pivot_lows_idx, -1)
+        
+        // Loop backwards
+        for i = array.size(pivot_lows_price) - 2 to 0
+            prev_price_low = array.get(pivot_lows_price, i)
+            prev_macd_low  = array.get(pivot_lows_macd, i)
+            prev_idx       = array.get(pivot_lows_idx, i)
+            
+            // Check Range
+            if (bar_index - prev_idx) > rangeUpper
+                break 
+            
+            // BULLISH CONDITION:
+            // Price Lower Low AND MACD Higher Low
+            priceLL = current_price_low < prev_price_low
+            macdHL  = current_macd_low > prev_macd_low
+            
+            if priceLL and macdHL
+                detected_bullish := true
+                if plotLines
+                    line.new(prev_idx, prev_price_low, current_idx, current_price_low, color=color.blue, width=2)
+                
+                // We break loop after finding the most recent valid divergence to clear clutter
+                break 
+
+// --- BEARISH DIVERGENCE LOGIC ---
+if not na(ph) // A new Pivot High is confirmed
+    array.push(pivot_highs_price, high[lbR])
+    array.push(pivot_highs_macd, macdLine[lbR])
+    array.push(pivot_highs_idx, bar_index[lbR])
+    
+    if array.size(pivot_highs_price) > 5
+        array.shift(pivot_highs_price)
+        array.shift(pivot_highs_macd)
+        array.shift(pivot_highs_idx)
+        
+    if array.size(pivot_highs_price) >= 2
+        current_price_high = array.get(pivot_highs_price, -1)
+        current_macd_high  = array.get(pivot_highs_macd, -1)
+        current_idx        = array.get(pivot_highs_idx, -1)
+        
+        for i = array.size(pivot_highs_price) - 2 to 0
+            prev_price_high = array.get(pivot_highs_price, i)
+            prev_macd_high  = array.get(pivot_highs_macd, i)
+            prev_idx        = array.get(pivot_highs_idx, i)
+            
+            if (bar_index - prev_idx) > rangeUpper
+                break
+                
+            // BEARISH CONDITION:
+            // Price Higher High AND MACD Lower High
+            priceHH = current_price_high > prev_price_high
+            macdLH  = current_macd_high < prev_macd_high
+            
+            if priceHH and macdLH
+                detected_bearish := true
+                if plotLines
+                    line.new(prev_idx, prev_price_high, current_idx, current_price_high, color=color.orange, width=2)
+                break
+
+// ════════════════════════════════
+// 3. SIGNAL GENERATION (ENTRY)
+// ════════════════════════════════
+
+// The Pivot Confirmation happens 'lbR' bars LATE.
+// This is typical in Pine.
+// The "Money Map" entry is the MACD Cross *following* a divergence.
+// If we just confirmed a pivot (divergence happened), we check:
+// Is MACD *already* crossed in favor? Or do we wait for cross?
+
+// Logic:
+// We use a simplified state: "Divergence Active"
+// If 'detected_bullish' is true strictly on this bar (meaning pivot confirmed now),
+// we check the CURRENT MACD state.
+
+trigger_long = false
+trigger_short = false
+
+if detected_bullish
+    // Divergence just confirmed. Check momentum.
+    // If MACD is already crossed up (macd > signal) OR crossing up now
+    if macdLine > signalLine
+        trigger_long := true
+
+if detected_bearish
+    if macdLine < signalLine
+        trigger_short := true
+
+        trigger_long := true
+
+if detected_bearish
+    if macdLine < signalLine
+        trigger_short := true
+
+// ════════════════════════════════
+// 4. PLOTTING
+// ════════════════════════════════
+
+plotshape(trigger_long, "Reversal Long", shape.triangleup, location.belowbar, color.blue, size=size.small, text="REV BUY")
+plotshape(trigger_short, "Reversal Short", shape.triangledown, location.abovebar, color.orange, size=size.small, text="REV SELL")
+
+// Alerts
+alertcondition(trigger_long, "Reversal Buy", "MACD Reversal Buy Detected")
+alertcondition(trigger_short, "Reversal Sell", "MACD Reversal Sell Detected")

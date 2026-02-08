@@ -1,0 +1,28 @@
+//@version=5
+indicator(title="Moving Average", shorttitle="MA with timeframe", overlay=true, timeframe="D", timeframe_gaps=true)
+len = input.int(1, minval=1, title="Length")
+len2 = input.int(5, minval=1, title="Length")
+
+src = input.source(close, title="Source")
+src2 = input.source(close, title="Source")
+
+offset = input.int(title="Offset", defval=0, minval=-500, maxval=500)
+offset2 = input.int(title="Offset", defval=0, minval=-500, maxval=500)
+
+emaFast = ta.ema(src, len)
+emaSlow = ta.ema(src2, len2)
+plot(emaFast, color=color.orange, title="EMA", offset=offset)
+plot(emaSlow, color=color.white, title="EMA", offset=offset)
+plot(ta.vwap(close), color=color.blue)
+
+// Calculate the conditions for the arrows
+crossUp = ta.crossover(emaFast, emaSlow)
+crossDown = ta.crossunder(emaFast, emaSlow)
+
+// Create alert conditions
+alertcondition(crossUp, title="Cross Up", message="EMA Fast crossed above EMA Slow")
+alertcondition(crossDown, title="Cross Down", message="EMA Fast crossed below EMA Slow")
+
+// Plot the arrows
+plotshape(crossUp, color=color.blue, style=shape.arrowup, location=location.belowbar, text = "B")
+plotshape(crossDown, color=color.red, style=shape.arrowdown, location=location.abovebar, text = "S")

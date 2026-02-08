@@ -1,0 +1,25 @@
+// Source: https://kodify.net/tradingview/lines/xloc/
+// How to switch a TradingView trend line from bar numbers to time values?
+
+//@version=4
+study(title="Monthly close trend line", overlay=true)
+
+// Make the trend line variable once
+var line monthClose = na
+
+// Determine number of bars since month start
+sinceStart = barssince(month != month[1])
+
+// Make a new line at the start of each month
+if (sinceStart == 0)
+    monthClose := line.new(x1=bar_index[1], y1=close[1],
+         x2=bar_index, y2=close[1], color=color.orange,
+         width=2)
+
+// Extend the line with one bar, each bar. Except on the last
+// bar. There extend the line 5 days in the future.
+if (not barstate.islast)
+    line.set_x2(id=monthClose, x=bar_index)
+else
+    line.set_xloc(id=monthClose, x1=time[sinceStart + 1],
+         x2=time_close + (5 * 86400000), xloc=xloc.bar_time)

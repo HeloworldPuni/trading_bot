@@ -1,0 +1,92 @@
+//@version=5
+indicator("Composite Bullish/Bearish Metric with Real-Time Expected High/Low Arrows", overlay=true)
+
+// Parameters
+buy_signal_threshold=input.float(0.8, title="Buy Signal Tuner", minval=0.5, maxval=1, step=0.1)
+sell_signal_threshold=input.float(0.2, title="Sell Signal Tuner", minval=0, maxval=0.5, step=0.1)
+vsa_weight=input.float(0.03, title="VSA Weight", minval=0, maxval=0.10, step=0.01)
+vsa_sma_length=input.int(50, title="SMA Length for VSA",minval=10, maxval=200, step=10)
+//VSA weight is added seperately to the mean of normalized indicators. It can be a deciding factor for buy and sell to trigger so keep it low but have it there to catch tiny movements.
+
+projection_factor = input.float(1.5, title="Projection Factor for Expected High/Low")
+sensitivity = input.float(0.1, title="Sensitivity Tuner", minval=0.1, maxval=2.0, step=0.1)
+arrow_length = input.int(10, title="Arrow Length in Bars", minval=1, maxval=50)
+
+rsi_length = input.int(14, title="RSI Length")
+macd_short = input.int(12, title="MACD Short Length")
+macd_long = input.int(26, title="MACD Long Length")
+macd_signal = input.int(9, title="MACD Signal Length")
+stoch_length = input.int(14, title="Stochastic Length")
+boll_length = input.int(20, title="Bollinger Bands Length")
+sma_length = input.int(50, title="SMA Length")
+ema_length = input.int(50, title="EMA Length")
+atr_length = input.int(14, title="ATR Length")
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+rsi_score = rsi / 100
+
+// MACD
+[macd_line, signal_line, _] = ta.macd(close, macd_short, macd_long, macd_signal)
+macd_diff = macd_line - signal_line
+macd_min = ta.lowest(macd_diff, 100)
+macd_max = ta.highest(macd_diff, 100)
+macd_score = (macd_diff - macd_min) / (macd_max - macd_min)
+
+// Bollinger Bands
+basis = ta.sma(close, boll_length)
+dev = ta.stdev(close, boll_length) * 2
+upper_band = basis + dev
+lower_band = basis - dev
+bb_position = (close - lower_band) / (upper_band - lower_band)
+bb_score = bb_position
+
+// Moving Averages
+sma = ta.sma(close, sma_length)
+ema = ta.ema(close, ema_length)
+price_min = ta.lowest(close, 100)
+price_max = ta.highest(close, 100)
+price_norm = (close - price_min) / (price_max - price_min)
+sma_cross = ta.crossover(close, sma) ? 1 : 0
+ema_cross = ta.crossover(close, ema) ? 1 : 0
+ma_score = price_norm * 0.5 + sma_cross * 0.25 + ema_cross * 0.25
+
+// Stochastic
+stochK = ta.stoch(close, high, low, stoch_length)
+stoch_score = stochK / 100
+
+// Volume Spread Analysis (VSA)
+avg_volume = ta.sma(volume, vsa_sma_length)
+vsa_score = (close > open and volume > avg_volume) ? vsa_weight : (close < open and volume > avg_volume) ? -vsa_weight : 0
+
+// Composite Metric
+composite_metric = (rsi_score + macd_score + bb_score + ma_score + stoch_score) / 5 + vsa_score
+
+// Entry conditions
+buy_signal = composite_metric >= buy_signal_threshold
+sell_signal = composite_metric <= sell_signal_threshold
+
+// Advanced Expected High/Low Calculation with Sensitivity Tuner
+atr = ta.atr(atr_length)
+momentum_adjustment = (macd_diff / atr) * projection_factor * sensitivity
+expected_high = close + (atr * projection_factor * sensitivity) + momentum_adjustment
+expected_low = close - (atr * projection_factor * sensitivity) + momentum_adjustment
+
+// Plotting Buy/Sell signals
+plotshape(buy_signal and vsa_score > 0, title="Buy Signal (VSA)", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY*")
+plotshape(buy_signal and vsa_score == 0, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY")
+plotshape(sell_signal and vsa_score < 0, title="Sell Signal (VSA)", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL*")
+plotshape(sell_signal and vsa_score == 0, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL")
+
+// Plotting Expected High/Low levels as horizontal arrows
+var line expected_high_line = na
+var line expected_low_line = na
+
+if (buy_signal)
+    expected_high_line := line.new(x1=bar_index, y1=expected_high, x2=bar_index + arrow_length, y2=expected_high, color=color.green, width=1, style=line.style_arrow_right)
+
+if (sell_signal)
+    expected_low_line := line.new(x1=bar_index, y1=expected_low, x2=bar_index + arrow_length, y2=expected_low, color=color.red, width=1, style=line.style_arrow_right)
+
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © BullBearWizard318

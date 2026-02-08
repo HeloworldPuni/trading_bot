@@ -1,0 +1,179 @@
+//=================================================================
+// Comprehensive Trading Indicator
+// Version: 1.0
+// Author: KP
+// Description: 
+//   This indicator combines multiple technical tools – trend, momentum,
+//   volatility, support/resistance, Fibonacci retracements, volume anomaly
+//   detection, liquidity/order blocks, and trade signal labeling – into one
+//   full-visualization script. Hover (read) the label text for trade details.
+// 
+// FEATURES:
+//  • Trend Analysis: MA50, MA200, VWMA with a background “heatmap”.
+//  • Momentum Indicators: MACD & RSI (values displayed in an on‐chart table).
+//  • Volatility: Bollinger Bands and ATR.
+//  • Support & Resistance: Swing Highs/Lows and volume‐based zones.
+//  • Fibonacci Retracements: Auto-Fibonacci levels over recent price range.
+//  • Volume Anomaly Detection: Highlights volume spikes.
+//  • Liquidity Zones / Order Blocks: Marks swing areas with volume anomalies.
+//  • Trade Entry Signals: Labels “Open Long/Short” and “Close Long/Short”
+//    generated from indicator‐based conditions with detailed info.
+//=================================================================
+
+ //@version=6
+indicator("Comprehensive Trading Indicator", overlay=true, shorttitle="CTI")
+
+//-----------------------------------------------------------------
+// 1. TREND ANALYSIS
+//-----------------------------------------------------------------
+// Inputs for Moving Averages (MA50, MA200) and VWMA.
+ma50_length   = input.int(50,  title="MA50 Length",   defval=50,  group="Trend Analysis", tooltip="Length for the 50-period Simple Moving Average")
+ma200_length  = input.int(200, title="MA200 Length",  defval=200, group="Trend Analysis", tooltip="Length for the 200-period Simple Moving Average")
+vwma_length   = input.int(50,  title="VWMA Length",   defval=50,  group="Trend Analysis", tooltip="Length for the Volume Weighted Moving Average")
+
+// Calculations:
+ma50   = ta.sma(close, ma50_length)
+ma200  = ta.sma(close, ma200_length)
+vwma   = ta.vwma(close, vwma_length)
+
+// Plot Trend Lines:
+plot(ma50,  color=color.blue,   title="MA50")
+plot(ma200, color=color.red,    title="MA200")
+plot(vwma,  color=color.orange, title="VWMA")
+
+// Trend Heatmap Background:
+// If price is above MA200 then bullish (green), else bearish (red).
+trendBullish = close > ma200
+bgcolor(trendBullish ? color.new(color.green, 90) : color.new(color.red, 90), title="Trend Heatmap")
+
+//-----------------------------------------------------------------
+// 2. MOMENTUM INDICATORS
+//-----------------------------------------------------------------
+// Inputs for MACD and RSI.
+macd_fast   = input.int(12, title="MACD Fast Length",   defval=12,  group="Momentum Indicators", tooltip="Fast EMA period for MACD")
+macd_slow   = input.int(26, title="MACD Slow Length",   defval=26,  group="Momentum Indicators", tooltip="Slow EMA period for MACD")
+macd_signal = input.int(9,  title="MACD Signal Length", defval=9,   group="Momentum Indicators", tooltip="Signal line EMA period for MACD")
+rsi_length  = input.int(14, title="RSI Length",         defval=14,  group="Momentum Indicators", tooltip="Period for the Relative Strength Index")
+
+// Calculations:
+[macdLine, signalLine, histLine] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+rsi = ta.rsi(close, rsi_length)
+
+// Display MACD and RSI values in an on‐chart table:
+var table indicatorTable = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(indicatorTable, 0, 0, "MACD",  text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 1, 0, str.tostring(macdLine, format.mintick), text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 0, 1, "Signal", text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 1, 1, str.tostring(signalLine, format.mintick), text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 0, 2, "RSI",   text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 1, 2, str.tostring(rsi, format.mintick), text_color=color.white, bgcolor=color.blue, size=size.normal)
+
+//-----------------------------------------------------------------
+// 3. VOLATILITY TRACKING
+//-----------------------------------------------------------------
+// ATR and Bollinger Bands settings.
+atr_length    = input.int(14,  title="ATR Length",    defval=14,  group="Volatility Tracking", tooltip="Period for Average True Range")
+atr_multiplier= input.float(1.0, title="ATR Multiplier",defval=1.0, group="Volatility Tracking", tooltip="Multiplier for ATR-based calculations")
+atr_value     = ta.atr(atr_length)
+
+bb_length   = input.int(20, title="BB Length",         defval=20,  group="Volatility Tracking", tooltip="Period for Bollinger Bands")
+bb_stdDev   = input.float(2.0, title="BB Standard Deviation", defval=2.0, group="Volatility Tracking", tooltip="Standard deviation multiplier for Bollinger Bands")
+
+// Bollinger Bands Calculation:
+basis   = ta.sma(close, bb_length)
+dev     = bb_stdDev * ta.stdev(close, bb_length)
+upperBB = basis + dev
+lowerBB = basis - dev
+
+// Plot Bollinger Bands:
+plot(basis,   color=color.yellow, title="BB Basis")
+plot(upperBB, color=color.green,  title="BB Upper")
+plot(lowerBB, color=color.red,    title="BB Lower")
+
+// (Optional) ATR can also be displayed in the on‐chart table:
+if barstate.islast
+    table.cell(indicatorTable, 0, 3, "ATR", text_color=color.white, bgcolor=color.blue, size=size.normal)
+    table.cell(indicatorTable, 1, 3, str.tostring(atr_value, format.mintick), text_color=color.white, bgcolor=color.blue, size=size.normal)
+
+//-----------------------------------------------------------------
+// 4. SUPPORT & RESISTANCE (Swing Highs/Lows)
+//-----------------------------------------------------------------
+pivot_lookback = input.int(5, title="Pivot Lookback", defval=5, group="Support & Resistance", tooltip="Lookback period for swing high/low detection")
+swingHigh = ta.pivothigh(high, pivot_lookback, pivot_lookback)
+swingLow  = ta.pivotlow(low,  pivot_lookback, pivot_lookback)
+
+// Plot swing points as labels:
+if not na(swingHigh)
+    label.new(bar_index[pivot_lookback], high[pivot_lookback], "Swing High", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+if not na(swingLow)
+    label.new(bar_index[pivot_lookback], low[pivot_lookback], "Swing Low", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+
+//-----------------------------------------------------------------
+// 5. VOLUME-BASED ZONES & LIQUIDITY DETECTION
+//-----------------------------------------------------------------
+vol_lookback   = input.int(20, title="Volume Lookback", defval=20, group="Volume Analysis", tooltip="Period for average volume calculation")
+vol_multiplier = input.float(1.5, title="Volume Anomaly Multiplier", defval=1.5, group="Volume Analysis", tooltip="Multiplier to determine volume spikes")
+avgVolume = ta.sma(volume, vol_lookback)
+volumeAnomaly = volume > (avgVolume * vol_multiplier)
+
+// Plot a marker below bars with volume anomalies:
+plotshape(volumeAnomaly, title="Volume Anomaly", location=location.belowbar, color=color.purple, style=shape.triangledown, size=size.tiny)
+
+// Simple liquidity/order block detection:
+// If a swing (high or low) coincides with a volume anomaly, mark it as an order block.
+orderBlock = (not na(swingHigh) or not na(swingLow)) and volumeAnomaly
+if orderBlock
+    label.new(bar_index, close, "Order Block", style=label.style_label_left, color=color.new(color.fuchsia, 0), textcolor=color.white, size=size.tiny)
+
+//-----------------------------------------------------------------
+// 6. AUTO-FIBONACCI ZONES
+//-----------------------------------------------------------------
+fib_lookback = input.int(50, title="Fibonacci Lookback", defval=50, group="Fibonacci", tooltip="Lookback period for Fibonacci retracement calculation")
+hh = ta.highest(high, fib_lookback)
+ll = ta.lowest(low, fib_lookback)
+
+// Fibonacci Levels:
+fib_0     = ll
+fib_100   = hh
+fib_38_2  = ll + 0.382 * (hh - ll)
+fib_50    = ll + 0.5   * (hh - ll)
+fib_61_8  = ll + 0.618 * (hh - ll)
+
+// Plot Fibonacci Levels:
+plot(fib_0,    title="Fib 0%",     color=color.gray, style=plot.style_linebr)
+plot(fib_38_2, title="Fib 38.2%",  color=color.gray, style=plot.style_linebr)
+plot(fib_50,   title="Fib 50%",    color=color.gray, style=plot.style_linebr)
+plot(fib_61_8, title="Fib 61.8%",  color=color.gray, style=plot.style_linebr)
+plot(fib_100,  title="Fib 100%",   color=color.gray, style=plot.style_linebr)
+
+//-----------------------------------------------------------------
+// 7. TRADE SIGNAL LABELING
+//-----------------------------------------------------------------
+// Calculate On-Balance Volume (OBV) & its simple moving average.
+obv    = ta.obv(close, volume)
+obvSma = ta.sma(obv, 20)
+
+// Define trade entry conditions using indicator-based signals:
+// Long Entry: Price crosses above MA50, above VWMA, and OBV is rising (above its SMA).
+// Short Entry: Price crosses below MA50, below VWMA, and OBV is below its SMA.
+longCondition  = ta.crossover(close, ma50) and (close > vwma) and (obv > obvSma)
+shortCondition = ta.crossunder(close, ma50) and (close < vwma) and (obv < obvSma)
+
+// Optionally, define exit conditions (using opposite cross signals here for demonstration).
+exitLongCondition  = ta.crossunder(close, ma50) and (obv < obvSma)
+exitShortCondition = ta.crossover(close, ma50) and (obv > obvSma)
+
+// Plot trade entry/exit labels with detailed info (labels include price and MA50 value).
+if longCondition
+    label.new(bar_index, low, "Open Long\nPrice: " + str.tostring(close) + "\nMA50: " + str.tostring(ma50),
+      style=label.style_label_up, color=color.green, textcolor=color.white, size=size.normal)
+if shortCondition
+    label.new(bar_index, high, "Open Short\nPrice: " + str.tostring(close) + "\nMA50: " + str.tostring(ma50),
+      style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+if exitLongCondition
+    label.new(bar_index, high, "Close Long\nPrice: " + str.tostring(close),
+      style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.normal)
+if exitShortCondition
+    label.new(bar_index, low, "Close Short\nPrice: " + str.tostring(close),
+      style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.normal)

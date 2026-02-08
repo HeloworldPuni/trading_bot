@@ -1,0 +1,76 @@
+//@version=5
+// Author: Krishneil
+
+indicator("SmartTrend Trader with Enhanced Sell Logic (4 Slopes)", overlay=true)
+
+// Parameters for Moving Averages
+fastLength = input.int(9, title="Fast EMA Length", minval=1)
+slowLength = input.int(21, title="Slow EMA Length", minval=1)
+longTermLength = input.int(200, title="Long-Term EMA Length", minval=1)
+
+// Parameters for ATR
+atrPeriod = input.int(14, title="ATR Period", minval=1)
+atrMultiplier = input.float(1.5, title="ATR Multiplier for Stop Loss/Take Profit", minval=0.1)
+
+// Parameters for Price Divergence
+priceDivergenceMultiplier = input.float(1.03, title="Price Divergence Multiplier", minval=1.0)
+
+// Calculate Moving Averages
+fastEMA = ta.ema(close, fastLength)
+slowEMA = ta.ema(close, slowLength)
+longTermEMA = ta.ema(close, longTermLength)
+
+// Calculate ATR
+atr = ta.atr(atrPeriod)
+
+// Enhanced Sell Logic
+fastEMA_slope = fastEMA - fastEMA[1]  // Fast EMA Slope (current - previous)
+
+// Negative Slope Confirmation for 4 Bars
+negativeSlopeConfirmed = fastEMA < fastEMA[1] and fastEMA[1] < fastEMA[2] and fastEMA[2] < fastEMA[3]
+
+// Price Divergence
+priceAboveFastEMA = close > fastEMA * priceDivergenceMultiplier  // Price significantly above Fast EMA
+
+// Alternating Buy/Sell Signal Logic
+var bool lastSignalWasBuy = false
+buySignal = ta.crossover(fastEMA, slowEMA) and not lastSignalWasBuy
+sellSignal = (negativeSlopeConfirmed or priceAboveFastEMA) and lastSignalWasBuy  // Sell on confirmed slope or price divergence
+
+// Update the last signal to prevent consecutive buy/sell
+if (buySignal)
+    lastSignalWasBuy := true
+if (sellSignal)
+    lastSignalWasBuy := false
+
+// Plot Buy/Sell Signals on the Chart
+plotshape(buySignal, title="BUY Signal", location=location.belowbar, color=color.lime, style=shape.labelup, text="BUY", textcolor=color.white, size=size.large)
+plotshape(sellSignal, title="SELL Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL", textcolor=color.white, size=size.large)
+
+// Plot the EMAs for trend visibility
+plot(fastEMA, color=color.blue, title="Fast EMA")
+plot(slowEMA, color=color.orange, title="Slow EMA")
+plot(longTermEMA, color=color.purple, title="Long-Term EMA")
+
+// Plot Stop Loss and Take Profit Levels
+var float entryPrice = na
+var line slLine = na
+var line tpLine = na
+
+if (buySignal)
+    entryPrice := close
+    sl = entryPrice - (atr * atrMultiplier)
+    tp = entryPrice + (atr * atrMultiplier * 2)
+    slLine := line.new(bar_index, sl, bar_index + 10, sl, color=color.red, style=line.style_dashed)
+    tpLine := line.new(bar_index, tp, bar_index + 10, tp, color=color.green, style=line.style_dashed)
+
+if (sellSignal)
+    entryPrice := close
+    sl = entryPrice + (atr * atrMultiplier)
+    tp = entryPrice - (atr * atrMultiplier * 2)
+    slLine := line.new(bar_index, sl, bar_index + 10, sl, color=color.red, style=line.style_dashed)
+    tpLine := line.new(bar_index, tp, bar_index + 10, tp, color=color.green, style=line.style_dashed)
+
+// Alert Conditions for Notifications
+alertcondition(buySignal, title="Buy Alert", message="SmartTrend Trader: BUY Signal")
+alertcondition(sellSignal, title="Sell Alert", message="SmartTrend Trader: SELL Signal")

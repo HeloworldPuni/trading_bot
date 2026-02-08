@@ -1,0 +1,128 @@
+//@version=6
+strategy("MACD + CMF + Supetrend strategy", calc_on_every_tick=true, overlay=false, initial_capital=80000, currency=currency.SEK, default_qty_type=strategy.percent_of_equity, default_qty_value=10, pyramiding=1, commission_type=strategy.commission.cash_per_order, commission_value=18, slippage=0, calc_on_order_fills=false, use_bar_magnifier=false, process_orders_on_close=false, backtest_fill_limits_assumption=2, behind_chart=false)
+
+// === Start Date Input ===
+startYear  = input.int(2023, "Start Year", minval=1900)
+startMonth = input.int(1, "Start Month", minval=1, maxval=12)
+startDay   = input.int(1, "Start Day", minval=1, maxval=31)
+startDate = timestamp("GMT+0", startYear, startMonth, startDay, 0, 0)
+inDateRange = time >= startDate
+
+// === MACD Parameters ===
+fastLength = input.int(12, title="Fast EMA Length", group="MACD Settings")
+slowLength = input.int(26, title="Slow EMA Length", group="MACD Settings")
+signalSmoothing = input.int(9, title="Signal SMA Length", group="MACD Settings")
+
+// === CMF Parameters ===
+cmfLength = input.int(20, title="CMF Length", minval=1, group="CMF Settings")
+
+// === Supertrend Parameters ===
+atrPeriodSuperTrend = input.int(10, title="ATR Period for Supertrend", group="Supertrend")
+factor = input.float(4.0, title="Factor", step=0.1, group="Supertrend")
+
+// === Strategy Parameters ===
+longThreshold = input.float(0.1, title="Long Threshold", step=0.01, group="Strategy Settings")
+shortThreshold = input.float(-0.1, title="Short Threshold", step=0.01, group="Strategy Settings")
+
+// === Stop Loss Parameters ===
+enableStopLoss = input.bool(true, title="Enable Stop Loss", group="Risk Management")
+stopLossPercent = input.float(5.0, title="Stop Loss %", minval=0.1, maxval=50.0, step=0.1, group="Risk Management")
+
+// === MACD Calculation ===
+fastEMA = ta.ema(close, fastLength)
+slowEMA = ta.ema(close, slowLength)
+macdLine = fastEMA - slowEMA
+signalLine = ta.sma(macdLine, signalSmoothing)
+histogram = macdLine - signalLine
+
+// Normalize MACD and Signal to range -1 to 1
+macdNormalized = ta.rsi(macdLine, 14) / 50 - 1  // Convert RSI (0-100) to -1 to 1
+signalNormalized = ta.rsi(signalLine, 14) / 50 - 1
+
+// === CMF Calculation ===
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+
+ad = close==high and close==low or high==low ? 0 : ((2*close-low-high)/(high-low))*volume
+mf = math.sum(ad, cmfLength) / math.sum(volume, cmfLength)
+
+// === Supertrend Calculation ===
+atrSuperTrend = ta.atr(atrPeriodSuperTrend)
+upperBasic = hl2 - factor * atrSuperTrend
+lowerBasic = hl2 + factor * atrSuperTrend
+
+var float upperBand = na
+var float lowerBand = na
+upperBand := na(upperBand[1]) ? upperBasic : close[1] > upperBand[1] ? math.max(upperBasic, upperBand[1]) : upperBasic
+lowerBand := na(lowerBand[1]) ? lowerBasic : close[1] < lowerBand[1] ? math.min(lowerBasic, lowerBand[1]) : lowerBasic
+
+var int trend = 1
+trend := close > lowerBand[1] ? 1 : close < upperBand[1] ? -1 : nz(trend[1], 1)
+supertrendLine = trend == 1 ? lowerBand : upperBand
+
+supertrendBuySignal = trend == 1 and trend[1] == -1
+supertrendSellSignal = trend == -1 and trend[1] == 1
+
+// Supertrend is bullish (green) when trend == 1
+supertrendBullish = trend == 1
+
+// === Strategy Logic ===
+// Long condition: CMF > longThreshold and both normalized MACD and signal > longThreshold
+longCondition = mf > longThreshold and macdNormalized > longThreshold and signalNormalized > longThreshold and inDateRange
+
+// Exit condition: CMF < shortThreshold and normalized MACD (blue line) < shortThreshold
+// BUT don't exit if Supertrend is bullish (green)
+exitCondition = mf < shortThreshold and macdNormalized < shortThreshold and not supertrendBullish and inDateRange
+
+// === Execute Strategy ===
+if longCondition
+    strategy.entry("Long", strategy.long)
+    
+if exitCondition
+    strategy.close("Long")
+
+// === Stop Loss Logic ===
+// Calculate stop loss price based on latest entry price
+var float stopLossPrice = na
+
+// Update stop loss price when entering a new long position
+if longCondition and strategy.position_size == 0
+    stopLossPrice := close * (1 - stopLossPercent / 100)
+
+// Reset stop loss price when position is closed
+if strategy.position_size == 0
+    stopLossPrice := na
+
+// Execute stop loss if enabled and price hits stop level
+if enableStopLoss and strategy.position_size > 0 and not na(stopLossPrice) and close <= stopLossPrice
+    strategy.close("Long", comment="Stop Loss")
+
+// === Plot MACD ===
+plot(macdNormalized, color=color.blue, title="MACD Normalized", linewidth=2)
+plot(signalNormalized, color=color.red, title="Signal Normalized", linewidth=2)
+
+// Histogram with color change (using normalized values)
+histNormalized = macdNormalized - signalNormalized
+histColor = histNormalized >= 0 ? color.green : color.red
+plot(histNormalized, color=histColor, title="Histogram", style=plot.style_columns)
+
+// Zero line
+hline(0, "Zero Line", color=color.gray, linestyle=hline.style_dashed)
+
+// === Plot CMF ===
+plot(mf, "CMF", color=color.orange, linewidth=2)
+hline(0, "Zero Line", color=#787B86, linestyle=hline.style_dashed)
+hline(longThreshold, "Long Threshold", color=#4CAF50, linestyle=hline.style_dotted)
+hline(shortThreshold, "Short Threshold", color=#F44336, linestyle=hline.style_dotted)
+
+// === Plot Strategy Signals ===
+plotshape(longCondition, title="Long Signal", location=location.bottom, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(exitCondition, title="Exit Signal", location=location.bottom, color=color.orange, style=shape.triangledown, size=size.small)
+
+// Plot stop loss signal
+plotshape(enableStopLoss and strategy.position_size > 0 and not na(stopLossPrice) and close <= stopLossPrice, title="Stop Loss Signal", location=location.bottom, color=color.red, style=shape.xcross, size=size.small)
+
+// === Supertrend Visualization ===
+bgcolor(trend == 1 ? color.new(color.green, 92) : color.new(color.red, 92), title="Supertrend Background")

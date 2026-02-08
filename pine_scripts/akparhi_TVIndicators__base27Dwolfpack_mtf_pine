@@ -1,0 +1,18 @@
+//@version=4
+study("Openwolf MTF", shorttitle="Openwolf MTF")
+
+tf = input('5', type=input.resolution, title="Timeframe 2")
+slowLen = input(3, title = 'MACD Fast Length', type = input.integer)
+fastLen = input(8, title = 'MACD Slow Length', type = input.integer)
+updateBarColor = input(true, title = 'Update bar color', type = input.bool)
+
+plot(0, title = "Zero line", linewidth = 1, color = color.black)
+
+[wolfpack1, q1, r1] = macd(close, slowLen, fastLen, 21)
+[wolfpack2, q2, r2] =  security(syminfo.tickerid, tf, macd(close, slowLen, fastLen, 21))
+
+plot(wolfpack1, title="Wolfpack(CTF)", color=wolfpack1 > 0 ? color.lime : color.red, linewidth=2, transp=0)
+plot(wolfpack2, title="Wolfpack(MTF)", color=wolfpack2 > 0 ? color.blue : color.black, linewidth=2, transp=0)
+
+BarColor = updateBarColor ? (wolfpack1 > 0 ? color.lime : color.red) : na
+barcolor(color=BarColor)

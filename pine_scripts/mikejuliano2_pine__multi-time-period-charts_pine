@@ -1,0 +1,99 @@
+//@version=4
+study("Multi-Time Period Charts", overlay=true, max_boxes_count=500)
+
+AUTO_TIMEFRAME_TOOLTIP = "When the Auto option is selected, the timeframe of the indicator is chosen automatically based on the chart timeframe. The Timeframe dropdown is ignored. The automated timeframes are: \n
+
+ '1 day' for any chart timeframes below '1 day' \n
+
+ '1 week' for any timeframes starting from '1 day' up to '1 week' \n
+
+ '1 month' for any timeframes starting from '1 week' up to '1 month' \n
+
+ '3 months' for any timeframes starting from '1 month' up to '3 months' \n
+
+ '12 months' for any timeframes above '3 months'"
+
+HLR = "High/Low Range"
+TR = "True Range"
+HAR = "Heikin Ashi Range"
+
+DEFAULT_RESOLUTION = "1M"
+DEFAULT_COLOR_GROWTH = color.rgb(0, 150, 136, 80)
+DEFAULT_COLOR_FALL = color.rgb(244, 67, 54, 80)
+DEFAULT_CALCULATION_METHOD = HLR
+DEFAULT_AUTO_RESOLUTION = true
+
+var prev_bar_index = bar_index
+
+draw_box(left, right, top, bottom, diff, color_growth, color_fall, border_growth, border_fall) =>
+    drawed_box = box.new(left, top, right, bottom)
+    if diff < 0
+        box.set_border_color(drawed_box, border_fall)
+        box.set_bgcolor(drawed_box, color_fall)
+    else
+        box.set_border_color(drawed_box, border_growth)
+        box.set_bgcolor(drawed_box, color_growth)
+    drawed_box
+        
+select_auto_resolution() => 
+     timeframe.isseconds ? '120':
+     timeframe.isminutes ? '1440': 
+     timeframe.isdaily ? 'W': 
+     timeframe.isweekly ? 'M': 
+     timeframe.ismonthly and timeframe.multiplier < 3 ? '3M': '12M'
+
+
+auto_resolution = input(DEFAULT_AUTO_RESOLUTION, title="AutoTimeframe", type=input.bool, tooltip=AUTO_TIMEFRAME_TOOLTIP)
+resolution_input = input(DEFAULT_RESOLUTION, title="Timeframe", type=input.resolution)
+color_growth = input(DEFAULT_COLOR_GROWTH, type=input.color, title="",inline="Body")
+color_fall = input(DEFAULT_COLOR_FALL, type=input.color, title="Body", inline="Body")
+calculation_method = input(DEFAULT_CALCULATION_METHOD, "Calculation", options = [HLR, TR, HAR])
+color_border_growth = color.rgb(color.r(color_growth), color.g(color_growth), color.b(color_growth), 0)
+color_border_fall = color.rgb(color.r(color_fall), color.g(color_fall), color.b(color_fall), 0)
+
+resolution = auto_resolution == true ? select_auto_resolution() : resolution_input
+
+
+
+
+[previous_high, previous_low, previous_close, previous_open, previous_prev_close] = security(syminfo.tickerid, resolution, [high[1], low[1], close[1], open[1], close[2]], lookahead=true)
+[current_high, current_low, current_close, current_open, prev_close] = security(syminfo.tickerid, resolution, [high, low, close, open, close[1]])
+
+sec_high = barstate.islast ? current_high : previous_high
+sec_prev_close = barstate.islast ? prev_close : previous_prev_close
+sec_low = barstate.islast ? current_low : previous_low
+
+diff = barstate.islast ? current_close - current_open : previous_close - previous_open 
+left = prev_bar_index
+right =  barstate.islast ? bar_index : bar_index[1]
+
+[ashi_high, ashi_low] = security(heikinashi(syminfo.tickerid), resolution, [high, low])
+float top = na 
+float bottom = na
+
+if calculation_method == HLR
+    top := sec_high
+    bottom := sec_low
+else if calculation_method == TR
+    top := max(sec_high, sec_prev_close)
+    bottom := min(sec_low, sec_prev_close)
+else if calculation_method == HAR
+    top := ashi_high
+    bottom := ashi_low
+
+is_new_period = change(time(resolution))
+
+if is_new_period 
+    prev_bar_index := bar_index
+
+var box prev_box = na
+
+if is_new_period and not barstate.isrealtime
+    draw_box(left, right, top, bottom, diff, color_growth, color_fall, color_border_growth, color_border_fall)
+
+if barstate.islast
+    if is_new_period
+        prev_box := na
+    else
+        box.delete(prev_box)
+        prev_box := draw_box(left, right, top, bottom, diff, color_growth, color_fall, color_border_growth, color_border_fall)

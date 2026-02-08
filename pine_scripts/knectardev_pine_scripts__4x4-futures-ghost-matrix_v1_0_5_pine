@@ -1,0 +1,99 @@
+//@version=5
+// =============================================================================
+// INDICATOR: 4x4 Futures Ghost Matrix
+// FILENAME: 4x4-futures-ghost-matrix_v1.0.5.pine
+// Version: v1.0.5
+// DATE:     2026-01-12
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.5 - Updated UI, renamed. 
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+("GhostDog Matrix - V8 Clean UI", overlay=true)
+
+// --- 1. INPUTS ---
+sessionTime  = input.session("0930-1600", "Trading Window")
+stdPeriod    = input.int(20, "Lookback Period")
+innerMult    = input.float(1.0, "Inner Sigma")
+outerMult    = input.float(2.5, "Outer Sigma")
+matrixReq    = input.int(2, "Signal Matrix Req", minval=1, maxval=4)
+glowReq      = input.int(3, "Glow Matrix Req", minval=1, maxval=4)
+sensitivity  = input.string("Aggressive", "Signal Mode", options=["Strict", "Aggressive"])
+filterRepeat = input.bool(true, "Filter Consecutive Signals")
+hideNoon     = input.bool(false, "Filter Noon Slump (12:00-13:30)")
+
+// --- 2. CALCULATIONS ---
+t = time(timeframe.period, sessionTime, "America/New_York")
+inSession = not na(t)
+isNoon    = hideNoon and hour(t, "America/New_York") == 12 or (hour(t, "America/New_York") == 13 and minute(t, "America/New_York") <= 30)
+
+basis = ta.sma(close, stdPeriod)
+dev   = ta.stdev(close, stdPeriod)
+
+eU = basis + (dev * outerMult)
+iU = basis + (dev * innerMult)
+iL = basis - (dev * innerMult)
+eL = basis - (dev * outerMult)
+
+// --- 3. MOMENTUM & MATRIX SCORE ---
+haTicker = ticker.heikinashi(syminfo.tickerid)
+[haOpen, haLow] = request.security(haTicker, timeframe.period, [open, low])
+haLong  = haOpen == haLow
+haShort = haOpen == (request.security(haTicker, timeframe.period, high))
+
+longScore  = (close[1] > iL[1] ? 1 : 0) + (close[2] > iL[2] ? 1 : 0) + (close[3] > iL[3] ? 1 : 0) + (close[4] > iL[4] ? 1 : 0)
+shortScore = (close[1] < iU[1] ? 1 : 0) + (close[2] < iU[2] ? 1 : 0) + (close[3] < iU[3] ? 1 : 0) + (close[4] < iU[4] ? 1 : 0)
+
+// --- 4. SIGNAL LOGIC ---
+rawLong  = ((ta.crossover(close, iL)) or (sensitivity == "Aggressive" and close > basis and haLong)) and longScore >= matrixReq and haLong and not isNoon
+rawShort = ((ta.crossunder(close, iU)) or (sensitivity == "Aggressive" and close < basis and haShort)) and shortScore >= matrixReq and haShort and not isNoon
+
+var int lastSignal = 0 
+longSignal  = rawLong and (not filterRepeat or lastSignal != 1)
+shortSignal = rawShort and (not filterRepeat or lastSignal != -1)
+
+if longSignal
+    lastSignal := 1
+if shortSignal
+    lastSignal := -1
+
+// --- 5. VISUALS (CLEAN UI UPDATE) ---
+// Using display.none on the price scale and status line values
+plotshape(longSignal and inSession,  title="Long",  style=shape.labelup,   location=location.belowbar, color=color.new(#00ff08, 0), text="L", textcolor=color.white, size=size.small)
+plotshape(shortSignal and inSession, title="Short", style=shape.labeldown, location=location.abovebar, color=color.new(#ff0000, 0), text="S", textcolor=color.white, size=size.small)
+
+// Background Glow
+bgcolor(inSession and longScore >= glowReq ? color.new(color.green, 92) : inSession and shortScore >= glowReq ? color.new(color.red, 92) : na)
+
+// Bands with display.none to hide values from status line and price scale
+plot(eU, color=color.new(color.red, 60), display=display.none)
+plot(iU, color=color.new(color.red, 85), display=display.none)
+plot(basis, color=color.new(color.gray, 90), display=display.none)
+plot(iL, color=color.new(color.green, 85), display=display.none)
+plot(eL, color=color.new(color.green, 60), display=display.none)
+
+// --- 6. HEATMAP MATRIX TABLE ---
+var table matrixTable = table.new(position.top_right, 5, 5, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.new(color.gray, 70))
+
+get_heat_color(currPrice, histLvl, curDev) =>
+    float dist = (currPrice - histLvl) / (curDev > 0 ? curDev : 1)
+    color.from_gradient(dist, -1.5, 1.5, color.red, color.green)
+
+if barstate.islast
+    table.cell(matrixTable, 0, 0, "LVL", text_color=color.white, text_size=size.small)
+    for i = 1 to 4
+        table.cell(matrixTable, i, 0, "B" + str.tostring(i), text_color=color.white, text_size=size.small)
+    
+    rowLabels = array.from("EX-U", "IN-U", "IN-L", "EX-L")
+    for r = 0 to 3
+        table.cell(matrixTable, 0, r + 1, array.get(rowLabels, r), text_color=color.white, text_size=size.small)
+        for c = 1 to 4
+            float lvlValue = (r == 0 ? eU[c] : r == 1 ? iU[c] : r == 2 ? iL[c] : eL[c])
+            color cVal = get_heat_color(close, lvlValue, dev)
+            table.cell(matrixTable, c, r + 1, "●", text_color=cVal, text_size=size.large)
+
+// --- 7. ALERTS ---
+alertcondition(longSignal,  "Matrix Long",  "New Long Signal")
+alertcondition(shortSignal, "Matrix Short", "New Short Signal")

@@ -1,0 +1,83 @@
+//@version=5
+// =============================================================================
+// INDICATOR: 4x4 Futures Ghost Matrix
+// FILENAME: 4x4-futures-ghost-matrix_v1.0.1.pine
+// Version: v1.0.1
+// DATE:     2026-01-12
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.1 - restores grid and uses ema instead of vwap
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+indicator("4x4 Futures Ghost Matrix - Responsive", overlay=true)
+
+// --- 1. INPUTS ---
+sessionTime = input.session("0930-1600", "Trading Window")
+stdPeriod   = input.int(20, "Lookback Period")
+innerMult   = input.float(1.0, "Inner Sigma")
+outerMult   = input.float(2.5, "Outer Sigma")
+useVWAP     = input.bool(false, "Use VWAP (Old Style) or SMA (Responsive)")
+
+// --- 2. CALCULATIONS ---
+inSession = not na(time(timeframe.period, sessionTime, "America/New_York"))
+
+// BASIS ADJUSTMENT: Use SMA for responsiveness to avoid the "Lag" issue
+basis = useVWAP ? ta.vwap : ta.sma(close, stdPeriod)
+dev   = ta.stdev(close, stdPeriod)
+
+// Define Price Levels
+eUpper = basis + (dev * outerMult)
+iUpper = basis + (dev * innerMult)
+iLower = basis - (dev * innerMult)
+eLower = basis - (dev * outerMult)
+
+// --- 3. HEIKIN ASHI VECTOR LOGIC ---
+haTicker = ticker.heikinashi(syminfo.tickerid)
+haOpen   = request.security(haTicker, timeframe.period, open)
+haLow    = request.security(haTicker, timeframe.period, low)
+haHigh   = request.security(haTicker, timeframe.period, high)
+
+haLongVector  = haOpen == haLow
+haShortVector = haOpen == haHigh
+
+// --- 4. GHOST CONFLUENCE & SIGNALS ---
+// Matrix check: Did the last 4 bars maintain the structure?
+longConfluence  = (close > iLower[1] ? 1 : 0) + (close > iLower[2] ? 1 : 0) + (close > iLower[3] ? 1 : 0) + (close > iLower[4] ? 1 : 0) >= 3
+shortConfluence = (close < eUpper[1] ? 1 : 0) + (close < eUpper[2] ? 1 : 0) + (close < eUpper[3] ? 1 : 0) + (close < eUpper[4] ? 1 : 0) >= 3
+
+// Signals trigger when price crosses the trigger bands WITH momentum confirmation
+longSignal  = ta.crossover(close, iLower) and longConfluence and haLongVector
+shortSignal = ta.crossunder(close, eUpper) and shortConfluence and haShortVector
+
+// --- 5. PLOTTING ---
+plotshape(longSignal and inSession,  title="High-Conviction Long",  style=shape.labelup,   location=location.belowbar, color=color.new(color.green, 0), text="L", textcolor=color.white, size=size.small)
+plotshape(shortSignal and inSession, title="High-Conviction Short", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0),   text="S", textcolor=color.white, size=size.small)
+
+// Bands for visual context
+plot(eUpper, color=color.new(color.red, 50), title="Extreme Upper")
+plot(iUpper, color=color.new(color.red, 80), title="Inner Upper")
+plot(iLower, color=color.new(color.green, 80), title="Inner Lower")
+plot(eLower, color=color.new(color.green, 50), title="Extreme Lower")
+
+// --- 6. MATRIX TABLE VISUALIZATION ---
+var table matrixDots = table.new(position.top_right, 5, 5, bgcolor=color.new(color.black, 70), border_width=1)
+
+if barstate.islast
+    // Headers
+    for lb = 1 to 4
+        table.cell(matrixDots, lb, 0, str.tostring(lb) + "m", text_color=color.white, text_size=size.small)
+    
+    float[] levels = array.from(eUpper, iUpper, iLower, eLower)
+    for row = 0 to 3
+        current_lvl = array.get(levels, row)
+        for col = 1 to 4
+            // Check if price was above/below the level at that 'ghost' interval
+            bool win = close > current_lvl[col]
+            color dotColor = win ? color.green : color.red
+            table.cell(matrixDots, col, row + 1, "●", text_color=dotColor, text_size=size.large)
+
+// Matrix Heatmap Glow
+highTrendGlow = longConfluence ? color.new(color.green, 90) : shortConfluence ? color.new(color.red, 90) : na
+bgcolor(inSession ? highTrendGlow : na, title="Matrix Confidence Glow")

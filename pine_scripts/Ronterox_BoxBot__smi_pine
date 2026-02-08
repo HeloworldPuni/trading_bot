@@ -1,0 +1,38 @@
+//@version=5
+indicator('Stochastic Momentum Index', shorttitle='SMI')
+
+var color TRANSPARENT = color.new(color.white, 100)
+
+LOOKBACK_PERIOD = input.int(title='Stochastic Lookback', defval=13, minval=1)
+SMOOTH_LEN1 = input.int(title='1st Smoothing Length', defval=25, minval=1)
+SMOOTH_LEN2 = input.int(title='2nd Smoothing Length', defval=2, minval=1)
+
+SIGNAL_LENGTH = input.int(title='Signal Length', defval=12, minval=1)
+OVERBOUGHT_LEVEL = input(title='Overbought Level', defval=40)
+OVERSOLD_LEVEL = input(title='Oversold Level', defval=-40)
+
+MAX_LEVEL = input(title='Max Level', defval=75)
+MIN_LEVEL = input(title='Min Level', defval=-75)
+
+highestHigh = ta.highest(LOOKBACK_PERIOD)
+lowestLow = ta.lowest(LOOKBACK_PERIOD)
+
+numerator = ta.ema(ta.ema(close - 0.5 * (highestHigh + lowestLow), SMOOTH_LEN1), SMOOTH_LEN2)
+denominator = 0.5 * ta.ema(ta.ema(highestHigh - lowestLow, SMOOTH_LEN1), SMOOTH_LEN2)
+
+smi = 100 * numerator / denominator
+signal = ta.ema(smi, SIGNAL_LENGTH)
+
+trendColor = smi > signal ? color.yellow : color.blue
+
+plot(smi, title='SMI', color=trendColor)
+plot(signal, title='Signal', color=trendColor)
+
+hline(MAX_LEVEL, title='Max Level', color=TRANSPARENT)
+hline(OVERBOUGHT_LEVEL, title='Overbought Level', color=color.red)
+
+hline(OVERSOLD_LEVEL, title='Oversold Level', color=color.green)
+hline(MIN_LEVEL, title='Min Level', color=TRANSPARENT)
+
+plotshape(ta.crossover(smi, signal) ? smi : na, title='Crossover', location=location.absolute, style=shape.circle, size=size.tiny, color=color.green)
+plotshape(ta.crossunder(smi, signal) ? smi : na, title='Crossunder', location=location.absolute, style=shape.circle, size=size.tiny, color=color.red)

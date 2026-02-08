@@ -1,0 +1,212 @@
+//@version=5
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified (electrifiedtrading)
+
+// WARNING:
+// THIS IS AN EXAMPLE TEMPLATE.
+// SHOULD NEVER BE USED FOR ACTUAL TRADING.
+// USE AT YOUR OWN RISK.
+// Feedback and comments welcomed and encouraged.
+indicator('MA signal Testing')
+
+PARAMS = 'Params'
+
+
+///////////////////////////////////////////////////
+// Signal Setup ///////////////////////////////////
+///////////////////////////////////////////////////
+
+SIGNAL_WEIGHT="Signal Weight", NEG_M = "Negative Multiple"
+
+signalsNeg = array.new_string()
+signalsPos = array.new_string()
+signalsWarn = array.new_string()
+signalValues = array.new_float()
+
+addWarning(
+  bool condition,
+  string message) =>
+    if condition
+        array.push(signalsWarn, message)
+    condition
+
+addSignal(
+  float value,
+  string message,
+  bool condition = true,
+  float negativeMultiplier = 1) =>
+    if condition and not na(value) and value!=0
+        v = value < 0 ? (negativeMultiplier * value) : value
+        array.push( v > 0 ? signalsPos : signalsNeg, message + " (" + str.tostring(math.abs(math.round(v, 3))) + ")")
+        array.push(signalValues, v)
+    condition
+
+addNegSignal(
+  string message,
+  float value,
+  float multiple = 1) =>
+    v = value * multiple
+    addSignal(v, message, v<0)
+
+
+///////////////////////////////////////////////////
+// Session Details ////////////////////////////////
+///////////////////////////////////////////////////
+import Electrified/SessionInfo/9 as Session
+import Electrified/Interpolation/1
+
+// Constants
+SESSION = 'Session', BAR = 'Bar', MINUTE = 'Minute', DAY = 'Day'
+res = '1440' // input.timeframe('1440', "Resolution", options=['D', 'W', 'M'])
+date = time('D')
+minutesPerBar = timeframe.isminutes ? timeframe.multiplier : timeframe.isseconds ? timeframe.multiplier / 60 : na
+
+sess =
+  input.session("0930-1600", 'Regular',
+  group=SESSION, tooltip='The schedule of a regular session.\nThis is used to know when a regular session starts and ends regarless if extended hours is enabled.')
+sessionBar = Session.bar(sess, res)
+session_minute = sessionBar * minutesPerBar
+
+isEarlySession = not na(session_minute) and session_minute <
+  input.int(10, 'Early Minutes',
+  group=SESSION, tooltip='Defines the first minutes of the day when stops are widened or withheld.\nTypically used to delay the activation of stops to avoid early morning volatility.')
+
+sess_late =
+  input.session('1530-1600', 'Late',
+  group=SESSION, tooltip='Defines when EOD sensitivity should be in effect.\nTypically used to exit near EOD or tighten stops.')
+isLateSession = Session.isIn(sess_late, res)
+sessionBarLast = Session.maxBars() - 1 // Only a good estimate.
+isFirstBarOfSession = sessionBar == 0
+isFirstBarOfDay = date != date[1]
+
+var sess_minutes = syminfo.session == session.regular ? 390 : 1440 // Session.maxMinutes(sess, res)
+sess_seconds = sess_minutes * 60
+sess_len = (timeframe.isseconds ? sess_seconds : timeframe.isminutes ? sess_minutes : na) / timeframe.multiplier
+isLikelyLastBarOfSession = sessionBar >= sessionBarLast and barstate.isconfirmed
+
+minutesToLen(simple int len, simple string type) =>
+    switch type
+        BAR => len
+        MINUTE => len / minutesPerBar
+        DAY => timeframe.isintraday ?
+          (sess_minutes * len / minutesPerBar) :
+          timeframe.isdaily ? len :
+          timeframe.isweekly ? len / 7 :
+          timeframe.ismonthly ? len / 30 :
+          na
+        => na
+////
+
+
+
+///////////////////////////////////////////////////
+// Moving Averages ////////////////////////////////
+///////////////////////////////////////////////////
+import Electrified/MovingAverages/10 as MA
+import Electrified/Momentum/7 
+
+MOVINGAVERAGES = 'Moving Averages'
+SMA = 'SMA', EMA = 'EMA', WMA = 'WMA', VWMA = 'VWMA', VAWMA = 'VAWMA'
+TYPE = 'Type', PERIOD = 'Len', FAST = 'Fast', MEDIUM = 'Med', SLOW = 'Slow'
+SIGNAL_PARAMS = 'Signal'
+SIGNAL_TOOLTIP = '[Pos-Clamp] + [Pos-Multiple] - [Neg-Multiple]'
+FAST_SIGNAL = "Fast Signal",
+
+MA_addNegSignal(
+  simple string type,
+  simple int len,
+  simple string period,
+  simple float posClamp,
+  simple float posM,
+  simple float negM,
+  float src = hlc3) =>
+    bars = minutesToLen(len, period)
+    ma = MA.get(type, bars, src)
+    ma_c = Momentum.changeNormalized(ma, math.min(4000, bars * 10))
+    message = str.tostring(len) + "-" + period + " " + type + " Declining"
+    signal = math.min(posClamp, ma_c)
+    if signal > 0
+        signal *= posM
+    else if signal < 0
+        signal *= negM
+    addSignal(signal, message)
+    [ma, ma_c]
+////
+
+FAST_MA = 'Fast Moving Average'
+fast_ma_visible = input.bool(false, "", group=FAST_MA, inline=PARAMS)
+[fast_ma, fast_ma_c] = MA_addNegSignal(
+  input.string(WMA, "", group=FAST_MA, inline=PARAMS, options=[SMA, WMA, EMA, VWMA, VAWMA]),
+  input.int(20, "", group=FAST_MA, inline=PARAMS, minval=1),
+  input.string(BAR, "", group=FAST_MA, inline=PARAMS, options=[BAR, MINUTE, DAY]),
+  input.float(0, SIGNAL_PARAMS, group=FAST_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=FAST_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "-", group=FAST_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP))
+plot(fast_ma_c, "Fast", color.blue, 1)
+
+MED_MA = 'Medium Moving Average'
+medium_ma_visible = input.bool(false, "", group=MED_MA, inline=PARAMS)
+[medium_ma, medium_ma_c] = MA_addNegSignal(
+  input.string(WMA, "", group=MED_MA, inline=PARAMS, options=[SMA, WMA, EMA, VWMA, VAWMA]),
+  input.int(2, "", group=MED_MA, inline=PARAMS, minval=1),
+  input.string(DAY, "", group=MED_MA, inline=PARAMS, options=[BAR, MINUTE, DAY]),
+  input.float(0, SIGNAL_PARAMS, group=MED_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=MED_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(2, "-", group=MED_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP))
+plot(medium_ma_c, "Medium", color.green, 2)
+
+SLOW_MA = 'Slow Moving Average'
+slow_ma_visible = input.bool(false, "", group=SLOW_MA, inline=PARAMS)
+[slow_ma, slow_ma_c] = MA_addNegSignal(
+  input.string(WMA, "", group=SLOW_MA, inline=PARAMS, options=[SMA, WMA, EMA, VWMA, VAWMA]),
+  input.int(7, "", group=SLOW_MA, inline=PARAMS, minval=1),
+  input.string(DAY, "", group=SLOW_MA, inline=PARAMS, options=[BAR, MINUTE, DAY]),
+  input.float(0, SIGNAL_PARAMS, group=SLOW_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=SLOW_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(3, "-", group=SLOW_MA, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP))
+plot(slow_ma_c, "Slow", color.red, 3)
+
+MONTHLY_WMA = "Monthly WMA"
+[monthly_ma, monthly_ma_c] = MA_addNegSignal(WMA, 23, DAY,
+  input.float(0, SIGNAL_PARAMS, group=MONTHLY_WMA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=MONTHLY_WMA, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(2, "-", group=MONTHLY_WMA, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP),
+  hlcc4)
+
+plot(medium_ma_visible ? medium_ma : na, 'Medium MA', color=color.new(color.yellow, 50), linewidth=2)
+//plot(medium_ma_visible ? medium2_ma : na, 'Medium MA2', color=color.new(color.yellow, 75), linewidth=1)
+plot(slow_ma_visible ? slow_ma : na, 'Slow MA', color=color.new(color.red, 50), linewidth=3)
+//plot(slow_ma_visible ? slow2_ma : na, 'Slow MA2', color=color.new(color.red, 75), linewidth=1)
+
+///////////////////////////////////////////////////
+// VAWMA //////////////////////////////////////////
+///////////////////////////////////////////////////
+
+VAWMA1 = 'VAWMA 1'
+VAWMA2 = 'VAWMA 2'
+
+vawma1_visible = input.bool(false, "", group=VAWMA1, inline=PARAMS)
+[vawma1, vawma1_c] = MA_addNegSignal(VAWMA,
+  input.int(160, "", group=VAWMA1, inline=PARAMS, minval=1),
+  input.string(MINUTE, "", group=VAWMA1, inline=PARAMS, options=[BAR, MINUTE, DAY]),
+  input.float(0, SIGNAL_PARAMS, group=VAWMA1, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=VAWMA1, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "-", group=VAWMA1, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP))
+vawma1_c6 = ta.change(vawma1, 6) // Smooth out the change
+
+vawma2_visible = input.bool(true, "", group=VAWMA2, inline=PARAMS)
+[vawma2, vawma2_c] = MA_addNegSignal(VAWMA,
+  input.int(1200, "", group=VAWMA2, inline=PARAMS, minval=1),
+  input.string(MINUTE, "", group=VAWMA2, inline=PARAMS, options=[BAR, MINUTE, DAY]),
+  input.float(0, SIGNAL_PARAMS, group=VAWMA2, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "+", group=VAWMA2, inline=SIGNAL_PARAMS, minval=0, step=0.5),
+  input.float(1, "-", group=VAWMA2, inline=SIGNAL_PARAMS, minval=0, step=0.5, tooltip=SIGNAL_TOOLTIP))
+
+vawmaColor = color.new(color.purple, 50)
+// plot(vawma1_visible ? vawma1 : na, VAWMA1, vawmaColor)
+// plot(vawma2_visible ? vawma2 : na, VAWMA2, vawmaColor, 2)
+
+vwap = ta.vwap(hlc3)
+vwap_c = ta.change(vwap)
+
+

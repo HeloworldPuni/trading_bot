@@ -1,0 +1,33 @@
+//@version=5
+//
+// @author LazyBear 
+// 
+// List of my public indicators: http://bit.ly/1LQaPK8 
+// List of my app-store indicators: http://blog.tradingview.com/?p=970 
+//
+//
+indicator('Range Identifier [LazyBear]', shorttitle='Range Identifier', overlay=true)
+
+connectRanges   = input.bool(false, title='Connect Ranges',             group="Range Identifier")
+showMidLine     = input.bool(false, title='Show MidLine',               group="Range Identifier")
+lengthEMA       = input.int(34,     title='EMA Length',                 group="Range Identifier")
+showEMA         = input.bool(true,  title='Show EMA',                   group="Range Identifier")
+hc              = input.bool(true,  title='Highlight Consolidation',    group="Range Identifier")
+
+e = ta.ema(close, lengthEMA)
+up = close
+down = close
+up := close < nz(up[1]) and close > down[1] ? nz(up[1]) : high
+down := close < nz(up[1]) and close > down[1] ? nz(down[1]) : low
+mid = math.avg(up, down)
+
+ul = plot(connectRanges ? up : up == nz(up[1]) ? up : na, color=color.new(color.gray, 0), linewidth=2, style=plot.style_linebr, title='Up')
+ll = plot(connectRanges ? down : down == nz(down[1]) ? down : na, color=color.new(color.gray, 0), linewidth=2, style=plot.style_linebr, title='Down')
+dummy = plot(hc ? close > e ? down : up : na, color=color.new(color.gray, 0), style=plot.style_circles, linewidth=0, title='Dummy')
+
+fill(ul, dummy, color=color.new(color.lime, 90))
+fill(dummy, ll, color=color.new(color.red, 90))
+plot(showMidLine ? mid : na, color=color.new(color.gray, 0), linewidth=1, title='Mid')
+plot(showEMA ? e : na, title='EMA', color=color.new(color.yellow, 0), linewidth=1)
+
+

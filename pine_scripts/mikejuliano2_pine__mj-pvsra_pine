@@ -1,0 +1,248 @@
+//@version=5
+
+indicator("MJ - PVSRA", overlay=true, precision=0, scale=scale.none)
+
+//////////////////////////////////////////////////
+// 
+// === INFO ===
+// 
+//////////////////////////////////////////////////
+
+// PVSRA
+// From MT4 source:
+
+//   Situation "Climax"
+//   Bars with volume >= 200% of the average volume of the 10 previous chart TFs, and bars
+//   where the product of candle spread x candle volume is >= the highest for the 10 previous
+//   chart time TFs.
+//   Default Colors:  Bull bars are green and bear bars are red.
+
+//   Situation "Volume Rising Above Average"
+//   Bars with volume >= 150% of the average volume of the 10 previous chart TFs.
+//   Default Colors:  Bull bars are blue and bear are blue-violet.
+
+// We want to be able to override where we get the volume data for the candles.
+
+//////////////////////////////////////////////////
+// 
+// === INPUTS ===
+// 
+//////////////////////////////////////////////////
+
+groupOverlay = 'Volume Overlay'
+groupColors = 'Colors'
+groupSymbol = 'Symbol'
+groupCalc = 'Calculation'
+
+// COLORS
+
+selectedTemplate = input.int(4, 'Template', minval=0, maxval=5, step=1, group=groupColors, tooltip="use color picker below if 0")
+overrideOpacity = input.int(0, 'Override Opacity', group=groupColors, minval=0, maxval=100, step=1)
+climaxVolBullColor = input(color.green, 'Climax Bull Color', group=groupColors)
+climaxVolBearColor = input(#b22833, 'Climax Bear Color', group=groupColors)
+aboveAvgVolBullColor = input(#2962ff, 'Above Average Volume Bull Color', group=groupColors)
+aboveAvgVolBearColor = input(#793be4, 'Above Average Volume Bear Color', group=groupColors)
+standardVolBullColor = input(#141d38, 'Standard Volume Bull Color', group=groupColors)
+standardVolBearColor = input(#141d38, 'Standard Volume Bear Color', group=groupColors)
+
+// CALCULATION
+
+volPeriodLength = input.int(10, 'Volume Period Length', tooltip='Used in the PVSRA calculation in 2 places', group=groupCalc, minval=1, maxval=20)
+
+//////////////////////////////////////////////////
+//
+// === APPLY COLOR TEMPLATE ===
+//
+//////////////////////////////////////////////////
+
+// nice dark blue: #010839
+
+if selectedTemplate == 1
+    climaxVolBullColor := color.new(#4caf50, 50)
+    climaxVolBearColor := color.new(#b22833, 50)
+    aboveAvgVolBullColor := color.new(#2962ff, 50)
+    aboveAvgVolBearColor := color.new(#793be4, 50)
+    standardVolBullColor := color.new(#090720, 40)
+    standardVolBearColor := color.new(#090720, 40)
+    overrideOpacity := 50
+else if selectedTemplate == 2
+    // climaxVolBullColor := color.new(#1d8634, 50)
+    climaxVolBullColor := color.new(#16864f, 50)
+    climaxVolBearColor := color.new(#8a294a, 50)
+    aboveAvgVolBullColor := color.new(#2962ff, 50)
+    aboveAvgVolBearColor := color.new(#793be4, 50)
+    standardVolBullColor := color.new(#363e57, 50)
+    standardVolBearColor := color.new(#363e57, 50)
+    overrideOpacity := 1
+else if selectedTemplate == 3
+    climaxVolBullColor := color.new(#056656, 50)
+    climaxVolBearColor := color.new(#542422, 50)
+    aboveAvgVolBullColor := color.new(#1848cc, 50)
+    aboveAvgVolBearColor := color.new(#3e31c4, 50)
+    standardVolBullColor := color.new(#363e57, 50)
+    standardVolBearColor := color.new(#363e57, 50)
+    overrideOpacity := 1
+else if selectedTemplate == 4
+    climaxVolBullColor := color.new(#1848cc, 50)
+    climaxVolBearColor := color.new(#b22833, 50)
+    aboveAvgVolBullColor := color.new(#5b9cf6, 50)
+    aboveAvgVolBearColor := color.new(#b1617c, 50)
+    standardVolBullColor := color.new(#363e57, 50)
+    standardVolBearColor := color.new(#363e57, 50)
+    overrideOpacity := 1
+else if selectedTemplate == 5
+    climaxVolBullColor := color.new(color.green, 50)
+    climaxVolBearColor := color.new(#b22833, 50)
+    aboveAvgVolBullColor := color.new(color.blue, 50)
+    aboveAvgVolBearColor := color.new(#793be4, 50)
+    standardVolBullColor := color.new(#9598a1, 50)
+    standardVolBearColor := color.new(#787b86, 50)
+    overrideOpacity := 1
+
+// PVSRA ORIGINAL LIGHT
+// green: color.green
+// red: #b22833
+// blue: color.blue
+// purple: #793be4
+// up: #9598a1
+// down: #787b86
+
+//////////////////////////////////////////////////
+//
+// === FUNCTIONS ===
+//
+//////////////////////////////////////////////////
+
+_print(_text) => var _label = label.new(bar_index, na, _text, xloc.bar_index, yloc.price, color(na), label.style_none, color.gray, size.large, text.align_left), label.set_xy(_label, bar_index, ta.highest(10)[1]), label.set_text(_label, _text)
+_printNum(_num) => _print(str.tostring(_num))
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_pvsraSecurity(sresolution, sseries) => request.security(
+      syminfo.tickerid,
+      sresolution,
+      sseries[barstate.isrealtime ? 1 : 0],
+      barmerge.gaps_off,
+      barmerge.lookahead_off)
+
+
+_getBarColorByVolWeight(volWeight, _open, _close) =>
+    if _close > _open
+        volWeight == 1
+          ? climaxVolBullColor
+          : volWeight == 2
+              ? aboveAvgVolBullColor
+              : standardVolBullColor
+    else
+        volWeight == 1
+          ? climaxVolBearColor
+          : volWeight == 2
+              ? aboveAvgVolBearColor
+              : standardVolBearColor
+
+_getVolumeWeight(_open, _spread, _close, _vol) =>
+    // The math below matches MT4 PVSRA indicator source
+    avgVol = ta.sma(_vol, volPeriodLength) // average volume from last 10 candles
+    volWeightedPriceSpread = _vol * _spread // climax volume on the current candle
+    highestVolWeightedPriceSpread = ta.highest(volWeightedPriceSpread, volPeriodLength) // highest climax volume of the last 10 candles
+
+    isClimaxVolume = _vol >= (avgVol * 2) or volWeightedPriceSpread >= highestVolWeightedPriceSpread
+    isAboveAvgVolume = _vol >= avgVol * 1.5 and not isClimaxVolume
+    volWeight = isClimaxVolume ? 1 : isAboveAvgVolume ? 2 : 0
+
+_getPvsraColor(_open, _spread, _close, _vol) =>
+    volWeight = _getVolumeWeight(_open, _spread, _close, _vol)
+    _getBarColorByVolWeight(volWeight, _open, _close)
+
+//////////////////////////////////////////////////
+//
+// === CALCULATIONS ===
+//
+//////////////////////////////////////////////////
+
+_vol = volume
+_high = high
+_low = low
+_open = open
+_close = close
+_spread = _high - _low
+
+volWeight = _getVolumeWeight(_open, _spread, _close, _vol)
+barColor = _getBarColorByVolWeight(volWeight, _open, _close)
+volumeBarColor = barColor == standardVolBullColor ? standardVolBearColor : barColor
+
+// APPLY OVERRIDE OPACITY
+if overrideOpacity > 0
+    barColor := color.new(barColor, overrideOpacity)
+
+//////////////////////////////////////////////////
+//
+// === PLOT ===
+//
+//////////////////////////////////////////////////
+
+barcolor(chart.is_standard ? barColor : na)
+
+
+//////////////////////////////////////////////////
+//
+// === ALERTS ===
+//
+//////////////////////////////////////////////////
+
+alertcondition(volWeight == 2, title="Alert on Green or Red Candle", message="{{ticker}} Green or Red Candle on the {{interval}}")
+alertcondition(volWeight > 0, title="Alert on Vector Candle", message="{{ticker}} Vector Candle on the {{interval}}")
+
+
+
+// template 1
+// green: #4caf50 50
+// red: #b22833 50
+// blue: #2962ff 50
+// purple: #793be4 50
+// up: #090720 40
+// down: #090720 40
+
+// template 2
+// green: #1d8634
+// red: #7a2c2c
+// blue: #2962ff
+// purple: #793be4
+// up: #363e57
+// down: #363e57
+
+// template 3
+// green: #056656
+// red: #542422
+// blue: #1848cc
+// purple: #3e31c4
+// up: #363e57
+// down: #363e57
+
+// template
+// green: #
+// red: #
+// blue: #
+// purple: #
+// up: #
+// down: #
+
+// template
+// green: #
+// red: #
+// blue: #
+// purple: #
+// up: #
+// down: #
+
+// template
+// green: #
+// red: #
+// blue: #
+// purple: #
+// up: #
+// down: #
+
+
+
+// template 2

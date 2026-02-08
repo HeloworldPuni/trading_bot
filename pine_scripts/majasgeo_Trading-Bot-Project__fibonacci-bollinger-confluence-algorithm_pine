@@ -1,0 +1,316 @@
+//@version=5
+indicator("Advanced Fibonacci Extensions + Dynamic Bollinger Bands", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ============================================================================
+// ΣΥΝΔΥΑΣΜΟΣ EXTENDED FIBONACCI + BOLLINGER BANDS ΜΕ ΜΕΤΑΒΛΗΤΗ STD_DEV
+// Βασισμένο στην αναλυτική συλλογιστική από τις συζητήσεις σας
+// ============================================================================
+
+// === SETTINGS ===
+// Fibonacci Extensions Settings
+fib_lookback = input.int(15, "Fibonacci Lookback Period", minval=5, maxval=50)
+show_fib_extensions = input.bool(true, "Show Fibonacci Extensions")
+show_price_targets = input.bool(true, "Show Price Target Labels")
+
+// Dynamic Bollinger Bands Settings
+bb_length_10 = input.int(10, "BB WMA Length", minval=5, maxval=50)
+bb_std_variable = input.float(1.618, "Variable StdDev Multiplier", minval=0.5, maxval=5.0, step=0.1)
+show_bb_bands = input.bool(true, "Show Bollinger Bands")
+
+// Extended Fibonacci Levels (Βασισμένα στην αναλυτική σας)
+fib_levels = array.from(0.236, 0.382, 0.5, 0.618, 0.786, 1.0, 1.272, 1.618, 2.0, 2.618, 3.618, 4.236)
+fib_colors = array.from(color.yellow, color.orange, color.blue, color.red, color.purple, color.white, 
+                        color.green, color.maroon, color.navy, color.olive, color.teal, color.silver)
+
+// === CORE FUNCTIONS ===
+
+// Weighted Moving Average Calculation (WMA)
+wma_value = ta.wma(close, bb_length_10)
+
+// Standard Deviation Calculation
+std_dev = ta.stdev(close, bb_length_10)
+
+// Dynamic Bollinger Bands με μεταβλητή StdDev
+bb_upper = wma_value + (std_dev * bb_std_variable)
+bb_middle = wma_value
+bb_lower = wma_value - (std_dev * bb_std_variable)
+
+// === FIBONACCI SWING DETECTION ===
+// Εντοπισμός Swing Highs και Lows για Extended Fibonacci
+swing_high = ta.pivothigh(high, fib_lookback, fib_lookback)
+swing_low = ta.pivotlow(low, fib_lookback, fib_lookback)
+
+// Variables για τα τελευταία swing points
+var float last_swing_high = na
+var float last_swing_low = na
+var int last_high_bar = na
+var int last_low_bar = na
+
+// Update swing points
+if not na(swing_high)
+    last_swing_high := swing_high
+    last_high_bar := bar_index - fib_lookback
+
+if not na(swing_low)
+    last_swing_low := swing_low
+    last_low_bar := bar_index - fib_lookback
+
+// === ADVANCED FIBONACCI CALCULATIONS ===
+// Υπολογισμός Extended Fibonacci Extensions (Βασισμένο στην συλλογιστική σας)
+
+var line[] fib_lines = array.new<line>()
+var label[] fib_labels = array.new<label>()
+
+// Function για καθαρισμό παλιών γραμμών
+clear_old_lines() =>
+    for i = 0 to array.size(fib_lines) - 1
+        line.delete(array.get(fib_lines, i))
+    array.clear(fib_lines)
+    
+    for i = 0 to array.size(fib_labels) - 1
+        label.delete(array.get(fib_labels, i))
+    array.clear(fib_labels)
+
+// Extended Fibonacci Calculation
+if not na(last_swing_high) and not na(last_swing_low) and show_fib_extensions
+    // Καθαρισμός παλιών γραμμών
+    clear_old_lines()
+    
+    // Υπολογισμός range για Fibonacci
+    fib_range = last_swing_high - last_swing_low
+    
+    // Καθορισμός κατεύθυνσης (bullish ή bearish)
+    is_bullish = last_low_bar > last_high_bar
+    
+    if is_bullish
+        // Bullish Extensions (από swing low προς τα πάνω)
+        for i = 0 to array.size(fib_levels) - 1
+            level = array.get(fib_levels, i)
+            fib_price = last_swing_low + (fib_range * level)
+            fib_color = array.get(fib_colors, i)
+            
+            // Δημιουργία γραμμής
+            fib_line = line.new(bar_index - 50, fib_price, bar_index + 10, fib_price, 
+                               color=fib_color, style=line.style_dashed, width=1)
+            array.push(fib_lines, fib_line)
+            
+            // Price target labels
+            if show_price_targets
+                label_text = str.tostring(level * 100, "#.1") + "% - $" + str.tostring(fib_price, "#.2")
+                fib_label = label.new(bar_index + 5, fib_price, label_text, 
+                                     color=fib_color, textcolor=color.white, size=size.small)
+                array.push(fib_labels, fib_label)
+    else
+        // Bearish Extensions (από swing high προς τα κάτω)
+        for i = 0 to array.size(fib_levels) - 1
+            level = array.get(fib_levels, i)
+            fib_price = last_swing_high - (fib_range * level)
+            fib_color = array.get(fib_colors, i)
+            
+            // Δημιουργία γραμμής
+            fib_line = line.new(bar_index - 50, fib_price, bar_index + 10, fib_price, 
+                               color=fib_color, style=line.style_dashed, width=1)
+            array.push(fib_lines, fib_line)
+            
+            // Price target labels
+            if show_price_targets
+                label_text = str.tostring(level * 100, "#.1") + "% - $" + str.tostring(fib_price, "#.2")
+                fib_label = label.new(bar_index + 5, fib_price, label_text, 
+                                     color=fib_color, textcolor=color.white, size=size.small)
+                array.push(fib_labels, fib_label)
+
+// === BOLLINGER BANDS CONFLUENCE ===
+// Συνδυασμός Fibonacci με Bollinger Bands για confluence zones
+
+// Υπολογισμός confluence scores
+confluence_upper = math.abs(close - bb_upper) / close * 100 < 1.0
+confluence_middle = math.abs(close - bb_middle) / close * 100 < 1.0
+confluence_lower = math.abs(close - bb_lower) / close * 100 < 1.0
+
+// Signals based on confluence
+fibonacci_bb_signal = 0
+if confluence_upper and close > bb_upper
+    fibonacci_bb_signal := 1  // Strong bullish
+else if confluence_lower and close < bb_lower
+    fibonacci_bb_signal := -1  // Strong bearish
+else if confluence_middle
+    fibonacci_bb_signal := 0   // Neutral
+
+// === VISUAL DISPLAY ===
+
+// Plot Bollinger Bands
+plot(show_bb_bands ? bb_upper : na, "BB Upper", color=color.red, linewidth=2)
+plot(show_bb_bands ? bb_middle : na, "BB Middle (WMA)", color=color.blue, linewidth=2)
+plot(show_bb_bands ? bb_lower : na, "BB Lower", color=color.green, linewidth=2)
+
+// Bollinger Band Fill
+fill_upper = plot(show_bb_bands ? bb_upper : na, color=na)
+fill_lower = plot(show_bb_bands ? bb_lower : na, color=na)
+fill(fill_upper, fill_lower, color=color.new(color.blue, 95), title="BB Fill")
+
+// === ALERTS & SIGNALS ===
+
+// Fibonacci + BB Confluence Alerts
+var bool bullish_confluence = false
+var bool bearish_confluence = false
+
+// Εντοπισμός confluence zones
+if not na(last_swing_high) and not na(last_swing_low)
+    // Check για confluence μεταξύ Fibonacci levels και BB levels
+    for i = 0 to array.size(fib_levels) - 1
+        level = array.get(fib_levels, i)
+        if last_low_bar > last_high_bar  // Bullish setup
+            fib_price = last_swing_low + ((last_swing_high - last_swing_low) * level)
+            // Check confluence με BB levels
+            if math.abs(fib_price - bb_upper) / bb_upper * 100 < 2.0
+                bullish_confluence := true
+            if math.abs(fib_price - bb_lower) / bb_lower * 100 < 2.0
+                bearish_confluence := true
+
+// Confluence Signals με μεγάλα σήματα
+plotshape(bullish_confluence and fibonacci_bb_signal == 1, "Bullish Confluence", 
+          shape.triangleup, location.belowbar, color=color.green, size=size.large)
+plotshape(bearish_confluence and fibonacci_bb_signal == -1, "Bearish Confluence", 
+          shape.triangledown, location.abovebar, color=color.red, size=size.large)
+
+// === ΠΛΗΡΟΦΟΡΙΕΣ ΣΤΟΝ ΠΙΝΑΚΑ ===
+
+// Table για πληροφορίες
+var table info_table = table.new(position.top_right, 3, 8, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "FIBONACCI + BB", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 0, "STATUS", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 2, 0, "PRICE", text_color=color.white, text_size=size.small)
+    
+    table.cell(info_table, 0, 1, "BB Upper", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 1, confluence_upper ? "CONFLUENCE" : "NORMAL", 
+               text_color=confluence_upper ? color.yellow : color.gray, text_size=size.tiny)
+    table.cell(info_table, 2, 1, str.tostring(bb_upper, "#.2"), text_color=color.red, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 2, "BB Middle", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 2, confluence_middle ? "CONFLUENCE" : "NORMAL", 
+               text_color=confluence_middle ? color.yellow : color.gray, text_size=size.tiny)
+    table.cell(info_table, 2, 2, str.tostring(bb_middle, "#.2"), text_color=color.blue, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 3, "BB Lower", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 3, confluence_lower ? "CONFLUENCE" : "NORMAL", 
+               text_color=confluence_lower ? color.yellow : color.gray, text_size=size.tiny)
+    table.cell(info_table, 2, 3, str.tostring(bb_lower, "#.2"), text_color=color.green, text_size=size.tiny)
+    
+    table.cell(info_table, 0, 4, "StdDev Multi", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 4, str.tostring(bb_std_variable, "#.3"), text_color=color.orange, text_size=size.tiny)
+    table.cell(info_table, 2, 4, "x" + str.tostring(bb_std_variable, "#.2"), text_color=color.orange, text_size=size.tiny)
+    
+    // Fibonacci Information
+    if not na(last_swing_high) and not na(last_swing_low)
+        fib_range = last_swing_high - last_swing_low
+        table.cell(info_table, 0, 5, "Fib Range", text_color=color.white, text_size=size.tiny)
+        table.cell(info_table, 1, 5, str.tostring(fib_range, "#.2"), text_color=color.yellow, text_size=size.tiny)
+        table.cell(info_table, 2, 5, last_low_bar > last_high_bar ? "BULLISH" : "BEARISH", 
+                   text_color=last_low_bar > last_high_bar ? color.green : color.red, text_size=size.tiny)
+    
+    // Signal Status
+    signal_text = fibonacci_bb_signal == 1 ? "BULLISH" : fibonacci_bb_signal == -1 ? "BEARISH" : "NEUTRAL"
+    signal_color = fibonacci_bb_signal == 1 ? color.green : fibonacci_bb_signal == -1 ? color.red : color.gray
+    table.cell(info_table, 0, 6, "SIGNAL", text_color=color.white, text_size=size.tiny)
+    table.cell(info_table, 1, 6, signal_text, text_color=signal_color, text_size=size.tiny)
+    table.cell(info_table, 2, 6, "ACTIVE", text_color=signal_color, text_size=size.tiny)
+
+// === ALERTS ===
+alertcondition(bullish_confluence and fibonacci_bb_signal == 1, 
+               title="Fibonacci + BB Bullish Confluence", 
+               message="🚀 BULLISH CONFLUENCE: Fibonacci Extension συναντά Bollinger Band!")
+
+alertcondition(bearish_confluence and fibonacci_bb_signal == -1, 
+               title="Fibonacci + BB Bearish Confluence", 
+               message="🔻 BEARISH CONFLUENCE: Fibonacci Extension συναντά Bollinger Band!")
+
+alertcondition(confluence_upper or confluence_middle or confluence_lower,
+               title="Bollinger Band Confluence Zone",
+               message="⚠️ CONFLUENCE ZONE: Τιμή κοντά σε Bollinger Band επίπεδο!")
+
+// === EXTENDED FIBONACCI PROJECTION ===
+// Reverse Fibonacci Logic (από την ανάλυση σας)
+var label reverse_fib_label = na
+
+if not na(last_swing_high) and not na(last_swing_low) and show_fib_extensions
+    // Reverse Fibonacci Calculation
+    // Όταν αποτυγχάνει ένα Fibonacci επίπεδο, στοχεύει στο αντίθετο ακρο
+    current_distance_from_high = math.abs(close - last_swing_high) / last_swing_high * 100
+    current_distance_from_low = math.abs(close - last_swing_low) / last_swing_low * 100
+    
+    // Αν είμαστε κοντά σε swing high και απορρίπτεται
+    if current_distance_from_high < 2.0 and close < last_swing_high
+        reverse_target = last_swing_low - ((last_swing_high - last_swing_low) * 1.618)
+        if not na(reverse_fib_label)
+            label.delete(reverse_fib_label)
+        reverse_fib_label := label.new(bar_index, reverse_target, 
+                                      "🔄 REVERSE FIB TARGET: $" + str.tostring(reverse_target, "#.2"), 
+                                      color=color.purple, textcolor=color.white, size=size.normal,
+                                      style=label.style_label_down)
+
+// === MATHEMATICAL CONSTANTS INTEGRATION ===
+// Χρήση Golden Ratio και Pi (από την ανάλυση σας)
+golden_ratio = 1.618033988749
+pi_constant = 3.141592653589
+
+// Mathematical Bollinger Band Multipliers
+math_multiplier_golden = golden_ratio - 0.26      // ≈ 1.358 (από την ανάλυση)
+math_multiplier_pi = pi_constant - 0.0196         // ≈ 3.122 (από την ανάλυση)
+
+// Εναλλακτικά Bollinger Bands με mathematical constants
+bb_golden = wma_value - (std_dev * math_multiplier_golden)
+bb_pi = wma_value + (std_dev * math_multiplier_pi)
+
+// Plot mathematical constant levels
+plot(show_bb_bands ? bb_golden : na, "BB Golden (φ-0.26)", color=color.yellow, linewidth=1, style=plot.style_circles)
+plot(show_bb_bands ? bb_pi : na, "BB Pi (π-0.02)", color=color.purple, linewidth=1, style=plot.style_circles)
+
+// === FINAL CONFLUENCE SCORING ===
+// Σύστημα βαθμολογίας confluence (από 1-10)
+confluence_score = 0
+
+// +2 για Fibonacci confluence
+if not na(last_swing_high) and not na(last_swing_low)
+    for i = 0 to array.size(fib_levels) - 1
+        level = array.get(fib_levels, i)
+        if last_low_bar > last_high_bar
+            fib_price = last_swing_low + ((last_swing_high - last_swing_low) * level)
+        else
+            fib_price = last_swing_high - ((last_swing_high - last_swing_low) * level)
+        
+        if math.abs(close - fib_price) / close * 100 < 1.0
+            confluence_score += 2
+            break
+
+// +3 για Bollinger Band confluence
+if confluence_upper or confluence_lower
+    confluence_score += 3
+else if confluence_middle
+    confluence_score += 1
+
+// +2 για Mathematical constant proximity
+if math.abs(close - bb_golden) / close * 100 < 1.0 or math.abs(close - bb_pi) / close * 100 < 1.0
+    confluence_score += 2
+
+// +3 για Volume explosion (αν διαθέσιμο)
+volume_avg = ta.sma(volume, 20)
+if volume > volume_avg * 2
+    confluence_score += 3
+
+// Nuclear signal (score >= 8)
+nuclear_signal = confluence_score >= 8
+
+plotshape(nuclear_signal, "🚀 NUCLEAR SIGNAL", shape.diamond, 
+          location.absolute, color=color.new(color.yellow, 0), size=size.huge)
+
+// Confluence score display
+var label score_label = na
+if barstate.islast and confluence_score > 0
+    if not na(score_label)
+        label.delete(score_label)
+    score_label := label.new(bar_index, high + (high * 0.02), 
+                            "⚡ CONFLUENCE: " + str.tostring(confluence_score) + "/10", 
+                            color=confluence_score >= 8 ? color.red : confluence_score >= 5 ? color.orange : color.gray,
+                            textcolor=color.white, size=size.large)

@@ -1,0 +1,325 @@
+//@version=5
+strategy("Larry Williams 9.2 - Day Trade Forex", overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity,
+         commission_type=strategy.commission.percent,
+         commission_value=0.0001)
+
+// ============================================================================
+// 📊 ESTRATÉGIA LARRY WILLIAMS 9.2 - DAY TRADE FOREX
+// ============================================================================
+//
+// 🎯 PROPÓSITO:
+// Esta estratégia implementa o sistema Larry Williams 9.2 com setup de pullback
+// otimizado para day trade em forex, usando EMA de 9 períodos e lógica de setup.
+//
+// 🔧 FUNCIONAMENTO:
+// 1. SETUP LONG: Candle fecha abaixo da mínima do candle anterior
+// 2. ENTRADA LONG: Preço rompe a máxima do candle que fechou abaixo
+// 3. SETUP SHORT: Candle fecha acima da máxima do candle anterior
+// 4. ENTRADA SHORT: Preço rompe a mínima do candle que fechou acima
+// 5. GESTÃO: Stop loss na mínima/máxima do candle de setup
+//
+// 📈 CARACTERÍSTICAS:
+// - Usa setup de pullback em vez de cruzamento direto
+// - Stop loss mais preciso (baseado no setup)
+// - Melhor timing de entrada
+// - Menos sinais falsos
+// - Filtros de sessão forex
+//
+// ⏰ TIMEFRAME IDEAL: M5, M15, M30
+// 💱 PARES RECOMENDADOS: EUR/USD, GBP/USD, USD/JPY
+// 🎯 TIPO: Pullback Trading (Trading de Retração)
+// ⭐ DIFICULDADE: ⭐⭐⭐ (Intermediário)
+//
+// ============================================================================
+
+// ===== INPUTS CONFIGURÁVEIS =====
+// Parâmetros de Risco
+risk_per_trade = input.float(2.0, "Risco por Trade (%)", minval=0.1, maxval=5.0, group="Gerenciamento de Risco")
+risk_reward_ratio = input.float(2.0, "Risk/Reward Ratio", minval=1.0, maxval=5.0, group="Gerenciamento de Risco")
+use_trailing_stop = input.bool(true, "Usar Trailing Stop", group="Gerenciamento de Risco")
+trailing_stop_atr = input.float(1.5, "Trailing Stop (ATR)", minval=0.5, maxval=3.0, group="Gerenciamento de Risco")
+
+// Parâmetros Larry Williams 9.2
+ema_length = input.int(9, "EMA Length (Larry Williams)", minval=1, group="Larry Williams 9.2")
+ma_filter_length = input.int(50, "MA Filtro Tendência", minval=1, group="Larry Williams 9.2")
+atr_length = input.int(14, "ATR Length", minval=1, group="Larry Williams 9.2")
+setup_lookback = input.int(1, "Lookback para Setup", minval=1, maxval=5, group="Larry Williams 9.2")
+
+// Filtros de Tempo (Day Trade)
+use_time_filter = input.bool(true, "Usar Filtro de Tempo", group="Filtros de Tempo")
+start_hour = input.int(8, "Hora Início (GMT)", minval=0, maxval=23, group="Filtros de Tempo")
+end_hour = input.int(17, "Hora Fim (GMT)", minval=0, maxval=23, group="Filtros de Tempo")
+avoid_news = input.bool(true, "Evitar Horários de Notícias", group="Filtros de Tempo")
+
+// Filtros de Volatilidade (Forex)
+min_atr = input.float(0.0001, "ATR Mínimo", minval=0.0001, group="Filtros de Volatilidade")
+max_atr = input.float(0.01, "ATR Máximo", minval=0.0001, group="Filtros de Volatilidade")
+use_volatility_filter = input.bool(true, "Usar Filtro de Volatilidade", group="Filtros de Volatilidade")
+
+// Filtros de Sessão Forex
+use_session_filter = input.bool(true, "Usar Filtro de Sessão", group="Sessões Forex")
+london_session = input.bool(true, "Sessão Londres (8-17 GMT)", group="Sessões Forex")
+ny_session = input.bool(true, "Sessão NY (13-22 GMT)", group="Sessões Forex")
+tokyo_session = input.bool(false, "Sessão Tóquio (0-9 GMT)", group="Sessões Forex")
+
+// Filtros Adicionais Larry Williams 9.2
+use_volume_filter = input.bool(true, "Usar Filtro de Volume", group="Filtros Adicionais")
+volume_multiplier = input.float(1.2, "Multiplicador Volume", minval=1.0, maxval=3.0, group="Filtros Adicionais")
+use_momentum_filter = input.bool(true, "Usar Filtro de Momentum", group="Filtros Adicionais")
+
+// ===== CÁLCULOS DE INDICADORES =====
+// Larry Williams 9.2 - EMA de 9 períodos
+ema_9 = ta.ema(close, ema_length)
+
+// Filtro de Tendência - MA de 50 períodos
+ma_50 = ta.sma(close, ma_filter_length)
+
+// Indicadores de Volatilidade
+atr = ta.atr(atr_length)
+
+// Indicadores de Momentum para confirmação
+rsi = ta.rsi(close, 14)
+stoch_k = ta.stoch(close, high, low, 14)
+stoch_d = ta.sma(stoch_k, 3)
+macd_line = ta.ema(close, 12) - ta.ema(close, 26)
+macd_signal = ta.ema(macd_line, 9)
+
+// Indicadores de Volume (para confirmação)
+volume_ma = ta.sma(volume, 20)
+volume_spike = volume > volume_ma * volume_multiplier
+
+// ===== CONDIÇÕES DE FILTROS =====
+// Filtro de Tendência (MA 50 apontada para cima)
+trend_bullish = ma_50 > ma_50[1] and ma_50[1] > ma_50[2]  // MA 50 em alta
+trend_bearish = ma_50 < ma_50[1] and ma_50[1] < ma_50[2]  // MA 50 em baixa
+
+// Filtro de Volatilidade
+atr_ok = not use_volatility_filter or (atr >= min_atr and atr <= max_atr)
+
+// Filtro de Tempo
+time_ok = not use_time_filter or (hour >= start_hour and hour <= end_hour)
+news_ok = not avoid_news or (hour != 8 and hour != 13 and hour != 15) // Evitar horários de notícias
+
+// Filtro de Sessão Forex
+london_active = not use_session_filter or not london_session or (hour >= 8 and hour <= 17)
+ny_active = not use_session_filter or not ny_session or (hour >= 13 and hour <= 22)
+tokyo_active = not use_session_filter or not tokyo_session or (hour >= 0 and hour <= 9)
+active_session = london_active or ny_active or tokyo_active
+
+// Filtro de Volume
+volume_ok = not use_volume_filter or volume_spike
+
+// Filtro de Momentum
+momentum_bullish = not use_momentum_filter or (rsi > 50 and macd_line > macd_signal)
+momentum_bearish = not use_momentum_filter or (rsi < 50 and macd_line < macd_signal)
+
+// ===== LÓGICA LARRY WILLIAMS 9.2 =====
+// Setup Long: Candle fecha abaixo da mínima do candle anterior
+// Entrada: Preço rompe a máxima do candle que fechou abaixo
+setup_long_condition = close[setup_lookback] < low[setup_lookback + 1]  // Candle fechou abaixo da mínima anterior
+breakout_long_condition = close > high[setup_lookback]  // Preço rompe máxima do candle de setup
+ema_9_rising = ema_9 > ema_9[1]  // EMA 9 em alta
+
+// Setup Short: Candle fecha acima da máxima do candle anterior  
+// Entrada: Preço rompe a mínima do candle que fechou acima
+setup_short_condition = close[setup_lookback] > high[setup_lookback + 1]  // Candle fechou acima da máxima anterior
+breakout_short_condition = close < low[setup_lookback]  // Preço rompe mínima do candle de setup
+ema_9_falling = ema_9 < ema_9[1]  // EMA 9 em baixa
+
+// Condições Finais de Entrada
+long_condition = setup_long_condition and 
+                 breakout_long_condition and 
+                 ema_9_rising and 
+                 trend_bullish and 
+                 momentum_bullish and 
+                 atr_ok and 
+                 time_ok and 
+                 news_ok and 
+                 active_session and 
+                 volume_ok
+
+short_condition = setup_short_condition and 
+                  breakout_short_condition and 
+                  ema_9_falling and 
+                  trend_bearish and 
+                  momentum_bearish and 
+                  atr_ok and 
+                  time_ok and 
+                  news_ok and 
+                  active_session and 
+                  volume_ok
+
+// ===== LÓGICA DE SAÍDA =====
+// Cálculo de Stop Loss e Take Profit baseado no setup
+// Stop Loss: Na mínima/máxima do candle de setup
+// Take Profit: Baseado em ATR ou risk/reward
+
+// Entrada Long
+if long_condition and barstate.isconfirmed and strategy.position_size == 0
+    // Stop Loss na mínima do candle de setup
+    stop_loss = low[setup_lookback]
+    // Take Profit baseado em ATR ou risk/reward
+    risk_distance = close - stop_loss
+    take_profit = close + (risk_distance * risk_reward_ratio)
+    
+    strategy.entry("Long LW9.2", strategy.long)
+    strategy.exit("Long Exit", "Long LW9.2", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Long Trailing", "Long LW9.2", trail_price=close, trail_offset=atr * trailing_stop_atr)
+
+// Entrada Short
+if short_condition and barstate.isconfirmed and strategy.position_size == 0
+    // Stop Loss na máxima do candle de setup
+    stop_loss = high[setup_lookback]
+    // Take Profit baseado em ATR ou risk/reward
+    risk_distance = stop_loss - close
+    take_profit = close - (risk_distance * risk_reward_ratio)
+    
+    strategy.entry("Short LW9.2", strategy.short)
+    strategy.exit("Short Exit", "Short LW9.2", stop=stop_loss, limit=take_profit)
+    
+    // Trailing Stop se habilitado
+    if use_trailing_stop
+        strategy.exit("Short Trailing", "Short LW9.2", trail_price=close, trail_offset=atr * trailing_stop_atr)
+
+// ===== PLOTS E VISUALIZAÇÕES =====
+// Larry Williams 9.2 - EMA 9
+plot(ema_9, "EMA 9 (Larry Williams)", color=color.blue, linewidth=2)
+
+// Filtro de Tendência - MA 50
+plot(ma_50, "MA 50 (Filtro Tendência)", color=color.red, linewidth=2)
+
+// Sinais de Setup (marcadores)
+plotchar(setup_long_condition, "Setup Long", "◄", location.belowbar, color=color.orange, size=size.small)
+plotchar(setup_short_condition, "Setup Short", "►", location.abovebar, color=color.orange, size=size.small)
+
+// Sinais de Entrada
+plotchar(long_condition, "Long Signal LW9.2", "▲", location.belowbar, color=color.green, size=size.normal)
+plotchar(short_condition, "Short Signal LW9.2", "▼", location.abovebar, color=color.red, size=size.normal)
+
+// Níveis de Stop Loss e Take Profit (para visualização)
+var float long_stop = na
+var float long_target = na
+var float short_stop = na
+var float short_target = na
+
+if long_condition and barstate.isconfirmed
+    long_stop := low[setup_lookback]
+    risk_distance = close - long_stop
+    long_target := close + (risk_distance * risk_reward_ratio)
+
+if short_condition and barstate.isconfirmed
+    short_stop := high[setup_lookback]
+    risk_distance = short_stop - close
+    short_target := close - (risk_distance * risk_reward_ratio)
+
+plot(strategy.position_size > 0 ? long_stop : na, "Stop Loss Long", color=color.red, style=plot.style_linebr)
+plot(strategy.position_size > 0 ? long_target : na, "Take Profit Long", color=color.green, style=plot.style_linebr)
+plot(strategy.position_size < 0 ? short_stop : na, "Stop Loss Short", color=color.red, style=plot.style_linebr)
+plot(strategy.position_size < 0 ? short_target : na, "Take Profit Short", color=color.green, style=plot.style_linebr)
+
+// Background para Sessões Forex
+bgcolor(london_active and use_session_filter ? color.new(color.blue, 95) : na, title="Sessão Londres")
+bgcolor(ny_active and use_session_filter ? color.new(color.orange, 95) : na, title="Sessão NY")
+bgcolor(tokyo_active and use_session_filter ? color.new(color.purple, 95) : na, title="Sessão Tóquio")
+
+// ===== ALERTAS =====
+alertcondition(long_condition, title="Larry Williams 9.2 - Long", message="Sinal de compra Larry Williams 9.2 detectado")
+alertcondition(short_condition, title="Larry Williams 9.2 - Short", message="Sinal de venda Larry Williams 9.2 detectado")
+alertcondition(setup_long_condition, title="Setup Long LW9.2", message="Setup de compra Larry Williams 9.2 detectado")
+alertcondition(setup_short_condition, title="Setup Short LW9.2", message="Setup de venda Larry Williams 9.2 detectado")
+
+// ===== INFORMAÇÕES ADICIONAIS =====
+// Display de informações na tela
+var table info_table = table.new(position.top_right, 2, 12, bgcolor=color.white, border_width=1)
+
+if barstate.islast
+    table.cell(info_table, 0, 0, "EMA 9", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, str.tostring(ema_9, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 1, "MA 50", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 1, str.tostring(ma_50, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 2, "ATR", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 2, str.tostring(atr, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 3, "RSI", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 3, str.tostring(rsi, "#.##"), text_color=color.black)
+    
+    table.cell(info_table, 0, 4, "MACD", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 4, str.tostring(macd_line, "#.####"), text_color=color.black)
+    
+    table.cell(info_table, 0, 5, "Tendência", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 5, trend_bullish ? "Bullish" : trend_bearish ? "Bearish" : "Neutral", 
+               text_color=trend_bullish ? color.green : trend_bearish ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 6, "EMA 9 Slope", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 6, ema_9_rising ? "Rising" : ema_9_falling ? "Falling" : "Flat", 
+               text_color=ema_9_rising ? color.green : ema_9_falling ? color.red : color.gray)
+    
+    table.cell(info_table, 0, 7, "Setup Long", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 7, setup_long_condition ? "Ativo" : "Inativo", 
+               text_color=setup_long_condition ? color.orange : color.gray)
+    
+    table.cell(info_table, 0, 8, "Setup Short", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 8, setup_short_condition ? "Ativo" : "Inativo", 
+               text_color=setup_short_condition ? color.orange : color.gray)
+    
+    table.cell(info_table, 0, 9, "Sessão", text_color=color.black, bgcolor=color.gray)
+    session_text = london_active and use_session_filter ? "Londres" : 
+                   ny_active and use_session_filter ? "NY" : 
+                   tokyo_active and use_session_filter ? "Tóquio" : "Fechado"
+    table.cell(info_table, 1, 9, session_text, text_color=color.black)
+    
+    table.cell(info_table, 0, 10, "Volume", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 10, volume_spike ? "Alto" : "Normal", 
+               text_color=volume_spike ? color.green : color.gray)
+    
+    table.cell(info_table, 0, 11, "Posição", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 11, strategy.position_size > 0 ? "Long" : strategy.position_size < 0 ? "Short" : "Neutro", 
+               text_color=strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray)
+
+// ===== COMENTÁRIOS EXPLICATIVOS =====
+// Esta estratégia implementa o sistema Larry Williams 9.2 otimizado para day trade em forex:
+// 
+// 1. LARRY WILLIAMS 9.2 - SETUP DE PULLBACK:
+//    - Setup Long: Candle fecha abaixo da mínima do candle anterior
+//    - Entrada Long: Preço rompe a máxima do candle que fechou abaixo
+//    - Setup Short: Candle fecha acima da máxima do candle anterior
+//    - Entrada Short: Preço rompe a mínima do candle que fechou acima
+//    - Stop Loss: Na mínima/máxima do candle de setup
+//
+// 2. FILTRO DE TENDÊNCIA:
+//    - MA de 50 períodos como filtro de tendência
+//    - Só opera na direção da tendência (MA 50 apontada para cima/baixo)
+//
+// 3. GERENCIAMENTO DE RISCO:
+//    - Stop loss baseado no setup (mínima/máxima do candle de setup)
+//    - Take profit com risk/reward configurável
+//    - Trailing stop opcional
+//    - Position sizing baseado em risco por trade
+//
+// 4. FILTROS FOREX:
+//    - Filtros de sessão (Londres, NY, Tóquio)
+//    - Filtros de tempo para evitar spreads altos
+//    - Filtros de volatilidade (ATR)
+//    - Evita horários de notícias importantes
+//
+// 5. CONFIRMAÇÕES:
+//    - RSI para momentum
+//    - MACD para confirmação de tendência
+//    - Volume para validação
+//    - EMA 9 para direção da tendência
+//
+// 6. DIFERENÇAS DA VERSÃO 9.1:
+//    - Usa setup de pullback em vez de cruzamento direto
+//    - Stop loss mais preciso (baseado no setup)
+//    - Melhor timing de entrada
+//    - Menos sinais falsos
+//
+// Otimizada para pares majors como EURUSD, GBPJPY, etc.
+// Recomendado para timeframes M5, M15, M30 para day trade

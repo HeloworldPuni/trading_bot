@@ -1,0 +1,42 @@
+//@version=5
+strategy('VWAP strategy', overlay=true)
+
+var cumVol = 0.
+cumVol += nz(volume)
+if barstate.islast and cumVol == 0
+    runtime.error("No volume is provided by the data vendor.")
+    
+percentAsPoints(pcnt) =>
+    strategy.position_size != 0 ? math.round(pcnt / 100.0 * strategy.position_avg_price / syminfo.mintick) : float(na)
+
+computeVWAP(src, isNewPeriod) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+
+	sumSrcVol := isNewPeriod ? src * volume : src * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+
+	_vwap = sumSrcVol / sumVol
+
+	[_vwap]
+
+src = hlc3
+
+isNewPeriod = ta.change(time("W"))
+
+float vwapValue = na
+float std = na
+
+[_vwap] = computeVWAP(src, isNewPeriod)
+vwapValue := _vwap
+
+plot(vwapValue, title="VWAP", color=#2962FF)
+
+longCondition = ta.crossover(close, vwapValue) and volume > ta.sma(volume,20)
+longTakeProfit = strategy.position_avg_price + percentAsPoints(5) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+longStopLoss = strategy.position_avg_price - percentAsPoints(1) * syminfo.mintick * strategy.position_size / math.abs(strategy.position_size)
+if(longCondition)
+    strategy.entry("Long", strategy.long)
+
+if strategy.position_size > 0
+    strategy.exit('Long TP', from_entry='Long', limit=longTakeProfit, stop=longStopLoss)

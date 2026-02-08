@@ -1,0 +1,82 @@
+//@version=5
+indicator("FV Mechanics Scalper [Location + Aggression]", overlay=true, shorttitle="FV_Scalper")
+
+// ==========================================
+// 1. CONFIGURATION
+// ==========================================
+group_loc = "1. LOCATION (Balance)"
+devMult   = input.float(1.5, "Balance Deviation Multiplier", group=group_loc, tooltip="Defines the 'Fair Value' zone. Inside this zone = Chop. Outside = Imbalance.")
+src       = input.source(close, "Source", group=group_loc)
+
+group_agg = "2. AGGRESSION (Order Flow Proxy)"
+volMult   = input.float(1.5, "Volume Spike Threshold", group=group_agg, tooltip="Current volume must be x times larger than average to count as 'Aggression'.")
+volLen    = input.int(20, "Volume Average Length", group=group_agg)
+bodyFilt  = input.bool(true, "Filter Small Bodies?", group=group_agg, tooltip="Requires the candle body to be significant relative to the wick.")
+
+// ==========================================
+// 2. CALCULATE LOCATION (VWAP + BANDS)
+// ==========================================
+// We use a Session VWAP to determine the day's 'Fair Value'
+t = time("D")
+start = na(t[1]) or t > t[1]
+sumSrc = float(na)
+sumVol = float(na)
+sumSrc := start ? src * volume : sumSrc[1] + src * volume
+sumVol := start ? volume : sumVol[1] + volume
+vwapValue = sumSrc / sumVol
+
+// Calculate Standard Deviation bands for "Balance"
+sumSq = float(na)
+sumSq := start ? volume * math.pow(src - vwapValue, 2) : sumSq[1] + volume * math.pow(src - vwapValue, 2)
+dev = math.sqrt(sumSq / sumVol)
+
+upperBand = vwapValue + (dev * devMult)
+lowerBand = vwapValue - (dev * devMult)
+
+// Plotting the "Arena"
+plot(vwapValue, "Session VWAP", color=color.new(color.yellow, 0), linewidth=2)
+p1 = plot(upperBand, "Upper Balance", color=color.new(color.gray, 50))
+p2 = plot(lowerBand, "Lower Balance", color=color.new(color.gray, 50))
+fill(p1, p2, color=color.new(color.gray, 90), title="Balance Zone (No Trade)")
+
+// ==========================================
+// 3. CALCULATE AGGRESSION (VOLUME FACTS)
+// ==========================================
+// Volume must be significantly higher than the recent average (Reading the tape)
+avgVol = ta.sma(volume, volLen)
+isHighVol = volume > (avgVol * volMult)
+
+// Candle interpretation: Is the close near the high (Bullish) or low (Bearish)?
+// This acts as a proxy for "Aggressive Buying/Selling"
+range_ = high - low
+body_  = math.abs(close - open)
+isBullishCandle = close > open and (close - low) > (range_ * 0.7) // Closing in top 30%
+isBearishCandle = close < open and (high - close) > (range_ * 0.7) // Closing in bottom 30%
+isBigBody = bodyFilt ? (body_ > range_ * 0.5) : true
+
+// ==========================================
+// 4. SYNTHESIS: THE SETUP
+// ==========================================
+
+// Setup 1: Breakout of Balance with Aggression
+// Price must be OUTSIDE the bands (Location) + High Volume (Aggression)
+bullishSetup = close > upperBand and isHighVol and isBullishCandle and isBigBody
+bearishSetup = close < lowerBand and isHighVol and isBearishCandle and isBigBody
+
+// ==========================================
+// 5. VISUALS & ALERTS
+// ==========================================
+
+// Color bars to show market state
+// Gray = Inside Balance (Wait/No Prediction)
+// Green/Red = Imbalance + Aggression (Read/React)
+barcolor(close > lowerBand and close < upperBand ? color.gray : na)
+barcolor(bullishSetup ? color.lime : bearishSetup ? color.red : na)
+
+// Signals
+plotshape(bullishSetup, title="Long Imbalance", location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.small, text="READ\nFLOW")
+plotshape(bearishSetup, title="Short Imbalance", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, text="READ\nFLOW")
+
+// Alerts
+alertcondition(bullishSetup, title="Bullish Imbalance", message="Price Out of Balance + Aggressive Buying")
+alertcondition(bearishSetup, title="Bearish Imbalance", message="Price Out of Balance + Aggressive Selling")

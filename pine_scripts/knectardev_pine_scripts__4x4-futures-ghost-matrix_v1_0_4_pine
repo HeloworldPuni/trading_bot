@@ -1,0 +1,101 @@
+//@version=5
+// =============================================================================
+// INDICATOR: 4x4 Futures Ghost Matrix
+// FILENAME: 4x4-futures-ghost-matrix_v1.0.4.pine
+// Version: v1.0.4
+// DATE:     2026-01-12
+// =============================================================================
+// CHANGE LOG:
+//   v1.0.4 - Restores matrix display
+//
+//   STRENGTHS: [To be documented]
+//   WEAKNESSES: [To be documented]
+// =============================================================================
+indicator("4x4 Futures Ghost Matrix - V5 Final", overlay=true)
+
+// --- 1. INPUTS ---
+sessionTime  = input.session("0930-1600", "Trading Window")
+stdPeriod    = input.int(20, "Lookback Period")
+innerMult    = input.float(1.0, "Inner Sigma")
+outerMult    = input.float(2.5, "Outer Sigma")
+matrixReq    = input.int(2, "Matrix Strength", minval=1, maxval=4)
+sensitivity  = input.string("Aggressive", "Signal Mode", options=["Strict", "Aggressive"])
+filterRepeat = input.bool(true, "Filter Consecutive Signals (First Only)")
+hideNoon     = input.bool(false, "Filter Noon Slump (12:00-13:30)")
+showTable    = input.bool(true, "Show Matrix Table")
+
+// --- 2. CALCULATIONS ---
+t = time(timeframe.period, sessionTime, "America/New_York")
+inSession = not na(t)
+isNoon    = hideNoon and hour(t, "America/New_York") == 12 or (hour(t, "America/New_York") == 13 and minute(t, "America/New_York") <= 30)
+
+basis = ta.sma(close, stdPeriod)
+dev   = ta.stdev(close, stdPeriod)
+
+eUpper = basis + (dev * outerMult)
+iUpper = basis + (dev * innerMult)
+iLower = basis - (dev * innerMult)
+eLower = basis - (dev * outerMult)
+
+// --- 3. MOMENTUM (HEIKIN ASHI) ---
+haTicker = ticker.heikinashi(syminfo.tickerid)
+[haOpen, haLow, haHigh, haClose] = request.security(haTicker, timeframe.period, [open, low, high, close])
+haLongVector  = haOpen == haLow
+haShortVector = haOpen == haHigh
+
+// --- 4. GHOST CONFLUENCE ---
+longScore  = (close[1] > iLower ? 1 : 0) + (close[2] > iLower ? 1 : 0) + (close[3] > iLower ? 1 : 0) + (close[4] > iLower ? 1 : 0)
+shortScore = (close[1] < iUpper ? 1 : 0) + (close[2] < iUpper ? 1 : 0) + (close[3] < iUpper ? 1 : 0) + (close[4] < iUpper ? 1 : 0)
+
+// --- 5. SIGNAL LOGIC ---
+longMeanRev    = ta.crossover(close, iLower) 
+shortMeanRev   = ta.crossunder(close, iUpper)
+longTrendCont  = (sensitivity == "Aggressive") and (close > basis) and haLongVector and (close > close[1])
+shortTrendCont = (sensitivity == "Aggressive") and (close < basis) and haShortVector and (close < close[1])
+
+rawLong  = (longMeanRev or longTrendCont) and longScore >= matrixReq and haLongVector and not isNoon
+rawShort = (shortMeanRev or shortTrendCont) and shortScore >= matrixReq and haShortVector and not isNoon
+
+// STATE MANAGEMENT
+var int lastSignal = 0 
+longSignal  = rawLong and (not filterRepeat or lastSignal != 1)
+shortSignal = rawShort and (not filterRepeat or lastSignal != -1)
+
+if longSignal
+    lastSignal := 1
+if shortSignal
+    lastSignal := -1
+
+// --- 6. PLOTTING ---
+plotshape(longSignal and inSession,  title="Long",  style=shape.labelup,   location=location.belowbar, color=color.new(#00ff08, 0), text="L", textcolor=color.white, size=size.small)
+plotshape(shortSignal and inSession, title="Short", style=shape.labeldown, location=location.abovebar, color=color.new(#ff0000, 0), text="S", textcolor=color.white, size=size.small)
+
+plot(eUpper, color=color.new(color.red, 40))
+plot(iUpper, color=color.new(color.red, 75))
+plot(basis,  color=color.new(color.gray, 80))
+plot(iLower, color=color.new(color.green, 75))
+plot(eLower, color=color.new(color.green, 40))
+
+// --- 7. MATRIX TABLE ---
+var table matrixDots = table.new(position.top_right, 5, 5, bgcolor=color.new(color.black, 50), border_width=1, border_color=color.new(color.gray, 50))
+
+if showTable and barstate.islast
+    // Headers
+    table.cell(matrixDots, 0, 0, "LVL", text_color=color.white, text_size=size.small)
+    for i = 1 to 4
+        table.cell(matrixDots, i, 0, "B" + str.tostring(i), text_color=color.white, text_size=size.small)
+    
+    // Row Labels
+    table.cell(matrixDots, 0, 1, "EX-U", text_color=color.red,   text_size=size.small)
+    table.cell(matrixDots, 0, 2, "IN-U", text_color=color.red,   text_size=size.small)
+    table.cell(matrixDots, 0, 3, "IN-L", text_color=color.green, text_size=size.small)
+    table.cell(matrixDots, 0, 4, "EX-L", text_color=color.green, text_size=size.small)
+
+    // Data Dots (Current Price vs Historical Levels)
+    for col = 1 to 4
+        table.cell(matrixDots, col, 1, "●", text_color = close > eUpper[col] ? color.green : color.red, text_size=size.large)
+        table.cell(matrixDots, col, 2, "●", text_color = close > iUpper[col] ? color.green : color.red, text_size=size.large)
+        table.cell(matrixDots, col, 3, "●", text_color = close > iLower[col] ? color.green : color.red, text_size=size.large)
+        table.cell(matrixDots, col, 4, "●", text_color = close > eLower[col] ? color.green : color.red, text_size=size.large)
+
+bgcolor(inSession and longScore >= 3 ? color.new(color.green, 95) : inSession and shortScore >= 3 ? color.new(color.red, 95) : na)

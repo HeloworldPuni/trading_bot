@@ -1,0 +1,93 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Electrified (electrifiedtrading)
+
+//@version=4
+study(title='Local Limits', overlay=true)
+
+maxdepth = 5
+margins = array.new_float(maxdepth)
+array.set(margins, 0, input(0.00, title='Margin 1'))
+array.set(margins, 1, input(0.00, title='Margin 2'))
+array.set(margins, 2, input(0.00, title='Margin 3'))
+array.set(margins, 3, input(0.00, title='Margin 4'))
+array.set(margins, 4, input(0.00, title='Margin 5'))
+
+// ------
+calcTrendValue(direction, current, previous, last, lastTrend, margin) =>
+    trend = lastTrend
+    value = last
+
+    candle = current - previous
+    
+    if (candle < 0)
+    	trend := -1
+    else if (candle > 0)
+    	trend := +1
+
+    if(direction>0 and current>last or direction<0 and current<last)
+        value := current
+        
+    v = previous + direction * margin
+    if(direction>0 and lastTrend>0 and trend<0 and v<last or direction<0 and lastTrend<0 and trend>0 and v>last)
+        value := v
+
+    [value, trend]    
+
+// ------
+calcTrendValues(direction, src, values, changes, trends, depth) =>
+    result = 0
+    current = src[0]
+    previous = src[1]
+
+    for i = 0 to (depth - 1)
+        last = array.get(values, i)
+        [v, t] = calcTrendValue(direction, current, previous, last, array.get(trends, i), array.get(margins, i))
+        array.set(changes, i, v-last)
+        previous := last
+        current := v
+        array.set(values, i, v)
+        array.set(trends, i, t)
+
+
+var highValue = array.new_float(maxdepth)
+var highChange = array.new_float(maxdepth)
+var highTrend = array.new_int(maxdepth)
+var lowValue = array.new_float(maxdepth)
+var lowChange = array.new_float(maxdepth)
+var lowTrend = array.new_int(maxdepth)
+var bar = 0
+if(bar==0)
+    array.fill(highValue, high)
+    array.fill(highChange, 0)
+    array.fill(highTrend, 0)
+    array.fill(lowValue, low)
+    array.fill(lowTrend, 0)
+    array.fill(lowChange, 0)
+bar := bar +1
+
+calcTrendValues(+1, high, highValue, highChange, highTrend, maxdepth)
+calcTrendValues(-1, low, lowValue, lowChange, lowTrend, maxdepth)
+
+plot(array.get(highValue, 0), 'Upper 1', color.lime, 1, transp=80)
+plot(array.get(highValue, 1), 'Upper 2', color.lime, 2, transp=80)
+plot(array.get(highValue, 2), 'Upper 3', color.lime, 3, transp=80)
+plot(array.get(highValue, 3), 'Upper 4', color.lime, 4, transp=80)
+plot(array.get(highValue, 4), 'Upper 5', color.lime, 5, transp=80, display=display.none)
+
+plot(array.get(lowValue, 0), 'Lower 1', color.orange, 1, transp=80)
+plot(array.get(lowValue, 1), 'Lower 2', color.orange, 2, transp=80)
+plot(array.get(lowValue, 2), 'Lower 3', color.orange, 3, transp=80)
+plot(array.get(lowValue, 3), 'Lower 4', color.orange, 4, transp=80)
+plot(array.get(lowValue, 4), 'Lower 5', color.orange, 5, transp=80, display=display.none)
+
+plot(array.get(highChange, 0), 'Upper 1 Change', display=display.none)
+plot(array.get(highChange, 1), 'Upper 2 Change', display=display.none)
+plot(array.get(highChange, 2), 'Upper 3 Change', display=display.none)
+plot(array.get(highChange, 3), 'Upper 4 Change', display=display.none)
+plot(array.get(highChange, 4), 'Upper 5 Change', display=display.none)
+
+plot(array.get(lowChange, 0), 'Lower 1 Change', display=display.none)
+plot(array.get(lowChange, 1), 'Lower 2 Change', display=display.none)
+plot(array.get(lowChange, 2), 'Lower 3 Change', display=display.none)
+plot(array.get(lowChange, 3), 'Lower 4 Change', display=display.none)
+plot(array.get(lowChange, 4), 'Lower 5 Change', display=display.none)

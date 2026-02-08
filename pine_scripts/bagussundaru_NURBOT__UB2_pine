@@ -1,0 +1,443 @@
+//@version=5
+strategy("Ultimate Aggressive Scalping Bot v3", shorttitle="UASB3", overlay=true, margin_long=100, margin_short=100, initial_capital=1000, commission_type=strategy.commission.percent, commission_value=0.04, calc_on_every_tick=true, calc_on_order_fills=true, pyramiding=1, process_orders_on_close=false, max_boxes_count=100, max_lines_count=100)
+
+// ================= INPUTS =================
+// Exchange & Symbol
+trading_symbol = input.string("ETHUSDT", "Trading Symbol", group="🎯 Exchange")
+exchange_name = input.string("BINANCE_FUTURES_TESTNET", "Exchange", options=["BINANCE_FUTURES_TESTNET", "BINANCE_FUTURES"], group="🎯 Exchange")
+
+// Trading Modes & Sensitivity
+trading_mode = input.string("Balanced", "Trading Mode", options=["Conservative", "Balanced", "Aggressive"], group="⚡ Scalping Mode")
+signal_sensitivity = input.int(3, "Signal Sensitivity", minval=1, maxval=5, tooltip="1=Less signals, 5=More signals", group="⚡ Scalping Mode")
+timeframe_preset = input.string("Auto", "Timeframe Preset", options=["Auto", "1m", "3m", "5m"], group="⚡ Scalping Mode")
+min_bars_cooldown = input.int(1, "Min Bars Between Entry", minval=0, maxval=10, group="⚡ Scalping Mode")
+
+// Risk Management
+risk_percent = input.float(1.5, "Risk Per Trade (%)", minval=0.1, maxval=5.0, step=0.1, group="💰 Risk")
+min_order_size = input.float(0.001, "Min Order Size", minval=0.001, step=0.001, group="💰 Risk")
+max_total_risk = input.float(15.0, "Max Total Risk (%)", minval=5.0, maxval=30.0, step=1.0, group="💰 Risk")
+use_dynamic_risk = input.bool(true, "Dynamic Risk Sizing", group="💰 Risk")
+
+// Entry Triggers (Multi-Strategy)
+use_trend_pullback = input.bool(true, "Trend + Pullback", group="🎯 Entry Triggers")
+use_momentum_micro = input.bool(true, "Momentum Micro", group="🎯 Entry Triggers")
+use_breakout_squeeze = input.bool(true, "Breakout Squeeze", group="🎯 Entry Triggers")
+use_vwap_bias = input.bool(false, "VWAP Bias", group="🎯 Entry Triggers")
+use_volume_spike = input.bool(true, "Volume Spike", group="🎯 Entry Triggers")
+
+// Indicators
+ema_fast = input.int(8, "EMA Fast", minval=3, maxval=21, group="📊 Indicators")
+ema_slow = input.int(21, "EMA Slow", minval=8, maxval=50, group="📊 Indicators")
+rsi_length = input.int(14, "RSI Length", minval=5, maxval=30, group="📊 Indicators")
+kc_length = input.int(20, "Keltner Length", minval=10, maxval=50, group="📊 Indicators")
+kc_mult = input.float(1.5, "Keltner Multiplier", minval=0.5, maxval=3.0, step=0.1, group="📊 Indicators")
+
+// Exit Strategy
+target_profit_pct = input.float(0.25, "Target Profit %", minval=0.05, maxval=1.0, step=0.05, group="🚪 Exit")
+use_multi_tp = input.bool(true, "Multi Take Profit", group="🚪 Exit")
+tp1_percent = input.float(60.0, "TP1 Close %", minval=30.0, maxval=90.0, step=10.0, group="🚪 Exit")
+sl_atr_mult = input.float(1.2, "Stop Loss ATR", minval=0.5, maxval=3.0, step=0.1, group="🚪 Exit")
+use_breakeven = input.bool(true, "Use Breakeven", group="🚪 Exit")
+be_trigger_pct = input.float(0.15, "Breakeven Trigger %", minval=0.05, maxval=0.5, step=0.05, group="🚪 Exit")
+max_bars_in_trade = input.int(15, "Max Bars In Trade", minval=5, maxval=50, group="🚪 Exit")
+use_trailing = input.bool(true, "Micro Trailing", group="🚪 Exit")
+trail_step_pct = input.float(0.08, "Trail Step %", minval=0.03, maxval=0.3, step=0.01, group="🚪 Exit")
+
+// Advanced Features
+allow_flip_signal = input.bool(true, "Allow Signal Flip", group="🔄 Advanced")
+use_regime_filter = input.bool(true, "Regime Filter", group="🔍 Filters")
+min_body_pct = input.float(0.02, "Min Body %", minval=0.01, maxval=0.2, step=0.01, group="🔍 Filters")
+max_body_pct = input.float(2.0, "Max Body %", minval=0.5, maxval=5.0, step=0.1, group="🔍 Filters")
+
+// Session Filter
+use_session_filter = input.bool(false, "Use Session Filter", group="⏰ Session")
+session_start = input.int(8, "Session Start (UTC)", minval=0, maxval=23, group="⏰ Session")
+session_end = input.int(22, "Session End (UTC)", minval=0, maxval=23, group="⏰ Session")
+
+// Visual
+show_signals = input.bool(true, "Show Signals", group="🎨 Visual")
+show_levels = input.bool(true, "Show Levels", group="🎨 Visual")
+show_dashboard = input.bool(true, "Show Dashboard", group="🎨 Visual")
+
+// ================= ADAPTIVE PARAMETERS =================
+// Mode-based sensitivity adjustments
+sensitivity_mult = trading_mode == "Conservative" ? 0.7 : trading_mode == "Balanced" ? 1.0 : 1.5
+sensitivity_mult := sensitivity_mult * signal_sensitivity * 0.2
+
+// Timeframe-based adjustments (OPTIMIZED)
+tf_minutes = timeframe.in_seconds() / 60
+// Reduced aggressiveness for short timeframes to avoid noise
+tf_mult = tf_minutes <= 1 ? 0.6 : tf_minutes <= 3 ? 0.7 : tf_minutes <= 5 ? 0.8 : tf_minutes <= 15 ? 1.0 : 1.2
+
+// Final sensitivity with better scaling
+final_sensitivity = sensitivity_mult * tf_mult
+
+// Cooldown adjustment (TIMEFRAME ADAPTIVE)
+// Longer cooldown for shorter timeframes to reduce overtrading
+base_cooldown = tf_minutes <= 1 ? math.max(3, min_bars_cooldown + 2) : tf_minutes <= 3 ? math.max(2, min_bars_cooldown + 1) : tf_minutes <= 5 ? math.max(1, min_bars_cooldown) : min_bars_cooldown
+effective_cooldown = trading_mode == "Aggressive" ? math.max(1, base_cooldown - 1) : base_cooldown
+
+// ================= CORE INDICATORS (ALWAYS CALCULATED) =================
+ema_f = ta.ema(close, ema_fast)
+ema_s = ta.ema(close, ema_slow)
+rsi = ta.rsi(close, rsi_length)
+atr = ta.atr(14)
+atr_pct = atr / close * 100
+
+// MACD - always calculated
+macd_line = ta.ema(close, 12) - ta.ema(close, 26)
+macd_signal = ta.ema(macd_line, 9)
+macd_hist = macd_line - macd_signal
+macd_hist_change = macd_hist - macd_hist[1]
+
+// Keltner Channels - always calculated
+kc_basis = ta.ema(close, kc_length)
+kc_range = ta.atr(kc_length) * kc_mult
+kc_upper = kc_basis + kc_range
+kc_lower = kc_basis - kc_range
+kc_squeeze = (high - low) < (kc_upper - kc_lower) * 0.8
+
+// VWAP - always calculated
+vwap = ta.vwap(hlc3)
+
+// Volume - always calculated
+vol_avg = ta.sma(volume, 20)
+vol_spike = volume > vol_avg * (1.0 + 0.5 * final_sensitivity)
+
+// ATR percentage SMA - always calculated
+atr_pct_sma = ta.sma(atr_pct, 20)
+
+// Price action metrics
+body_size = math.abs(close - open)
+body_pct = body_size / close * 100
+candle_range = high - low
+range_pct = candle_range / close * 100
+
+// ================= REGIME DETECTION =================
+volatility_regime = atr_pct > atr_pct_sma * 1.2 ? "High" : atr_pct < atr_pct_sma * 0.8 ? "Low" : "Normal"
+
+// ================= ENTRY CONDITIONS =================
+// Cooldown check
+var int last_entry_bar = 0
+cooldown_ok = bar_index - last_entry_bar >= effective_cooldown
+
+// Session filter
+session_ok = not use_session_filter or (hour >= session_start and hour <= session_end)
+
+// Body size filter
+body_ok = body_pct >= min_body_pct and body_pct <= max_body_pct
+
+// 1) Trend + Pullback
+trend_up = ema_f > ema_s
+trend_down = ema_f < ema_s
+pullback_long = use_trend_pullback and trend_up and close < ema_f and close > ema_s and close > open
+pullback_short = use_trend_pullback and trend_down and close > ema_f and close < ema_s and close < open
+
+// 2) Momentum Micro (TIMEFRAME OPTIMIZED)
+// Stricter RSI thresholds for short timeframes
+rsi_buffer = tf_minutes <= 5 ? 10 : 5
+momentum_threshold = 50 - (15 * final_sensitivity)  // Reduced from 25 to 15
+momentum_long = use_momentum_micro and macd_hist_change > 0 and rsi > (momentum_threshold + rsi_buffer) and rsi < (70 - rsi_buffer)
+momentum_short = use_momentum_micro and macd_hist_change < 0 and rsi < (100 - momentum_threshold - rsi_buffer) and rsi > (30 + rsi_buffer)
+
+// 3) Breakout Squeeze (ENHANCED FILTERING)
+// More conservative breakout thresholds for short timeframes
+squeeze_threshold = tf_minutes <= 5 ? 0.15 * final_sensitivity : 0.3 * final_sensitivity
+// Add volume confirmation for breakouts
+breakout_long = use_breakout_squeeze and close > kc_upper * (1 - squeeze_threshold/100) and kc_squeeze and volume > vol_avg * 1.2
+breakout_short = use_breakout_squeeze and close < kc_lower * (1 + squeeze_threshold/100) and kc_squeeze and volume > vol_avg * 1.2
+
+// 4) VWAP Bias
+vwap_long = use_vwap_bias and close > vwap * (1 + 0.01 * final_sensitivity)
+vwap_short = use_vwap_bias and close < vwap * (1 - 0.01 * final_sensitivity)
+
+// 5) Volume confirmation
+volume_ok = not use_volume_spike or vol_spike
+
+// Final conditions
+long_triggers = (pullback_long or momentum_long or breakout_long or vwap_long) and volume_ok
+short_triggers = (pullback_short or momentum_short or breakout_short or vwap_short) and volume_ok
+
+// Regime filter adjustment
+regime_mult = use_regime_filter ? (volatility_regime == "High" ? 0.8 : volatility_regime == "Low" ? 1.2 : 1.0) : 1.0
+
+long_signal = long_triggers and cooldown_ok and session_ok and body_ok and ta.change(close) > 0
+short_signal = short_triggers and cooldown_ok and session_ok and body_ok and ta.change(close) < 0
+
+// Signal confirmation with additional filters for short timeframes
+// Add trend alignment filter for short timeframes
+trend_alignment_long = tf_minutes <= 5 ? (ema_f > ema_s and close > ema_f) : true
+trend_alignment_short = tf_minutes <= 5 ? (ema_f < ema_s and close < ema_f) : true
+
+long_confirmed = long_signal and barstate.isconfirmed and trend_alignment_long
+short_confirmed = short_signal and barstate.isconfirmed and trend_alignment_short
+
+// ================= RISK CALCULATION =================
+calculate_position_size(entry_price, stop_price) =>
+    base_risk = strategy.equity * (risk_percent / 100.0)
+    
+    // Dynamic risk adjustment
+    dynamic_mult = use_dynamic_risk ? (1.0 + (final_sensitivity - 1.0) * 0.3) : 1.0
+    adjusted_risk = base_risk * dynamic_mult
+    
+    price_diff = math.abs(entry_price - stop_price)
+    pos_size = price_diff > 0 ? adjusted_risk / price_diff : min_order_size
+    
+    math.max(min_order_size, math.min(pos_size, strategy.equity * 0.1 / entry_price))
+
+// Current risk check
+current_risk_pct = strategy.position_size != 0 ? math.abs(strategy.openprofit) / strategy.equity * 100 : 0
+total_risk_ok = current_risk_pct < max_total_risk
+
+// ================= TP/SL CALCULATION (TIMEFRAME OPTIMIZED) =================
+calculate_tp_sl_long(entry_price) =>
+    // Adaptive profit target with timeframe scaling
+    base_profit = target_profit_pct
+    // Smaller targets for short timeframes, larger for long timeframes
+    tf_profit_mult = tf_minutes <= 1 ? 0.6 : tf_minutes <= 3 ? 0.7 : tf_minutes <= 5 ? 0.8 : tf_minutes <= 15 ? 1.0 : 1.3
+    adaptive_profit = base_profit * tf_profit_mult * (1.0 + final_sensitivity * 0.15)  // Reduced from 0.2 to 0.15
+    
+    tp_price = entry_price * (1 + adaptive_profit / 100)
+    // Tighter stop loss for short timeframes
+    sl_mult = tf_minutes <= 5 ? sl_atr_mult * 0.8 : sl_atr_mult
+    sl_price = entry_price - atr * sl_mult
+    
+    // Ensure minimum tick distance
+    min_tp = entry_price + syminfo.mintick * 5
+    min_sl = entry_price - syminfo.mintick * 5
+    
+    [math.max(tp_price, min_tp), math.min(sl_price, min_sl)]
+
+calculate_tp_sl_short(entry_price) =>
+    base_profit = target_profit_pct
+    // Timeframe-adaptive profit targets
+    tf_profit_mult = tf_minutes <= 1 ? 0.6 : tf_minutes <= 3 ? 0.7 : tf_minutes <= 5 ? 0.8 : tf_minutes <= 15 ? 1.0 : 1.3
+    adaptive_profit = base_profit * tf_profit_mult * (1.0 + final_sensitivity * 0.15)
+    
+    tp_price = entry_price * (1 - adaptive_profit / 100)
+    // Tighter stop loss for short timeframes
+    sl_mult = tf_minutes <= 5 ? sl_atr_mult * 0.8 : sl_atr_mult
+    sl_price = entry_price + atr * sl_mult
+    
+    min_tp = entry_price - syminfo.mintick * 5
+    min_sl = entry_price + syminfo.mintick * 5
+    
+    [math.min(tp_price, min_tp), math.max(sl_price, min_sl)]
+
+// ================= JSON BUILDER (FIXED) =================
+build_json(side, qty, tp_val, sl_val, close_pos, reason) =>
+    string tp_str = na(tp_val) ? "null" : str.tostring(tp_val, format.mintick)
+    string sl_str = na(sl_val) ? "null" : str.tostring(sl_val, format.mintick)
+    string close_str = close_pos ? "true" : "false"
+    string qty_str = str.tostring(math.abs(qty), format.mintick)
+    string price_str = str.tostring(close, format.mintick)
+    string tf_str = str.tostring(tf_minutes, "#")
+    
+    string json_str = "{\"exchange\":\"" + exchange_name + "\",\"symbol\":\"" + trading_symbol + "\",\"side\":\"" + side + "\",\"type\":\"MARKET\",\"quantity\":" + qty_str + ",\"takeProfit\":" + tp_str + ",\"stopLoss\":" + sl_str + ",\"closePosition\":" + close_str + ",\"meta\":{\"reason\":\"" + reason + "\",\"tf\":\"" + tf_str + "\",\"price\":" + price_str + "}}"
+    json_str
+
+// ================= POSITION TRACKING =================
+var int bars_in_trade = 0
+var float entry_price_stored = na
+var float tp1_price = na
+var bool tp1_hit = false
+
+if strategy.position_size != 0
+    bars_in_trade := bars_in_trade + 1
+    if na(entry_price_stored)
+        entry_price_stored := strategy.position_avg_price
+else
+    bars_in_trade := 0
+    entry_price_stored := na
+    tp1_price := na
+    tp1_hit := false
+
+// ================= TRADING LOGIC =================
+// Long Entry
+if long_confirmed and strategy.position_size == 0 and total_risk_ok
+    [tp_long, sl_long] = calculate_tp_sl_long(close)
+    qty_long = calculate_position_size(close, sl_long)
+    
+    if tp_long > close and sl_long < close and qty_long >= min_order_size
+        strategy.entry("LONG", strategy.long, qty=qty_long)
+        last_entry_bar := bar_index
+        
+        if use_multi_tp
+            tp1_price := close + (tp_long - close) * (tp1_percent / 100)
+        
+        json_payload = build_json("BUY", qty_long, tp_long, sl_long, false, "SCALP_LONG")
+        alert(json_payload, alert.freq_once_per_bar)
+
+// Short Entry
+if short_confirmed and strategy.position_size == 0 and total_risk_ok
+    [tp_short, sl_short] = calculate_tp_sl_short(close)
+    qty_short = calculate_position_size(close, sl_short)
+    
+    if tp_short < close and sl_short > close and qty_short >= min_order_size
+        strategy.entry("SHORT", strategy.short, qty=qty_short)
+        last_entry_bar := bar_index
+        
+        if use_multi_tp
+            tp1_price := close - (close - tp_short) * (tp1_percent / 100)
+        
+        json_payload = build_json("SELL", qty_short, tp_short, sl_short, false, "SCALP_SHORT")
+        alert(json_payload, alert.freq_once_per_bar)
+
+// Flip Signal
+if allow_flip_signal and strategy.position_size != 0
+    should_flip_long = strategy.position_size < 0 and long_confirmed
+    should_flip_short = strategy.position_size > 0 and short_confirmed
+    
+    if should_flip_long or should_flip_short
+        exit_side = strategy.position_size > 0 ? "SELL" : "BUY"
+        json_exit = build_json(exit_side, 0.0, float(na), float(na), true, "FLIP_EXIT")
+        alert(json_exit, alert.freq_once_per_bar)
+        
+        strategy.close_all("FLIP")
+
+// Position Management
+if strategy.position_size > 0
+    current_profit_pct = (close - entry_price_stored) / entry_price_stored * 100
+    
+    // TP1 (Partial)
+    if use_multi_tp and not tp1_hit and close >= tp1_price
+        partial_qty = strategy.position_size * (tp1_percent / 100)
+        strategy.close("LONG", qty=partial_qty, comment="TP1")
+        tp1_hit := true
+        
+        json_tp1 = build_json("SELL", partial_qty, float(na), float(na), false, "TP1")
+        alert(json_tp1, alert.freq_once_per_bar)
+    
+    // Breakeven
+    else if use_breakeven and current_profit_pct >= be_trigger_pct and not tp1_hit
+        be_price = entry_price_stored + syminfo.mintick * 2
+        strategy.exit("BE_LONG", "LONG", stop=be_price, comment="BE")
+        
+        json_be = build_json("SELL", strategy.position_size, float(na), be_price, false, "BE")
+        alert(json_be, alert.freq_once_per_bar)
+    
+    // Micro Trailing
+    else if use_trailing and current_profit_pct >= trail_step_pct * 2
+        trail_price = close * (1 - trail_step_pct / 100)
+        strategy.exit("TRAIL_LONG", "LONG", stop=trail_price, comment="TRAIL")
+        
+        json_trail = build_json("SELL", strategy.position_size, float(na), trail_price, false, "TRAIL")
+        alert(json_trail, alert.freq_once_per_bar)
+    
+    // Time Exit (TIMEFRAME ADAPTIVE)
+    // Shorter time limits for short timeframes
+    max_bars_adaptive = tf_minutes <= 1 ? math.min(max_bars_in_trade, 8) : tf_minutes <= 3 ? math.min(max_bars_in_trade, 12) : tf_minutes <= 5 ? math.min(max_bars_in_trade, 15) : max_bars_in_trade
+    else if bars_in_trade >= max_bars_adaptive
+        strategy.close("LONG", comment="TIME")
+        
+        json_time = build_json("SELL", strategy.position_size, float(na), float(na), true, "TIME_EXIT")
+        alert(json_time, alert.freq_once_per_bar)
+
+if strategy.position_size < 0
+    current_profit_pct = (entry_price_stored - close) / entry_price_stored * 100
+    
+    // TP1 (Partial)
+    if use_multi_tp and not tp1_hit and close <= tp1_price
+        partial_qty = math.abs(strategy.position_size) * (tp1_percent / 100)
+        strategy.close("SHORT", qty=partial_qty, comment="TP1")
+        tp1_hit := true
+        
+        json_tp1 = build_json("BUY", partial_qty, float(na), float(na), false, "TP1")
+        alert(json_tp1, alert.freq_once_per_bar)
+    
+    // Breakeven
+    else if use_breakeven and current_profit_pct >= be_trigger_pct and not tp1_hit
+        be_price = entry_price_stored - syminfo.mintick * 2
+        strategy.exit("BE_SHORT", "SHORT", stop=be_price, comment="BE")
+        
+        json_be = build_json("BUY", math.abs(strategy.position_size), float(na), be_price, false, "BE")
+        alert(json_be, alert.freq_once_per_bar)
+    
+    // Micro Trailing
+    else if use_trailing and current_profit_pct >= trail_step_pct * 2
+        trail_price = close * (1 + trail_step_pct / 100)
+        strategy.exit("TRAIL_SHORT", "SHORT", stop=trail_price, comment="TRAIL")
+        
+        json_trail = build_json("BUY", math.abs(strategy.position_size), float(na), trail_price, false, "TRAIL")
+        alert(json_trail, alert.freq_once_per_bar)
+    
+    // Time Exit (TIMEFRAME ADAPTIVE)
+    // Shorter time limits for short timeframes
+    max_bars_adaptive = tf_minutes <= 1 ? math.min(max_bars_in_trade, 8) : tf_minutes <= 3 ? math.min(max_bars_in_trade, 12) : tf_minutes <= 5 ? math.min(max_bars_in_trade, 15) : max_bars_in_trade
+    else if bars_in_trade >= max_bars_adaptive
+        strategy.close("SHORT", comment="TIME")
+        
+        json_time = build_json("BUY", math.abs(strategy.position_size), float(na), float(na), true, "TIME_EXIT")
+        alert(json_time, alert.freq_once_per_bar)
+
+// Exit Detection
+if bar_index > 0 and strategy.position_size[1] != 0 and strategy.position_size == 0
+    exit_side = strategy.position_size[1] > 0 ? "SELL" : "BUY"
+    json_exit = build_json(exit_side, 0.0, float(na), float(na), true, "FINAL_EXIT")
+    alert(json_exit, alert.freq_once_per_bar)
+
+// ================= VISUALIZATION =================
+plot(ema_f, "EMA Fast", color=color.new(color.blue, 0), linewidth=1)
+plot(ema_s, "EMA Slow", color=color.new(color.red, 0), linewidth=1)
+
+// VWAP plot - conditional but indicator always calculated
+plot_vwap = use_vwap_bias ? vwap : na
+plot(plot_vwap, "VWAP", color=color.new(color.purple, 50), linewidth=1)
+
+// Keltner plots - conditional but indicators always calculated
+plot_kc_upper = use_breakout_squeeze ? kc_upper : na
+plot_kc_lower = use_breakout_squeeze ? kc_lower : na
+plot(plot_kc_upper, "KC Upper", color=color.new(color.gray, 70))
+plot(plot_kc_lower, "KC Lower", color=color.new(color.gray, 70))
+
+plotshape(show_signals and long_confirmed, "Long Signal", shape.triangleup, location.belowbar, color.new(color.green, 0), size=size.small)
+plotshape(show_signals and short_confirmed, "Short Signal", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.small)
+
+// Background
+bgcolor(long_signal and not long_confirmed ? color.new(color.green, 95) : short_signal and not short_confirmed ? color.new(color.red, 95) : na)
+
+// ================= DASHBOARD =================
+if show_dashboard
+    var table info_table = table.new(position.top_right, 3, 8, bgcolor=color.new(color.white, 0), border_width=1)
+    
+    if barstate.islast
+        table.clear(info_table, 0, 0, 2, 7)
+        
+        signal_text = long_signal ? "LONG" : short_signal ? "SHORT" : "WAIT"
+        signal_color = long_signal ? color.green : short_signal ? color.red : color.gray
+        
+        pos_text = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+        pos_pnl = strategy.position_size != 0 ? strategy.openprofit / strategy.equity * 100 : 0
+        
+        table.cell(info_table, 0, 0, "UASB3", bgcolor=color.navy, text_color=color.white, text_size=size.small)
+        table.cell(info_table, 1, 0, trading_symbol, bgcolor=color.navy, text_color=color.white, text_size=size.small)
+        table.cell(info_table, 2, 0, trading_mode, bgcolor=color.navy, text_color=color.white, text_size=size.small)
+        
+        table.cell(info_table, 0, 1, "Signal", text_size=size.tiny)
+        table.cell(info_table, 1, 1, signal_text, bgcolor=signal_color, text_color=color.white, text_size=size.tiny)
+        table.cell(info_table, 2, 1, "Sens:" + str.tostring(signal_sensitivity), text_size=size.tiny)
+        
+        table.cell(info_table, 0, 2, "Position", text_size=size.tiny)
+        table.cell(info_table, 1, 2, pos_text, text_size=size.tiny)
+        table.cell(info_table, 2, 2, "Bars:" + str.tostring(bars_in_trade), text_size=size.tiny)
+        
+        table.cell(info_table, 0, 3, "PnL%", text_size=size.tiny)
+        table.cell(info_table, 1, 3, str.tostring(pos_pnl, "#.##"), bgcolor=pos_pnl > 0 ? color.green : pos_pnl < 0 ? color.red : color.gray, text_size=size.tiny)
+        table.cell(info_table, 2, 3, "Risk:" + str.tostring(risk_percent, "#.#") + "%", text_size=size.tiny)
+        
+        table.cell(info_table, 0, 4, "ATR%", text_size=size.tiny)
+        table.cell(info_table, 1, 4, str.tostring(atr_pct, "#.##"), text_size=size.tiny)
+        table.cell(info_table, 2, 4, "Regime:" + volatility_regime, text_size=size.tiny)
+        
+        table.cell(info_table, 0, 5, "Cooldown", text_size=size.tiny)
+        table.cell(info_table, 1, 5, str.tostring(bar_index - last_entry_bar), bgcolor=cooldown_ok ? color.green : color.red, text_size=size.tiny)
+        table.cell(info_table, 2, 5, "Vol:" + (vol_spike ? "✓" : "✗"), text_size=size.tiny)
+        
+        table.cell(info_table, 0, 6, "TP1", text_size=size.tiny)
+        table.cell(info_table, 1, 6, tp1_hit ? "HIT" : "WAIT", bgcolor=tp1_hit ? color.green : color.gray, text_color=color.white, text_size=size.tiny)
+        table.cell(info_table, 2, 6, "TF:" + str.tostring(tf_minutes, "#") + "m", text_size=size.tiny)
+        
+        triggers_text = str.tostring(math.round((pullback_long or pullback_short ? 1 : 0) + (momentum_long or momentum_short ? 1 : 0) + (breakout_long or breakout_short ? 1 : 0) + (vwap_long or vwap_short ? 1 : 0)))
+        table.cell(info_table, 0, 7, "Triggers", text_size=size.tiny)
+        table.cell(info_table, 1, 7, triggers_text + "/4", text_size=size.tiny)
+        table.cell(info_table, 2, 7, "FS:" + str.tostring(final_sensitivity, "#.#"), text_size=size.tiny)

@@ -1,0 +1,703 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International  
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © Order Block Strategy using Nephew Sam's EXACT OB Logic + Signal Alerts
+
+//@version=5
+indicator('Order Blocks + Alerts (Nephew Sam Logic)', overlay=true, max_bars_back=500, max_labels_count=100, max_lines_count=100, max_boxes_count=200)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+grpFractal = "═══ FRACTAL SETTINGS ═══"
+showFractals = input.bool(false, "Show Fractal Points", group=grpFractal)
+filterFractal = input.string("3", "Fractal Type (3 or 5 bar)", options=["3", "5"], group=grpFractal)
+
+grpOB = "═══ ORDER BLOCK SETTINGS ═══"
+findObType = input.string("Close", "OB Detection Method", options=["Close", "HL"], group=grpOB,
+     tooltip="Close: Fractal break on close. HL: Fractal break on high/low")
+filterFvgs = input.bool(true, "Filter only OB that follow with FVG", group=grpOB)
+fvgDistance = input.int(3, "Max bars between OB and FVG", minval=1, maxval=6, group=grpOB)
+lineHeight = input.string("Body", "OB Height", options=["Body", "Wick"], group=grpOB)
+delLines = input.bool(true, "Delete OB after mitigation", group=grpOB)
+int barsBack = input.int(500, "Bars to look back", minval=100, maxval=500, group=grpOB)
+
+grpStyle = "═══ STYLE SETTINGS ═══"
+linesStyle = input.string("Solid", "Lines Style", options=["Solid", "Dashed", "Dotted"], group=grpStyle)
+lineLength = input.int(50, "Length of OB lines", minval=5, maxval=200, group=grpStyle)
+linesWidth = input.int(2, "Lines Width", minval=1, maxval=4, group=grpStyle)
+bearLineColor = input.color(color.red, "Bear OB Color", group=grpStyle)
+bullLineColor = input.color(color.blue, "Bull OB Color", group=grpStyle)
+bool useBoxes = input.bool(true, "Use Boxes instead of Lines", group=grpStyle)
+int boxTransparency = input.int(80, "Box Transparency", minval=0, maxval=100, group=grpStyle)
+
+grpSignal = "═══ SIGNAL SETTINGS ═══"
+bool enableSignals = input.bool(true, "Enable Buy/Sell Signals", group=grpSignal)
+int consecutiveCandles = input.int(2, "Consecutive Candles Required", minval=2, maxval=5, group=grpSignal,
+     tooltip="Number of consecutive bullish/bearish candles after OB tap")
+bool enableAlerts = input.bool(true, "Enable Alerts", group=grpSignal)
+color buySignalColor = input.color(color.lime, "Buy Signal Color", group=grpSignal)
+color sellSignalColor = input.color(color.red, "Sell Signal Color", group=grpSignal)
+
+grpVolume = "═══ VOLUME FILTER ═══"
+bool useVolumeFilter = input.bool(true, "Enable Volume Confirmation", group=grpVolume,
+     tooltip="Only signal when volume is above average")
+int volumePeriod = input.int(20, "Volume MA Period", minval=5, maxval=50, group=grpVolume)
+float volumeMultiplier = input.float(1.0, "Volume Threshold (x Average)", minval=0.5, maxval=3.0, step=0.1, group=grpVolume,
+     tooltip="1.0 = at or above average, 1.5 = 50% above average")
+
+grpSLTP = "═══ SL/TP SETTINGS ═══"
+bool showSLTP = input.bool(true, "Show SL/TP Levels", group=grpSLTP)
+float riskRewardRatio = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.5, group=grpSLTP,
+     tooltip="TP distance = SL distance × this value")
+float slBuffer = input.float(0.1, "SL Buffer (%)", minval=0.0, maxval=1.0, step=0.05, group=grpSLTP,
+     tooltip="Extra buffer below/above OB for stop loss")
+color slColor = input.color(color.red, "Stop Loss Color", group=grpSLTP)
+color tpColor = input.color(color.green, "Take Profit Color", group=grpSLTP)
+int slTpLineLength = input.int(30, "SL/TP Line Length (bars)", minval=10, maxval=100, group=grpSLTP)
+
+grpStats = "═══ WIN RATE TRACKING ═══"
+bool trackWinRate = input.bool(true, "Track Win Rate", group=grpStats)
+bool showStatsTable = input.bool(true, "Show Statistics Table", group=grpStats)
+
+grpDash = "═══ DASHBOARD SETTINGS ═══"
+string dashboardSize = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal", "Large"], group=grpDash)
+string dashboardPosition = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grpDash)
+string statsPosition = input.string("Bottom Right", "Stats Table Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grpDash)
+
+// Get line style
+lineStyle = linesStyle == "Solid" ? line.style_solid : linesStyle == "Dashed" ? line.style_dashed : line.style_dotted
+
+// Get dashboard size function
+f_getSize() =>
+    dashboardSize == "Tiny" ? size.tiny : dashboardSize == "Small" ? size.small : dashboardSize == "Normal" ? size.normal : size.large
+
+// Get dashboard positions
+f_getDashPos() =>
+    dashboardPosition == "Top Right" ? position.top_right : dashboardPosition == "Top Left" ? position.top_left : dashboardPosition == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+f_getStatsPos() =>
+    statsPosition == "Top Right" ? position.top_right : statsPosition == "Top Left" ? position.top_left : statsPosition == "Bottom Right" ? position.bottom_right : position.bottom_left
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRACTAL FUNCTIONS (EXACT Nephew Sam Logic)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+isRegularFractal(mode) =>
+    ret = mode == "Buy" ? high[0] < high[1] and (high[2] < high[1] or (high[2] == high[1] and high[3] < high[2])) : 
+          mode == "Sell" ? low[0] > low[1] and (low[2] > low[1] or (low[2] == low[1] and low[3] > low[2])) : false
+    ret
+
+isBWFractal(mode) =>
+    ret = mode == "Buy" ? high[0] < high[2] and high[1] < high[2] and high[3] < high[2] and high[4] < high[2] : 
+          mode == "Sell" ? low[0] > low[2] and low[1] > low[2] and low[3] > low[2] and low[4] > low[2] : false
+    ret
+
+isFractalHigh() => filterFractal == "3" ? isRegularFractal("Buy") : isBWFractal("Buy")
+isFractalLow() => filterFractal == "3" ? isRegularFractal("Sell") : isBWFractal("Sell")
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+resolutionInMinutes() =>
+    resInMinutes = timeframe.multiplier * (timeframe.isseconds ? 1.0 / 60 : timeframe.isminutes ? 1.0 : timeframe.isdaily ? 60.0 * 24 : timeframe.isweekly ? 60.0 * 24 * 7 : timeframe.ismonthly ? 60.0 * 24 * 30.4375 : na)
+    resInMinutes
+
+f_timeFrom(length, idx) =>
+    int _timeFrom = int(time[idx] + resolutionInMinutes() * 60 * 1000 * length)
+    _timeFrom
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TYPE DEFINITION FOR TRACKING OBs
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type OBZone
+    float top
+    float bottom
+    bool isBull
+    bool tapped
+    bool signalTriggered
+    int tappedBar
+    line line1
+    line line2
+    box obBox
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GLOBAL VARIABLES (EXACT Nephew Sam Structure)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Fractal arrays (Nephew Sam style)
+var fractal_highs = array.new_float(0)
+var fractal_high_times = array.new_int(0)
+var fractal_lows = array.new_float(0)
+var fractal_low_times = array.new_int(0)
+
+// OB Line arrays (Nephew Sam style)
+var line1 = array.new_line()  // Bear OB top
+var line2 = array.new_line()  // Bear OB bottom
+var line3 = array.new_line()  // Bull OB bottom
+var line4 = array.new_line()  // Bull OB top
+
+// Box arrays for optional box display
+var bearBoxes = array.new_box()
+var bullBoxes = array.new_box()
+
+// OB Zone tracking for signals
+var array<OBZone> obZones = array.new<OBZone>()
+
+// Signal variables (reset each bar - no var)
+bool buySignal = false
+bool sellSignal = false
+
+// Volume calculation
+float volumeMA = ta.sma(volume, volumePeriod)
+bool volumeConfirmed = not useVolumeFilter or (volume >= volumeMA * volumeMultiplier)
+
+// Trade tracking for win rate
+type TradeRecord
+    float entry
+    float sl
+    float tp
+    bool isBuy
+    int entryBar
+    bool isOpen
+    bool isWin
+    bool isClosed
+
+var array<TradeRecord> trades = array.new<TradeRecord>()
+var int totalWins = 0
+var int totalLosses = 0
+var int totalTrades = 0
+
+// SL/TP line arrays
+var array<line> slLines = array.new_line()
+var array<line> tpLines = array.new_line()
+var array<label> slLabels = array.new_label()
+var array<label> tpLabels = array.new_label()
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRACTAL DETECTION (EXACT Nephew Sam Logic)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Check for fractal HIGH and add to array
+if isFractalHigh()
+    int offset = filterFractal == "3" ? 1 : 2
+    array.push(fractal_highs, high[offset])
+    array.push(fractal_high_times, time[offset])
+
+// Check for fractal LOW and add to array
+if isFractalLow()
+    int offset = filterFractal == "3" ? 1 : 2
+    array.push(fractal_lows, low[offset])
+    array.push(fractal_low_times, time[offset])
+
+// Limit fractal arrays to prevent memory issues
+while array.size(fractal_highs) > 100
+    array.shift(fractal_highs)
+    array.shift(fractal_high_times)
+while array.size(fractal_lows) > 100
+    array.shift(fractal_lows)
+    array.shift(fractal_low_times)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORDER BLOCK DETECTION (EXACT Nephew Sam Logic)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BEARISH ORDER BLOCK DETECTION
+// When price breaks BELOW a fractal low, find the highest bullish candle
+// ─────────────────────────────────────────────────────────────────────────────
+
+if array.size(fractal_lows) > 0
+    for i = array.size(fractal_lows) - 1 to 0 by 1
+        // Check if price breaks below the fractal low
+        float fractalLowVal = array.get(fractal_lows, i)
+        bool breakCondition = findObType == "Close" ? close < fractalLowVal : low < fractalLowVal
+        
+        if breakCondition
+            int idx = 0
+            float maxHigh = low  // Start with current low
+            int gapIndex = 0
+            int fractalTime = array.get(fractal_low_times, i)
+            
+            // Loop back to find the highest bullish candle between fractal and now
+            for k = 0 to barsBack by 1
+                // Check for bearish FVG (gap down)
+                bool bearishGap = (close[k+1] < low[k+2]) and (high[k] < low[k+2])
+                
+                // Stop loop if reached the fractal time
+                if time[k] < fractalTime
+                    break
+                
+                // Find bullish candles and track the one with highest high
+                if close[k] > open[k] and high[k] > maxHigh
+                    idx := k
+                    maxHigh := high[k]
+                
+                if bearishGap and high[k] > maxHigh
+                    gapIndex := k + 2
+            
+            // FVG filter check
+            bool fvgOk = filterFvgs ? gapIndex > 0 and idx - gapIndex >= 0 and idx - gapIndex <= fvgDistance : true
+            
+            // Create the Order Block if valid
+            if idx != 0 and fvgOk
+                int timeTo = f_timeFrom(lineLength, idx)
+                float obBottom = lineHeight == "Body" ? open[idx] : low[idx]
+                float obTop = high[idx]
+                
+                if useBoxes
+                    newBox = box.new(bar_index - idx, obTop, bar_index + lineLength, obBottom, 
+                         bgcolor=color.new(bearLineColor, boxTransparency), border_color=bearLineColor, border_width=linesWidth)
+                    array.push(bearBoxes, newBox)
+                else
+                    array.push(line1, line.new(x1=time[idx], y1=obTop, x2=timeTo, y2=obTop, xloc=xloc.bar_time, style=lineStyle, color=bearLineColor, width=linesWidth))
+                    array.push(line2, line.new(x1=time[idx], y1=obBottom, x2=timeTo, y2=obBottom, xloc=xloc.bar_time, style=lineStyle, color=bearLineColor, width=linesWidth))
+                
+                // Track for signals
+                newZone = OBZone.new(obTop, obBottom, false, false, false, 0, na, na, na)
+                array.push(obZones, newZone)
+            
+            // Remove processed fractal
+            array.remove(fractal_lows, i)
+            array.remove(fractal_low_times, i)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BULLISH ORDER BLOCK DETECTION
+// When price breaks ABOVE a fractal high, find the lowest bearish candle
+// ─────────────────────────────────────────────────────────────────────────────
+
+if array.size(fractal_highs) > 0
+    for i = array.size(fractal_highs) - 1 to 0 by 1
+        // Check if price breaks above the fractal high
+        float fractalHighVal = array.get(fractal_highs, i)
+        bool breakCondition = findObType == "Close" ? close > fractalHighVal : high > fractalHighVal
+        
+        if breakCondition
+            int idx = 0
+            float minLow = high  // Start with current high
+            int gapIndex = 0
+            int fractalTime = array.get(fractal_high_times, i)
+            
+            // Loop back to find the lowest bearish candle between fractal and now
+            for k = 0 to barsBack by 1
+                // Check for bullish FVG (gap up)
+                bool bullishGap = (close[k+1] > high[k+2]) and (low[k] > high[k+2])
+                
+                // Stop loop if reached the fractal time
+                if time[k] < fractalTime
+                    break
+                
+                // Find bearish candles and track the one with lowest low
+                if close[k] < open[k] and low[k] < minLow
+                    idx := k
+                    minLow := low[k]
+                
+                if bullishGap
+                    gapIndex := k + 2
+            
+            // FVG filter check
+            bool fvgOk = filterFvgs ? gapIndex > 0 and idx - gapIndex >= 0 and idx - gapIndex <= fvgDistance : true
+            
+            // Create the Order Block if valid
+            if idx != 0 and fvgOk
+                int timeTo = f_timeFrom(lineLength, idx)
+                float obTop = lineHeight == "Body" ? open[idx] : high[idx]
+                float obBottom = low[idx]
+                
+                if useBoxes
+                    newBox = box.new(bar_index - idx, obTop, bar_index + lineLength, obBottom, 
+                         bgcolor=color.new(bullLineColor, boxTransparency), border_color=bullLineColor, border_width=linesWidth)
+                    array.push(bullBoxes, newBox)
+                else
+                    array.push(line3, line.new(x1=time[idx], y1=obBottom, x2=timeTo, y2=obBottom, xloc=xloc.bar_time, style=lineStyle, color=bullLineColor, width=linesWidth))
+                    array.push(line4, line.new(x1=time[idx], y1=obTop, x2=timeTo, y2=obTop, xloc=xloc.bar_time, style=lineStyle, color=bullLineColor, width=linesWidth))
+                
+                // Track for signals
+                newZone = OBZone.new(obTop, obBottom, true, false, false, 0, na, na, na)
+                array.push(obZones, newZone)
+            
+            // Remove processed fractal
+            array.remove(fractal_highs, i)
+            array.remove(fractal_high_times, i)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OB MITIGATION & TAP DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Delete BEARISH OBs when mitigated (price closes above the top)
+int line1Size = array.size(line1)
+if line1Size > 0
+    for i = line1Size - 1 to 0 by 1
+        if i >= array.size(line1)  // Safety check
+            continue
+        float obTop = line.get_y1(array.get(line1, i))
+        if close > obTop
+            if delLines
+                line.delete(array.get(line1, i))
+                line.delete(array.get(line2, i))
+            array.remove(line1, i)
+            array.remove(line2, i)
+
+int bearBoxSize = array.size(bearBoxes)
+if bearBoxSize > 0
+    for i = bearBoxSize - 1 to 0 by 1
+        if i >= array.size(bearBoxes)  // Safety check
+            continue
+        thisBox = array.get(bearBoxes, i)
+        float obTop = box.get_top(thisBox)
+        if close > obTop
+            if delLines
+                box.delete(thisBox)
+            array.remove(bearBoxes, i)
+
+// Delete BULLISH OBs when mitigated (price closes below the bottom)
+int line3Size = array.size(line3)
+if line3Size > 0
+    for i = line3Size - 1 to 0 by 1
+        if i >= array.size(line3)  // Safety check
+            continue
+        float obBot = line.get_y1(array.get(line3, i))
+        if close < obBot
+            if delLines
+                line.delete(array.get(line3, i))
+                line.delete(array.get(line4, i))
+            array.remove(line3, i)
+            array.remove(line4, i)
+
+int bullBoxSize = array.size(bullBoxes)
+if bullBoxSize > 0
+    for i = bullBoxSize - 1 to 0 by 1
+        if i >= array.size(bullBoxes)  // Safety check
+            continue
+        thisBox = array.get(bullBoxes, i)
+        float obBot = box.get_bottom(thisBox)
+        if close < obBot
+            if delLines
+                box.delete(thisBox)
+            array.remove(bullBoxes, i)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIGNAL GENERATION - TAP + CONSECUTIVE CANDLES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Consecutive candle detection functions
+// Checks the last N closed candles (bar[1] to bar[N])
+isConsecutiveBullish(int count) =>
+    bool result = true
+    for j = 0 to count - 1
+        if close[j] <= open[j]
+            result := false
+            break
+    result
+
+isConsecutiveBearish(int count) =>
+    bool result = true
+    for j = 0 to count - 1
+        if close[j] >= open[j]
+            result := false
+            break
+    result
+
+// Process OB Zones for tap and signal
+int zonesSize = array.size(obZones)
+if enableSignals and zonesSize > 0
+    for i = zonesSize - 1 to 0 by 1
+        if i >= array.size(obZones)  // Safety check after removals
+            continue
+        zone = array.get(obZones, i)
+        
+        if zone.isBull
+            // Remove if mitigated first (price closes below OB)
+            if close < zone.bottom
+                array.remove(obZones, i)
+                continue
+            
+            // BULLISH OB - Check for tap (price wicks into the zone)
+            bool tapCondition = low <= zone.top and close > zone.bottom
+            
+            if not zone.tapped and tapCondition
+                zone.tapped := true
+                zone.tappedBar := bar_index
+            
+            // Check for BUY signal: tapped + consecutive bullish candles + volume
+            if zone.tapped and not zone.signalTriggered
+                if isConsecutiveBullish(consecutiveCandles) and volumeConfirmed
+                    buySignal := true
+                    zone.signalTriggered := true
+                    
+                    // Calculate and draw SL/TP
+                    if showSLTP or trackWinRate
+                        float slLevel = zone.bottom * (1 - slBuffer / 100)
+                        float riskAmount = close - slLevel
+                        float tpLevel = close + (riskAmount * riskRewardRatio)
+                        
+                        if showSLTP
+                            // Draw SL line
+                            slLine = line.new(bar_index, slLevel, bar_index + slTpLineLength, slLevel, 
+                                 color=slColor, style=line.style_dashed, width=1)
+                            array.push(slLines, slLine)
+                            slLbl = label.new(bar_index + slTpLineLength, slLevel, "SL", 
+                                 style=label.style_label_left, color=slColor, textcolor=color.white, size=size.tiny)
+                            array.push(slLabels, slLbl)
+                            
+                            // Draw TP line
+                            tpLine = line.new(bar_index, tpLevel, bar_index + slTpLineLength, tpLevel, 
+                                 color=tpColor, style=line.style_dashed, width=1)
+                            array.push(tpLines, tpLine)
+                            tpLbl = label.new(bar_index + slTpLineLength, tpLevel, "TP", 
+                                 style=label.style_label_left, color=tpColor, textcolor=color.white, size=size.tiny)
+                            array.push(tpLabels, tpLbl)
+                        
+                        // Track trade for win rate
+                        if trackWinRate
+                            newTrade = TradeRecord.new(close, slLevel, tpLevel, true, bar_index, true, false, false)
+                            array.push(trades, newTrade)
+                            totalTrades := totalTrades + 1
+        
+        else
+            // Remove if mitigated first (price closes above OB)
+            if close > zone.top
+                array.remove(obZones, i)
+                continue
+            
+            // BEARISH OB - Check for tap (price wicks into the zone)
+            bool tapCondition = high >= zone.bottom and close < zone.top
+            
+            if not zone.tapped and tapCondition
+                zone.tapped := true
+                zone.tappedBar := bar_index
+            
+            // Check for SELL signal: tapped + consecutive bearish candles + volume
+            if zone.tapped and not zone.signalTriggered
+                if isConsecutiveBearish(consecutiveCandles) and volumeConfirmed
+                    sellSignal := true
+                    zone.signalTriggered := true
+                    
+                    // Calculate and draw SL/TP
+                    if showSLTP or trackWinRate
+                        float slLevel = zone.top * (1 + slBuffer / 100)
+                        float riskAmount = slLevel - close
+                        float tpLevel = close - (riskAmount * riskRewardRatio)
+                        
+                        if showSLTP
+                            // Draw SL line
+                            slLine = line.new(bar_index, slLevel, bar_index + slTpLineLength, slLevel, 
+                                 color=slColor, style=line.style_dashed, width=1)
+                            array.push(slLines, slLine)
+                            slLbl = label.new(bar_index + slTpLineLength, slLevel, "SL", 
+                                 style=label.style_label_left, color=slColor, textcolor=color.white, size=size.tiny)
+                            array.push(slLabels, slLbl)
+                            
+                            // Draw TP line
+                            tpLine = line.new(bar_index, tpLevel, bar_index + slTpLineLength, tpLevel, 
+                                 color=tpColor, style=line.style_dashed, width=1)
+                            array.push(tpLines, tpLine)
+                            tpLbl = label.new(bar_index + slTpLineLength, tpLevel, "TP", 
+                                 style=label.style_label_left, color=tpColor, textcolor=color.white, size=size.tiny)
+                            array.push(tpLabels, tpLbl)
+                        
+                        // Track trade for win rate
+                        if trackWinRate
+                            newTrade = TradeRecord.new(close, slLevel, tpLevel, false, bar_index, true, false, false)
+                            array.push(trades, newTrade)
+                            totalTrades := totalTrades + 1
+
+// Limit array sizes to prevent memory issues
+while array.size(obZones) > 50
+    array.shift(obZones)
+
+// Limit visual elements
+while array.size(bullBoxes) > 50
+    box.delete(array.shift(bullBoxes))
+while array.size(bearBoxes) > 50
+    box.delete(array.shift(bearBoxes))
+while array.size(line1) > 50
+    line.delete(array.shift(line1))
+    line.delete(array.shift(line2))
+while array.size(line3) > 50
+    line.delete(array.shift(line3))
+    line.delete(array.shift(line4))
+
+// Limit SL/TP visual elements
+while array.size(slLines) > 30
+    line.delete(array.shift(slLines))
+    label.delete(array.shift(slLabels))
+while array.size(tpLines) > 30
+    line.delete(array.shift(tpLines))
+    label.delete(array.shift(tpLabels))
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRADE OUTCOME TRACKING (Win Rate Calculation)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if trackWinRate and array.size(trades) > 0
+    for i = array.size(trades) - 1 to 0 by 1
+        if i >= array.size(trades)
+            continue
+        trade = array.get(trades, i)
+        
+        if trade.isOpen and not trade.isClosed
+            if trade.isBuy
+                // BUY trade: Check if TP hit (high >= tp) or SL hit (low <= sl)
+                if high >= trade.tp
+                    trade.isWin := true
+                    trade.isClosed := true
+                    trade.isOpen := false
+                    totalWins := totalWins + 1
+                else if low <= trade.sl
+                    trade.isWin := false
+                    trade.isClosed := true
+                    trade.isOpen := false
+                    totalLosses := totalLosses + 1
+            else
+                // SELL trade: Check if TP hit (low <= tp) or SL hit (high >= sl)
+                if low <= trade.tp
+                    trade.isWin := true
+                    trade.isClosed := true
+                    trade.isOpen := false
+                    totalWins := totalWins + 1
+                else if high >= trade.sl
+                    trade.isWin := false
+                    trade.isClosed := true
+                    trade.isOpen := false
+                    totalLosses := totalLosses + 1
+
+// Limit trades array
+while array.size(trades) > 100
+    array.shift(trades)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLOT SIGNALS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+plotshape(enableSignals and buySignal, title="BUY Signal",
+     style=shape.labelup, location=location.belowbar,
+     color=buySignalColor, text="BUY", textcolor=color.white, size=size.normal)
+
+plotshape(enableSignals and sellSignal, title="SELL Signal",
+     style=shape.labeldown, location=location.abovebar,
+     color=sellSignalColor, text="SELL", textcolor=color.white, size=size.normal)
+
+// Plot fractals (optional)
+plotshape(showFractals and isFractalHigh(), title="Fractal High",
+     style=shape.triangledown, location=location.abovebar,
+     color=color.red, offset=filterFractal == "3" ? -1 : -2, size=size.auto)
+plotshape(showFractals and isFractalLow(), title="Fractal Low",
+     style=shape.triangleup, location=location.belowbar,
+     color=color.blue, offset=filterFractal == "3" ? -1 : -2, size=size.auto)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+alertcondition(enableAlerts and buySignal,
+     title="🟢 BUY Signal - OB Tap + Consecutive Candles",
+     message="🚀 BUY SIGNAL on {{ticker}} ({{interval}})\nBullish Order Block tapped with consecutive bullish candles!\nConsider LONG entry.")
+
+alertcondition(enableAlerts and sellSignal,
+     title="🔴 SELL Signal - OB Tap + Consecutive Candles",
+     message="🔻 SELL SIGNAL on {{ticker}} ({{interval}})\nBearish Order Block tapped with consecutive bearish candles!\nConsider SHORT entry.")
+
+alertcondition(buySignal or sellSignal,
+     title="⚡ Any OB Signal",
+     message="Order Block Signal on {{ticker}} ({{interval}}) - Check chart!")
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var table dash = table.new(f_getDashPos(), 2, 5, chart.bg_color, frame_color=color.gray, frame_width=1)
+
+if barstate.islast
+    int bullCount = useBoxes ? array.size(bullBoxes) : array.size(line3)
+    int bearCount = useBoxes ? array.size(bearBoxes) : array.size(line1)
+    int tappedCount = 0
+    for zone in obZones
+        if zone.tapped
+            tappedCount += 1
+    
+    dash.cell(0, 0, "Bull OBs", text_color=bullLineColor, text_size=f_getSize())
+    dash.cell(1, 0, str.tostring(bullCount), text_color=chart.fg_color, text_size=f_getSize())
+    
+    dash.cell(0, 1, "Bear OBs", text_color=bearLineColor, text_size=f_getSize())
+    dash.cell(1, 1, str.tostring(bearCount), text_color=chart.fg_color, text_size=f_getSize())
+    
+    dash.cell(0, 2, "Tapped", text_color=color.yellow, text_size=f_getSize())
+    dash.cell(1, 2, str.tostring(tappedCount), text_color=chart.fg_color, text_size=f_getSize())
+    
+    dash.cell(0, 3, "Volume", text_color=color.gray, text_size=f_getSize())
+    dash.cell(1, 3, volumeConfirmed ? "✓" : "✗", text_color=volumeConfirmed ? color.lime : color.red, text_size=f_getSize())
+    
+    dash.cell(0, 4, "R:R", text_color=color.gray, text_size=f_getSize())
+    dash.cell(1, 4, "1:" + str.tostring(riskRewardRatio, "#.#"), text_color=color.aqua, text_size=f_getSize())
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WIN RATE STATISTICS TABLE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+var table statsTable = table.new(f_getStatsPos(), 2, 6, chart.bg_color, frame_color=color.gray, frame_width=1)
+
+if barstate.islast and showStatsTable and trackWinRate
+    int closedTrades = totalWins + totalLosses
+    // FIXED: Cast to float to avoid integer division (was returning 0 or 100 only)
+    float winRate = closedTrades > 0 ? (float(totalWins) / float(closedTrades)) * 100.0 : 0.0
+    int openTrades = 0
+    for trade in trades
+        if trade.isOpen
+            openTrades += 1
+    
+    // Expected value with 1:RR ratio
+    // EV = (WinRate × RR) - (LossRate × 1)
+    float lossRate = closedTrades > 0 ? (float(totalLosses) / float(closedTrades)) * 100.0 : 0.0
+    float expectedValue = closedTrades > 0 ? ((winRate/100 * riskRewardRatio) - (lossRate/100 * 1)) * 100 : 0.0
+    
+    // Profit Factor = (Wins × RR) / Losses
+    float profitFactor = totalLosses > 0 ? (totalWins * riskRewardRatio) / totalLosses : totalWins > 0 ? 999.0 : 0.0
+    
+    // Color based on performance
+    color winRateColor = winRate >= 50 ? color.lime : winRate >= 33 ? color.yellow : color.red
+    color evColor = expectedValue >= 0 ? color.lime : color.red
+    color pfColor = profitFactor >= 1 ? color.lime : color.red
+    
+    statsTable.cell(0, 0, "══ STATS ══", text_color=color.white, text_size=f_getSize())
+    statsTable.cell(1, 0, "", text_color=chart.fg_color, text_size=f_getSize())
+    
+    statsTable.cell(0, 1, "Total Trades", text_color=color.gray, text_size=f_getSize())
+    statsTable.cell(1, 1, str.tostring(closedTrades) + " (" + str.tostring(openTrades) + " open)", text_color=chart.fg_color, text_size=f_getSize())
+    
+    statsTable.cell(0, 2, "Wins / Losses", text_color=color.gray, text_size=f_getSize())
+    statsTable.cell(1, 2, str.tostring(totalWins) + " / " + str.tostring(totalLosses), text_color=chart.fg_color, text_size=f_getSize())
+    
+    statsTable.cell(0, 3, "Win Rate", text_color=color.gray, text_size=f_getSize())
+    statsTable.cell(1, 3, str.tostring(winRate, "#.#") + "%", text_color=winRateColor, text_size=f_getSize())
+    
+    statsTable.cell(0, 4, "Profit Factor", text_color=color.gray, text_size=f_getSize())
+    statsTable.cell(1, 4, str.tostring(profitFactor, "#.##"), text_color=pfColor, text_size=f_getSize())
+    
+    statsTable.cell(0, 5, "Exp. Value", text_color=color.gray, text_size=f_getSize())
+    statsTable.cell(1, 5, str.tostring(expectedValue, "#.#") + "%", text_color=evColor, text_size=f_getSize())
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WATERMARK
+// ═══════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
+    var table watermark = table.new(position.bottom_left, 1, 1)
+    table.cell(watermark, 0, 0, text="OB Logic: Nephew Sam | Signals Added", text_size=size.small, text_color=color.new(color.gray, 50))

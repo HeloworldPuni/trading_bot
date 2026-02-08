@@ -1,0 +1,53 @@
+//@version=6
+strategy("EMA 200 + MACD + RSI Strategy", overlay=true)
+
+// === PARÂMETROS ===
+length_ema = 200
+rsi_length = 14
+src = close
+
+// === EMA 200 e Canal ===
+ema200 = ta.ema(src, length_ema)
+desvio = math.abs(src - ema200)
+banda_superior = ema200 + ta.ema(desvio, length_ema)
+banda_inferior = ema200 - ta.ema(desvio, length_ema)
+
+p_sup = plot(banda_superior, title="Banda Superior", color=color.orange)
+p_inf = plot(banda_inferior, title="Banda Inferior", color=color.orange)
+fill(p_sup, p_inf, color=color.rgb(255, 153, 0, 78))
+
+// === MACD ===
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+macd_cross_up = ta.crossover(macdLine, signalLine)
+macd_cross_down = ta.crossunder(macdLine, signalLine)
+
+// === RSI ===
+rsi = ta.rsi(close, rsi_length)
+
+// === CONDIÇÕES DE ENTRADA ===
+longCondition = close < banda_inferior and macd_cross_up and rsi < 30
+shortCondition = close > banda_superior and macd_cross_down and rsi > 60
+
+// === VARIÁVEIS PERSISTENTES PARA TP/SL ===
+var float sl_atual = na
+var float tp_atual = na
+
+if strategy.position_size == 0
+    sl_atual := na
+    tp_atual := na
+
+// === ENTRADAS ===
+if (longCondition and strategy.position_size == 0)
+    sl_atual := ta.lowest(low, 14)
+    tp_atual := ema200
+    strategy.entry("Long", strategy.long)
+
+if (shortCondition and strategy.position_size == 0)
+    sl_atual := ta.highest(high, 14)
+    tp_atual := ema200
+    strategy.entry("Short", strategy.short)
+
+// === SAÍDAS ===
+if not na(sl_atual) and not na(tp_atual)
+    strategy.exit("Long TP/SL", from_entry="Long", stop=sl_atual, limit=tp_atual)
+    strategy.exit("Short TP/SL", from_entry="Short", stop=sl_atual, limit=tp_atual)

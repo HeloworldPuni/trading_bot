@@ -1,0 +1,74 @@
+//@version=5
+strategy("Power Law Oscillator Strategy - Fixed", overlay=false, pyramiding=0)
+
+// -----------------
+// USER INPUTS
+// -----------------
+length            = input.int(200,    minval=1,  title="Percentile Calculation Period")
+upper_percentile  = input.float(90.0, "Upper Percentile", minval=50,  maxval=100)
+lower_percentile  = input.float(45.0, "Lower Percentile", minval=0,   maxval=50)
+useStopLoss       = input.bool(true,  title="Use Stop Loss?")
+stopLossPerc      = input.float(5.0,  title="Stop Loss %",   minval=0.0)
+useTakeProfit     = input.bool(true,  title="Use Take Profit?")
+takeProfitPerc    = input.float(10.0, title="Take Profit %", minval=0.0)
+
+// -----------------
+// POWER LAW OSCILLATOR CALCULATION
+// -----------------
+var inceptionDate = timestamp(2009, 1, 3, 0, 0)
+daysSinceInception = math.max((time - inceptionDate) / 86400000, 1)
+modelPrice = math.exp(5.71 * math.log(daysSinceInception) - 38.16)
+oscillator = ((close - modelPrice) / modelPrice) * 100
+
+var float[] osc_values = array.new_float(0)
+if barstate.isnew
+    array.unshift(osc_values, oscillator)
+    if array.size(osc_values) > length
+        array.pop(osc_values)
+
+percentile(float[] arr, float percent) =>
+    arr_sorted = array.copy(arr)
+    array.sort(arr_sorted, order.ascending)
+    index = math.floor((array.size(arr_sorted) - 1) * percent / 100)
+    array.get(arr_sorted, index)
+
+upperBand = array.size(osc_values) >= length ? percentile(osc_values, upper_percentile) : na
+lowerBand = array.size(osc_values) >= length ? percentile(osc_values, lower_percentile) : na
+
+// -----------------
+// STRATEGY SIGNALS
+// -----------------
+longCondition  = oscillator < lowerBand
+exitCondition  = oscillator > upperBand
+
+// -----------------
+// POSITION SIZING: Ensuring a positive quantity
+// -----------------
+tradeSizePerc = 100.0  // % of equity to use per trade
+tradeSize = math.abs(strategy.equity * tradeSizePerc * 0.01)  // Ensure positive qty
+maxTradeSize = 1000000  // Optional cap on trade size to prevent oversized orders
+
+// -----------------
+// STRATEGY ENTRIES
+// -----------------
+if longCondition
+    strategy.entry(id="Long", direction=strategy.long, qty=math.min(tradeSize, maxTradeSize))
+
+// -----------------
+// STOP LOSS / TAKE PROFIT: Written on one line to prevent splitting errors
+// -----------------
+if strategy.position_size > 0
+    stopPrice = strategy.position_avg_price * (1.0 - stopLossPerc * 0.01)
+    takeProfPrice = strategy.position_avg_price * (1.0 + takeProfitPerc * 0.01)
+    strategy.exit(id="Exit Long", stop=useStopLoss ? stopPrice : na, limit=useTakeProfit ? takeProfPrice : na, when=exitCondition)
+
+// -----------------
+// PLOTS & VISUALS
+// -----------------
+plot(oscillator, color=color.white, linewidth=2, title="Power Law Oscillator")
+plot(upperBand,  color=color.red,   linewidth=2, title="Upper Band")
+plot(lowerBand,  color=color.green, linewidth=2, title="Lower Band")
+bgcolor(oscillator > upperBand ? color.new(color.red, 80) : na)
+bgcolor(oscillator < lowerBand ? color.new(color.green, 80) : na)
+plotshape(longCondition, title="Long Signal", location=location.bottom, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(exitCondition, title="Exit Signal", location=location.top, color=color.red, style=shape.triangledown, size=size.small)

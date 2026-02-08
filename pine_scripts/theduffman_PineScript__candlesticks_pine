@@ -1,0 +1,59 @@
+//@version=5
+indicator("Candlesticks",overlay=true)
+
+//References:
+// Pin Bar: https://forexbee.co/pin-bar-forex-trading-strategy/?expand_article=1
+
+var showPinBar = input.bool(false, "Mark candlestick pin bars?", group="Patterns")
+var showEngulfing = input.bool(false, "Mark engulfing candlesticks?", group="Patterns")
+var pinSizePerVal = input.int(50, "Size of the wick as a percentage.", group="Pin Bar Settings")
+var pinbarBodyPerVal = input.int(25, "The percent size of the body.", group="Pin Bar Settings")
+var reversal3Bar = input.bool(false, "Mark the 3rd candlestick in a 3-bar reversal pattern?", group="Patterns")
+var pinSizePer = pinSizePerVal / 100
+var pinbarBodyPer = pinbarBodyPerVal / 100
+
+// Candlestick part lengths and percentages.
+candlestickLen = high - low
+bodyLen = math.abs(close - open)
+upShadowLen = (high - (open > close? open : close))
+downShadowLen = ((open > close? close : open) - low)
+bodyPer = bodyLen / candlestickLen
+upShadowPer = upShadowLen / candlestickLen
+downShadowPer = downShadowLen / candlestickLen
+
+showPinBar_l = showPinBar and upShadowPer > pinSizePer and bodyPer < pinbarBodyPer
+showPinBar_h = showPinBar and downShadowPer > pinSizePer and bodyPer < pinbarBodyPer
+
+plotshape(showPinBar_h, style=shape.arrowdown, color=color.lime, location=location.top, text="P", textcolor=color.lime)
+plotshape(showPinBar_l, style=shape.arrowup, color=color.red, location=location.bottom, text="P", textcolor=color.red)
+
+showEngulfing_l = showEngulfing and close[1] > open[1] and open > close and close[1] <= open and open[1] >= close and (close[1] < open or open[1] > close)
+showEngulfing_h = showEngulfing and open[1] > close[1] and close > open and open[1] <= close and close[1] >= open and (open[1] < close or close[1] > open)
+
+plotshape(showEngulfing_h, style=shape.square, color=color.lime, location=location.top, text="E", textcolor=color.lime)
+plotshape(showEngulfing_l, style=shape.square, color=color.red, location=location.bottom, text="E", textcolor=color.red)
+
+show3Bar_l = false
+show3Bar_h = false
+//-- Bearish 3-Bar Reversal
+// Left-bar and center-bar are up bars:
+if (open[2] < close[2] and open[1] < close[1]) 
+    // The center-bar has a high above the close of the left-bar.
+    if (high[1] > close[2]) 
+        // The right-bar needs to close BELOW the close of the left-bar.
+        if (close[0] < close [2]) 
+            show3Bar_l := true //-- Going Short
+
+
+//-- Bullish 3-Bar Reversal
+// Left-bar and center-bar are down bars.
+else if (open[2] > close[2] and open[1] > close[1])
+    // The center-bar has low below the close of the left-bar.
+    if (low[1] < close[2])
+        // The right-bar needs to close ABOVE the close of the left-bar.
+        if (close[0] > close[2])
+            show3Bar_h := true //-- Going Long
+
+
+plotshape(show3Bar_h and reversal3Bar, style=shape.circle, color=color.lime, location=location.top, text="3", textcolor=color.lime)
+plotshape(show3Bar_l and reversal3Bar, style=shape.circle, color=color.red, location=location.bottom, text="3", textcolor=color.red)

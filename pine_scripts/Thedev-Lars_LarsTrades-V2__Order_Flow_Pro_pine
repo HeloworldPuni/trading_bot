@@ -1,0 +1,296 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © thewallranka
+
+//@version=6
+indicator("Institutional Orderflow Pro (Color HUD) — by Dhawal Ranka", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ========================= INPUTS =========================
+group_of     = "Orderflow Proxies"
+lenRVOL      = input.int(20, "RVOL Lookback", minval=5, group=group_of)
+zDeltaLen    = input.int(50, "Delta Z-Score Lookback", minval=20, group=group_of)
+
+group_sig    = "Signal Logic"
+rvolMin      = input.float(1.3, "Min RVOL", step=0.1, group=group_sig)
+zDeltaMin    = input.float(1.2, "Min |Delta Z|", step=0.1, group=group_sig)
+clvHigh      = input.float(0.75, "Close-in-Range ≥ (bull)", step=0.05, group=group_sig)
+clvLow       = input.float(0.25, "Close-in-Range ≤ (bear)", step=0.05, group=group_sig)
+// Symmetric debug toggles (relax thresholds to diagnose)
+easierLongs  = input.bool(false, "Relax bull thresholds (debug)", group=group_sig)
+easierShorts = input.bool(false, "Relax bear thresholds (debug)", group=group_sig)
+
+group_ctx    = "Context Filters"
+useVWAPDir   = input.bool(true, "Require VWAP Direction", group=group_ctx)
+useVWAPSlope = input.bool(true, "Require VWAP Slope", group=group_ctx)
+slopeLen     = input.int(20, "VWAP Slope Lookback", group=group_ctx)
+slopeZMult   = input.float(0.6, "Slope Z Threshold × stdev", step=0.05, group=group_ctx)
+useCVDdiv    = input.bool(true, "Block on Opposite CVD Divergence", group=group_ctx)
+divLen       = input.int(20, "CVD Divergence Lookback", group=group_ctx)
+
+group_pd     = "Prev Day Confluence"
+showPD       = input.bool(true, "Show PDH/PDL/PDC/VWAP", group=group_pd)
+needPDConf   = input.bool(false, "Require PD Confluence", group=group_pd)
+atrLen       = input.int(14, "ATR Len (for PD distance)", minval=5, group=group_pd)
+pdAtrMult    = input.float(0.35, "Max PD Distance ATR ×", step=0.05, group=group_pd)
+
+group_vis    = "Visuals"
+showHUD      = input.bool(true, "Show Color HUD", group=group_vis)
+showMarks    = input.bool(true, "Show ABS/EXH Circles", group=group_vis)
+// unified gates rows for both sides
+showGateDiag = input.bool(true, "Show Bull & Bear Gates (debug)", group=group_vis)
+
+// Realtime vs confirmed-on-close signals
+realtimeSignals = input.bool(true, "Realtime signals (intrabar)")
+
+// ========================= CALCULATIONS =========================
+rng     = math.max(high - low, syminfo.mintick)
+body    = math.abs(close - open)
+clv     = rng > 0 ? (close - low) / rng : 0.5
+rngSafe = math.max(rng, syminfo.mintick)
+
+vAvg    = ta.sma(volume, lenRVOL)
+rvol    = vAvg > 0 ? volume / vAvg : 1.0
+delta   = volume * (2 * (close - low) / rngSafe - 1)
+cvd     = ta.cum(delta)
+deltaMean = ta.sma(delta, zDeltaLen)
+deltaStd  = ta.stdev(delta, zDeltaLen)
+zDelta    = deltaStd > 0 ? (delta - deltaMean) / deltaStd : 0
+
+vwap       = ta.vwap(hlc3)
+bullFlow   = close > vwap
+bearFlow   = close < vwap
+vwapSlope  = vwap - vwap[slopeLen]
+vwapStd    = ta.stdev(vwap, 5 * slopeLen)
+vwapSlopePass = not useVWAPSlope or math.abs(vwapSlope) > slopeZMult * vwapStd
+trendUp    = vwapSlopePass and vwapSlope > 0
+trendDown  = vwapSlopePass and vwapSlope < 0
+
+priceSlopeL = close - close[divLen]
+cvdSlopeL   = cvd  - cvd[divLen]
+bullDiv     = priceSlopeL < 0 and cvdSlopeL > 0
+bearDiv     = priceSlopeL > 0 and cvdSlopeL < 0
+divBlockBull = useCVDdiv and bearDiv
+divBlockBear = useCVDdiv and bullDiv
+
+absorb  = rvol > 1.5 and body / rngSafe < 0.25
+exhaust = math.abs(zDelta[1]) >= (zDeltaMin + 0.5) and math.sign(zDelta) == -math.sign(zDelta[1]) and math.sign(close - close[1]) == -math.sign(close[1] - close[2])
+
+newDay = ta.change(time("D")) != 0
+var float dHigh   = na
+var float dLow    = na
+var float dClose  = na
+var float dCumPV  = na
+var float dCumVol = na
+var float dVWAP   = na
+
+if barstate.isfirst
+    dHigh := high, dLow := low, dClose := close, dCumPV := hlc3*volume, dCumVol := volume, dVWAP := dCumPV/dCumVol
+else
+    if newDay
+        dHigh := high, dLow := low, dClose := close, dCumPV := hlc3*volume, dCumVol := volume
+    else
+        dHigh  := math.max(nz(dHigh, high), high)
+        dLow   := math.min(nz(dLow,  low),  low)
+        dClose := close
+        dCumPV += hlc3*volume
+        dCumVol += volume
+    dVWAP := dCumPV/dCumVol
+
+var float pdh    = na
+var float pdl    = na
+var float pdc    = na
+var float pdvwap = na
+
+if newDay
+    pdh    := nz(dHigh[1],  pdh)
+    pdl    := nz(dLow[1],   pdl)
+    pdc    := nz(dClose[1], pdc)
+    pdvwap := nz(dVWAP[1],  pdvwap)
+
+atr       = ta.atr(atrLen)
+distToPD  = math.min(math.min(math.abs(close - nz(pdh)), math.abs(close - nz(pdl))),
+                     math.min(math.abs(close - nz(pdc)), math.abs(close - nz(pdvwap))))
+pdPass    = not needPDConf or (atr > 0 and distToPD <= pdAtrMult * atr)
+
+// ========================= SIGNALS (symmetric relax) =========================
+// Effective thresholds (bull)
+rvolMinBull   = easierLongs ? math.max(1.0, rvolMin - 0.2) : rvolMin
+zDeltaMinBull = easierLongs ? math.max(0.8, zDeltaMin - 0.3) : zDeltaMin
+clvHighBull   = easierLongs ? math.min(0.65, clvHigh) : clvHigh
+// Effective thresholds (bear)
+rvolMinBear   = easierShorts ? math.max(1.0, rvolMin - 0.2) : rvolMin
+zDeltaMinBear = easierShorts ? math.max(0.8, zDeltaMin - 0.3) : zDeltaMin
+clvLowBear    = easierShorts ? math.max(0.35, clvLow) : clvLow
+
+// Bar-level tests
+bullBar = rvol >= rvolMinBull and zDelta >= zDeltaMinBull and clv >= clvHighBull and cvd > cvd[1]
+bearBar = rvol >= rvolMinBear and -zDelta >= zDeltaMinBear and clv <= clvLowBear and cvd < cvd[1]
+
+// Context gates
+vwapDirBull = not useVWAPDir or bullFlow
+vwapDirBear = not useVWAPDir or bearFlow
+regimeBull  = (not useVWAPSlope) or trendUp
+regimeBear  = (not useVWAPSlope) or trendDown
+
+// Final signals (pre-toggle)
+bullSig = bullBar and vwapDirBull and regimeBull and pdPass and not divBlockBull
+bearSig = bearBar and vwapDirBear and regimeBear and pdPass and not divBlockBear
+
+// Realtime vs confirmed-on-close
+bullSigFinal = realtimeSignals ? bullSig : (bullSig and barstate.isconfirmed)
+bearSigFinal = realtimeSignals ? bearSig : (bearSig and barstate.isconfirmed)
+
+// Edge-trigger pulses for alerts (fires once when the signal appears)
+bullPulse = ta.crossover(bullSigFinal ? 1.0 : 0.0, 0.5)
+bearPulse = ta.crossover(bearSigFinal ? 1.0 : 0.0, 0.5)
+
+// ========================= PLOTS =========================
+plot(vwap, "VWAP", color=color.new(color.silver, 60))
+plotshape(bullSigFinal, "LONG",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime, 0), text="OF↑")
+plotshape(bearSigFinal, "SHORT", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),  text="OF↓")
+
+plot(showPD ? pdh    : na, "PDH",     color=color.new(color.red,  40))
+plot(showPD ? pdl    : na, "PDL",     color=color.new(color.lime, 40))
+plot(showPD ? pdc    : na, "PDC",     color=color.new(color.gray, 40))
+plot(showPD ? pdvwap : na, "PD VWAP", color=color.new(color.blue, 40))
+
+plotshape(showMarks and absorb,  "Absorption", style=shape.circle, location=location.abovebar, color=color.new(color.yellow, 0), text="ABS")
+plotshape(showMarks and exhaust, "Exhaustion", style=shape.circle, location=location.belowbar, color=color.new(color.orange, 0), text="EXH")
+
+// ========================= ALERTS =========================
+// Set alert to "Once per bar" to fire immediately intrabar but only once per bar.
+alertcondition(bullPulse, title="Orderflow LONG (realtime)",  message='{"type":"LONG","ticker":"{{ticker}}","time":"{{time}}","price":{{close}}}')
+alertcondition(bearPulse, title="Orderflow SHORT (realtime)", message='{"type":"SHORT","ticker":"{{ticker}}","time":"{{time}}","price":{{close}}}')
+
+// ========================= UNIFIED SMART HUD TABLE =========================
+// 11 rows total: header + 8 metrics + Bull gates + Bear gates
+var tbl = table.new(position.top_right, 4, 11, border_width=1)
+
+if barstate.islast and showHUD
+    // Column headers
+    table.cell(tbl, 0, 0, "Label",   text_color=color.white, bgcolor=color.new(color.black,0))
+    table.cell(tbl, 1, 0, "Value",   text_color=color.white, bgcolor=color.new(color.black,0))
+    table.cell(tbl, 2, 0, "Meaning", text_color=color.white, bgcolor=color.new(color.black,0))
+    table.cell(tbl, 3, 0, "Context", text_color=color.white, bgcolor=color.new(color.black,0))
+
+    // Dynamic logic for HUD text
+    trendBias = (bullFlow and vwapSlopePass) ? "UP" : (bearFlow and vwapSlopePass) ? "DOWN" : "FLAT"
+    status    = absorb ? "ABS" : exhaust ? "EXH" : "-"
+
+    // RVOL
+    rvolTxt = rvol >= 1.3 ? "High institutional volume" : rvol < 0.8 ? "Low participation" : "Normal activity"
+    rvolCtx = rvol >= 1.3 ? "✅ Good participation" : rvol < 0.8 ? "⚠ Low liquidity" : "⚪ Average session"
+    table.cell(tbl, 0, 1, "RVOL", text_color=color.white)
+    table.cell(tbl, 1, 1, str.tostring(rvol, "#.00"), text_color=rvol >= 1.3 ? color.lime : rvol < 0.8 ? color.red : color.gray)
+    table.cell(tbl, 2, 1, rvolTxt, text_color=rvol >= 1.3 ? color.lime : rvol < 0.8 ? color.red : color.gray)
+    table.cell(tbl, 3, 1, rvolCtx, text_color=rvol >= 1.3 ? color.lime : rvol < 0.8 ? color.red : color.gray)
+
+    // zΔ
+    zTxt = zDelta > 1.2 ? "Aggressive buyers" : zDelta < -1.2 ? "Aggressive sellers" : "Balanced flow"
+    zCtx = zDelta > 1.2 ? "✅ Buyer pressure" : zDelta < -1.2 ? "⚠ Seller pressure" : "⚪ Neutral"
+    table.cell(tbl, 0, 2, "zΔ", text_color=color.white)
+    table.cell(tbl, 1, 2, str.tostring(zDelta, "#.00"), text_color=zDelta > 1.2 ? color.lime : zDelta < -1.2 ? color.red : color.gray)
+    table.cell(tbl, 2, 2, zTxt, text_color=zDelta > 1.2 ? color.lime : zDelta < -1.2 ? color.red : color.gray)
+    table.cell(tbl, 3, 2, zCtx, text_color=zDelta > 1.2 ? color.lime : zDelta < -1.2 ? color.red : color.gray)
+
+    // CVDΔ
+    cvdTxt = (cvd > cvd[1]) ? "Net buyers in control" : (cvd < cvd[1]) ? "Net sellers in control" : "No delta change"
+    cvdCtx = (cvd > cvd[1]) ? "✅ Confirmed buy flow"  : (cvd < cvd[1]) ? "⚠ Sell flow"         : "⚪ Idle tape"
+    table.cell(tbl, 0, 3, "CVDΔ", text_color=color.white)
+    table.cell(tbl, 1, 3, str.tostring(cvd - cvd[1], "#"), text_color=(cvd > cvd[1]) ? color.lime : (cvd < cvd[1]) ? color.red : color.gray)
+    table.cell(tbl, 2, 3, cvdTxt, text_color=(cvd > cvd[1]) ? color.lime : (cvd < cvd[1]) ? color.red : color.gray)
+    table.cell(tbl, 3, 3, cvdCtx, text_color=(cvd > cvd[1]) ? color.lime : (cvd < cvd[1]) ? color.red : color.gray)
+
+    // VWAP Direction
+    vwapTxt = bullFlow ? "Above VWAP (bullish bias)" : bearFlow ? "Below VWAP (bearish bias)" : "On VWAP (neutral)"
+    vwapCtx = bullFlow ? "✅ Long bias zone"          : bearFlow ? "⚠ Short bias zone"        : "⚪ Neutral mean"
+    table.cell(tbl, 0, 4, "VWAP dir", text_color=color.white)
+    table.cell(tbl, 1, 4, bullFlow ? "↑" : bearFlow ? "↓" : "-", text_color=bullFlow ? color.lime : bearFlow ? color.red : color.gray)
+    table.cell(tbl, 2, 4, vwapTxt, text_color=bullFlow ? color.lime : bearFlow ? color.red : color.gray)
+    table.cell(tbl, 3, 4, vwapCtx, text_color=bullFlow ? color.lime : bearFlow ? color.red : color.gray)
+
+    // Slope OK
+    slopeTxt = vwapSlopePass ? "Trending" : "Flat slope (no trend)"
+    slopeCtx = vwapSlopePass ? "✅ Active regime" : "⚠ Choppy"
+    table.cell(tbl, 0, 5, "Slope ok", text_color=color.white)
+    table.cell(tbl, 1, 5, useVWAPSlope ? (vwapSlopePass ? "YES" : "NO") : "OFF", text_color=vwapSlopePass ? color.lime : color.red)
+    table.cell(tbl, 2, 5, slopeTxt, text_color=vwapSlopePass ? color.lime : color.red)
+    table.cell(tbl, 3, 5, slopeCtx, text_color=vwapSlopePass ? color.lime : color.red)
+
+    // PD Distance
+    pdTxt = distToPD <= pdAtrMult * atr ? "Near liquidity zone" : "Far from key levels"
+    pdCtx = distToPD <= pdAtrMult * atr ? "✅ Tradeable zone"    : "⚠ Mid-air"
+    table.cell(tbl, 0, 6, "PD dist", text_color=color.white)
+    table.cell(tbl, 1, 6, atr > 0 ? str.tostring(distToPD / atr, "#.00") + " ATR" : "n/a",
+               text_color=(atr > 0 and distToPD <= pdAtrMult * atr) ? color.lime : color.red)
+    table.cell(tbl, 2, 6, pdTxt, text_color=(distToPD <= pdAtrMult * atr) ? color.lime : color.red)
+    table.cell(tbl, 3, 6, pdCtx, text_color=(distToPD <= pdAtrMult * atr) ? color.lime : color.red)
+
+    // Bias
+    biasTxt = trendBias == "UP" ? "Market trending up" : trendBias == "DOWN" ? "Market trending down" : "Flat bias"
+    biasCtx = trendBias == "UP" ? "✅ Bullish environment" : trendBias == "DOWN" ? "⚠ Bearish environment" : "⚪ Sideways"
+    table.cell(tbl, 0, 7, "Bias", text_color=color.white)
+    table.cell(tbl, 1, 7, trendBias, text_color=trendBias == "UP" ? color.lime : trendBias == "DOWN" ? color.red : color.gray)
+    table.cell(tbl, 2, 7, biasTxt,  text_color=trendBias == "UP" ? color.lime : trendBias == "DOWN" ? color.red : color.gray)
+    table.cell(tbl, 3, 7, biasCtx,  text_color=trendBias == "UP" ? color.lime : trendBias == "DOWN" ? color.red : color.gray)
+
+    // ABS/EXH
+    absTxt = absorb ? "Absorption detected" : exhaust ? "Exhaustion detected" : "Normal flow"
+    absCtx = absorb ? "⚠ Buyers/sellers trapped" : exhaust ? "⚠ Momentum fading" : "✅ Clean tape"
+    table.cell(tbl, 0, 8, "ABS/EXH", text_color=color.white)
+    table.cell(tbl, 1, 8, status, text_color=status == "ABS" ? color.yellow : status == "EXH" ? color.orange : color.gray)
+    table.cell(tbl, 2, 8, absTxt, text_color=status == "ABS" ? color.yellow : status == "EXH" ? color.orange : color.gray)
+    table.cell(tbl, 3, 8, absCtx, text_color=status == "ABS" ? color.yellow : status == "EXH" ? color.orange : color.gray)
+
+    // ------- Bull Gates (why a long did NOT trigger)
+    if showGateDiag
+        string bullWhy = ""
+        if not (rvol >= rvolMinBull)
+            bullWhy += (bullWhy == "" ? "" : ", ") + "RVOL"
+        if not (zDelta >= zDeltaMinBull)
+            bullWhy += (bullWhy == "" ? "" : ", ") + "zΔ"
+        if not (clv >= clvHighBull)
+            bullWhy += (bullWhy == "" ? "" : ", ") + "CLV"
+        if not (cvd > cvd[1])
+            bullWhy += (bullWhy == "" ? "" : ", ") + "CVDΔ"
+        if useVWAPDir and not bullFlow
+            bullWhy += (bullWhy == "" ? "" : ", ") + "VWAP dir"
+        if useVWAPSlope and not trendUp
+            bullWhy += (bullWhy == "" ? "" : ", ") + "Slope"
+        if needPDConf and not (atr > 0 and distToPD <= pdAtrMult * atr)
+            bullWhy += (bullWhy == "" ? "" : ", ") + "PD dist"
+        if useCVDdiv and bearDiv
+            bullWhy += (bullWhy == "" ? "" : ", ") + "Opp div"
+
+        table.cell(tbl, 0, 9, "Bull gates", text_color=color.white)
+        table.cell(tbl, 1, 9, bullSig ? "PASS" : "BLOCK", text_color=bullSig ? color.lime : color.red)
+        table.cell(tbl, 2, 9, bullSig ? "All conditions met" : (bullWhy == "" ? "Waiting..." : bullWhy),
+                   text_color=bullSig ? color.lime : color.gray)
+        table.cell(tbl, 3, 9, bullSig ? "Long eligible" : "Fix items at left",
+                   text_color=bullSig ? color.lime : color.gray)
+
+    // ------- Bear Gates (why a short did NOT trigger)
+    if showGateDiag
+        string bearWhy = ""
+        if not (rvol >= rvolMinBear)
+            bearWhy += (bearWhy == "" ? "" : ", ") + "RVOL"
+        if not (-zDelta >= zDeltaMinBear)
+            bearWhy += (bearWhy == "" ? "" : ", ") + "zΔ"
+        if not (clv <= clvLowBear)
+            bearWhy += (bearWhy == "" ? "" : ", ") + "CLV"
+        if not (cvd < cvd[1])
+            bearWhy += (bearWhy == "" ? "" : ", ") + "CVDΔ"
+        if useVWAPDir and not bearFlow
+            bearWhy += (bearWhy == "" ? "" : ", ") + "VWAP dir"
+        if useVWAPSlope and not trendDown
+            bearWhy += (bearWhy == "" ? "" : ", ") + "Slope"
+        if needPDConf and not (atr > 0 and distToPD <= pdAtrMult * atr)
+            bearWhy += (bearWhy == "" ? "" : ", ") + "PD dist"
+        if useCVDdiv and bullDiv
+            bearWhy += (bearWhy == "" ? "" : ", ") + "Opp div"
+
+        table.cell(tbl, 0, 10, "Bear gates", text_color=color.white)
+        table.cell(tbl, 1, 10, bearSig ? "PASS" : "BLOCK", text_color=bearSig ? color.lime : color.red)
+        table.cell(tbl, 2, 10, bearSig ? "All conditions met" : (bearWhy == "" ? "Waiting..." : bearWhy),
+                   text_color=bearSig ? color.lime : color.gray)
+        table.cell(tbl, 3, 10, bearSig ? "Short eligible" : "Fix items at left",
+                   text_color=bearSig ? color.lime : color.gray)

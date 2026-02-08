@@ -1,0 +1,633 @@
+//@version=4
+
+study("MJ - Pivots", overlay=true)
+
+COLOR_LIME = #1cd206
+COLOR_VOLT = #affd00
+COLOR_PINK = #e63a97
+COLOR_RED = #f21616
+COLOR_LIGHT_BLUE = #3179f5
+COLOR_MAGENTA = #d612f8
+COLOR_ORANGE = #f57f17
+COLOR_GOLD = #ffb74d
+COLOR_YELLOW = #ffeb3b
+COLOR_TEAL = #00bcd4
+COLOR_WHITE = #ffffff
+COLOR_BLUE = #1848cc
+COLOR_PURPLE = #3e31c4
+COLOR_GREY_ONE = #9598a1
+COLOR_GREEN = #4caf50
+COLOR_ROYAL_BLUE = #1848cc
+COLOR_TURQUOISE = #00897b
+COLOR_PEACH = #e57373
+COLOR_POWDER_BLUE = #5b9cf6
+COLOR_LAVENDER = #7e57c2
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== DATE UTILS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+int MS_PER_MINUTE = 1000 * 60
+int MS_PER_HOUR = MS_PER_MINUTE * 60
+int MS_PER_DAY = MS_PER_HOUR * 24
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+
+_getTimeNBarsFromNow(numBars) => numBars > 0 ? _getFutureTimeNBarsFromNow(numBars) : _getPastTimeNBarsBackFromNow(numBars * -1)
+
+_currentBarTime() => time(timeframe.period)
+
+_calcBarsPerHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+
+_calcBarsPerDay() => _calcBarsPerHour() * 24
+
+_timeElapsedTodayInMs() => (MS_PER_HOUR * hour) - (MS_PER_MINUTE * minute) - (1000 * second)
+_timeElapsedThisHourInMs() => (MS_PER_MINUTE * minute) + (1000 * second)
+
+_getTimeAtBeginningOfToday() => timenow - _timeElapsedTodayInMs()
+    
+_getTimeAtStartOfHourNHoursAgo(numHours) => 
+    timeElapsedSinceStartInMs = _timeElapsedThisHourInMs() + (numHours * MS_PER_HOUR)
+    timenow - timeElapsedSinceStartInMs
+
+
+// *** TOOD ***
+// _getBarIndexAtTime() => 
+// _getBarIndexForTimestamp(_timestamp) => 
+
+_getBarsElapsedAndRemainingForCurrentHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+    int barsRemainingThisHour = barsPerHour - barsElapsedThisHour
+    [barsElapsedThisHour, barsRemainingThisHour]
+
+_getStartTimeNDaysBack(numDays) => 
+    // int barsPerDay = _calcBarsPerDay()
+    // int numBarsElapsedToday = 0
+    // int barsElapsedSinceCutoff = numBarsElapsedToday + (barsPerDay * numDays)
+    // _getPastTimeNBarsBackFromNow(barsElapsedSinceCutoff)
+    _getTimeAtBeginningOfToday() - (numDays * MS_PER_DAY)    
+
+_isCurrentDay() => 
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - MS_PER_DAY)   
+
+_isInSession(timeRange) =>
+    not na(time(timeframe.period, timeRange))
+
+_isFirstOrLastFiveMinOfAnyHour() => 
+    _isInSession('2355-0005') or _isInSession('0055-0105') or _isInSession('0155-0205') or _isInSession('0255-0305') or _isInSession('0355-0405') or _isInSession('0455-0505') or _isInSession('0555-0605') or _isInSession('0655-0705') or _isInSession('0755-0805') or _isInSession('0855-0905') or _isInSession('0955-1005') or _isInSession('1055-1105') or _isInSession('1155-1205') or _isInSession('1255-1305') or _isInSession('1355-1405') or _isInSession('1455-1505') or _isInSession('1555-1605') or _isInSession('1655-1705') or _isInSession('1755-1805') or _isInSession('1855-1905') or _isInSession('1955-2005') or _isInSession('2055-2105') or _isInSession('2155-2205') or _isInSession('2255-2305')    
+
+_isLastBarForCurrentTimeframeAtResolution(Resolution) =>
+    t = time(Resolution, session.regular) // e.g. "1440" = DailyF Resolution
+    not na(t[1]) and na(t) or t[1] < t
+
+_isFirstBarForCurrentTimeframeAtResolution(Resolution) =>
+    // e.g. current timeframe: 1min, resolution: '60' => return true for the first minute of the hour
+    // e.g. current timeframe: 5min, resolution: '60' => return true for the first 5 minutes of the hour
+    t = time(Resolution)
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and ( na(previousBar) or currentBar > previousBar)
+
+// new_bar: check if we're on a new bar within the session in a given resolution
+new_bar(res) => change(time(res)) != 0
+
+_securityRepaint(_symbol, _res, _src, _repaint) => 
+    _gaps = barmerge.gaps_off
+    _lookahead = barmerge.lookahead_on
+    _index = _repaint ? 0 : barstate.isrealtime ? 0 : 1
+    _srcIndex = _repaint ? 0 : barstate.isrealtime ? 1 : 0
+    security(_symbol, _res, _src[_srcIndex], _gaps, _lookahead)[_index]
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== PLOT UTILS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+_drawLabelledLine(x1, x2, y, _color, _width, _style, _extend, labelText, labelStyle, labelColor, labelTextColor, labelSize, showLabel, labelOffsetInBars) => 
+    // x1 and x2 are in time (not bars)
+    _lineId = line.new(x1, y, x2, y, xloc.bar_time, _extend)
+    line.set_xy1(_lineId, x1, y)
+    line.set_xy2(_lineId, x2, y)
+    line.set_color(_lineId, _color)
+    line.set_width(_lineId, _width)
+    line.set_style(_lineId, _style)
+
+    if not na(_lineId[1])
+        line.delete(_lineId[1])
+
+    // ----------------
+    // draw the label
+    // ----------------
+
+    if showLabel
+        // labelPosition = rangeLabelRightJustified ? x2 : x1
+        timePerBar = time[0] - time[1]
+        labelTime = x2 + (labelOffsetInBars * timePerBar)
+        labelId = label.new(labelTime, y, labelText, textcolor=labelTextColor, style=labelStyle, size=labelSize, xloc=xloc.bar_time, color=labelColor)
+        label.delete(labelId[1])
+
+    _lineId
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== CALCULATIONS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+_high = security(syminfo.tickerid, 'D', high[1], lookahead=true)
+_low = security(syminfo.tickerid, 'D', low[1], lookahead=true)
+_open = security(syminfo.tickerid, 'D', open[1], lookahead=true)
+_close = security(syminfo.tickerid, 'D', close[1], lookahead=true)
+_range = _high - _low
+
+// weekHigh = security(syminfo.tickerid, 'W', high[1], lookahead=9true)
+// weekLow = security(syminfo.tickerid, 'W', low[1], lookahead=true)
+
+// ------------------
+// Standard
+// ------------------
+
+pp = (_high + _low + _close)/3
+r1 = (2 * pp) - _low
+s1 = (2 * pp) - _high
+r2 = pp-s1+r1
+s2 = pp-r1+s1
+r3 = (2*pp)+(_high-(2*_low))
+s3 = (2*pp)-((2*_high)-_low)
+m0 = (s2+s3)/2
+m1 = (s1+s2)/2
+m2 = (pp+s1)/2
+m3 = (pp+r1)/2
+m4 = (r1+r2)/2
+m5 = (r2+r3)/2
+
+// ------------------
+// Camarilla
+// ------------------
+
+h5 = (_high/_low) * _close 
+h4 = _close + _range * 1.1 / 2.0
+h3 = _close + _range * 1.1 / 4.0
+h2 = _close + _range * 1.1 / 6.0
+h1 = _close + _range * 1.1 / 12.0
+l1 = _close - _range * 1.1 / 12.0
+l2 = _close - _range * 1.1 / 6.0
+l3 = _close - _range * 1.1 / 4.0
+l4 = _close - _range * 1.1 / 2.0
+h6 = h5 + 1.168 * (h5 - h4) 
+l5 = _close - (h5 - _close)
+l6 = _close - (h6 - _close)
+
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== PIVOTS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+groupColors = 'Colors'
+groupPositioning = 'Positioning'
+groupLines = 'Lines'
+groupLabels = 'Labels'
+groupSwitches = 'Switches'
+groupPlot = 'Plot'
+groupCamarillaOpacity = 'Camarilla Opacity'
+
+standardPlotActive = input(false, 'Standard Plot', group=groupSwitches)
+camarillaPlotActive = input(false, 'Camarilla Plot', group=groupSwitches)
+showStandardLines = input(true, 'Standard Lines', group=groupSwitches)
+showCamarillaLines = input(false, 'Camarilla Lines', group=groupSwitches)
+fixedToPriceLinesStandard = input(false, 'Fix Standard Pivots to Current Price', group=groupSwitches)
+fixedToPriceLinesCamarilla = input(false, 'Fix Camarilla Pivots to Current Price', group=groupSwitches)
+
+lineOffset = input(15, 'Line Offset (in bars)', tooltip='How many bars away from current price to shift x1', group=groupPositioning)
+lineLength = input(50, 'Line Length (in bars)', minval=0, group=groupPositioning)
+labelOffsetNotFixed = input(5, 'Label Offset when NOT fixed to price (in bars)', group=groupPositioning)
+labelOffsetFixed = input(5, 'Label Offset when fixed to price (in bars)', group=groupPositioning)
+
+lineStyle = input(line.style_dotted, 'Line Style', options=[line.style_solid, line.style_dashed, line.style_dotted], group=groupLines)
+lineWidth = input(3, 'Line Width', options=[1,2,3,4], group=groupLines)
+lineExtendStandard = input(extend.none, 'Line Extend Standard', options=[extend.none, extend.left, extend.right, extend.both], group=groupLines)
+lineExtendCamarilla = input(extend.none, 'Line Extend Camarilla', options=[extend.none, extend.left, extend.right, extend.both], group=groupLines)
+lineOpacity = input(50, 'Line Opacity', group=groupLines)
+
+labelVisible = input(true, 'Labels Visible', group=groupLabels)
+labelStyle = input(label.style_none, 'Label Style', options=[label.style_none, label.style_label_up, label.style_label_upper_right, label.style_label_right, label.style_label_lower_right, label.style_label_down, label.style_label_lower_left, label.style_label_left, label.style_label_upper_left, label.style_label_center, label.style_triangleup, label.style_triangledown, label.style_arrowup, label.style_arrowdown, label.style_xcross, label.style_cross, label.style_flag, label.style_circle], group=groupLabels)
+labelSize = input(size.large, 'Label Size', options=[size.auto, size.tiny, size.small, size.normal, size.large], group=groupLabels)
+labelOpacity = input(50, 'Label Opacity', group=groupLabels)
+labelTextOpacity = input(0, 'Label Text Opacity', group=groupLabels)
+
+mColor = input(COLOR_WHITE, 'M Color', group=groupColors)
+sColor = input(color.red, 'S Color', group=groupColors)
+rColor = input(color.green, 'R Color', group=groupColors)
+ppColor = input(COLOR_YELLOW, 'PP Color', group=groupColors)
+hColor = input(#ec407a, 'H Color', group=groupColors)
+lColor = input(COLOR_LIME, 'L Color', group=groupColors)
+labelTextColor = input(color.new(color.black, 0), 'Label Text Color', group=groupColors, tooltip='Not applicable if label style == \'none\'')
+
+opacityCamarillaOne = input(70, 'Opacity Camarilla - 1', group=groupCamarillaOpacity)
+opacityCamarillaTwo = input(70, 'Opacity Camarilla - 2', group=groupCamarillaOpacity)
+opacityCamarillaThree = input(0, 'Opacity Camarilla - 3', group=groupCamarillaOpacity)
+opacityCamarillaFour = input(0, 'Opacity Camarilla - 4', group=groupCamarillaOpacity)
+opacityCamarillaFive = input(70, 'Opacity Camarilla - 5', group=groupCamarillaOpacity)
+
+_getPivotLabelTextColorFromLabelStyle(labelStyle, masterColor) => 
+    defaultColor = color.new(labelTextColor, labelTextOpacity)
+    labelStyle == label.style_none ? color.new(masterColor, labelTextOpacity) : defaultColor
+
+mLineColor = color.new(mColor, lineOpacity)
+mLabelColor = color.new(mColor, labelOpacity)
+mLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, mColor)
+
+sLineColor = color.new(sColor, lineOpacity)
+sLabelColor = color.new(sColor, labelOpacity)
+sLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, sColor)
+
+rLineColor = color.new(rColor, lineOpacity)
+rLabelColor = color.new(rColor, labelOpacity)
+rLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, rColor)
+
+ppLineColor = color.new(ppColor, lineOpacity)
+ppLabelColor = color.new(ppColor, labelOpacity)
+ppLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, ppColor)
+
+hLineColorOne = color.new(hColor, opacityCamarillaOne)
+hLineColorTwo = color.new(hColor, opacityCamarillaTwo)
+hLineColorThree = color.new(hColor, opacityCamarillaThree)
+hLineColorFour = color.new(hColor, opacityCamarillaFour)
+hLineColorFive = color.new(hColor, opacityCamarillaFive)
+hLabelColor = color.new(hColor, labelOpacity)
+hLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, hColor)
+
+lLineColorOne = color.new(lColor, opacityCamarillaOne)
+lLineColorTwo = color.new(lColor, opacityCamarillaTwo)
+lLineColorThree = color.new(lColor, opacityCamarillaThree)
+lLineColorFour = color.new(lColor, opacityCamarillaFour)
+lLineColorFive = color.new(lColor, opacityCamarillaFive)
+lLabelColor = color.new(lColor, labelOpacity)
+lLabelTextColor = _getPivotLabelTextColorFromLabelStyle(labelStyle, lColor)
+
+_drawPivot(isFixedToPrice, y, labelText, lineColor, labelColor, labelTextColor, isVisible, _extend, plotActive) =>
+    _lineLength = plotActive ? 0 : lineLength
+    _lineOffset = isFixedToPrice ? (_lineLength * -1) : lineOffset
+    
+    x1 = _getTimeNBarsFromNow(_lineOffset)
+    x2 = _getTimeNBarsFromNow(_lineOffset + _lineLength)
+    // x1, x2, y, _color, _width, _style, _extend, labelText, labelStyle, labelColor, labelTextColor, labelSize, showLabel, labelOffsetInBars) => 
+
+    _drawLabelledLine(
+         x1=x1, 
+         x2=x2, 
+         y=isVisible ? y : na, 
+         _color=lineColor, 
+         _width=lineWidth, 
+         _style=lineStyle, 
+         _extend=_extend, 
+         labelText=labelText, 
+         labelStyle=labelStyle, 
+         labelColor=labelColor, 
+         labelTextColor=labelTextColor, 
+         labelSize=labelSize, 
+         showLabel=labelVisible, 
+         labelOffsetInBars=isFixedToPrice ? labelOffsetFixed : labelOffsetNotFixed
+         )
+
+_standardLine(y, labelText, lineColor, labelColor, labelTextColor) => 
+    _drawPivot(
+         fixedToPriceLinesStandard, 
+         y, 
+         labelText, 
+         lineColor, 
+         labelColor, 
+         labelTextColor, 
+         showStandardLines, 
+         lineExtendStandard, 
+         standardPlotActive
+         )
+
+_camarillaLine(y, labelText, lineColor, labelColor, labelTextColor) => 
+    _drawPivot(
+         fixedToPriceLinesCamarilla, 
+         y, 
+         labelText, 
+         lineColor, 
+         labelColor, 
+         labelTextColor, 
+         showCamarillaLines, 
+         lineExtendCamarilla, 
+         camarillaPlotActive
+         )
+
+_drawPivots(linesArray) => 
+    initialArraySize = array.size(linesArray)
+    
+    // --------
+    // pp 
+    // --------
+    
+    eitherIsVisible = showStandardLines or showCamarillaLines
+    eitherIsFixed = fixedToPriceLinesStandard or fixedToPriceLinesCamarilla
+    eitherIsNotFixed = not (fixedToPriceLinesStandard and fixedToPriceLinesCamarilla)
+
+    // _ppStandardLine = _drawPivot(fixedToPriceLinesStandard, pp, 'PP', ppLineColor, ppLabelColor, ppLabelTextColor, true, lineExtendStandard)
+    // _ppCamarillaLine = _drawPivot(fixedToPriceLinesCamarilla, pp, 'PP', ppLineColor, ppLabelColor, ppLabelTextColor, fixedToPriceLinesStandard != fixedToPriceLinesCamarilla, lineExtendCamarilla)
+    _ppStandardLine = _standardLine(pp, 'PP', ppLineColor, ppLabelColor, ppLabelTextColor)
+    _ppCamarillaLine = _camarillaLine(pp, 'PP', ppLineColor, ppLabelColor, ppLabelTextColor)
+
+    // --------
+    // M 
+    // --------
+    
+    _m0LineId = _standardLine(m0, 'M0', mLineColor, mLabelColor, mLabelTextColor)
+    _m1LineId = _standardLine(m1, 'M1', mLineColor, mLabelColor, mLabelTextColor)
+    _m2LineId = _standardLine(m2, 'M2', mLineColor, mLabelColor, mLabelTextColor)
+    _m3LineId = _standardLine(m3, 'M3', mLineColor, mLabelColor, mLabelTextColor)
+    _m4LineId = _standardLine(m4, 'M4', mLineColor, mLabelColor, mLabelTextColor)
+    _m5LineId = _standardLine(m5, 'M5', mLineColor, mLabelColor, mLabelTextColor)
+    
+    // --------
+    // S
+    // --------
+    
+    _s1LineId = _standardLine(s1, 'S1', sLineColor, sLabelColor, sLabelTextColor)
+    _s2LineId = _standardLine(s2, 'S2', sLineColor, sLabelColor, sLabelTextColor)
+    _s3LineId = _standardLine(s3, 'S3', sLineColor, sLabelColor, sLabelTextColor)
+    
+    // --------
+    // R
+    // --------
+    
+    _r1LineId = _standardLine(r1, 'R1', rLineColor, rLabelColor, rLabelTextColor)
+    _r2LineId = _standardLine(r2, 'R2', rLineColor, rLabelColor, rLabelTextColor)
+    _r3LineId = _standardLine(r3, 'R3', rLineColor, rLabelColor, rLabelTextColor)
+
+    // --------
+    // H 
+    // --------
+
+    lineH1 = _camarillaLine(h1, 'H1', hLineColorOne, hLabelColor, hLabelTextColor)
+    lineH2 = _camarillaLine(h2, 'H2', hLineColorTwo, hLabelColor, hLabelTextColor)
+    lineH3 = _camarillaLine(h3, 'H3', hLineColorThree, hLabelColor, hLabelTextColor)
+    lineH4 = _camarillaLine(h4, 'H4', hLineColorFour, hLabelColor, hLabelTextColor)
+    lineH5 = _camarillaLine(h5, 'H5', hLineColorFive, hLabelColor, hLabelTextColor)
+
+    // --------
+    // L
+    // --------
+
+    lineL1 = _camarillaLine(l1, 'L1', lLineColorOne, lLabelColor, lLabelTextColor)
+    lineL2 = _camarillaLine(l2, 'L2', lLineColorTwo, lLabelColor, lLabelTextColor)
+    lineL3 = _camarillaLine(l3, 'L3', lLineColorThree, lLabelColor, lLabelTextColor)
+    lineL4 = _camarillaLine(l4, 'L4', lLineColorFour, lLabelColor, lLabelTextColor)
+    lineL5 = _camarillaLine(l5, 'L5', lLineColorFive, lLabelColor, lLabelTextColor)
+    
+    array.push(linesArray, _m0LineId)
+    array.push(linesArray, _m1LineId)
+    array.push(linesArray, _m2LineId)
+    array.push(linesArray, _m3LineId)
+    array.push(linesArray, _m4LineId)
+    array.push(linesArray, _m5LineId)
+    array.push(linesArray, _s1LineId)
+    array.push(linesArray, _s2LineId)
+    array.push(linesArray, _s3LineId)
+    array.push(linesArray, _r1LineId)
+    array.push(linesArray, _r2LineId)
+    array.push(linesArray, _r3LineId)
+    array.push(linesArray, _ppStandardLine)
+    array.push(linesArray, _ppCamarillaLine)
+    array.push(linesArray, lineH1)
+    array.push(linesArray, lineH2)
+    array.push(linesArray, lineH3)
+    array.push(linesArray, lineH4)
+    array.push(linesArray, lineH5)
+    array.push(linesArray, lineL1)
+    array.push(linesArray, lineL2)
+    array.push(linesArray, lineL3)
+    array.push(linesArray, lineL4)
+    array.push(linesArray, lineL5)
+
+    // cleanup
+    if initialArraySize > 0
+        for i = 0 to initialArraySize
+            lineToDelete = array.shift(linesArray)
+            line.delete(lineToDelete)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== EXECUTE ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+var line[] _lines = array.new_line(0)
+_drawPivots(_lines)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== PLOT ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+plotStyle = input(plot.style_stepline, 'Plot Style', group=groupPlot, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+
+isFirstPointOfDay = _open != _open[1]
+
+hPlotColor = isFirstPointOfDay ? na : hColor
+lPlotColor = isFirstPointOfDay ? na : lColor
+rPlotColor = isFirstPointOfDay ? na : rLineColor
+sPlotColor = isFirstPointOfDay ? na : sLineColor
+mPlotColor = isFirstPointOfDay ? na : mLineColor
+ppPlotColor = isFirstPointOfDay ? na : ppLineColor
+
+plotH1 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? h1 : na, 
+      "H1 Plot", 
+      color.new(hPlotColor, opacityCamarillaOne),
+      lineWidth, 
+      plotStyle
+      )
+
+plotH2 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? h2 : na, 
+      "H2 Plot", 
+      color.new(hPlotColor, opacityCamarillaTwo),
+      lineWidth, 
+      plotStyle
+      )
+
+plotH3 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? h3 : na, 
+      "H3 Plot", 
+      color.new(hPlotColor, opacityCamarillaThree),
+      lineWidth, 
+      plotStyle
+      )
+
+plotH4 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? h4 : na, 
+      "H4 Plot", 
+      color.new(hPlotColor, opacityCamarillaFour),
+      lineWidth, 
+      plotStyle
+      )
+
+plotH5 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? h5 : na, 
+      "H5 Plot", 
+      color.new(hPlotColor, opacityCamarillaFive),
+      lineWidth, 
+      plotStyle
+      )
+
+plotL1 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? l1 : na, 
+      "L1 Plot", 
+      color.new(lPlotColor, opacityCamarillaOne), 
+      lineWidth, 
+      plotStyle
+      )
+
+plotL2 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? l2 : na, 
+      "L2 Plot", 
+      color.new(lPlotColor, opacityCamarillaTwo), 
+      lineWidth, 
+      plotStyle
+      )
+
+plotL3 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? l3 : na, 
+      "L3 Plot",
+      color.new(lPlotColor, opacityCamarillaThree),
+      lineWidth, 
+      plotStyle
+      )
+
+plotL4 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? l4 : na, 
+      "L4 Plot", 
+      color.new(lPlotColor, opacityCamarillaFour),
+      lineWidth, 
+      plotStyle
+      )
+
+plotL5 = plot(
+      camarillaPlotActive and not isFirstPointOfDay ? l5 : na, 
+      "L5 Plot", 
+      color.new(lPlotColor, opacityCamarillaFive),
+      lineWidth, 
+      plotStyle
+      )
+
+plotM0 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m0 : na, 
+      "M0 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotM1 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m1 : na, 
+      "M1 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotM2 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m2 : na, 
+      "M2 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotM3 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m3 : na, 
+      "M3 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotM4 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m4 : na, 
+      "M4 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotM5 = plot(
+      standardPlotActive and not isFirstPointOfDay ? m5 : na, 
+      "M5 Plot", 
+      mPlotColor, lineWidth, plotStyle)
+
+plotS1 = plot(
+      standardPlotActive and not isFirstPointOfDay ? s1 : na, 
+      "S1 Plot", 
+      sPlotColor, lineWidth, plotStyle)
+
+plotS2 = plot(
+      standardPlotActive and not isFirstPointOfDay ? s2 : na, 
+      "S2 Plot", 
+      sPlotColor, lineWidth, plotStyle)
+
+plotS3 = plot(
+      standardPlotActive and not isFirstPointOfDay ? s3 : na, 
+      "S3 Plot", 
+      sPlotColor, lineWidth, plotStyle)
+
+plotR1 = plot(
+      standardPlotActive and not isFirstPointOfDay ? r1 : na, 
+      "R1 Plot", 
+      rPlotColor, lineWidth, plotStyle)
+
+plotR2 = plot(
+      standardPlotActive and not isFirstPointOfDay ? r2 : na, 
+      "R2 Plot", 
+      rPlotColor, lineWidth, plotStyle)
+
+plotR3 = plot(
+      standardPlotActive and not isFirstPointOfDay ? r3 : na, 
+      "R3 Plot", 
+      rPlotColor, lineWidth, plotStyle)
+
+plotPP = plot(
+      (standardPlotActive or camarillaPlotActive) and not isFirstPointOfDay? pp : na, 
+      "PP Plot", 
+      ppPlotColor, lineWidth, plotStyle)
+
+
+// _drawPlotLabel(_text, _color, _textColor, _y, _isActive) => 
+//     label.new(
+//          isFirstPointOfDay ? bar_index : na,
+//          _y, 
+//          _text, 
+//          textcolor=_textColor, 
+//          style=labelStyle, 
+//          size=labelSize, 
+//          xloc=xloc.bar_index, 
+//          color=_color)
+
+// _drawPlotLabel('M0', mLabelColor, mLabelTextColor, m0, standardPlotActive)
+// _drawPlotLabel('M1', mLabelColor, mLabelTextColor, m1, standardPlotActive)
+// _drawPlotLabel('M2', mLabelColor, mLabelTextColor, m2, standardPlotActive)
+// _drawPlotLabel('M3', mLabelColor, mLabelTextColor, m3, standardPlotActive)
+// _drawPlotLabel('M4', mLabelColor, mLabelTextColor, m4, standardPlotActive)
+// _drawPlotLabel('M5', mLabelColor, mLabelTextColor, m5, standardPlotActive)
+// _drawPlotLabel('S1', sLabelColor, sLabelTextColor, s1, standardPlotActive)
+// _drawPlotLabel('S2', sLabelColor, sLabelTextColor, s2, standardPlotActive)
+// _drawPlotLabel('S3', sLabelColor, sLabelTextColor, s3, standardPlotActive)
+// _drawPlotLabel('R1', rLabelColor, rLabelTextColor, r1, standardPlotActive)
+// _drawPlotLabel('R2', rLabelColor, rLabelTextColor, r2, standardPlotActive)
+// _drawPlotLabel('R3', rLabelColor, rLabelTextColor, r3, standardPlotActive)
+
+// _drawPlotLabel('PP', ppLabelColor, ppLabelTextColor, pp, standardPlotActive or camarillaPlotActive)
+
+// _drawPlotLabel('H1', hLabelColor, hLabelTextColor, h1, camarillaPlotActive)
+// _drawPlotLabel('H2', hLabelColor, hLabelTextColor, h2, camarillaPlotActive)
+// _drawPlotLabel('H3', hLabelColor, hLabelTextColor, h3, camarillaPlotActive)
+// _drawPlotLabel('H4', hLabelColor, hLabelTextColor, h4, camarillaPlotActive)
+// _drawPlotLabel('H5', hLabelColor, hLabelTextColor, h5, camarillaPlotActive)
+// _drawPlotLabel('L1', lLabelColor, lLabelTextColor, l1, camarillaPlotActive)
+// _drawPlotLabel('L2', lLabelColor, lLabelTextColor, l2, camarillaPlotActive)
+// _drawPlotLabel('L3', lLabelColor, lLabelTextColor, l3, camarillaPlotActive)
+// _drawPlotLabel('L4', lLabelColor, lLabelTextColor, l4, camarillaPlotActive)
+// _drawPlotLabel('L5', lLabelColor, lLabelTextColor, l5, camarillaPlotActive)

@@ -1,0 +1,112 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © rhapsodyz
+
+//@version=5
+strategy("SMI-MA Long Strategy", overlay = true, pyramiding = 0, initial_capital = 100000, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 2)
+
+// #######################
+// === General Numbers ===
+// #######################
+
+// === Equity Usage ===
+equityUsage = input(0.9, title="Equity Usage Percentage")
+_qty = (strategy.equity * equityUsage) / close
+
+// === Input MA Series ===
+fastLength      = input(12, title="Fast Length")
+slowLength      = input(26, title="Slow Length")
+signalLength    = input(9, title="Signal Length")
+
+// === Input Smoothed Stochastic ===
+lengthK     = input.int(10, "%K Length",  minval = 1, maxval = 15000)
+lengthD     = input.int(3,  "%D Length",  minval = 1, maxval = 4999)
+lengthEMA   = input.int(8,  "EMA Length", minval = 1, maxval = 4999)
+oversold    = -40
+overbought  = 40
+
+// ##################
+// === Indicators ===
+// ##################
+
+// === EMA series ===
+maFast      = ta.ema(close, fastLength)
+maSlow      = ta.ema(close, slowLength)
+ema20       = ta.ema(close, 20)
+diff        = maFast - maSlow
+bullTrend   = diff >= 0
+bearTrend   = diff <  0
+
+// === MACD series ===
+[macdLine, signalLine, histLine] = ta.macd(close, fastLength, slowLength, signalLength)
+diffHist = histLine - histLine[1]
+
+emaEma(source, length) => ta.ema(ta.ema(source, length), length)
+
+// === Stochastic Momentum Index ===
+highestHigh         = ta.highest(lengthK)
+lowestLow           = ta.lowest(lengthK)
+highestLowestRange  = highestHigh - lowestLow
+relativeRange       = close - (highestHigh + lowestLow) / 2
+smi                 = 200 * (emaEma(relativeRange, lengthD) / emaEma(highestLowestRange, lengthD))
+smiEMA              = ta.ema(smi, lengthEMA)
+smiDiff             = smi - smiEMA
+smiDiv              = smiDiff - smiDiff[1]
+
+// ##################
+// === Conditions ===
+// ##################
+
+// === MA ===
+maLongOpen    = ta.crossover(maFast, maSlow)
+maLongExit    = ta.crossunder(maFast, maSlow)
+maShortOpen   = ta.crossunder(maFast, maSlow)
+maShortExit   = ta.crossover(maFast, maSlow)
+
+// === MACD ===
+macdOpen      = ta.crossover(histLine, ta.sma(histLine, 3))  and histLine < 0 
+macdClose     = ta.crossunder(histLine, ta.sma(histLine, 3)) and histLine > 0
+macdLong      = ta.crossover(histLine, 0) and close > ema20
+macdShort     = ta.crossunder(histLine, 0) and close < ema20
+
+// === Stochastic ===
+smiLongOpen   = (ta.crossover(smi, smiEMA)     and  smi < overbought)
+smiLongExit   = (ta.crossunder(smi, smiEMA)   and  smi > 10)           or   ta.crossunder(maFast, maSlow)    //or (ta.crossover(smiEMA, overbought))
+smiShortOpen  = (ta.crossunder(smi, smiEMA)    and  smi > overbought)
+smiShortExit  = (ta.crossover(smi, smiEMA) and  smi < oversold)        or   ta.crossover(maFast, maSlow)      or   smiDiff[1] < smiDiff //or (ta.crossunder(smiEMA, oversold))
+
+// #######################
+// === Risk Management ===
+// #######################
+
+// === Stop-loss ===
+stopLoss   = input(3, "Stop Loss")
+var float stopLossPrice = na
+// === Take-profit ===
+takeProfit = input(30, "Take Profit")
+var float takeProfitPrice = na
+
+// #######################
+// === Order Execution ===
+// #######################
+
+// === Execute long entry ===
+if smiLongOpen
+    stopLossPrice   := close * (1 - stopLoss/100)
+    takeProfitPrice := close * (1 + takeProfit/100)
+    strategy.entry("Long", strategy.long, qty = _qty)
+    strategy.exit("exit", "Long", stop = stopLossPrice, limit = takeProfitPrice)
+
+// === Execute long exit ===
+if smiLongExit
+    strategy.close("Long", qty_percent=100)
+
+// === Execute short entry ===
+if macdClose
+    stopLossPrice   := close * (1 + stopLoss/100)
+    takeProfitPrice := close * (1 - takeProfit/100)
+    strategy.entry("Short", strategy.short, qty = _qty)
+    strategy.exit("Exit", "Short", stop = stopLossPrice, limit = takeProfitPrice)
+
+// === Execute short exit ===
+if macdLong or macdOpen
+    strategy.close("Short", qty_percent = 100)

@@ -1,0 +1,41 @@
+//@version=6
+indicator(title="Overlay", shorttitle="2", format=format.price, timeframe="", timeframe_gaps=true)
+hline(50)
+
+// a - Stochastic
+a = input(defval=false, title='Stochastic'), a0 = ta.sma(ta.stoch(close, high, low, 14), 1)
+plot(a ? a0 : na, color=#2962FF), plot(a ? ta.sma(a0, 3) : na, color=#FF6D00), hline(a ? 80 : na), hline(a ? 20 : na)
+
+// b - RSI
+b = input(defval=false, title='RSI'), b0 = ta.rsi(close, 14), plot(b ? b0 : na, color=#aaaaaa)
+hline(b ? 70 : na, linestyle=hline.style_dotted), hline(b ? 30 : na, linestyle=hline.style_dotted)
+
+// c - Divergence
+c = input(defval=false, title='Divergence')
+C0(_a) => _b = ta.barssince(_a == true), 5 <= _b and _b <= 60
+c1 = na(ta.pivotlow(b0, 5, 5)) ? false : true, c2 = na(ta.pivothigh(b0, 5, 5)) ? false : true, c3 = C0(c1[1]), 
+ c4 = b0[5] > ta.valuewhen(c1, b0[5], 1) and c3, c5 = low[5] < ta.valuewhen(c1, low[5], 1) and c4 and c1, 
+ c6 = b0[5] < ta.valuewhen(c1, b0[5], 1) and c3, c7 = low[5] > ta.valuewhen(c1, low[5], 1) and c6 and c1, c8 = C0(c2[1]), 
+ c9 = b0[5] < ta.valuewhen(c2, b0[5], 1) and c8, c0 = high[5] > ta.valuewhen(c2, high[5], 1) and c9 and c2, 
+ ca = b0[5] > ta.valuewhen(c2, b0[5], 1) and c8, cb = high[5] < ta.valuewhen(c2, high[5], 1) and ca and c2
+plot(c and c1 ? b0[5] : na, offset=-5, color=(c5?#00ff00:na)), plot(c and c1 ? b0[5] : na, offset=-5, color=(c7?#00ff00:na))
+plot(c and c2 ? b0[5] : na, offset=-5, color=(c0?#ff0000:na)), plot(c and c2 ? b0[5] : na, offset=-5, color=(cb?#ff0000:na))
+plotshape(c and c5 ? b0[5] : na, offset=-5, text="Bull", location=location.absolute, textcolor=#00ff00)
+plotshape(c and c7 ? b0[5] : na, offset=-5, text="H Bull", location=location.absolute, textcolor=#00ff00)
+plotshape(c and c0 ? b0[5] : na, offset=-5, text="Bear", location=location.absolute, textcolor=#ff0000)
+plotshape(c and cb ? b0[5] : na, offset=-5, text="H Bear", location=location.absolute, textcolor=#ff0000) 
+
+// d - Directional Movement Index
+d = input(defval=false, title='Directional Movement Index'), d1 = ta.change(high), d2 = -ta.change(low), 
+ d3 = ta.rma(ta.tr, 14), d4 = fixnan(100 * ta.rma(na(d1) ? na : (d1 > d2 and d1 > 0 ? d1 : 0), 14) / d3), 
+ d5 = fixnan(100 * ta.rma(na(d2) ? na : (d2 > d1 and d2 > 0 ? d2 : 0), 14) / d3), d6 = d4 + d5
+plot(d ? 100 * ta.rma(math.abs(d4 - d5) / (d6 == 0 ? 1 : d6), 14) : na, color=#F50057)
+plot(d ? d4 : na, color=#2962FF), plot(d ? d5 : na, color=#FF6D00)
+
+// e - MACD
+e = input(defval=true, title='MACD'), e0 = .0, e1 = .0, e2 =.0
+if e
+    e0 := ta.ema(close, 12) - ta.ema(close, 16), e1 := ta.ema(e0, 9), e2 := e0 - e1
+plot(e ? e2 : na, style=plot.style_columns, color=(e2>=0?(e2[1]<e2?#26A69A:#B2DFDB):(e2[1]<e2?#FFCDD2:#FF5252)))
+plot(e ? e0 : na, color=#2962FF)
+plot(e ? e1 : na, color=#FF6D00)

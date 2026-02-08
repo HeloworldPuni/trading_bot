@@ -1,0 +1,77 @@
+//@version=5
+indicator("Financial Crisis Predictor - Doomsday Clock", overlay=false)
+
+// Input Parameters
+var grp1 = "Risk Detection Settings"
+fast_ma = input.int(5, "Fast MA Length", group=grp1, minval=1, maxval=20)
+slow_ma = input.int(20, "Slow MA Length", group=grp1, minval=5, maxval=50)
+vix_thresh = input.float(30, "VIX Threshold", group=grp1, minval=15)
+spread_thresh = input.float(0.2, "Yield Spread Threshold", group=grp1)
+hy_thresh = input.float(5.0, "High Yield Spread Threshold", group=grp1, minval=0.0)
+
+// Market Volatility (VIX)
+vix = request.security("TVC:VIX", "D", close)
+vix_fast = ta.ema(vix, fast_ma)
+vix_slow = ta.ema(vix, slow_ma)
+vix_cross = ta.crossover(vix_fast, vix_slow)
+vix_signal = vix_cross and vix > vix_thresh
+vix_weight = vix_signal ? 1 : 0
+vix_weight_smooth = ta.ema(vix_weight, 3)  // Smooth the VIX signal
+
+// Yield Curve
+us10y = request.security("TVC:US10Y", "D", close)
+us02y = request.security("TVC:US02Y", "D", close)
+yield_spread = us10y - us02y
+curve_signal = yield_spread < spread_thresh
+curve_weight = curve_signal ? 1 : 0
+curve_weight_smooth = ta.ema(curve_weight, 3)  // Smooth the Yield Curve signal
+
+// Market Momentum
+spy = request.security("SPY", "D", close)
+spy_ma = ta.ema(spy, 20)
+spy_roc = ta.roc(spy, 5)  // 5-day Rate of Change
+momentum_signal = ta.crossunder(spy, spy_ma) and spy_roc < -2
+momentum_weight = momentum_signal ? 1 : 0
+momentum_weight_smooth = ta.ema(momentum_weight, 3)  // Smooth the Momentum signal
+
+// Credit Risk (High Yield Spread)
+hy_spread = request.security("FRED:BAMLH0A0HYM2", "D", close)
+hy_fast = ta.ema(hy_spread, fast_ma)
+hy_slow = ta.ema(hy_spread, slow_ma)
+credit_signal = ta.crossover(hy_fast, hy_slow) and hy_spread > hy_thresh
+credit_weight = credit_signal ? 1 : 0
+credit_weight_smooth = ta.ema(credit_weight, 3)  // Smooth the Credit Risk signal
+
+// Quick Risk Score (0-100) with Weighted and Smoothed Signals
+// Assign weights to each signal for finer granularity
+risk_score = (vix_weight_smooth * 35) + 
+             (curve_weight_smooth * 25) + 
+             (momentum_weight_smooth * 20) + 
+             (credit_weight_smooth * 20)
+
+
+// Ensure the risk_score stays within 0-100
+risk_score := math.min(math.max(risk_score, 0), 100)
+
+// Risk States
+extreme_risk = risk_score >= 75
+high_risk = risk_score >= 15 and risk_score < 75
+moderate_risk = risk_score >= 10 and risk_score < 15
+low_risk = risk_score < 10
+
+// Plotting
+plot(risk_score, "Risk Score", color=color.new(color.white, 0), linewidth=2)
+hline(75, "Extreme Risk", color=color.new(color.red, 80), linestyle=hline.style_dashed)
+hline(50, "High Risk", color=color.new(color.orange, 80), linestyle=hline.style_dashed)
+hline(25, "Moderate Risk", color=color.new(color.yellow, 80), linestyle=hline.style_dashed)
+
+// Risk Zone Background
+bgcolor(extreme_risk ? color.new(color.red, 90) : 
+       high_risk ? color.new(color.orange, 90) : 
+       moderate_risk ? color.new(color.yellow, 90) : 
+       color.new(color.green, 90))
+
+// Alert Conditions
+alertcondition(ta.cross(risk_score, 75), "Extreme Risk Alert!", "Risk Score crossed into extreme zone")
+alertcondition(ta.cross(risk_score, 50), "High Risk Alert!", "Risk Score crossed into high risk zone")
+alertcondition(ta.cross(risk_score, 25), "Moderate Risk Alert!", "Risk Score crossed into moderate risk zone")

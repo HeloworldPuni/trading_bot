@@ -1,0 +1,80 @@
+//@version=6
+strategy("Optimized High-Accuracy Trading Strategy", overlay=true)
+
+// ─── INPUTS ────────────────────────────────────────────────────────────────
+// Common Inputs
+emaShortLength = input.int(21, "Short EMA Length", minval=1)
+emaLongLength  = input.int(50, "Long EMA Length", minval=1)
+rsiLength      = input.int(14, "RSI Length", minval=1)
+pivotLen       = input.int(2, "Pivot Length")  // Reduced for more trade signals
+atrLength      = input.int(14, "ATR Length")  // Used for dynamic stop-loss & take-profit
+
+// BUY-specific Inputs
+rsiOversold      = input.int(50, "RSI Oversold Level", inline="BUY")  // More buy opportunities
+supportTolerance = input.float(3.0, "Support Tolerance (%)", step=0.1, inline="BUY")  // Wider support range
+
+// SELL-specific Inputs
+rsiOverbought       = input.int(50, "RSI Overbought Level", inline="SELL")  // More sell opportunities
+resistanceTolerance = input.float(3.0, "Resistance Tolerance (%)", step=0.1, inline="SELL")  // Wider resistance range
+
+// ─── INDICATORS ─────────────────────────────────────────────────────────────
+// Exponential Moving Average (EMA) & RSI
+emaShort = ta.ema(close, emaShortLength)
+emaLong  = ta.ema(close, emaLongLength)
+rsiValue = ta.rsi(close, rsiLength)
+atrValue = ta.atr(atrLength)  // ATR for dynamic risk management
+
+// Pivot levels: support from pivotlow and resistance from pivothigh
+supportLevel    = ta.pivotlow(low, pivotLen, pivotLen)
+resistanceLevel = ta.pivothigh(high, pivotLen, pivotLen)
+
+// Check if current price is near the support/resistance zone
+inSupportZone    = not na(supportLevel)    and math.abs(close - supportLevel) / supportLevel * 100 <= supportTolerance
+inResistanceZone = not na(resistanceLevel) and math.abs(close - resistanceLevel) / resistanceLevel * 100 <= resistanceTolerance
+
+// ─── TREND CONFIRMATION ────────────────────────────────────────────────────────
+// Allow trades when price breaks EMA with momentum
+uptrendConfirmed   = (close > emaShort) and (emaShort > emaLong)  // Short EMA above Long EMA
+downtrendConfirmed = (close < emaShort) and (emaShort < emaLong)  // Short EMA below Long EMA
+
+// ─── SIGNAL LOGIC ──────────────────────────────────────────────────────────────
+// BUY SIGNAL: Confirmed uptrend + RSI oversold OR price near support
+buySignal = uptrendConfirmed and ((rsiValue < rsiOversold) or inSupportZone)
+
+// SELL SIGNAL: Confirmed downtrend + RSI overbought OR price near resistance
+sellSignal = downtrendConfirmed and ((rsiValue > rsiOverbought) or inResistanceZone)
+
+// ─── TRADE EXECUTION ──────────────────────────────────────────────────────────
+// Force strategy to allow entries
+strategy.risk.allow_entry_in(strategy.direction.all)
+
+// Enter long when buy signal triggers.
+if buySignal
+    strategy.entry("Long", strategy.long)
+
+// Dynamic ATR-based stop-loss & take-profit
+long_tp = close + (atrValue * 1.2)  // Profit target = 1.2x ATR
+long_sl = close - (atrValue * 0.8)  // Stop-loss = 0.8x ATR
+strategy.exit("Long Exit", from_entry="Long", stop=long_sl, limit=long_tp, trail_points=atrValue * 0.5)
+
+// Enter short when sell signal triggers.
+if sellSignal
+    strategy.entry("Short", strategy.short)
+
+// Dynamic ATR-based stop-loss & take-profit
+short_tp = close - (atrValue * 1.2)  // Profit target = 1.2x ATR
+short_sl = close + (atrValue * 0.8)  // Stop-loss = 0.8x ATR
+strategy.exit("Short Exit", from_entry="Short", stop=short_sl, limit=short_tp, trail_points=atrValue * 0.5)
+
+// ─── PLOTTING ───────────────────────────────────────────────────────────────────
+// Plot EMA for trend confirmation
+plot(emaShort, title="Short EMA", color=color.blue, linewidth=2)
+plot(emaLong, title="Long EMA", color=color.orange, linewidth=2)
+
+// Plot support and resistance levels when available
+plot(supportLevel, title="Support", style=plot.style_linebr, color=color.green, linewidth=2)
+plot(resistanceLevel, title="Resistance", style=plot.style_linebr, color=color.red, linewidth=2)
+
+// Mark buy signals and sell signals on the chart
+plotshape(buySignal, style=shape.labelup, color=color.green, text="Buy", location=location.belowbar)
+plotshape(sellSignal, style=shape.labeldown, color=color.red, text="Sell", location=location.abovebar)

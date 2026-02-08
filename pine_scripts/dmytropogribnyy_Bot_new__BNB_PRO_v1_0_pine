@@ -1,0 +1,323 @@
+//@version=6
+indicator(title="UT Bot Alerts BNB PRO v1.0 (CORE-BNB)", overlay=true, max_labels_count=500)
+
+// ============================================================================
+// BNB PRO v1.0 - Найстабільніший символ
+// ============================================================================
+// BASE: UNIVERSAL PRO v1.1
+//
+// BNB PRESET (жорстко зашиті параметри):
+// ✅ ADX: OFF (BNB дуже плавний)
+// ✅ RangeGuard: OFF
+// ✅ Squeeze: ON
+// ✅ MACD: OFF
+// ✅ Volume: OFF
+// ✅ HTF EMA200: OFF
+// ✅ EMA9 Close Filter: ON
+// ✅ ATR Cap 2.5%: ON
+// ✅ Anti-Bottom-Short: ON
+// ✅ MinBarsBetweenSignals: 7
+//
+// ОЧІКУЄТЬСЯ: 18-22 сигнали/день @ WR 86-90% (найкращий з CORE-4)
+//
+// DATE: November 21, 2025
+// ============================================================================
+
+// GRADUATED parameters (BNB optimal)
+minAtrPctLong          = 0.22
+minAtrPctShort         = 0.23
+maxAtrPct              = 2.50
+minEmaGapPct           = 0.035
+emaAlignToleranceLong  = 0.005
+emaAlignTolShort       = 0.003
+
+// CORE Settings
+a = 1
+c = 10
+h = false
+
+// Quality Filter
+useSoftFilter          = true
+emaFastLen             = 9
+emaSlowLen             = 21
+confirmClose           = true
+
+// Filter modes
+filterModeLong         = "OR"
+filterModeShort        = "AND"
+minBarsBetweenSignals  = 7
+
+// RangeGuard - OFF
+useRangeGuard          = false
+rangeLen               = 14
+minRangePct            = 0.40
+
+// Crossover smoothing
+crossSmoothLen         = 1
+
+// ShortGuard LITE - ON
+useShortGuardLite      = true
+minStopGapShortPct     = 0.08
+minBearBodyShortPct    = 37.0
+requireShortStayBars   = 1
+minShortMomentumBars   = 2
+strongShortGapPct      = 0.10
+strongBearBodyBypass   = 55.0
+
+// LONG filters
+minLongMomentumBars    = 1
+strongLongGapPct       = 0.12
+strongBullBodyBypass   = 55.0
+
+// EMA Alignment - ON
+requireEmaAlignmentLong  = true
+requireEmaAlignmentShort = true
+
+// ============================================================================
+// BNB FILTERS (hardcoded)
+// ============================================================================
+
+// ADX - OFF для BNB
+useAdxFilter       = false
+adxLength          = 14
+adxThresholdLong   = 18.0
+adxThresholdShort  = 22.0
+
+// EMA9 Close Filter - ON
+useEma9CloseFilter = true
+
+// HTF EMA200 - OFF
+useHtfEma200       = false
+htfTf              = "15"
+htfEmaLen          = 200
+
+// ATR Cap - ON
+useAtrCap          = true
+
+// Squeeze - ON
+useSqueezeFilter = true
+squeezeBbLength  = 20
+squeezeBbMult    = 2.0
+squeezeKcMult    = 1.5
+
+// MACD - OFF
+useMacdFilter    = false
+macdFastLength   = 12
+macdSlowLength   = 26
+macdSignalLength = 9
+
+// Volume - OFF
+useVolumeFilter  = false
+volumeEmaShort   = 5
+volumeEmaLong    = 10
+volumeThreshold  = 15.0
+
+// Body filter - OFF
+minCandleBodyPct       = 0.0
+
+// EMA-200 Global - ON
+useEma200Filter        = true
+ema200Tolerance        = 0.7
+
+// Anti-Bottom-Short - ON
+useAntiBottomShort     = true
+dropThresholdPct       = 8.0
+bottomLookbackBars     = 8
+
+// Debug - OFF
+enableDebug            = false
+
+// ============================================================================
+// FILTER CALCULATIONS
+// ============================================================================
+
+[diPlus, diMinus, adx] = ta.dmi(adxLength, adxLength)
+adxLongOk  = not useAdxFilter or (adx > adxThresholdLong)
+adxShortOk = not useAdxFilter or (adx > adxThresholdShort)
+
+basisSqz = ta.sma(close, squeezeBbLength)
+dev = squeezeBbMult * ta.stdev(close, squeezeBbLength)
+upperBB = basisSqz + dev
+lowerBB = basisSqz - dev
+maSqz = ta.sma(close, squeezeBbLength)
+rangeMa = ta.sma(ta.tr, squeezeBbLength)
+upperKC = maSqz + rangeMa * squeezeKcMult
+lowerKC = maSqz - rangeMa * squeezeKcMult
+sqzOn = (lowerBB > lowerKC) and (upperBB < upperKC)
+squeezeBreakdown = sqzOn and close < lowerKC
+squeezeOk = not useSqueezeFilter or not sqzOn or squeezeBreakdown
+
+[macdLine, signalLine, histLine] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
+macdLongOk = not useMacdFilter or histLine > 0
+macdShortOk = not useMacdFilter or histLine < 0
+
+volShort = ta.ema(volume, volumeEmaShort)
+volLong  = ta.ema(volume, volumeEmaLong)
+volOsc   = 100 * (volShort - volLong) / math.max(volLong, 1)
+volumeOk = not useVolumeFilter or (volOsc > volumeThreshold)
+
+ema200 = ta.ema(close, 200)
+toleranceMult = ema200Tolerance / 100.0
+ema200LongOk  = not useEma200Filter or (close > ema200 * (1.0 - toleranceMult))
+ema200ShortOk = not useEma200Filter or (close < ema200 * (1.0 + toleranceMult))
+
+htfEma = useHtfEma200 ? request.security(syminfo.tickerid, htfTf, ta.ema(close, htfEmaLen), lookahead=barmerge.lookahead_off) : na
+htfLongOk  = not useHtfEma200 or (close > htfEma)
+htfShortOk = not useHtfEma200 or (close < htfEma)
+
+recentHigh = ta.highest(high, 25)
+recentLow  = ta.lowest(low, 25)
+recentDrop = (recentHigh - recentLow) / recentHigh * 100.0
+isAtBottom = low == ta.lowest(low, bottomLookbackBars)
+antiBottomShortOk = not useAntiBottomShort or not (recentDrop >= dropThresholdPct and isAtBottom)
+
+// ============================================================================
+// CORE UT BOT LOGIC
+// ============================================================================
+xATR  = ta.atr(c)
+nLoss = a * xATR
+haTkr = ticker.heikinashi(syminfo.tickerid)
+src   = h ? request.security(haTkr, timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+var float xATRTrailingStop = na
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src - nLoss) : src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src + nLoss) : src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+
+basis = crossSmoothLen == 1 ? src : nz(ta.ema(src, crossSmoothLen), src)
+above = ta.crossover(basis, xATRTrailingStop)
+below = ta.crossunder(basis, xATRTrailingStop)
+
+buy    = src > xATRTrailingStop and above
+sell   = src < xATRTrailingStop and below
+barbuy  = src > xATRTrailingStop
+barsell = src < xATRTrailingStop
+
+haOpen = request.security(haTkr, timeframe.period, open,  lookahead=barmerge.lookahead_off)
+haHigh = request.security(haTkr, timeframe.period, high,  lookahead=barmerge.lookahead_off)
+haLow  = request.security(haTkr, timeframe.period, low,   lookahead=barmerge.lookahead_off)
+src_open = h ? haOpen : open
+src_high = h ? haHigh : high
+src_low  = h ? haLow  : low
+
+// ============================================================================
+// QUALITY FILTERS
+// ============================================================================
+emaF    = ta.ema(src, emaFastLen)
+emaS    = ta.ema(src, emaSlowLen)
+
+den_atr = math.max(math.abs(xATRTrailingStop), 1e-9)
+atrp    = (xATR / den_atr) * 100.0
+
+den_ema = math.max(math.abs(emaS), 1e-9)
+gapPct  = na(emaS) or emaS == 0 ? na : math.abs((emaF - emaS) / den_ema) * 100.0
+
+trendUp   = emaF > emaS and gapPct >= minEmaGapPct
+trendDown = emaF < emaS and gapPct >= minEmaGapPct
+
+atr_gate_long  = atrp >= minAtrPctLong
+atr_gate_short = atrp >= minAtrPctShort
+
+atr_cap_ok = not useAtrCap or (atrp <= maxAtrPct)
+
+ema9_close_long  = not useEma9CloseFilter or (close > emaF)
+ema9_close_short = not useEma9CloseFilter or (close < emaF)
+
+adxLongOk  := not useAdxFilter or (adx > adxThresholdLong) or (trendUp and atr_gate_long)
+adxShortOk := not useAdxFilter or (adx > adxThresholdShort) or (trendDown and atr_gate_short)
+
+long_core  = buy
+short_core = sell
+
+rangeHigh = ta.highest(src, rangeLen)
+rangeLow  = ta.lowest(src, rangeLen)
+den_rng   = math.max(math.abs(src), 1e-9)
+rangePct  = (rangeHigh - rangeLow) / den_rng * 100.0
+range_ok  = not useRangeGuard or (rangePct >= minRangePct)
+
+var int bearStreak_early = 0
+bearStreak_early := (src < src_open) ? nz(bearStreak_early[1]) + 1 : 0
+denAbs_early = math.max(math.abs(src), 1e-9)
+rng_early = math.max(src_high - src_low, 1e-9)
+body_early = math.abs(src_open - src)
+bearBodyPct_early = (src < src_open) ? (body_early / rng_early * 100.0) : 0.0
+stopGapShortPct_early = (xATRTrailingStop - src) / denAbs_early * 100.0
+
+cascade_bypass = (bearStreak_early >= minShortMomentumBars + 1 and bearBodyPct_early >= minBearBodyShortPct) or (bearStreak_early >= minShortMomentumBars + 2 and bearBodyPct_early >= minBearBodyShortPct - 10.0) or (stopGapShortPct_early >= strongShortGapPct * 1.8 and bearBodyPct_early >= strongBearBodyBypass and atrp >= minAtrPctShort * 1.4)
+
+emaGapAbs = math.abs(emaF - emaS) / den_ema
+ema_aligned_long  = not requireEmaAlignmentLong or (emaF > emaS) or (emaGapAbs < emaAlignToleranceLong)
+ema_aligned_short = not requireEmaAlignmentShort or (emaF < emaS) or (emaGapAbs < emaAlignTolShort)
+
+// ============================================================================
+// FINAL FILTER COMBINATION
+// ============================================================================
+
+long_filt = filterModeLong == "AND" ? (long_core and atr_gate_long and trendUp) : (long_core and (atr_gate_long or trendUp))
+long_filt := long_filt and ema_aligned_long and adxLongOk and macdLongOk and volumeOk and ema9_close_long and atr_cap_ok and htfLongOk
+
+short_base = filterModeShort == "AND" ? (short_core and atr_gate_short and trendDown) : (short_core and (atr_gate_short or trendDown))
+short_filt = cascade_bypass ? short_core : (short_base and ema_aligned_short and adxShortOk and squeezeOk and macdShortOk and volumeOk)
+short_filt := short_filt and ema9_close_short and atr_cap_ok and htfShortOk
+
+denAbs           = math.max(math.abs(src), 1e-9)
+stopGapShortPct  = (xATRTrailingStop - src) / denAbs * 100.0
+rng              = math.max(src_high - src_low, 1e-9)
+body             = math.abs(src_open - src)
+bearBodyPct      = (src < src_open) ? (body / rng * 100.0) : 0.0
+
+short_lite_ok     = not useShortGuardLite or ((stopGapShortPct >= minStopGapShortPct) or (bearBodyPct >= minBearBodyShortPct))
+isBelowStop = src < xATRTrailingStop
+barsBelowStop_raw = ta.barssince(not isBelowStop)
+barsBelowStop     = na(barsBelowStop_raw) ? 0 : barsBelowStop_raw
+stay_ok_short     = (requireShortStayBars == 0) or (barsBelowStop >= requireShortStayBars)
+
+var int bearStreak = 0
+bearStreak := (src < src_open) ? nz(bearStreak[1]) + 1 : 0
+short_momo_ok = (minShortMomentumBars == 0) or (bearStreak >= minShortMomentumBars) or (stopGapShortPct >= strongShortGapPct) or (bearBodyPct >= strongBearBodyBypass)
+
+var int bullStreak = 0
+bullStreak := (src > src_open) ? nz(bullStreak[1]) + 1 : 0
+bullBodyPct    = (src > src_open) ? (body / rng * 100.0) : 0.0
+stopGapLongPct = (src - xATRTrailingStop) / denAbs * 100.0
+long_momo_ok   = (minLongMomentumBars == 0) or (bullStreak >= minLongMomentumBars) or (stopGapLongPct >= strongLongGapPct) or (bullBodyPct >= strongBullBodyBypass)
+
+longImpulseBypass = (stopGapLongPct >= strongLongGapPct) or (bullBodyPct >= strongBullBodyBypass)
+shortImpulseBypass = (stopGapShortPct >= strongShortGapPct * 1.2) or (bearBodyPct >= strongBearBodyBypass)
+
+body_filter_ok = (minCandleBodyPct == 0.0) or ((body / rng * 100.0) >= minCandleBodyPct)
+
+var int lastSigBar = na
+cooldown_ok = na(lastSigBar) or (bar_index - lastSigBar >= minBarsBetweenSignals)
+
+long_filt  := long_filt  and range_ok and long_momo_ok and body_filter_ok
+short_quality_ok = short_lite_ok and stay_ok_short and short_momo_ok
+short_filt := short_filt and range_ok and (cascade_bypass or short_quality_ok) and body_filter_ok
+
+long_ok  = useSoftFilter ? (long_filt  and cooldown_ok) : long_core
+short_ok = useSoftFilter ? (short_filt and cooldown_ok) : short_core
+
+long_ok  := long_ok  and (ema200LongOk or longImpulseBypass or trendUp or atr_gate_long)
+short_ok := short_ok and (ema200ShortOk or shortImpulseBypass) and antiBottomShortOk
+
+if (long_ok or short_ok) and (not confirmClose or barstate.isconfirmed)
+    lastSigBar := bar_index
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+shouldPlot = (confirmClose ? barstate.isconfirmed : true)
+plotshape(shouldPlot and long_ok,  title="Buy",  text="Buy",  style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
+plotshape(shouldPlot and short_ok, title="Sell", text="Sell", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.tiny)
+barcolor(shouldPlot ? (barbuy ? color.new(color.green, 0) : (barsell ? color.new(color.red, 0) : na)) : na)
+
+plot(atrp,   title="atr_pct",     display=display.none)
+plot(gapPct, title="ema_gap_pct", display=display.none)
+
+plot(emaF,   title="EMA 9",    color=color.new(#2196F3, 0), linewidth=1)
+plot(emaS,   title="EMA 21",   color=color.new(#FF9800, 0), linewidth=2)
+plot(ema200, title="EMA 200",  color=color.new(#9C27B0, 0), linewidth=2)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+alertcondition((confirmClose ? barstate.isconfirmed : true) and long_ok,  "BNB Long", message='{"action":"entry","side":"long","source":"utbot","symbol":"{{ticker}}","preset":"bnb_pro_v1","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')
+alertcondition((confirmClose ? barstate.isconfirmed : true) and short_ok, "BNB Short", message='{"action":"entry","side":"short","source":"utbot","symbol":"{{ticker}}","preset":"bnb_pro_v1","price":{{close}},"timeframe":"{{interval}}","t":"{{timenow}}","atr_pct":{{plot_0}},"ema_gap_pct":{{plot_1}}}')

@@ -1,0 +1,232 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © giantguppy
+//
+// DESCRIPTION
+// Momentum-based Tradingview indicator utilizes Heiken-Ashi data to detect
+// price action pivots and generates a buy signal with letter grade based on
+// various factors, including macro trend, micro trend, and RSI. An alert
+// condition is exported so that user can be notified when to buy. Designed for
+// day-trading on a 5M timeframe, but feel free to experiment with others.
+//
+// DISCLAIMER
+// No buy signal is perfect, and many things are not taken into account. Use at
+// your own risk!
+//
+
+//@version=6
+indicator("MomentumBuySignal", overlay=true)
+
+CLEAR_COLOR             = color.rgb(0, 0, 0, 0)
+BEARISH_COLOR           = color.rgb(180, 0, 0)
+BULLISH_COLOR           = color.rgb(0, 160, 0)
+BEARISH_COLOR_DIM       = color.rgb(150, 0, 0)
+BULLISH_COLOR_DIM       = color.rgb(0, 130, 0)
+BEARISH_COLOR_BRIGHT    = color.rgb(240, 60, 60)
+BULLISH_COLOR_BRIGHT    = color.rgb(60, 220, 60)
+SIDEWAYS_COLOR          = color.rgb(80, 80, 80)
+SQUEEZE_COLOR           = color.rgb(30, 70, 255, 25)
+BUY_LABEL_MARGIN        = 1
+DIR_BEARISH             = -1
+DIR_BULLISH             = 1
+DIR_SIDEWAYS            = 0
+MACRO_TREND_DAYS        = 200
+MICRO_TREND_INTERVALS   = 20
+TREND_SLOPE_EPSILON     = 0.00005
+MIN_GROWTH_RATIO        = 1.5
+MAX_OPPOSITE_WICK       = 0.1
+STRONG_HEIGHT_RATIO     = 1.3
+RSI_LENGTH              = 14
+RSI_OVERBOUGHT          = 70
+RSI_OVERSOLD            = 30
+
+getGradeFromScore(score) =>
+    if(score >= 97)
+        "A+"
+    else if(score >= 90)
+        "A"
+    else if(score >= 80)
+        "B"
+    else if(score >= 70)
+        "C"
+    else
+        "F"
+
+getTrendDirection(p0, p1, epsilon) =>
+    s = p0/p1
+
+    if(s < 1 - epsilon)
+        DIR_BEARISH
+    else if(s > 1 + epsilon)
+        DIR_BULLISH
+    else
+        DIR_SIDEWAYS
+
+getTrendColor(trend, isBright) =>
+    if isBright
+        switch trend
+            DIR_BEARISH => BEARISH_COLOR_BRIGHT
+            DIR_BULLISH => BULLISH_COLOR_BRIGHT
+            DIR_SIDEWAYS => SIDEWAYS_COLOR
+    else
+        switch trend
+            DIR_BEARISH => BEARISH_COLOR_DIM
+            DIR_BULLISH => BULLISH_COLOR_DIM
+            DIR_SIDEWAYS => SIDEWAYS_COLOR
+
+//
+// Candle Analysis, Pivot Detection
+//
+
+// use Heiken-Ashi (smoothed) candles for most things
+ticker = syminfo.tickerid
+haTicker = ticker.heikinashi(ticker)
+haClose = request.security(haTicker, timeframe.period, close)
+haOpen = request.security(haTicker, timeframe.period, open)
+haHigh = request.security(haTicker, timeframe.period, high)
+haLow = request.security(haTicker, timeframe.period, low)
+
+// Macro Trend on the Daily
+macroAvg = ta.ema(close, MACRO_TREND_DAYS)
+macroAvg0 = request.security(ticker, "D", macroAvg[0])  // today
+macroAvg1 = request.security(ticker, "D", macroAvg[1])  // yesterday
+macroTrend = getTrendDirection(macroAvg0, macroAvg1, TREND_SLOPE_EPSILON)
+// macro plot is not useful on a daily chart except to see trend color
+// macroSeries = request.security(ticker, "D", macroAvg)
+// plot(macroSeries, title="Macro", color=getTrendColor(macroTrend, false), linewidth=5)
+
+// Micro Trend (very important)
+microAvg = (ta.ema(close, MICRO_TREND_INTERVALS) + ta.vwap(close))/2
+microTrend = getTrendDirection(microAvg[0], microAvg[1], TREND_SLOPE_EPSILON)
+trendsMatch = (microTrend == macroTrend)
+microTrendColor = getTrendColor(microTrend, trendsMatch)
+
+anchor = timeframe.change("1D")
+stdevMult = 1.0
+[vwap, upper, lower] = ta.vwap(open, anchor, stdevMult)
+distHigh = math.max(upper - vwap, 0.1)
+distLow = math.min(vwap - lower, 0.1)
+// plot(vwap, color=color.gray)
+// plot(upper, color=color.orange)
+// plot(lower, color=color.red)
+
+d0 = haClose[0] - haOpen[0]
+d1 = haClose[1] - haOpen[1]
+d2 = haClose[2] - haOpen[2]
+d3 = haClose[3] - haOpen[3]
+d4 = haClose[4] - haOpen[4]
+dir0 = (d0 > 0) ? DIR_BULLISH : DIR_BEARISH
+dir1 = (d1 > 0) ? DIR_BULLISH : DIR_BEARISH
+dir2 = (d2 > 0) ? DIR_BULLISH : DIR_BEARISH
+dir3 = (d3 > 0) ? DIR_BULLISH : DIR_BEARISH
+dir4 = (d4 > 0) ? DIR_BULLISH : DIR_BEARISH
+// minimum height of one avoids division by zero
+h0 = math.max(math.abs(d0), 1)
+h1 = math.max(math.abs(d1), 1)
+h2 = math.max(math.abs(d2), 1)
+h3 = math.max(math.abs(d3), 1)
+oppositeWickLength = (dir0 == DIR_BEARISH)
+     ? (haHigh[0] - math.max(haOpen[0], haClose[0])) // upper
+     : (math.min(haOpen[0], haClose[0]) - haLow[0])  // lower
+
+growthRatioCheckA       = h0/math.min(h1, h2) >= MIN_GROWTH_RATIO
+prevGrowthRatioCheckA   = h1/math.min(h2, h3) >= MIN_GROWTH_RATIO
+growthRatioCheckB       = h0/h1 >= MIN_GROWTH_RATIO and h1/h2 >= MIN_GROWTH_RATIO
+// 2-2 pivot case
+pivotCheckA             = dir2 != dir1 and dir3 == dir2 and dir1 == dir0 and growthRatioCheckA
+prevPivotCheckA         = dir3 != dir2 and dir4 == dir3 and dir2 == dir1 and prevGrowthRatioCheckA
+// 1-3 pivot case for "waterfall" detection (up or down)
+pivotCheckB             = dir3 != dir2 and dir2 == dir1 and dir1 == dir0 and growthRatioCheckB and not prevPivotCheckA
+buyDir                  = ((pivotCheckA or pivotCheckB)
+                           and (h0 > h1)                                    // current candle must be taller than previous (accelerating)
+                           and (oppositeWickLength/h0 <= MAX_OPPOSITE_WICK) // oppisite wick length must be short (minimal slop)
+                           and (dir0 == macroTrend or dir0 == microTrend)   // direction must match either macro or micro trend
+                          )
+                             ? dir0
+                             : DIR_SIDEWAYS  // no buy
+
+// Candle Height Ratio
+hSum = 0.0  
+for i = 0 to MICRO_TREND_INTERVALS - 1
+    hSum += math.abs(haClose[i] - haOpen[i])
+avgCandleHeight = hSum/MICRO_TREND_INTERVALS
+candleHeightRatio = h0/avgCandleHeight
+
+// Put/Call Ratio
+putCallRatio = request.security("USI:PCC", timeframe.period, close)
+putCallDir = (putCallRatio > 1) ? DIR_BEARISH : DIR_BULLISH
+
+// RSI
+rsiValue = ta.rsi(close, RSI_LENGTH)
+
+// Bollinger Bands Squeeze
+keltPrd = 20
+keltFactor = 1.5
+cciPeriod = 50
+bbDeviations = 2.0
+bbPeriod = 20
+bbD = ta.cci(close, cciPeriod)
+bbDiff = ta.atr(keltPrd)*keltFactor
+bbStd = ta.stdev(close, bbPeriod)
+bbS = bbDeviations*bbStd/bbDiff
+bbSqueeze = bbS < 1 and bbD > 0 or bbS < 1 and bbD <= 0
+midY = (haOpen + haClose)/2
+plot(bbSqueeze ? midY : na, title="BB Squeeze", color=bbSqueeze ? SQUEEZE_COLOR : CLEAR_COLOR, style=plot.style_circles, linewidth=15)
+
+// draw micro trend line last, after BB squeeze
+plot(microAvg, title="Micro Trend", color=microTrendColor, linewidth=3)
+
+//
+// Score & Grade
+// 
+// 1-3 candle pivot is slower and therefore not as good as 2-2 pivot
+baseScore = pivotCheckA ? 55 : 50
+score = (buyDir != DIR_SIDEWAYS) ? baseScore : 0
+scoreInfo = array.new<string>()
+
+if(dir0 == microTrend)
+    score += 20
+    scoreInfo.push("micro trend")
+
+if(buyDir == macroTrend)
+    score += 5
+    scoreInfo.push("macro trend")
+
+if(candleHeightRatio >= STRONG_HEIGHT_RATIO)
+    score += 5
+    scoreInfo.push("strong height")
+
+if(buyDir == putCallDir)
+    score += 5
+    scoreInfo.push((putCallDir == DIR_BEARISH) ? "puts" : "calls")
+
+if(buyDir == DIR_BEARISH and rsiValue < 50 and rsiValue > RSI_OVERSOLD)
+    score += 5
+    scoreInfo.push("RSI-lo")
+else if(buyDir == DIR_BULLISH and rsiValue > 50 and rsiValue < RSI_OVERBOUGHT)
+    score += 5
+    scoreInfo.push("RSI-hi")
+
+if(bbSqueeze)
+    score += 5
+    scoreInfo.push("squeeze")
+
+grade = getGradeFromScore(score)
+isBuyGrade = (grade != "F")
+
+if isBuyGrade
+    hoverText = str.tostring(score)
+         +((scoreInfo.size() != 0) ? (": "+scoreInfo.join(", ")) : "")
+    labelColor = (buyDir == DIR_BEARISH) ? BEARISH_COLOR : BULLISH_COLOR
+
+    if(buyDir == DIR_BEARISH)
+        label.new(bar_index, high + BUY_LABEL_MARGIN, text="PUT "+grade, tooltip=hoverText, color=labelColor, style=label.style_label_down)
+    else if(buyDir == DIR_BULLISH)
+        label.new(bar_index, low - BUY_LABEL_MARGIN, text="CALL "+grade, tooltip=hoverText, color=labelColor, style=label.style_label_up)
+
+msg1 = "Buy Call or Put"
+alertcondition(isBuyGrade, title=msg1, message=msg1)
+msg2 = "Buy Call (bullish)"
+alertcondition(isBuyGrade and buyDir == DIR_BULLISH, title=msg2, message=msg2)
+msg3 = "Buy Put (bearish)"
+alertcondition(isBuyGrade and buyDir == DIR_BEARISH, title=msg3,  message=msg3)
+

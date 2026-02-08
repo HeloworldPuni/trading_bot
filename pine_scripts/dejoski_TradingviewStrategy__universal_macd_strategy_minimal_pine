@@ -1,0 +1,75 @@
+//@version=6
+strategy("MACD Minimal", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=20, pyramiding=100)
+
+// === INPUTS ===
+profit_pct = input.float(2.0, "Profit Percentage")
+
+// === STATE VARIABLES ===
+var float latest_entry_price = na
+var float trailing_stop = na
+var bool trail_active = false
+var float last_exit_price = na
+var bool waiting_for_dip = false
+
+// === INDICATORS ===
+[macd_line, signal_line, _] = ta.macd(close, 12, 26, 9)
+
+// === ENTRY LOGIC ===
+buy_signal = macd_line > macd_line[1] and close > open and macd_line > signal_line
+
+// === DIP WAITING LOGIC ===
+if waiting_for_dip
+    dip_target = last_exit_price * (1 - profit_pct / 100)
+    rise_target = last_exit_price * (1 + profit_pct / 100)
+    if high >= rise_target or (low <= dip_target and buy_signal and close <= dip_target)
+        waiting_for_dip := false
+
+// === ENTRY ===
+if buy_signal and strategy.position_size == 0 and not waiting_for_dip
+    strategy.entry("Long", strategy.long)
+    latest_entry_price := close
+    trailing_stop := na
+    trail_active := false
+
+// === AVERAGE DOWN ===
+if buy_signal and strategy.position_size > 0 and not trail_active and close <= latest_entry_price * (1 - profit_pct / 100)
+    strategy.entry("Long", strategy.long)
+    latest_entry_price := close
+
+// === PROFIT TARGET AND TRAILING STOP ===
+profit_target = strategy.position_size > 0 ? strategy.position_avg_price * (1 + profit_pct / 100) : na
+
+if strategy.position_size > 0
+    // Activate trailing stop when profit target hit
+    if high >= profit_target
+        trail_active := true
+    
+    // Update trailing stop
+    if trail_active
+        current_stop = high * (1 - profit_pct / 100)
+        if na(trailing_stop) or current_stop > trailing_stop
+            trailing_stop := current_stop
+
+// === EXIT ===
+if strategy.position_size > 0 and trail_active and close <= trailing_stop
+    strategy.close_all()
+    last_exit_price := close
+    waiting_for_dip := true
+    latest_entry_price := na
+    trailing_stop := na
+    trail_active := false
+
+// === VISUALIZATION ===
+// Use the persistent trail_active state, NOT the current bar's high
+line_value = strategy.position_size > 0 ? (trail_active ? trailing_stop : profit_target) : na
+line_color = trail_active ? color.red : color.green
+
+// Make lines transparent when waiting for dip OR when no positions
+target_line_color = strategy.position_size == 0 ? color.new(line_color, 100) : waiting_for_dip ? color.new(line_color, 80) : line_color
+add_line_color = strategy.position_size == 0 ? color.new(color.blue, 100) : waiting_for_dip ? color.new(color.blue, 80) : color.blue
+
+plot(line_value, "Target/Stop", color=target_line_color, linewidth=2)
+plot(strategy.position_size > 0 and not trail_active ? latest_entry_price * (1 - profit_pct / 100) : na, "Add Level", color=add_line_color, linewidth=1)
+
+// === BACKGROUND STATUS ===
+bgcolor(waiting_for_dip ? color.new(color.yellow, 90) : strategy.position_size > 0 and not trail_active ? color.new(color.blue, 95) : na)

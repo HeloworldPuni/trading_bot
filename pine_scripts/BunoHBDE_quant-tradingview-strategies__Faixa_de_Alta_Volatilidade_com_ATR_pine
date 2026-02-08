@@ -1,0 +1,77 @@
+//@version=5
+indicator("Faixa de Alta Volatilidade com ATR", overlay=true)
+
+// ==== INPUTS ====
+length = input.int(12, "STC Length")
+fastLength = input.int(26, "STC Fast EMA")
+slowLength = input.int(50, "STC Slow EMA")
+ma_len = input.int(200, "SMA Length")
+atrPeriod = input.int(5, "ATR Period")
+atrMult = input.float(3.5, "ATR Multiplier")
+
+// ==== STC FUNCTION ====
+f_macd(src, fast, slow) =>
+    ta.ema(src, fast) - ta.ema(src, slow)
+
+f_stc(length, fast, slow) =>
+    macd = f_macd(close, fast, slow)
+    min_macd = ta.lowest(macd, length)
+    max_macd = ta.highest(macd, length)
+    k = max_macd != min_macd ? (macd - min_macd) / (max_macd - min_macd) * 100 : 0.0
+    d = 0.0
+    d := na(d[1]) ? k : d[1] + 0.5 * (k - d[1])
+    min_d = ta.lowest(d, length)
+    max_d = ta.highest(d, length)
+    stc = max_d != min_d ? (d - min_d) / (max_d - min_d) * 100 : 0.0
+    stc_out = na(stc[1]) ? stc : stc[1] + 0.5 * (stc - stc[1])
+    stc_out
+
+stcValue = f_stc(length, fastLength, slowLength)
+stcLong = ta.crossover(stcValue, stcValue[1])
+stcShort = ta.crossunder(stcValue, stcValue[1])
+
+// ==== ATR TRAILING STOP ====
+atr = ta.atr(atrPeriod)
+nLoss = atr * atrMult
+var float trailingStop = na
+trailingStop := close > nz(trailingStop[1], close) ? math.max(nz(trailingStop[1]), close - nLoss) :
+                 close < nz(trailingStop[1], close) ? math.min(nz(trailingStop[1]), close + nLoss) :
+                 close + nLoss
+
+atrUp = close > trailingStop
+atrDown = close < trailingStop
+
+// ==== MA TREND ====
+ma = ta.sma(close, ma_len)
+maTrendUp = close > ma
+
+// ==== FRACTAL (fim da tendência) ====
+isFractalTop = high[2] > high[1] and high[2] > high[3]
+
+// ==== LÓGICA DE TENDÊNCIA ====
+startTrend = stcLong and atrUp and maTrendUp
+endTrend = isFractalTop
+
+// ==== PERSISTÊNCIA DA LINHA ====
+var line trendLine = na
+var float priceStart = na
+var int barStart = na
+var bool inTrend = false
+
+if startTrend and not inTrend
+    priceStart := close
+    barStart := bar_index
+    trendLine := line.new(x1=bar_index, y1=priceStart, x2=bar_index + 1, y2=priceStart, color=color.green, width=2)
+    inTrend := true
+
+if inTrend and not na(trendLine)
+    line.set_x2(trendLine, bar_index)
+
+if inTrend and endTrend
+    inTrend := false
+
+// ==== VISUAL EXTRA (opcional) ====
+plot(ma, title="SMA", color=color.blue)
+plot(trailingStop, title="ATR Stop", color=atrUp ? color.green : color.red)
+plotshape(stcLong, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny, title="STC Long")
+plotshape(stcShort, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, title="STC Short")

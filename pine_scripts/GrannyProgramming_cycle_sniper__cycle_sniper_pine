@@ -1,0 +1,1036 @@
+//@version=5
+indicator("Cycle Sniper", overlay=true, format=format.price, precision=3, max_bars_back=5000)
+
+// ============================================================================
+// 1. Inputs & Constants
+// ============================================================================
+groupMain = "Main Settings"
+useTickerSpecific = input.bool(true, "Ticker Presets", group=groupMain)
+show_future_dcl   = input.bool(true, "Show Future Cycle Lows", group=groupMain)
+show_hist_trough  = input.bool(true, "Show Historical Cycle Lows Predictions", group=groupMain)
+
+// ----- Confirmation Signals -----
+groupSignals = "Confirmation Signals"
+show_FRAMA = input.bool(true, "Show FRAMA Indicator", group=groupSignals)
+
+// ----- Manual Settings (formerly DCL Analysis) -----
+groupManual = "MANUAL SETTINGS"
+src   = close
+dpr   = input.int(7, "DRO period", minval=5, group=groupManual)
+sig_in = input.string("NONE", "Harmonic Period", options=["20 Day", "40 Day", "60 Day", "80 Day", "20 Week", "NONE"], group=groupManual)
+
+// ----- FRAMA Settings -----
+groupFRAMA = "FRAMA Settings"
+framaFC = input.int(1, "FRAMA Fast MA", minval=1, group=groupFRAMA)
+framaSC = input.int(200, "FRAMA Slow MA", minval=1, group=groupFRAMA)
+
+// ----- Tooltip Settings (Keep at Bottom) -----
+groupTooltip = "Tooltip Settings"
+position_input = input.string("bottom_right", "Tooltip Position", 
+     options=["top_left", "top_center", "top_right", 
+              "middle_left", "middle_right", 
+              "bottom_left", "bottom_center", 
+              "bottom_right"], 
+     group=groupTooltip)
+size_input = input.string("small", "Text Size", 
+     options=["tiny", "small", "normal", "large", "huge"], 
+     group=groupTooltip)
+
+// Fixed maximum array size and decimals
+var int MAX_ARRAY_SIZE = 1000000
+var int DECIMALS = 2
+
+// Constants for Method 1 and Method 2 (formerly inputs)
+var int redBarTarget_M1 = 3      // Red Bar Target for Method 1
+var int magThreshold_M1 = 2      // Green Signal Magnitude for Method 1
+var bool dopm = true             // Use Midpoint (else use Prev Close)
+var int yellowLine = 5           // Yellow Threshold (min red bars)
+var int magThreshold = 2         // Green Signal Magnitude
+
+// ============================================================================
+// Global variables for low-finding logic
+// ============================================================================
+var array<int>   low_indices    = array.new_int()
+var array<float> low_distances  = array.new_float()
+var float        avg_distance   = na
+
+// ============================================================================
+// 2. Ticker Presets: Stored Values vs Manual Handling
+// ============================================================================
+var string ticker_harmonic = ""
+var float  ticker_dro      = 0.0
+if useTickerSpecific
+    if syminfo.ticker == "BTCUSD"
+        ticker_dro := 6
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "GME"
+        ticker_dro := 6
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "GOLD"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "NDQ"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "OIL"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "QQQ"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "RUT"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "SILVER"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "SMH"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "SPX"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "TSLA"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "UPR"
+        ticker_dro := 5
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VDC"
+        ticker_dro := 10
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VDE"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VFH"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VHT"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VIS"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VIX"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "VNQ"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "VOX"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CIFR"
+        ticker_dro := 5
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "WULF"
+        ticker_dro := 5
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "HUT"
+        ticker_dro := 6
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "IREN"
+        ticker_dro := 5
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "HOOD"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "BTBT"
+        ticker_dro := 5
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "MSTR"
+        ticker_dro := 10
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MARA"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "RIOT"
+        ticker_dro := 6
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "HIVE"
+        ticker_dro := 9
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "BLK"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CLSK"
+        ticker_dro := 9
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "COIN"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "BITF"
+        ticker_dro := 5
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "CDE"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "HMY"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "SILJ"
+        ticker_dro := 10
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "NGD"
+        ticker_dro := 8
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "OR"
+        ticker_dro := 11
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "KGC"
+        ticker_dro := 12
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "NEM"
+        ticker_dro := 11
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "GFI"
+        ticker_dro := 10
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "AGI"
+        ticker_dro := 11
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "AAPL"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "ABBV"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "ACN"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "ADBE"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "ADP"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "AEM"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "AIR"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "AMD"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "AMGN"
+        ticker_dro := 9
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "AMT"
+        ticker_dro := 9
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "AMZN"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "ASML"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "AVGO"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "AXP"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "BA"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "BKNG"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "BN"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CAT"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CL"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "CLX"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "CME"
+        ticker_dro := 10
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "COST"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CRH"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CRM"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CRWD"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "CVX"
+        ticker_dro := 8
+        ticker_harmonic := "80 Day"
+    else if syminfo.ticker == "D"
+        ticker_dro := 11
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "DE"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "DG"
+        ticker_dro := 9
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "DHR"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "DIS"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "DOCU"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "DRD"
+        ticker_dro := 7
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "ELV"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "FDX"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "FICO"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "GDX"
+        ticker_dro := 11
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "GOOG"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "GS"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "HD"
+        ticker_dro := 9
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "HIMS"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "HLT"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "HON"
+        ticker_dro := 6
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "IAG"
+        ticker_dro := 8
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "IIPR"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "INTU"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "JNJ"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "JPM"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "KKR"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "KO"
+        ticker_dro := 10
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "LLY"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "LMT"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "LOW"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "LULU"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MA"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MCD"
+        ticker_dro := 9
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MCO"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MELI"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "META"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MRK"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "MS"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MSFT"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "MSGS"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "NFLX"
+        ticker_dro := 8
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "NKE"
+        ticker_dro := 9
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "NOW"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "NTLA"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "NVDA"
+        ticker_dro := 7
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "NVO"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "NVS"
+        ticker_dro := 9
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "O"
+        ticker_dro := 9
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PEP"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PFE"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PG"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PLD"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PLTR"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "PSA"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "QCOM"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "QSR"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "REGN"
+        ticker_dro := 6
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "RGLD"
+        ticker_dro := 11
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "RR."
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "RTX"
+        ticker_dro := 9
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "SNOW"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "SOFI"
+        ticker_dro := 5
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "SPGI"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "STNE"
+        ticker_dro := 6
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "TMO"
+        ticker_dro := 9
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "TMUS"
+        ticker_dro := 12
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "TTE"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "TTWO"
+        ticker_dro := 10
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "TXN"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "ULVR"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "UNH"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "UNP"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "UPS"
+        ticker_dro := 6
+        ticker_harmonic := "60 Day"
+    else if syminfo.ticker == "V"
+        ticker_dro := 8
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "WCN"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "WM"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "WMT"
+        ticker_dro := 11
+        ticker_harmonic := "40 Day"
+    else if syminfo.ticker == "WPM"
+        ticker_dro := 8
+        ticker_harmonic := "20 Day"
+    else if syminfo.ticker == "XOM"
+        ticker_dro := 7
+        ticker_harmonic := "40 Day"
+    else
+        ticker_dro := na
+        ticker_harmonic := ""
+        if barstate.islast
+            label.new(bar_index, high, text="No valid ticker found for Ticker Presets", style=label.style_label_up, color=color.red, textcolor=color.white, size=size.large)
+
+// ============================================================================
+// 2.5. Helper Function: Convert Cycle String to Number of Bars
+// ============================================================================
+f_getCycleBars(string cycleText, float avg) =>
+    if cycleText == "20 Day"
+        avg
+    else if cycleText == "40 Day"
+        avg * 2
+    else if cycleText == "60 Day"
+        avg * 3
+    else if cycleText == "80 Day"
+        avg * 4
+    else if cycleText == "20 Week"
+        avg * 8
+    else
+        na
+
+// ============================================================================
+// 3. Helper Functions (Existing Functions)
+// ============================================================================
+f_drawFuturePrediction(float xlo, float wavelength, int baseIndex, color lineColor, color fillColor, int tolerance) =>
+    float half_width = wavelength / 4.0
+    int pred = na
+    if not na(baseIndex)
+        pred := baseIndex
+    else
+        pred := bar_index + (xlo < wavelength ? int(wavelength - xlo) : 0)
+    int left_b  = pred - int(half_width) - tolerance
+    int right_b = pred + int(half_width) + tolerance
+    float top_val = ta.highest(high, 500)
+    float bottom_val = ta.lowest(low, 500)
+    line l_left = line.new(left_b, top_val, left_b, bottom_val, xloc.bar_index, extend=extend.none, color=lineColor, style=line.style_solid)
+    line l_right = line.new(right_b, top_val, right_b, bottom_val, xloc.bar_index, extend=extend.none, color=lineColor, style=line.style_solid)
+    linefill lf = linefill.new(l_left, l_right, color=fillColor)
+    [pred, left_b, right_b, l_left, l_right, lf]
+
+pos_map(position_string) =>
+    switch position_string
+        "top_left" => position.top_left
+        "top_center" => position.top_center
+        "top_right" => position.top_right
+        "middle_left" => position.middle_left
+        "middle_right" => position.middle_right
+        "bottom_left" => position.bottom_left
+        "bottom_center" => position.bottom_center
+        "bottom_right" => position.bottom_right
+        => position.bottom_right
+
+size_map(size_string) =>
+    switch size_string
+        "tiny" => size.tiny
+        "small" => size.small
+        "normal" => size.normal
+        "large" => size.large
+        "huge" => size.huge
+        => size.small
+
+truncate(number) =>
+    factor = math.pow(10, DECIMALS)
+    math.floor(number * factor) / factor
+
+// Bandpass Filter Function
+bpf(series, float Period, Delta) =>
+    float tmpbpf = na
+    if not na(Period) and Period >= 2
+        beta = math.cos(math.pi * (360 / Period) / 180)
+        gamma = 1 / math.cos(math.pi * (720 * Delta / Period) / 180)
+        alpha = gamma - math.sqrt(gamma * gamma - 1)
+        tmpbpf := 0.5 * (1 - alpha) * (series - series[2]) + beta * (1 + alpha) * nz(tmpbpf[1]) - alpha * nz(tmpbpf[2])
+    tmpbpf
+
+// ============================================================================
+// 4. DRO Low-Finding Logic (Cycle Timing Windows Calculation)
+// ============================================================================
+int usedZigPeriod = useTickerSpecific and not na(ticker_dro) ? int(ticker_dro) : dpr
+var int dir1 = 0
+ppo = 100 * (ta.ema(src, 3) - ta.ema(src, 50)) / ta.ema(src, 50)
+float highs_val2 = ta.highestbars(ppo, usedZigPeriod) == 0 ? ppo : na
+float lows_val2  = ta.lowestbars(ppo, usedZigPeriod) == 0 ? ppo : na
+
+dir1 := if not na(highs_val2) and na(lows_val2)
+    1
+else if not na(lows_val2) and na(highs_val2)
+    -1
+else
+    dir1[1]
+
+bool dir1changed = dir1 != nz(dir1[1])
+if not na(highs_val2) or not na(lows_val2)
+    if dir1changed and dir1 == -1
+        array.unshift(low_indices, bar_index)
+        if array.size(low_indices) > 1
+            distance = array.get(low_indices, 0) - array.get(low_indices, 1)
+            array.unshift(low_distances, distance)
+        if array.size(low_indices) > MAX_ARRAY_SIZE
+            array.pop(low_indices)
+        if array.size(low_distances) > MAX_ARRAY_SIZE
+            array.pop(low_distances)
+
+avg_distance := array.size(low_distances) > 0 ? array.sum(low_distances) / array.size(low_distances) : na
+
+// ============================================================================
+// 5. Harmonic Period Calculations Based on avg_distance
+// ============================================================================
+period20Day  = avg_distance
+period40Day  = avg_distance * 2
+period60Day  = avg_distance * 3
+period80Day  = avg_distance * 4
+period20Week = period80Day * 2
+
+period20Day  := (na(period20Day)  or period20Day < 2)  ? 2 : period20Day
+period40Day  := (na(period40Day)  or period40Day < 2)  ? 2 : period40Day
+period60Day  := (na(period60Day)  or period60Day < 2)  ? 2 : period60Day
+period80Day  := (na(period80Day)  or period80Day < 2)  ? 2 : period80Day
+period20Week := (na(period20Week) or period20Week < 2) ? 2 : period20Week
+
+float period_out = na
+if useTickerSpecific
+    if ticker_harmonic == "20 Day"
+        period_out := period20Day
+    else if ticker_harmonic == "40 Day"
+        period_out := period40Day
+    else if ticker_harmonic == "60 Day"
+        period_out := period60Day
+    else if ticker_harmonic == "80 Day"
+        period_out := period80Day
+    else if ticker_harmonic == "20 Week"
+        period_out := period20Week
+    else
+        period_out := na
+else
+    if sig_in == "20 Day"
+        period_out := period20Day
+    else if sig_in == "40 Day"
+        period_out := period40Day
+    else if sig_in == "60 Day"
+        period_out := period60Day
+    else if sig_in == "80 Day"
+        period_out := period80Day
+    else if sig_in == "20 Week"
+        period_out := period20Week
+    else
+        period_out := na
+
+float finalHarmonic = useTickerSpecific and (ticker_harmonic != "") ? f_getCycleBars(ticker_harmonic, avg_distance) : f_getCycleBars(sig_in, avg_distance)
+
+// ============================================================================
+// 6. Harmonic Analysis – Compute the Oscillator (sig_out)
+// ============================================================================
+source_bpf = hl2
+BPF20Day   = bpf(source_bpf, period20Day, 0.02)
+BPF40Day   = bpf(source_bpf, period40Day, 0.02)
+BPF60Day   = bpf(source_bpf, period60Day, 0.02)
+BPF80Day   = bpf(source_bpf, period80Day, 0.02)
+BPF20Week  = bpf(source_bpf, period20Week, 0.02)
+
+float sig_out =
+     sig_in == "20 Day"  ? BPF20Day  :
+     sig_in == "40 Day"  ? BPF40Day  :
+     sig_in == "60 Day"  ? BPF60Day  :
+     sig_in == "80 Day"  ? BPF80Day  :
+     sig_in == "20 Week" ? BPF20Week : na
+
+float used_sig_out = useTickerSpecific ? bpf(source_bpf, finalHarmonic, 0.02) : sig_out
+
+// ============================================================================
+// 7. Highs/Lows Detection (Using used_sig_out)
+// ============================================================================
+bool hi =
+     not na(used_sig_out[2]) and not na(used_sig_out[1]) and not na(used_sig_out) and 
+     (used_sig_out[2] < used_sig_out[1]) and (used_sig_out[1] > used_sig_out) ? true : false
+
+bool lo =
+     not na(used_sig_out[2]) and not na(used_sig_out[1]) and not na(used_sig_out) and 
+     (used_sig_out[2] > used_sig_out[1]) and (used_sig_out[1] < used_sig_out) ? true : false
+
+float xhi = ta.barssince(hi)
+float xlo = ta.barssince(lo)
+float wavelength = math.round(math.abs(xhi - xlo) * 2)
+next_peak   = -math.abs(xhi - wavelength)
+next_trough = -math.abs(xlo - wavelength)
+
+// ============================================================================
+// 8. Amplitude Calculations
+// ============================================================================
+bool valid_period_out = not na(finalHarmonic) and finalHarmonic > 0
+float bpfphi = valid_period_out ? ta.highest(used_sig_out, math.max(1, math.round(finalHarmonic))) : na
+float bpfplo = valid_period_out ? ta.lowest(used_sig_out, math.max(1, math.round(finalHarmonic))) : na
+float tot_amp = bpfphi - bpfplo
+
+// ============================================================================
+// 9. Build Tooltip Text for Harmonic Analysis (Simplified)
+// ============================================================================
+string manualWarning =
+     useTickerSpecific and (ticker_harmonic == "" or na(ticker_dro)) ? "\n⚠ Manual input required for ticker presets" : ""
+
+string cycleLabel =
+     useTickerSpecific ? ticker_harmonic + "/" + str.tostring(truncate(period_out)) :
+     sig_in + "/" + str.tostring(truncate(period_out))
+
+labeltt = "🔄 Cycle: " + cycleLabel
+labeltt += "\n📏 Period (⊺): ~" + str.tostring(math.abs(xhi - xlo)) + " bars"
+labeltt += "\n🌊 Wavelength (λ): ~" + str.tostring(wavelength) + " bars"
+labeltt += "\n⚖ Delta Amplitude: " + str.tostring(truncate(tot_amp))
+labeltt += "\n📈 Peak: " + str.tostring(truncate(bpfphi)) + ", " + str.tostring(xhi) + " bars ago"
+labeltt += "\n📉 Trough: " + str.tostring(truncate(bpfplo)) + ", " + str.tostring(xlo) + " bars ago"
+labeltt += "\n\n🔮 Estimates: " + ((-next_peak < -next_trough) ? "Bullish🟢" : "Bearish🔴")
+labeltt += "\n📈 Next Peak: " + str.tostring(-next_peak) + "ish bars"
+labeltt += "\n🔀 Next Node: " + str.tostring(math.abs(xhi - xlo) - ta.barssince(ta.cross(used_sig_out, 0))) + "ish bars"
+labeltt += "\n📉 Next Trough: " + str.tostring(-next_trough) + "ish bars" + manualWarning
+
+// ============================================================================
+// 10. Display Tooltip in a Table
+// ============================================================================
+table_position = pos_map(position_input)
+text_size_value = size_map(size_input)
+var table TickerTable = na
+if barstate.islast
+    if not na(TickerTable)
+        table.delete(TickerTable)
+    TickerTable := table.new(table_position, 1, 1)
+    table.cell(TickerTable, 0, 0, text="Cycle Timing Info:\n" + labeltt, 
+         text_size=text_size_value, text_color=color.white, bgcolor=color.new(color.black, 50), tooltip=labeltt)
+
+// ============================================================================
+// 11. Future Daily Cycle Prediction (Persistent Active Prediction)
+// ============================================================================
+var int activePredDaily       = na
+var int activeLeftDaily       = na
+var int activeRightDaily      = na
+var line activeLineLeftDaily  = na
+var line activeLineRightDaily = na
+var linefill activeLineFillDaily = na
+
+int last_trough = (array.size(low_indices) > 0) ? array.get(low_indices, 0) : na
+
+if show_future_dcl and not na(wavelength) and not na(last_trough)
+    float half_width = wavelength / 4.0
+    float orig_range = 2 * half_width        
+    int toleranceBars = int(orig_range * 0.1) 
+    if na(activePredDaily)
+        activePredDaily := last_trough + int(wavelength)
+        activeLeftDaily := activePredDaily - int(half_width) - toleranceBars
+        activeRightDaily := activePredDaily + int(half_width) + toleranceBars
+        [temp1, temp2, temp3, temp4, temp5, temp6] = f_drawFuturePrediction(xlo, wavelength, activePredDaily, color.new(color.green, 0), color.new(color.green, 85), toleranceBars)
+        activeLineLeftDaily := temp4
+        activeLineRightDaily := temp5
+        activeLineFillDaily := temp6
+    else
+        if bar_index >= activeRightDaily
+            activePredDaily := last_trough + int(wavelength)
+            activeLeftDaily := activePredDaily - int(half_width) - toleranceBars
+            activeRightDaily := activePredDaily + int(half_width) + toleranceBars
+            line.delete(activeLineLeftDaily)
+            line.delete(activeLineRightDaily)
+            linefill.delete(activeLineFillDaily)
+            [temp1, temp2, temp3, temp4, temp5, temp6] = f_drawFuturePrediction(xlo, wavelength, activePredDaily, color.new(color.green, 0), color.new(color.green, 85), toleranceBars)
+            activeLineLeftDaily := temp4
+            activeLineRightDaily := temp5
+            activeLineFillDaily := temp6
+
+// ============================================================================
+// 12. Future Weekly Cycle Prediction (Persistent Active Prediction)
+// ============================================================================
+bool hi_week =
+     not na(BPF20Week[2]) and not na(BPF20Week[1]) and not na(BPF20Week) and (BPF20Week[2] < BPF20Week[1]) and (BPF20Week[1] > BPF20Week)
+     ? true :
+     false
+
+bool lo_week =
+     not na(BPF20Week[2]) and not na(BPF20Week[1]) and not na(BPF20Week) and (BPF20Week[2] > BPF20Week[1]) and (BPF20Week[1] < BPF20Week)
+     ? true :
+     false
+
+float xhi_week = ta.barssince(hi_week)
+float xlo_week = ta.barssince(lo_week)
+float wavelength_week = math.round(math.abs(xhi_week - xlo_week) * 2)
+int baseIndex_week = lo_week ? bar_index : na
+
+var int activePredWeekly       = na
+var int activeLeftWeekly       = na
+var int activeRightWeekly      = na
+var line activeLineLeftWeekly  = na
+var line activeLineRightWeekly = na
+var linefill activeLineFillWeekly = na
+
+if show_future_dcl and not na(wavelength_week) and not na(xlo_week)
+    float half_width_week = wavelength_week / 4.0
+    float orig_range_week = 2 * half_width_week
+    int toleranceBars_week = int(orig_range_week * 0.1)
+    if na(activePredWeekly)
+        [tempW1, tempW2, tempW3, tempW4, tempW5, tempW6] = f_drawFuturePrediction(xlo_week, wavelength_week, baseIndex_week, color.new(color.blue, 0), color.new(color.blue, 85), toleranceBars_week)
+        activePredWeekly := tempW1
+        activeLeftWeekly := tempW2
+        activeRightWeekly := tempW3
+        activeLineLeftWeekly := tempW4
+        activeLineRightWeekly := tempW5
+        activeLineFillWeekly := tempW6
+    else
+        if bar_index >= activeRightWeekly
+            activePredWeekly := na
+            activeLeftWeekly := na
+            activeRightWeekly := na
+            line.delete(activeLineLeftWeekly)
+            line.delete(activeLineRightWeekly)
+            linefill.delete(activeLineFillWeekly)
+
+// ============================================================================
+// 13. Historical Trough Estimate – Plot Background Color
+// ============================================================================
+bg_color_dcl = show_hist_trough ? color.new(color.green, lo ? 75 : 100) : na
+bg_color_wcl = show_hist_trough ? color.new(color.blue, lo_week ? 75 : 100) : na
+
+bgcolor(bg_color_dcl, title="DCL Trough Estimate", offset=int(wavelength))
+bgcolor(bg_color_wcl, title="WCL Trough Estimate", offset=int(wavelength_week))
+
+// ============================================================================
+// 15. FRAMA Indicator Implementation (Dual FRAMA for DCL and WCL)
+// ============================================================================
+float frama_period_dcl = finalHarmonic
+float frama_period_wcl = f_getCycleBars("20 Week", avg_distance)
+frama_period_dcl := (na(frama_period_dcl) or frama_period_dcl < 2) ? 2 : frama_period_dcl
+frama_period_wcl := (na(frama_period_wcl) or frama_period_wcl < 2) ? 2 : frama_period_wcl
+
+var float frama_val_dcl = src
+var float frama_val_wcl = src
+
+float w = -4.6  // constant for FRAMA smoothing factor
+
+// Daily Cycle FRAMA Calculation
+int len_dcl = math.round(frama_period_dcl)
+float len1_dcl = len_dcl / 2.0
+float H1_dcl = ta.highest(high, int(len1_dcl))
+float L1_dcl = ta.lowest(low, int(len1_dcl))
+float N1_dcl = (H1_dcl - L1_dcl) / len1_dcl
+float H2_dcl = ta.highest(high, int(len1_dcl))[int(len1_dcl)]
+float L2_dcl = ta.lowest(low, int(len1_dcl))[int(len1_dcl)]
+float N2_dcl = (H2_dcl - L2_dcl) / len1_dcl
+float H3_dcl = ta.highest(high, len_dcl)
+float L3_dcl = ta.lowest(low, len_dcl)
+float N3_dcl = (H3_dcl - L3_dcl) / len_dcl
+float dimen1_dcl = (math.log(N1_dcl + N2_dcl) - math.log(N3_dcl)) / math.log(2)
+float dimen_dcl = (N1_dcl > 0 and N2_dcl > 0 and N3_dcl > 0) ? dimen1_dcl : 0.0
+float alpha1_dcl = math.exp(w * (dimen_dcl - 1))
+float oldalpha_dcl = alpha1_dcl > 1 ? 1 : (alpha1_dcl < 0.01 ? 0.01 : alpha1_dcl)
+float oldN_dcl = (2 - oldalpha_dcl) / oldalpha_dcl
+float N_val_dcl = (((framaSC - framaFC) * (oldN_dcl - 1)) / (framaSC - 1)) + framaFC
+float alpha__dcl = 2 / (N_val_dcl + 1)
+float alpha_dcl  = alpha__dcl < 2 / (framaSC + 1) ? 2 / (framaSC + 1) : (alpha__dcl > 1 ? 1 : alpha__dcl)
+frama_val_dcl := (1 - alpha_dcl) * nz(frama_val_dcl[1]) + alpha_dcl * src
+
+// Weekly Cycle FRAMA Calculation
+int len_wcl = math.round(frama_period_wcl)
+float len1_wcl = len_wcl / 2.0
+float H1_wcl = ta.highest(high, int(len1_wcl))
+float L1_wcl = ta.lowest(low, int(len1_wcl))
+float N1_wcl = (H1_wcl - L1_wcl) / len1_wcl
+float H2_wcl = ta.highest(high, int(len1_wcl))[int(len1_wcl)]
+float L2_wcl = ta.lowest(low, int(len1_wcl))[int(len1_wcl)]
+float N2_wcl = (H2_wcl - L2_wcl) / len1_wcl
+float H3_wcl = ta.highest(high, len_wcl)
+float L3_wcl = ta.lowest(low, len_wcl)
+float N3_wcl = (H3_wcl - L3_wcl) / len_wcl
+float dimen1_wcl = (math.log(N1_wcl + N2_wcl) - math.log(N3_wcl)) / math.log(2)
+float dimen_wcl = (N1_wcl > 0 and N2_wcl > 0 and N3_wcl > 0) ? dimen1_wcl : 0.0
+float alpha1_wcl = math.exp(w * (dimen_wcl - 1))
+float oldalpha_wcl = alpha1_wcl > 1 ? 1 : (alpha1_wcl < 0.01 ? 0.01 : alpha1_wcl)
+float oldN_wcl = (2 - oldalpha_wcl) / oldalpha_wcl
+float N_val_wcl = (((framaSC - framaFC) * (oldN_wcl - 1)) / (framaSC - 1)) + framaFC
+float alpha__wcl = 2 / (N_val_wcl + 1)
+float alpha_wcl  = alpha__wcl < 2 / (framaSC + 1) ? 2 / (framaSC + 1) : (alpha__wcl > 1 ? 1 : alpha__wcl)
+frama_val_wcl := (1 - alpha_wcl) * nz(frama_val_wcl[1]) + alpha_wcl * src
+
+plot(show_FRAMA ? frama_val_dcl : na, title="FRAMA DCL", color=color.yellow)
+plot(show_FRAMA ? frama_val_wcl : na, title="FRAMA WCL", color=color.blue)
+
+// ============================================================================
+// 17. Integrated Method 1 & 2 Implementation
+// ============================================================================
+
+// --- Common Price Condition Definitions ---
+hl2_val = (high + low) / 2
+greenCond = dopm ? (close > hl2_val[1]) : (close > close[1])
+redCond   = dopm ? (close < hl2_val[1]) : (close < close[1])
+
+// --- Persistent State Variables for Both Methods ---
+var int   redCount_M1       = 0
+var int   greenCount_M1     = 0
+var bool  inConfirmation_M1 = false
+var bool  m1_signal         = false
+
+var int   redCount_M2       = 0
+var int   greenCount_M2     = 0
+var bool  inConfirmation_M2 = false
+var bool  m2_signal         = false
+
+// --- Method 1 Logic (Aggressive) ---
+if redCond
+    redCount_M1    := nz(redCount_M1[1]) + 1
+    greenCount_M1  := 0
+    if inConfirmation_M1
+        inConfirmation_M1 := false
+    m1_signal := false
+else if greenCond
+    if not inConfirmation_M1
+        if nz(redCount_M1[1]) >= redBarTarget_M1  // Uses 3 bars
+            inConfirmation_M1 := true
+            greenCount_M1     := 1
+            m1_signal         := false
+        else
+            redCount_M1   := 0
+            greenCount_M1 := 0
+            m1_signal     := false
+    else
+        if not greenCond[1]
+            greenCount_M1 := 1
+        else
+            greenCount_M1 := nz(greenCount_M1[1]) + 1
+        
+        if greenCount_M1 >= magThreshold_M1
+            m1_signal := true
+            inConfirmation_M1 := false
+            redCount_M1       := 0
+            greenCount_M1     := 0
+        else
+            m1_signal := false
+else
+    m1_signal := false
+
+// --- Method 2 Logic (Conservative) ---
+if redCond
+    if not inConfirmation_M2
+        redCount_M2    := nz(redCount_M2[1]) + 1
+        greenCount_M2  := 0
+        m2_signal      := false
+    else
+        inConfirmation_M2 := false
+        redCount_M2       := 0
+        greenCount_M2     := 0
+        m2_signal         := false
+else if greenCond
+    if redCond[1] and not inConfirmation_M2
+        if nz(redCount_M2[1]) >= yellowLine  // Uses 5 bars
+            inConfirmation_M2 := true
+            greenCount_M2     := 1
+            m2_signal         := false
+        else
+            redCount_M2   := 0
+            greenCount_M2 := 0
+            m2_signal     := false
+    else if inConfirmation_M2
+        greenCount_M2 := nz(greenCount_M2[1]) + 1
+        m2_signal     := false
+    else
+        greenCount_M2 := 0
+        m2_signal     := false
+else
+    m2_signal := false
+
+// Fire Method 2 signal
+if inConfirmation_M2 and greenCond and (greenCount_M2 >= magThreshold)
+    m2_signal := true
+    inConfirmation_M2 := false
+    redCount_M2       := 0
+    greenCount_M2     := 0
+
+// Plot both signals
+plotshape(m1_signal, 
+     title="M1 Signal", 
+     style=shape.triangleup, 
+     location=location.belowbar, 
+     color=color.green, 
+     size=size.tiny)
+
+plotshape(m2_signal, 
+     title="M2 Signal", 
+     style=shape.triangleup, 
+     location=location.belowbar, 
+     color=color.red, 
+     size=size.tiny)
+
+// ============================================================================
+// 19. Integrated Long Entry Signal with FRAMA and UP_down Confirmation
+// ============================================================================
+
+// Remove input toggles for FRAMA confirmation and keep only UP/Down confirmation
+groupConfirmSignals = "Confirmation Options"
+use_ud_confirm = input.bool(true, title="Use UP/Down Confirmation", group=groupConfirmSignals)
+
+// Modified combined entry logic with both signals always active
+bool combined_long_entry_dcl = true
+bool combined_long_entry_wcl = true
+
+// UP/Down confirmation (if enabled)
+if use_ud_confirm
+    combined_long_entry_dcl := combined_long_entry_dcl and (math.sum((m1_signal or m2_signal) ? 1 : 0, 5) > 0)
+    combined_long_entry_wcl := combined_long_entry_wcl and (math.sum((m1_signal or m2_signal) ? 1 : 0, 5) > 0)
+
+// Separate lookback periods for DCL and WCL
+int lookback_period_dcl = 4  // Tighter lookback for DCL
+int lookback_period_wcl = 8  // Original lookback for WCL
+
+// DCL FRAMA condition with body high
+bodyHigh = math.max(open, close)
+bool crossed_below_dcl = math.sum(bodyHigh < frama_val_dcl ? 1 : 0, lookback_period_dcl) >= 3
+bool current_above_dcl = close > frama_val_dcl
+combined_long_entry_dcl := combined_long_entry_dcl and current_above_dcl and crossed_below_dcl
+
+// WCL FRAMA condition (unchanged lookback)
+bool crossed_below_wcl = math.sum(high < frama_val_wcl ? 1 : 0, lookback_period_wcl) >= 3
+bool current_above_wcl = close > frama_val_wcl
+combined_long_entry_wcl := combined_long_entry_wcl and current_above_wcl and crossed_below_wcl
+
+// Plot both signals simultaneously with their respective colors
+plotshape(combined_long_entry_dcl and not combined_long_entry_dcl[1], 
+     title="DCL Long Entry Signal", 
+     style=shape.labelup, 
+     location=location.belowbar, 
+     offset=-2, 
+     text="DCL", 
+     color=color.green, 
+     textcolor=color.white, 
+     size=size.tiny)
+plotshape(combined_long_entry_wcl and not combined_long_entry_wcl[1], 
+     title="WCL Long Entry Signal", 
+     style=shape.labelup, 
+     location=location.belowbar, 
+     offset=-5, 
+     text="WCL", 
+     color=color.blue, 
+     textcolor=color.white, 
+     size=size.tiny)
+

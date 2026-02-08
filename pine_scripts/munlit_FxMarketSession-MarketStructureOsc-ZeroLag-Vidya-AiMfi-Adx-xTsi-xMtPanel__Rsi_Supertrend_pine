@@ -1,0 +1,101 @@
+/// ╔═══════════════════════════════╗
+/// ║	RSI Supertrend				║
+/// ║	@	Allen	㔬				║
+/// ╚═══════════════════════════════╝
+
+//@version=5
+indicator("Supertrended RSI [Allen]", overlay = false, timeframe = "")
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
+
+
+//// ─────────────────────────────────────────────────────────────────────
+
+co_sTrend_Up							= _co_gbl_buy
+co_sTrend_Down							= _co_gbl_sell
+co_sTrend_RSI							= _co_gbl_white			// AmeTrBlueFrost
+co_sTrend_Dark							= _co_gbl_black			// PlatziBlue70
+
+//// ───────────────────────
+/// ─── Supertrend Rsi
+/// ─── Variables ────
+//// ───────────────────────
+
+show_sTrendSTrend						= input.bool	(defval = false,		title = 'Visualizar Supertrend',	group = 'RSI Settings')
+
+sTrendRSILength							= input.int		(defval = 14,			title = 'Longitud RSI',				group = 'RSI Settings')
+sTrendSmoothLength						= input.int		(defval = 21,			title = 'Longitud RSI Suavisado',	group = 'RSI Settings')
+show_sTrendISmoothed					= input.bool	(defval = false,		title = 'Suavisado RSI',			group = 'RSI Settings')
+
+sTrendMALength							= input.int		(defval = 14,			title = 'Longitud MA',				group = 'MA Settings',			display = display.data_window)
+sTrendMAType							= input.string	(defval = 'HMA',		title = 'Tipo MA',					group = 'MA Settings',			options = ['SMA', 'HMA', 'EMA', 'SMMA', 'WMA', 'VWMA'],	display = display.data_window)
+
+sTrendFactor							= input.float	(defval = 0.8,			title = 'Factor',					group = 'Super Trend Settings')
+sTrendATRLength							= input.int		(defval = 10,			title = 'Longitud ATR',				group = 'Super Trend Settings')
+
+//// ───────────────────────
+/// ─── Supertrend Rsi
+/// ─── Funciones ────
+//// ───────────────────────
+
+/// ─── function calculate ATR
+FussTrend_CalculateATR(_source, _atr_length) =>
+	_highest_high						= ta.highest(_source, _atr_length)
+	_lowest_low							= ta.lowest(_source, _atr_length)
+	_true_range							= na(_highest_high[1]) ? _highest_high - _lowest_low : math.max(_highest_high - _lowest_low, math.abs(_highest_high - _source[1]), math.abs(_lowest_low - _source[1]))
+	ta.rma(_true_range, _atr_length)
+
+//// ───────────────────────
+/// ─── Supertrend Rsi
+/// ─── Math ─────────
+//// ───────────────────────
+
+/// ─── Function to calculate Supertrend
+FussTrend_CalculateSupertrend(_factor, _atr_length, _source) =>
+	_price_source						= _source
+	_atr								= FussTrend_CalculateATR(_source, _atr_length)
+	_upper_band							= _price_source + _factor * _atr
+	_lower_band							= _price_source - _factor * _atr
+	_prev_lowerband						= nz(_lower_band[1])
+	_prev_upperband						= nz(_upper_band[1])
+	_lower_band							:= _lower_band > _prev_lowerband or _source[1] < _prev_lowerband ? _lower_band : _prev_lowerband
+	_upper_band							:= _upper_band < _prev_upperband or _source[1] > _prev_upperband ? _upper_band : _prev_upperband
+	int _trend_direction				= na
+	float _supertrend_value				= na
+	FusTPrevSupertrend					= _supertrend_value[1]
+	if na(_atr[1])
+		_trend_direction				:= 1
+	else if FusTPrevSupertrend			== _prev_upperband
+		_trend_direction				:= _source > _upper_band ? -1 : 1
+	else
+		_trend_direction				:= _source < _lower_band ? 1 : -1
+	_supertrend_value					:= _trend_direction == -1 ? _lower_band : _upper_band
+	[_supertrend_value, _trend_direction]
+
+/// ─── Calculete Rsi ───────
+sTrend_RsiValue						= show_sTrendISmoothed and show_sTrendSTrend ? ta.hma(ta.rsi(gblSource.C, sTrendRSILength), sTrendSmoothLength) : ta.rsi(gblSource.C, sTrendRSILength)
+// sTrendRsiMovingAverage		= FunGlobalCalculateMA(sTrend_RsiValue, sTrendMALength, sTrendMAType)
+
+/// ─── Calculating Supertrend based on RSI values
+[sTrendRsiSupertrend, FusTTrendDirection] = FussTrend_CalculateSupertrend(sTrendFactor, sTrendATRLength, sTrend_RsiValue)
+
+//// ───────────────────────
+/// ─── Supertrend Rsi
+/// ─── Visual ───────
+//// ───────────────────────
+
+/// ─── Plot RSI / MA
+plot_sTrend_Strend						= plot(show_sTrendSTrend ? sTrendRsiSupertrend	: na,		color = FusTTrendDirection == -1 ? co_sTrend_Up : co_sTrend_Down,							title = 'Supertrend')
+plot_sTrend_Rsi							= plot(show_sTrendSTrend ? sTrend_RsiValue		: na,		color = FusTTrendDirection == -1 ? co_sTrend_Up : co_sTrend_Down,			linewidth = 1,	title = '')
+
+/// ─── Lines OverBought / OverSold
+plot(110,			color = color.from_gradient(sTrend_RsiValue,	60,	80,	color.new(co_sTrend_Dark, 70),		color.new(co_sTrend_Down, 0)),		linewidth = 6)
+plot(-10,			color = color.from_gradient(sTrend_RsiValue,	20,	40,	color.new(co_sTrend_Up, 0),			color.new(co_sTrend_Dark, 70)),		linewidth = 6)
+
+/// ─── Filling ───────
+fill(plot_sTrend_Strend, plot_sTrend_Rsi,									color = FusTTrendDirection == 1 ? color.new(co_sTrend_Down, 90) : color.new(co_sTrend_Up, 90),	title = 'Zona de Tendencia')
+fill(plot_sTrend_Strend, plot_sTrend_Rsi, sTrend_RsiValue, sTrendRsiSupertrend, color.new(chart.bg_color, 1000),		FusTTrendDirection == 1 ? co_sTrend_Down : co_sTrend_Up)
+
+
+/// ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■

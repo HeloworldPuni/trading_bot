@@ -1,0 +1,156 @@
+//@version=5
+indicator("Multi-TF Fibonacci Cluster", overlay=true, max_lines_count=500)
+
+// ======================================================================
+// How-to
+// ----------------------------------------------------------------------
+// 1. Add this script to your chart on any symbol.
+// 2. Toggle which timeframe fibs you want to display in the Inputs panel.
+// 3. Create alerts using the built-in conditions from this script.
+// 4. All objects are drawn only after bars close (non‑repaint).
+// ======================================================================
+
+// === Input Section ===
+showD1Fibs = input.bool(true,  "Show Daily Fibs")
+showH4Fibs = input.bool(true,  "Show H4 Fibs")
+showH1Fibs = input.bool(false, "Show H1 Fibs")
+clusterTol  = input.float(2.0,  "Cluster tolerance %") / 100.0
+pivotLook   = input.int(5,     "Pivot lookback")
+riskPct     = input.float(1.0, "Display risk % of equity")
+
+// === Multi TF price series ===
+[h1Open, h1High, h1Low, h1Close] = request.security(syminfo.tickerid, "60", [open, high, low, close])
+[h4Open, h4High, h4Low, h4Close] = request.security(syminfo.tickerid, "240", [open, high, low, close])
+[d1Open, d1High, d1Low, d1Close] = request.security(syminfo.tickerid, "D", [open, high, low, close])
+
+// === Oscillators ===
+[h1K, h1D] = request.security(syminfo.tickerid, "60", ta.stoch(close, high, low, 9), barmerge.gaps_on, barmerge.lookahead_on)
+[h4K, h4D] = request.security(syminfo.tickerid, "240", ta.stoch(close, high, low, 9), barmerge.gaps_on, barmerge.lookahead_on)
+[d1K, d1D] = request.security(syminfo.tickerid, "D", ta.stoch(close, high, low, 9), barmerge.gaps_on, barmerge.lookahead_on)
+h4Rsi = request.security(syminfo.tickerid, "240", ta.rsi(close, 14))
+
+// === Pivot functions on different TF ===
+f_getPivotHigh(tf) => request.security(syminfo.tickerid, tf, ta.pivothigh(high, pivotLook, pivotLook))
+f_getPivotLow(tf)  => request.security(syminfo.tickerid, tf, ta.pivotlow(low, pivotLook, pivotLook))
+
+ph1H = f_getPivotHigh("60")
+ph1L = f_getPivotLow ("60")
+ph4H = f_getPivotHigh("240")
+ph4L = f_getPivotLow ("240")
+pd1H = f_getPivotHigh("D")
+pd1L = f_getPivotLow ("D")
+
+// === Trend detection using Daily pivots ===
+var string d1Trend = "side"
+if barstate.isconfirmed
+    if not na(pd1H)
+        d1Trend := "up"
+    if not na(pd1L)
+        d1Trend := "down"
+
+// === Container for Fib lines ===
+class FibSet
+    var line   l0 = na
+    var line   l161 = na
+    var line   l261 = na
+    var line   l423 = na
+    float start
+    float end
+    bool  up
+
+var FibSet[] fibD1 = array.new<FibSet>()
+var FibSet[] fibH4 = array.new<FibSet>()
+var FibSet[] fibH1 = array.new<FibSet>()
+
+f_drawFib(setArray, float s, float e, bool upColor, color col) =>
+    var FibSet fs = FibSet.new()
+    fs.start := s
+    fs.end   := e
+    fs.up    := upColor
+    float range = e - s
+    float lvl161 = s + range * 1.618
+    float lvl261 = s + range * 2.618
+    float lvl423 = s + range * 4.236
+    if barstate.isconfirmed
+        fs.l0   := line.new(bar_index-1, s, bar_index, s, color=col, width=1)
+        fs.l161 := line.new(bar_index-1, lvl161, bar_index, lvl161, color=col)
+        fs.l261 := line.new(bar_index-1, lvl261, bar_index, lvl261, color=col)
+        fs.l423 := line.new(bar_index-1, lvl423, bar_index, lvl423, color=col)
+        array.push(setArray, fs)
+    
+    while array.size(setArray) > 3
+        FibSet old = array.shift(setArray)
+        if not na(old.l0)
+            line.delete(old.l0)
+        if not na(old.l161)
+            line.delete(old.l161)
+        if not na(old.l261)
+            line.delete(old.l261)
+        if not na(old.l423)
+            line.delete(old.l423)
+
+// === Detect structure break and draw fibs ===
+var float lastH4High = na
+var float lastH4Low  = na
+var string h4Trend = "side"
+
+if barstate.isconfirmed
+    if not na(ph4H)
+        if not na(lastH4High) and close > lastH4High
+            f_drawFib(fibH4, lastH4Low, ph4H, true, color.new(color.blue, 0))
+            alert("H4 New Higher High", alert.freq_once_per_bar_close)
+            h4Trend := "up"
+        lastH4High := ph4H
+    if not na(ph4L)
+        if not na(lastH4Low) and close < lastH4Low
+            f_drawFib(fibH4, lastH4High, ph4L, false, color.new(color.red, 0))
+            alert("H4 New Lower Low", alert.freq_once_per_bar_close)
+            h4Trend := "down"
+        lastH4Low := ph4L
+
+// === Draw Daily Fibs on new pivots ===
+var float lastD1High = na
+var float lastD1Low  = na
+if barstate.isconfirmed
+    if not na(pd1H)
+        if not na(lastD1High) and d1Close > lastD1High
+            f_drawFib(fibD1, lastD1Low, pd1H, true, color.new(color.green, 0))
+        lastD1High := pd1H
+    if not na(pd1L)
+        if not na(lastD1Low) and d1Close < lastD1Low
+            f_drawFib(fibD1, lastD1High, pd1L, false, color.new(color.orange, 0))
+        lastD1Low := pd1L
+
+// === Cluster detection ===
+f_checkCluster(FibSet a, FibSet b) =>
+    float[] levelsA = [line.get_price(a.l161), line.get_price(a.l261), line.get_price(a.l423)]
+    float[] levelsB = [line.get_price(b.l161), line.get_price(b.l261), line.get_price(b.l423)]
+    for levA in levelsA
+        for levB in levelsB
+            if math.abs(levA - levB) / levA <= clusterTol
+                float clusterPrice = (levA + levB) / 2.0
+                label.new(bar_index, clusterPrice, "CLUSTER", style=label.style_label_down, color=color.yellow, textcolor=color.black, size=size.small)
+                alert("Cluster at " + str.tostring(clusterPrice), alert.freq_once_per_bar_close)
+
+// Iterate clusters between D1 and H4 fibs
+if barstate.isconfirmed
+    for fsD in fibD1
+        for fsH in fibH4
+            f_checkCluster(fsD, fsH)
+
+// === Oscillator-based alert ===
+longSignal  = ta.crossover(h4K, 20) and d1Trend == "up"
+shortSignal = ta.crossunder(h4K, 80) and d1Trend == "down"
+alertcondition(longSignal and barstate.isconfirmed, "Stoch Long", "Stochastic cross up with D1 trend")
+alertcondition(shortSignal and barstate.isconfirmed, "Stoch Short", "Stochastic cross down with D1 trend")
+alertcondition(barstate.isconfirmed and (h4Trend == "up" or h4Trend == "down"), "H4 Structure Flip", "H4 structure flipped")
+
+// === Dashboard ===
+var table dash = table.new(position.bottom_right, 3, 3)
+if barstate.isconfirmed
+    table.cell(dash, 0, 0, "D1 Trend")
+    table.cell(dash, 1, 0, d1Trend)
+    table.cell(dash, 0, 1, "Risk %")
+    table.cell(dash, 1, 1, str.tostring(riskPct) + "%")
+
+// Optional: lines already plotted. Use toggles to show/hide sets

@@ -1,0 +1,120 @@
+//@version=6
+indicator("Pond Stoch Pro v1.9", shorttitle="Pond Sto Pro v1.9", overlay=false, format=format.price, precision=2, max_bars_back=1000)
+
+// ─────────── STOCHASTIC INPUTS ───────────
+group_stoch   = "Stochastic"
+kLen          = input.int(14, "%K Length",        minval=1, group=group_stoch)
+kSmoothLen    = input.int(6,  "%K Smooth Length", minval=1, group=group_stoch)
+kSmoothType   = input.string("SMA", "%K Smooth Type", options=["SMA","EMA","RMA","WMA"], group=group_stoch)
+colorK        = input.color(color.white, "%K Color", group=group_stoch)
+showK         = input.bool(true, "%K Display",    group=group_stoch)
+
+dLen          = input.int(3,  "%D Length",        minval=1, group=group_stoch)
+dSmoothLen    = input.int(6,  "%D Smooth Length", minval=1, group=group_stoch)
+dSmoothType   = input.string("SMA", "%D Smooth Type", options=["SMA","EMA","RMA","WMA"], group=group_stoch)
+colorD        = input.color(color.blue, "%D Color", group=group_stoch)
+showD         = input.bool(true, "%D Display",    group=group_stoch)
+
+stochUpper     = input.int(80, "Upper Band",      group=group_stoch)
+stochLower     = input.int(20, "Lower Band",      group=group_stoch)
+showFill      = input.bool(true, "Show Zone Fill", group=group_stoch)
+fillColor     = input.color(color.new(color.gray, 80), "Zone Color", group=group_stoch)
+
+// ─────────── PROJECTION TABLE INPUTS ───────────
+group_table   = "Projection Table"
+deltaPad      = input.float(0.2, "Cross Delta Padding", minval=0.0, step=0.1, group=group_table)
+showTable     = input.bool(true, "Show Projection Table", group=group_table)
+labelText     = input.color(color.white,           "Table Text Color", group=group_table)
+labelBgUp     = input.color(color.new(#26A69A,50), "BG Trend Up",       group=group_table)
+labelBgDown   = input.color(color.new(#EF5350,50), "BG Trend Down",     group=group_table)
+
+// ─────────── DMI INPUTS ───────────
+group_dmi      = "DMI"
+dmiLen         = input.int(14, "%DI Length",       minval=1, group=group_dmi)
+dmiSmoothLen   = input.int(3,  "%DI Smooth Length",minval=1, group=group_dmi)
+dmiSmoothType  = input.string("EMA","%DI Smooth Type", options=["SMA","EMA","RMA","WMA"], group=group_dmi)
+showDMI        = input.bool(true, "Show DMI Hist",    group=group_dmi)
+colorPlusDI    = input.color(#99FF99, "+DI Color",    group=group_dmi)
+colorMinusDI   = input.color(#FF9999, "-DI Color",    group=group_dmi)
+
+// ─────────── ADX INPUTS ───────────
+group_adx      = "ADX"
+adxLen         = input.int(14, "%ADX Length",     minval=1, group=group_adx)
+showADX        = input.bool(true, "Show ADX Dots",    group=group_adx)
+weakThr        = input.int(1,   "Weak (>)",         minval=0, group=group_adx)
+weakColor      = input.color(color.new(#99FF99,0),  "Weak Color",      group=group_adx)
+strongThr      = input.int(20,  "Strong (>)",       minval=0, group=group_adx)
+strongColor    = input.color(color.new(#FFFF99,0),  "Strong Color",    group=group_adx)
+veryStrongThr  = input.int(50,  "Very Strong (>)",  minval=0, group=group_adx)
+veryStrongColor= input.color(color.new(#FF9999,0),  "Very Strong Color",group=group_adx)
+extremeThr     = input.int(75,  "Extreme (>)",      minval=0, group=group_adx)
+extremeColor   = input.color(color.white,          "Extreme Color",   group=group_adx)
+
+// ─────────── HELPERS ───────────
+_clamp100(x) => math.max(0.0, math.min(100.0, x))
+
+maSwitch(src,len,typ) =>
+    switch typ
+        "SMA" => ta.sma(src,len)
+        "EMA" => ta.ema(src,len)
+        "WMA" => ta.wma(src,len)
+        "RMA" => ta.rma(src,len)
+        "HMA" => ta.hma(src,len)
+        => ta.vwma(src,len)
+
+price_for_k(pct, ll, hh) =>
+    hh - ll == 0 ? close : ll + pct/100.0 * (hh - ll)
+
+// ─────────── STOCHASTIC CALC ───────────
+rawK = ta.stoch(close, high, low, kLen)
+smK  = switch kSmoothType
+    "SMA" => ta.sma(rawK, kSmoothLen)
+    "EMA" => ta.ema(rawK, kSmoothLen)
+    "RMA" => ta.rma(rawK, kSmoothLen)
+    "WMA" => ta.wma(rawK, kSmoothLen)
+fastK= _clamp100(smK)
+
+smD  = switch dSmoothType
+    "SMA" => ta.sma(fastK, dSmoothLen)
+    "EMA" => ta.ema(fastK, dSmoothLen)
+    "RMA" => ta.rma(fastK, dSmoothLen)
+    "WMA" => ta.wma(fastK, dSmoothLen)
+stochD= _clamp100(smD)
+
+// ─────────── DRAW ZONE & ZONE LINES ───────────
+// mid-line and upper/lower boundaries
+hMid = hline(50,            "", color.new(color.gray, 70), linestyle=hline.style_dotted)
+h1   = hline(stochUpper,    "", color.new(color.gray, 90), linestyle=hline.style_dashed)
+h2   = hline(stochLower,    "", color.new(color.gray, 90), linestyle=hline.style_dashed)
+// fill zone between upper/lower
+fill(h1, h2, showFill ? fillColor : na)
+
+// ─────────── PLOTS ───────────
+plot(showK  ? fastK  : na, "%K", color=colorK, linewidth=2)
+plot(showD  ? stochD : na, "%D", color=colorD, linewidth=2)
+
+// ─────────── DMI HISTOGRAM ───────────
+[plusDI, minusDI, adxVal] = ta.dmi(dmiLen, adxLen)
+smPlus  = maSwitch(plusDI,  dmiSmoothLen, dmiSmoothType)
+smMinus = maSwitch(minusDI, dmiSmoothLen, dmiSmoothType)
+histVal = smPlus - smMinus
+plot(showDMI ? histVal : na, "DMI Hist", color=(histVal >= 0 ? colorPlusDI : colorMinusDI), style=plot.style_histogram)
+
+// ─────────── PROJECTION TABLE ───────────
+ll     = ta.lowest(low,  kLen)
+hh     = ta.highest(high, kLen)
+projUp = fastK < stochD ? price_for_k(stochD + deltaPad, ll, hh) : na
+projDn = fastK > stochD ? price_for_k(stochD - deltaPad, ll, hh) : na
+var table infoTable = table.new(position.middle_right, 1, 2, frame_color=color.gray, bgcolor=color.new(color.black,80))
+if showTable
+    trendUp = fastK > stochD
+    table.cell(infoTable, 0, 0, "", bgcolor=(trendUp ? labelBgUp : labelBgDown), text_halign=text.align_left)
+    crossTxt = not na(projUp) ? "Cross ↑: " + str.tostring(projUp, format.mintick) : not na(projDn) ? "Cross ↓: " + str.tostring(projDn, format.mintick) : ""
+    table.cell(infoTable, 0, 1, crossTxt, text_color=labelText, text_halign=text.align_left)
+
+// ─────────── ADX DOTS ───────────
+adxColor = adxVal > extremeThr      ? extremeColor :
+           adxVal > veryStrongThr   ? veryStrongColor :
+           adxVal > strongThr       ? strongColor :
+           adxVal > weakThr         ? weakColor : na
+plot(showADX ? adxVal : na, "ADX", color=adxColor, style=plot.style_circles, linewidth=1)

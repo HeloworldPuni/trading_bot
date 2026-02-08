@@ -1,0 +1,17 @@
+
+//@version=4
+strategy("F2F", overlay=true)
+
+longCondition = crossover(sma(close,14), sma(close,28))
+if (longCondition)
+    strategy.entry("Long", strategy.long)
+
+shortCondition = crossover(sma(close,14), sma(close,28))
+if (shortCondition)
+    strategy.entry("Short", strategy.short)
+    
+longExitCondition = crossunder(sma(close, 5), sma(close, 13))
+shortExitCondition = crossover(sma(close, 5), sma(close, 13))
+    
+strategy.close("Long", when = longExitCondition)
+strategy.close("Short", when = shortExitCondition)

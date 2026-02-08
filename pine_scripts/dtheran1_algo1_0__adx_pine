@@ -1,0 +1,321 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © OskarGallard
+
+//@version=6
+indicator(title = 'Directional Movement Index and ADX', shorttitle = 'DMI & ADX', format = format.price, precision = 2)
+
+// ALMA - Arnaud Legoux Moving Average of @kurtsmock
+enhanced_alma(_series, _length, _offset, _sigma) =>
+    length = int(_length) // Floating point protection
+    numerator = 0.0
+    denominator = 0.0
+    m = _offset * (length - 1)
+    s = length / _sigma
+    for i = 0 to length - 1 by 1
+        weight = math.exp(-((i - m) * (i - m)) / (2 * s * s))
+        numerator := numerator + weight * _series[length - 1 - i]
+        denominator := denominator + weight
+        denominator
+    numerator / denominator
+
+// Function to select the type of moving average
+ma(_type, _source, _length) =>
+    switch _type
+        'SMA' => ta.sma(_source, _length)
+        'EMA' => ta.ema(_source, _length)
+        'WMA' => ta.wma(_source, _length)
+        'RMA' => ta.rma(_source, _length)
+        'ALMA' => enhanced_alma(_source, _length, 0.85, 6)
+
+// Inputs
+bool show_DMI = input.bool(true, '═════════ Show DMI ═════════')
+int dilen = input.int(14, 'DI Length', minval = 1, inline = 'di0')
+string type_ma = input.string('RMA', 'Type', options = ['ALMA', 'WMA', 'EMA', 'SMA', 'RMA'], inline = 'di0')
+bool show_ADX = input.bool(true, '═════════ Show ADX ═════════')
+int adxlen = input.int(14, 'ADX Smoothing', minval = 1, maxval = 50)
+int keyLevel = input.int(23, 'Key level for ADX', minval = 1)
+
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ma(type_ma, up > down and up > 0 ? up : 0, len) / truerange)
+    minus = fixnan(100 * ma(type_ma, down > up and down > 0 ? down : 0, len) / truerange)
+    [plus, minus]
+
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adx = 100 * ma(type_ma, math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+    [adx, plus, minus]
+
+[sig, up, down] = adx(dilen, adxlen)
+
+color chartreuse = #80FF00
+color deep_chartreuse = #499100
+color redorange = #FF4000
+color deep_redorange = #912400
+color color_Plus = up > up[1] ? chartreuse : deep_chartreuse
+color color_Minus = down > down[1] ? redorange : deep_redorange
+color color_DMI = up > down ? color.new(chartreuse, 90) : color.new(redorange, 90)
+color color_ADX = sig > sig[1] ? #FFFFFF : #526172
+ADX_Trend = sig >= keyLevel ? up > down ? 1 : -1 : 0
+color color_bull = ta.rising(sig, 2) ? color.new(chartreuse, 80) : color.new(deep_chartreuse, 80)
+color color_bear = ta.rising(sig, 2) ? color.new(redorange, 80) : color.new(deep_redorange, 80)
+color ADX_bgcolor = ADX_Trend == 1 ? color_bull : ADX_Trend == -1 ? color_bear : color.new(#0A0C12, 50)
+
+plot(show_ADX ? sig : na, 'ADX', color_ADX, linewidth = 2)
+plot(show_ADX ? keyLevel : na, 'Key Level', color_ADX)
+p1 = plot(show_DMI ? up : na, '+DI', color_Plus)
+p2 = plot(show_DMI ? down : na, '-DI', color_Minus)
+fill(p1, p2, color_DMI, 'DI Fill')
+bgcolor(ADX_bgcolor, title = 'ADX Trend Background')
+
+//______________________________________________________________________________
+// Based on "InfoPanel Indicators microtrend" - Author: @03.freeman
+// https://www.tradingview.com/script/vTCV4bGA-InfoPanel-Indicators-microtrend/
+//______________________________________________________________________________
+color lavender = color.new(#8080FF, 45)
+color coral = color.new(#FF8080, 45)
+indicator_text(value, name) =>
+    string triangulo = ''
+    color colorCell = #000000
+    if ta.change(value) > 0
+        triangulo := '▲ '
+        colorCell := lavender
+        colorCell
+    else
+        triangulo := '▼ '
+        colorCell := coral
+        colorCell
+    valueText = triangulo + name + ': ' + str.tostring(value, '#.##')
+    [valueText, colorCell]
+
+// Moving Average Convergence / Divergence (MACD)_____________________________________________________________________
+int fast_length = input.int(12, 'Fast', inline = 'macd1', group = 'Moving Average Convergence / Divergence (MACD)')
+int slow_length = input.int(26, 'Slow', inline = 'macd1', group = 'Moving Average Convergence / Divergence (MACD)')
+int signal_length = input.int(9, 'Signal Smoothing', minval = 1, maxval = 55, inline = 'macd1', group = 'Moving Average Convergence / Divergence (MACD)')
+string type_ma2 = input.string('EMA', 'Type', inline = 'macd2', options = ['ALMA', 'WMA', 'EMA', 'SMA', 'RMA'], group = 'Moving Average Convergence / Divergence (MACD)')
+float macd_src = input.source(close, 'Source', inline = 'macd2', group = 'Moving Average Convergence / Divergence (MACD)')
+bool show_macd = input.bool(true, 'Show MACD Dots', inline = '0_macd', group = 'Moving Average Convergence / Divergence (MACD)')
+bool show_macd3 = input.bool(false, 'Show MACD Plot', inline = '0_macd', group = 'Moving Average Convergence / Divergence (MACD)')
+bool show_macd2 = input.bool(false, 'Show Bars Color', inline = '0_macd', group = 'Moving Average Convergence / Divergence (MACD)')
+tool_vol = 'MACD Volatility Normalized \n Not applicable for the information table.'
+tool_atr = 'Used to gauge volatility to standardize MACD. Keep at the same value as the MACD Slow Length parameter for best results.'
+bool show_macdv = input.bool(true, 'Use Volatility', tooltip = tool_vol, inline = 'macd_v0', group = 'Moving Average Convergence / Divergence (MACD)')
+int atr_length = input.int(26, 'ATR Length', 2, tooltip = tool_atr, inline = 'macd_v1', group = 'Moving Average Convergence / Divergence (MACD)')
+
+fast_ma = ma(type_ma2, macd_src, fast_length)
+slow_ma = ma(type_ma2, macd_src, slow_length)
+macd_line = fast_ma - slow_ma
+signal_line = ma(type_ma2, macd_line, signal_length)
+hist = macd_line - signal_line
+[macdText, macdColor] = indicator_text(hist, 'MACD')
+
+// Squeeze Momentum Indicator of @LazyBear_______________________________________________________________________
+const string gm = 'Squeeze Momentum Indicator'
+show_mom = input.bool(false, 'Show Momentum  ', inline = 'mom0', group = gm)
+mom_mode = input.string('Histogram', 'Plot', options = ['Columns', 'Area', 'Histogram'], inline = 'mom0', group = gm)
+mode = mom_mode == 'Columns' ? plot.style_columns : mom_mode == 'Area' ? plot.style_area : plot.style_histogram
+show_mom_sig = input.bool(false, 'Use Signal Line', inline = 'stren', group = gm)
+show_strength = input.bool(false, 'Show Strength(MOM)', inline = 'stren', group = gm)
+show_arrows = input.bool(true, 'Show ▲ ▼ ', inline = 'stren', group = gm)
+char_sqz = input.string('✪', 'Squeeze symbol', inline = 'sqz0', group = gm)
+tooltip_sqz = 'The Squeeze Indicator measures the relationship between Bollinger Bands and Keltner\'s Channels to help identify consolidations and signal when prices are likely to break out (whether up or down). ' + 'The Squeeze Indicator finds sections of the Bollinger Bands which fall inside the Keltner\'s Channels and in this case the market is said to be in a squeeze (indicator turns off, displayed with grey dot shapes in this study). ' + 'When the volatility increases, so does the distance between the bands, conversely, when the volatility declines, the distance also decreases and in such cases the squeeze is said to be released (indicator turns on, displayed with triangle up or triangle down shapes)'
+show_sqz = input.bool(true, '▶ Show Squeeze Indicator  ', tooltip = tooltip_sqz, inline = 'sqz0', group = gm)
+momLength = input.int(20, 'Length', minval = 1, inline = 'mom2', group = gm)
+src_mom = input.source(close, 'Source', inline = 'mom2', group = gm)
+signalLength = input.int(5, 'Signal Length', minval = 2, inline = 's0', group = gm)
+type_signal = input.string('SMA', 'Type', inline = 's0', group = gm, options = ['ALMA', 'WMA', 'EMA', 'SMA', 'RMA'])
+sqzLength = input.int(20, 'Squeeze (KC|BB) Length', minval = 1, group = gm)
+bbMult = input.float(2.0, 'Bollinger Bands MultFactor', step = 0.05, minval = 0.25, group = gm)
+kcMult = input.float(1.25, 'Keltner\'s Channel MultFactor', step = 0.05, minval = 0.25, group = gm)
+useTrueRange = input.bool(true, 'Use TrueRange (Keltner\'s Channel)', group = gm)
+
+// WaveTrend Oscillator of @LazyBear_______________________________________________________________________________________________________
+string type_ma3 = input.string('EMA', 'Type', inline = 'w1', options = ['ALMA', 'WMA', 'EMA', 'SMA', 'RMA'], group = 'WaveTrend Oscillator')
+float src_wt = input.source(hlc3, 'Source', inline = 'w1', group = 'WaveTrend Oscillator')
+int clen = input.int(10, 'Channel Length', 3, 55, 1, inline = 'w2', group = 'WaveTrend Oscillator')
+int alen = input.int(21, 'Average Length', 3, 55, 1, inline = 'w2', group = 'WaveTrend Oscillator')
+esa = ma(type_ma3, src_wt, clen)
+d = ma(type_ma3, math.abs(src_wt - esa), clen)
+ci = (src_wt - esa) / (0.015 * d)
+wt1 = ma(type_ma3, ci, alen)
+[wtText, wtColor] = indicator_text(wt1, 'WaveTrend')
+
+// Money Flow Index (MFI)_________________________________________
+mfiLength = input(14, 'Length', group = 'Money Flow Index (MFI)')
+mfi0 = ta.mfi(hlc3, mfiLength)
+[mfiText, mfiColor] = indicator_text(mfi0, 'MFI')
+
+// Relative Strength Index (RSI)_________________________________________________
+rsiLength = input.int(14, 'RSI Length', group = 'Relative Strength Index (RSI)')
+rsi0 = ta.rsi(close, rsiLength)
+[rsiText, rsiColor] = indicator_text(rsi0, 'RSI')
+
+// STOCHASTIC_____________________________________________________
+periodK = input.int(14, 'K', minval = 1, group = 'Stochastic')
+smoothK = input.int(7, 'Smooth', minval = 1, group = 'Stochastic')
+k0 = ta.sma(ta.stoch(close, high, low, periodK), smoothK)
+[stochText, stochColor] = indicator_text(k0, 'Stochastic')
+
+// STOCH RSI________________________________________________________________
+lengthRSI = input.int(14, 'RSI Length', minval = 1, group = 'Stochastic RSI')
+lengthStoch = input.int(14, 'K', minval = 1, group = 'Stochastic RSI')
+smoothK2 = input.int(3, 'Smooth', minval = 1, group = 'Stochastic RSI')
+strsi0 = ta.rsi(close, lengthRSI)
+stk0 = ta.sma(ta.stoch(strsi0, strsi0, strsi0, lengthStoch), smoothK2)
+[stochRSIText, stochRSIColor] = indicator_text(stk0, 'Stoch RSI')
+
+// VWAP Commodity Channel Index (CCI)________________________________________________________
+lengthVCCI = input.int(34, 'Length', minval = 1, group = 'Commodity Channel Index (VWAP CCI)')
+maVCCI = enhanced_alma(ta.vwap, lengthVCCI, 0.85, 6.0)
+vcci = (ta.vwap - maVCCI) / (0.015 * ta.dev(ta.vwap, lengthVCCI))
+[vcciText, vcciColor] = indicator_text(vcci, 'VWAP CCI')
+
+// Bollinger Bands %B_______________________________________________________________________________________________
+lengthBB = input.int(20, 'Length', minval = 1, group = 'Bollinger Bands %B (BB %B)')
+multiBB = input.float(2.0, 'Multiplier', minval = 0.001, maxval = 50, step = 0.1, group = 'Bollinger Bands %B (BB %B)')
+basisBB = ta.sma(close, lengthBB)
+devBB = multiBB * ta.stdev(close, lengthBB)
+upperBB = basisBB + devBB
+lowerBB = basisBB - devBB
+bbr = (close - lowerBB) / (upperBB - lowerBB)
+[bbrText, bbrColor] = indicator_text(bbr, 'BB %B')
+
+//______________________________________________________________________________
+// Based on "Heatmap Volume" - Author: @xdecow
+// https://www.tradingview.com/script/unWex8N4-Heatmap-Volume-xdecow/
+//______________________________________________________________________________
+// Inputs
+tooltip_len1 = 'Moving Average Length\n\n- Smaller values will respond more quickly and activate more frequently. (Best for short-term analysis)\n- Larger values will have a slower response, will be less sensitive to small volume variations, and will highlight large volumes. (Best for long-term analysis)\n\nFormula: How many stdev is the volume far from the Moving Average?'
+tooltip_len2 = 'Standard Deviation lookback period.\n\nFormula: How many stdev is the volume far from the Moving Average?'
+tooltip_ehv = 'Volume Threshold Multiplier\neg: 4 = 400% or 4 x Stdev above the mean'
+tooltip_mode = '- Heatmap mode: colors based only on volume.\n- Up/Down mode: colors based on candle volume and direction.\nChange the cores below according to the selected mode.'
+bcolor_enabled = input.bool(true, '═══ Heatmap Volume - Colored bars ═══')
+length = input.int(610, 'MA Length', minval = 2, tooltip = tooltip_len1)
+slength = input.int(610, 'Standard Deviation Length', minval = 2, tooltip = tooltip_len2)
+cmode = input.string('Heatmap', 'Color Mode', options = ['Heatmap', 'Up/Down'], tooltip = tooltip_mode)
+thresholdExtraHigh = input.float(4, 'Extra High Volume Threshold', minval = 1, tooltip = tooltip_ehv)
+thresholdHigh = input.float(2.5, 'High Volume Threshold', minval = 1)
+thresholdMedium = input.float(1, 'Medium Volume Threshold', minval = 1)
+
+// Heatmap colors
+chmthresholdExtraHigh = input.color(#FF0000, 'Heatmap Extra High')
+chmthresholdHigh = input.color(#FF7800, 'Heatmap High')
+chmthresholdMedium = input.color(#FFCF03, 'Heatmap Medium')
+cupthresholdExtraHigh = input.color(#00FF00, 'Up Extra High')
+cupthresholdHigh = input.color(#30FF30, 'Up High')
+cupthresholdMedium = input.color(#60FF60, 'Up Medium')
+cdnthresholdExtraHigh = input.color(#FF0000, 'Down Extra High')
+cdnthresholdHigh = input.color(#FF3030, 'Down High')
+cdnthresholdMedium = input.color(#FF6060, 'Down Medium')
+cthresholdExtraHighUp = cmode == 'Heatmap' ? chmthresholdExtraHigh : cupthresholdExtraHigh
+cthresholdHighUp = cmode == 'Heatmap' ? chmthresholdHigh : cupthresholdHigh
+cthresholdMediumUp = cmode == 'Heatmap' ? chmthresholdMedium : cupthresholdMedium
+cthresholdExtraHighDn = cmode == 'Heatmap' ? chmthresholdExtraHigh : cdnthresholdExtraHigh
+cthresholdHighDn = cmode == 'Heatmap' ? chmthresholdHigh : cdnthresholdHigh
+cthresholdMediumDn = cmode == 'Heatmap' ? chmthresholdMedium : cdnthresholdMedium
+
+// Calculations
+length := math.min(length, bar_index + 1)
+slength := math.min(slength, bar_index + 1)
+
+mean = ta.sma(volume, length)
+std = ta.stdev(volume, slength)
+stdbar = (volume - mean) / std
+dir = close > open
+
+bcolor = stdbar > thresholdExtraHigh ? dir ? cthresholdExtraHighUp : cthresholdExtraHighDn : stdbar > thresholdHigh ? dir ? cthresholdHighUp : cthresholdHighDn : stdbar > thresholdMedium ? dir ? cthresholdMediumUp : cthresholdMediumDn : na
+
+// Plots
+barcolor(bcolor_enabled ? bcolor : na, editable = false)
+
+//_____________________________________________________________________________________
+// MACD Volatility Normalised of @Mik3Christ3ns3n - Modified by @OskarGallard
+// https://www.tradingview.com/script/CE4EqZ1A-MACD-V-Volatility-Normalized-Momentum/
+// https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4099617
+//_____________________________________________________________________________________
+macdv_line = (ta.ema(macd_src, fast_length) - ta.ema(macd_src, slow_length)) / ta.atr(atr_length) * 100
+macdv_signal = ta.ema(macdv_line, signal_length)
+
+color cian = color.new(#38F5E9, 0)
+color cian_oscuro = color.new(#1C7A74, 0)
+color pink = color.new(#F7709D, 0)
+color pink_oscuro = color.new(#7B384E, 0)
+char_dot = '◍'
+char_dot_red = '🔴'
+char_dot_blue = '🔵'
+
+color color_m_up = macd_line >= signal_line ? cian : cian_oscuro
+color color_m_dn = macd_line <= signal_line ? pink : pink_oscuro
+color color_macd = macd_line >= 0 ? color_m_up : color_m_dn
+
+color color_up_v = macdv_line >= 150 ? color.blue : macdv_line >= 50 ? cian : cian_oscuro
+color color_dn_v = macdv_line <= -150 ? color.red : macdv_line <= -50 ? pink : pink_oscuro
+color color_macdv = macdv_line >= 0 ? color_up_v : color_dn_v
+
+color color_m = show_macdv ? color_macdv : color_macd
+area_macd = show_macdv ? macdv_line : macd_line
+
+plot(show_macd3 ? area_macd : na, 'MACD Area', color_m, 2, plot.style_histogram)
+plot(show_macd3 and not show_macdv ? signal_line : na, 'MACD Siganal', color.new(#DBDB78, 45), 2)
+plotchar(show_macd ? macd_line : na, 'MACD', char_dot, location.bottom, color_m)
+plotchar(show_macdv and macdv_line >= 150 ? macdv_line : na, 'MACD-V OverBought', char_dot_blue, location.bottom, color.blue)
+hline(show_macd3 and show_macdv ? 150 : na, 'MACD-V - Upper Band', color = color.new(#EFEFBF, 50), linestyle = hline.style_dotted)
+hline(show_macd3 and show_macdv ? 50 : na, 'MACD-V: Upper Band', color = color.new(#EFEFBF, 50), linestyle = hline.style_dotted)
+plotchar(show_macdv and macdv_line <= -150 ? macdv_line : na, 'MACD-V OverSold', char_dot_red, location.bottom, color.red)
+hline(show_macd3 and show_macdv ? -50 : na, 'MACD-V: Lower Band', color = color.new(#EFEFBF, 50), linestyle = hline.style_dotted)
+hline(show_macd3 and show_macdv ? -150 : na, 'MACD-V - Lower Band', color = color.new(#EFEFBF, 50), linestyle = hline.style_dotted)
+barcolor(show_macd2 ? color_m : na, title = 'MACD Bars Color')
+
+//_______________________________________________________________________________
+// "Squeeze Momentum Indicator" - Author: @LazyBear - Modified by @OskarGallard
+// https://www.tradingview.com/script/3mQBizyn/
+//_______________________________________________________________________________
+// Calculations
+[_, bbUpper, bbLower] = ta.bb(src_mom, sqzLength, bbMult)
+[_, kcUpper, kcLower] = ta.kc(src_mom, sqzLength, kcMult, useTrueRange)
+
+sqzOn = bbLower > kcLower and bbUpper < kcUpper
+sqzOff = bbLower < kcLower and bbUpper > kcUpper
+noSqz = sqzOn == false and sqzOff == false
+
+momOsc = ta.linreg(src_mom - math.avg(math.avg(ta.highest(high, momLength), ta.lowest(low, momLength)), ta.sma(src_mom, momLength)), momLength, 0)
+signal = ma(type_signal, momOsc, signalLength)
+momentum_strength = momOsc - signal
+
+// Plotting 
+color color_mom = momOsc >= 0 ? momOsc >= momOsc[1] ? color.new(#15FF00, 0) : color.new(#335E33, 0) : momOsc < momOsc[1] ? color.new(#F44336, 0) : color.new(#B71C1C, 0)
+color color_up = color.new(#05FFA6, 0)
+color color_dn = color.new(#FF9900, 0) //#FF0AE2 #FF1C0D
+
+plot(show_mom ? momOsc : na, 'Momentum', color_mom, 2, mode)
+plot(show_mom_sig ? signal : na, 'Signal(Mom)', signal > signal[1] ? #00FF77 : #FF1100)
+
+mom_up = sqzOff and momentum_strength >= 0 or not show_sqz and momentum_strength >= 0
+mom_dn = sqzOff and momentum_strength < 0 or not show_sqz and momentum_strength < 0
+plotshape(show_arrows and mom_up, 'Squeeze Release', shape.triangleup, location.top, color_up)
+plotshape(show_arrows and mom_dn, 'Squeeze Release', shape.triangledown, location.top, color_dn)
+plotchar(show_sqz and (sqzOn or noSqz) ? true : false, 'In Squeeze', char_sqz, location.top, #EFEFBF)
+
+color_strength = momentum_strength > 0 ? color_up : color_dn
+color_strength_cloud = momentum_strength > 0 ? color.new(color_up, 85) : color.new(color_dn, 85)
+plot(show_strength ? momentum_strength * 2 : na, 'Momentum Strength', color_strength_cloud, 1, plot.style_columns, display = display.pane)
+plot(show_strength ? momentum_strength * 2 : na, 'Momentum Strength', color_strength, 1, plot.style_line, join = true)
+
+//_______________________________________________________________________________________________________________________________
+// Table creation________________________________________________________________________________________________________________
+color colorNegro = color.new(#000000, 0)
+var table_info = table.new(position.middle_right, 2, 4)
+
+// Update table cells
+if barstate.islast
+    table.cell(table_info, 0, 0, mfiText, bgcolor = mfiColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 0, 1, vcciText, bgcolor = vcciColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 0, 2, rsiText, bgcolor = rsiColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 0, 3, wtText, bgcolor = wtColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 1, 0, stochText, bgcolor = stochColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 1, 1, stochRSIText, bgcolor = stochRSIColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 1, 2, bbrText, bgcolor = bbrColor, text_color = colorNegro, text_halign = text.align_left)
+    table.cell(table_info, 1, 3, macdText, bgcolor = macdColor, text_color = colorNegro, text_halign = text.align_left)

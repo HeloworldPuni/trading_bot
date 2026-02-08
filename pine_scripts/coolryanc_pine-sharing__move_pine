@@ -1,0 +1,71 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © Rytotw
+
+//@version=5
+indicator('FTX BTC Move Trend [Ryto]')
+
+moveType = input.string('Day', 'Move Type', options=['Day', 'Week'])
+srcInput = input(ohlc4, title='Price Source')
+
+getFTXIndexPrice(_timeframe, _source) =>
+    //***********************************//
+    // Note: no ticker FTXUS:BTCUSD      //
+    //***********************************//
+    indexSourcePrice = array.new_float(0)
+    array.push(indexSourcePrice, request.security('BINANCE:BTCTUSD', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('BINANCE:BTCUSDC', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('BITSTAMP:BTCUSD', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('BITTREX:BTCUSD', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('COINBASE:BTCUSD', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('COINBASE:BTCUSDC', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('KRAKEN:BTCUSD', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('OKEX:BTCUSDC', _timeframe, _source))
+    array.push(indexSourcePrice, request.security('FTX:BTCUSD', _timeframe, _source))
+    array.avg(indexSourcePrice)
+
+getFTXTWAPPrice(_price) =>
+    timeInterval = request.security(syminfo.tickerid, '60', time, lookahead=barmerge.lookahead_on)  //
+    weight = ta.barssince(ta.change(timeInterval))
+    price = 0.0
+    price := weight == 0 ? _price : _price + nz(price[1])
+    twap = price / (weight + 1)
+    twap
+
+indexPrice = getFTXIndexPrice(timeframe.period, srcInput)
+twapPrice = getFTXTWAPPrice(indexPrice)
+
+//*******************************************************************//
+// strikePrice: red, expirationPrice: orange, others: grey           //
+// Note: expirationPrice = valuewhen(hour(time) == 23, twapPrice, 1) //
+// UTC 23:00:00-23:59:59 交割價                                      //
+//*******************************************************************//
+isWKType = moveType == 'Week'
+
+twapStrikeColor = input(color.red, 'Strike Price')
+twapExpirationColor = input(color.orange, 'Expiration Price')
+twapColor = input(color.gray, 'TWAP Index Price')
+pricePalette = hour(time) == 0 ? twapStrikeColor : hour(time) == 23 ? twapExpirationColor : twapColor
+strikePrice = ta.valuewhen(hour(time) == 0, twapPrice, 1)  // UTC 00:00:00-00:59:59 行權價
+strikeWithExpirationPrice = hour(time) > 0 and hour(time) < 23 ? strikePrice : twapPrice
+
+if isWKType
+    pricePalette := hour(time) == 0 and dayofweek(time) == 7 ? twapStrikeColor : hour(time) == 23 and dayofweek(time) == 6 ? twapExpirationColor : twapColor
+    strikePrice := ta.valuewhen(hour(time) == 0 and dayofweek(time) == 7, twapPrice, 1)  // UTC 00:00:00-00:59:59 行權價
+    strikeWithExpirationPrice := dayofweek(time) == 7 and hour(time) == 0 or dayofweek(time) == 6 and hour(time) == 23 ? twapPrice : strikePrice
+    strikeWithExpirationPrice
+
+predictedPrice = math.abs(indexPrice - strikeWithExpirationPrice)
+
+plot(indexPrice, linewidth=2, title='FTX Index Price')
+// plot(twapPrice, linewidth = 2, color = color.purple, title = 'TWAP Index Price')
+plot(strikeWithExpirationPrice, linewidth=2, title='FTX Strike & Expiration Price', color=pricePalette)
+
+var priceTable = table.new(position=position.top_right, columns=1, rows=5, bgcolor=color.yellow, border_width=1)
+if barstate.islast
+    table.cell(table_id=priceTable, column=0, row=0, text='Strike Price')
+    table.cell(table_id=priceTable, column=0, row=1, text=str.tostring(strikeWithExpirationPrice), bgcolor=color.teal)
+    table.cell(table_id=priceTable, column=0, row=3, text='Predicted Expiration Price')
+    table.cell(table_id=priceTable, column=0, row=4, text=str.tostring(predictedPrice), bgcolor=color.teal)
+
+
+

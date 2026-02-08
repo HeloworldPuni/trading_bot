@@ -1,0 +1,96 @@
+//@version=4
+study(title="My:Bitcoin Simplified Macro", shorttitle="mbsm", overlay=true)
+
+ema_21_W  = security(syminfo.tickerid, '1D', ema(close, 147))
+ema21WeeksPlot = plot(ema_21_W, color=color.new(color.white, 100), linewidth=1, title="EMA 21 W")
+
+sma_200_D = security(syminfo.tickerid, '1D', sma(close, 200))
+sma200DaysPlot = plot(sma_200_D, color=color.new(color.white, 100), linewidth=1, title="SMA 200 D")
+
+sma_4_Y = security(syminfo.tickerid, '1D', sma(close, 1458))
+sma4YearsPlot = plot(sma_4_Y, color=color.new(color.white, 100), linewidth=1, title="SMA 4 Y")
+
+sma_200_W = security(syminfo.tickerid, '1D', sma(close, 1400))
+sma200WeeksPlot = plot(sma_200_W, color=color.new(color.white, 100), linewidth=1, title="SMA 200 W")
+
+// Bull Market Support Band - 21 weeks ema + 200 days sma
+bullMarketSupportBandColor = color.lime
+fill(ema21WeeksPlot, sma200DaysPlot, color=color.new(bullMarketSupportBandColor, 75))
+
+// Market Support Band - 4 Years sma + 200 weeks sma
+marketSupportBandColor = color.blue
+fill(sma4YearsPlot, sma200WeeksPlot, color=color.new(marketSupportBandColor, 75))
+
+///////////////////////////////////////////////////////////
+// PI Cycle Pre Out - Out - In
+///////////////////////////////////////////////////////////
+mayersMultiple06 = sma_200_D * 0.6
+mayersMultiple24 = sma_200_D * 2.4
+mayersMultiple5 = sma_200_D * 5
+sma_21_D  = security(syminfo.tickerid, '1D', sma(close, 21))
+sma_350_D_By_2 = security(syminfo.tickerid, '1D', sma(close, 350)*2)
+sma_111_D = security(syminfo.tickerid, '1D', sma(close, 111))
+dailyClose = security(syminfo.tickerid, '1D', close)
+
+cycleInBackgroundColor = #39d348 // Lime Green
+cycleOutBackgroundColor = #ed6565 // Candy Oink
+cycleQuestionBackgroundColor = #648aea // Blue Pastel
+cycleIPreOutBackgroundColor = #fcac00 // Honey Yellow
+
+cycleIn = crossover(mayersMultiple06, sma_21_D) ? dailyClose + (dailyClose/100 * 10) : na
+plotshape(cycleIn, style=shape.labelup,size=size.small, text="Cycle In", color=cycleInBackgroundColor, textcolor=color.black, location=location.belowbar)
+
+cycleOut = crossunder(sma_350_D_By_2, sma_111_D) ? dailyClose + (dailyClose/100 * 10) : na
+plotshape(cycleOut, style=shape.labeldown,size=size.small, text="Cycle Out", color=cycleOutBackgroundColor, textcolor=color.black, location=location.abovebar)
+
+
+var cycleOutCrossed = 0
+var cycleInCrossed = 0
+var currentPreInValue = 0
+var currentOutInValue = 0
+
+
+// Cycle Out to Cycle In percentage
+if (cycleOutCrossed == 0 and crossunder(sma_350_D_By_2, sma_111_D))
+    cycleOutCrossed := 1
+    cycleInCrossed := 0
+if (cycleInCrossed == 0 and crossover(mayersMultiple06, sma_21_D))
+    cycleOutCrossed := 0
+    cycleInCrossed := 1
+currentOutInValue:= round(100 + (sma_111_D - sma_350_D_By_2) / sma_350_D_By_2 * 100)
+currentPreInValue := round(100 + (mayersMultiple06 - sma_21_D) / sma_21_D * 100)
+
+///////////////////////////////////////////////////////////
+// DCA IN - Feigenbaum constant
+///////////////////////////////////////////////////////////
+timeDuration = time - time[1]
+timeDurationSinceGenesis = round((time - 1231502400 * 1000) / timeDuration)
+lm = round(timeDurationSinceGenesis/4.669201609102990671853203820466)
+clm = close[lm]
+plotshape(crossover(clm[3], close[3]) and clm > close, text='DCA', location=location.belowbar, style=shape.triangleup, color=color.yellow, size=size.tiny)
+bgcolor(clm > close ? color.new(color.yellow, 95) : color.new(color.yellow, 100))
+
+///////////////////////////////////////////////////////////
+// Puell Multiple
+///////////////////////////////////////////////////////////
+
+mining_revenue_1_D = security("QUANDL:BCHAIN/MIREV", "1D", close[1], barmerge.gaps_off, barmerge.lookahead_on)
+sma_355_D = security("QUANDL:BCHAIN/MIREV", "1D", sma(close, 365)[1], barmerge.gaps_off, barmerge.lookahead_on)
+puellMultiple = mining_revenue_1_D / sma_355_D
+
+///////////////////////////////////////////////////////////
+// Text Info
+///////////////////////////////////////////////////////////
+
+textEQ () =>
+    tooltip = ''
+    if (cycleOutCrossed == 1)
+        tooltip := tooltip + "Cycle Out to Cycle In (0% > 100%) : " + tostring(currentPreInValue) + "%"
+        tooltip := tooltip + "\n\n" + "Cycle In to Cycle Out (0% > 100%) : " + tostring(currentOutInValue) + "%"
+        tooltip := tooltip + "\n\n" + "Puell Multiple (Buy < 0.5 / Sell > 6) : " + tostring(puellMultiple, '#.#')
+    tooltip
+
+labelText = textEQ ()
+labelXLoc = time_close + (( time_close - time_close[1] ) * 6 ) // Set Label offset
+label = label.new (labelXLoc, hlc3, labelText , xloc.bar_time, yloc.price, color.black, label.style_label_left, color.white, size=size.normal )
+label.delete ( label[1] )   // Delete Previous Label

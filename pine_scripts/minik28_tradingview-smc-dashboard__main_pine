@@ -1,0 +1,73 @@
+//@version=5
+indicator(title="SMC Dashboard (LuxAlgo Support)", overlay=true, max_boxes_count=20)
+
+//
+// === INPUTS ===
+//
+show_long = input.bool(true, "Long-Setups anzeigen")
+show_short = input.bool(true, "Short-Setups anzeigen")
+show_history = input.bool(true, "Letzte Setups anzeigen")
+pos_x = input.int(80, "Dashboard X-Position (Prozent)", minval=0, maxval=100)
+pos_y = input.int(5, "Dashboard Y-Position (Prozent)", minval=0, maxval=100)
+
+//
+// === MULTI-TIMEFRAME TRENDS ===
+//
+timeframes = array.from("1", "5", "15", "60")
+trend_colors = array.new_color()
+for tf in timeframes
+    // LuxAlgo Trend: placeholder (hier sollte LuxAlgo Trend-Output eingelesen werden)
+    trend = na // TODO: LuxAlgo Trend Signal für tf einlesen (bullish/bearish/neutral)
+    color = trend == "bullish" ? color.green : trend == "bearish" ? color.red : color.gray
+    array.push(trend_colors, color)
+
+// Visualisierung (Platzhalter, Anpassung folgt)
+box_width = 65
+box_height = 30
+for i = 0 to array.size(timeframes) - 1
+    label.new(x=bar_index, y=high + (i+1)*syminfo.mintick, text=array.get(timeframes, i)+"m", color=array.get(trend_colors, i), style=label.style_label_down, size=size.small)
+
+//
+// === SETUP MATRIX (LIVE) ===
+//
+var table dashboard = table.new(position=position.top_right, columns=6, rows=8, bgcolor=color.new(color.black, 80))
+
+// Platzhalter für LuxAlgo-Signale (hier später als Input einlesen)
+liq_grab = na  // true/false je nach Signal von LuxAlgo
+choch     = na
+orderblock = na
+fvg       = na
+
+// Matrix befüllen – Beispiel für Long-Setup
+table.cell(dashboard, 0, 0, "Long-Setup", text_color=color.green, bgcolor=color.new(color.green, 90))
+table.cell(dashboard, 0, 1, liq_grab ? "✅ Liquidity Grab" : "❌ Liquidity Grab", text_color=liq_grab ? color.green : color.red)
+table.cell(dashboard, 0, 2, choch ? "✅ CHoCH" : "❌ CHoCH", text_color=choch ? color.green : color.red)
+table.cell(dashboard, 0, 3, orderblock ? "✅ OB" : "❌ OB", text_color=orderblock ? color.green : color.red)
+table.cell(dashboard, 0, 4, fvg ? "✅ FVG" : "❌ FVG", text_color=fvg ? color.green : color.red)
+// ... analog für Short-Setup
+
+//
+// === SETUP HISTORY (PLATZHALTER) ===
+//
+if show_history
+    // Die letzten 3-5 abgeschlossenen Setups anzeigen (Labels, Linien, etc.)
+    // Hier werden später die LuxAlgo-Outputs ausgewertet und die Setups als Markierungen visualisiert
+    // TODO: Setup-Historie einbauen
+
+//
+// === UI Buttons (optional, Platzhalter) ===
+//
+if bar_index == ta.highest(bar_index, 10)
+    // Beispiel für Button
+    // TODO: Umschalt-Buttons implementieren
+
+//
+// === HINWEIS ===
+//
+/*
+Dieses Skript ist ein Grundgerüst für das SMC-Dashboard.
+Die eigentliche Logik für die Erkennung/Anzeige der LuxAlgo-Signale (CHoCH, Liquidity Grab, OB, FVG etc.)
+muss integriert werden, sobald die entsprechenden Variablen/Plots aus LuxAlgo SMC im Chart verfügbar sind.
+
+Siehe README.md für weitere Infos!
+*/

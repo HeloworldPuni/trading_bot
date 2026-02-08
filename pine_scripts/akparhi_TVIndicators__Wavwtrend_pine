@@ -1,0 +1,196 @@
+//@version=4
+study(title = "100Seconds DMF Wavetrend", shorttitle = '100Seconds_DMF_Wavetrend')
+
+// General
+wtSrc = input(hlc3, title = 'WT MA Source', type = input.source)
+
+anchor = input(1, minval=1, title="Wolfpack anchor")
+filterByWavetrendDirection = input(true, title = 'Filter MACD signals by wavetrend', type = input.bool)
+// WaveTrend
+wtMASource = wtSrc
+wtShow = input(true, title = 'Show WaveTrend', type = input.bool)
+wtBuyShow = input(true, title = 'Show Buy dots', type = input.bool)
+wtGoldShow = input(true, title = 'Show Gold dots', type = input.bool)
+wtSellShow = input(true, title = 'Show Sell dots', type = input.bool)
+wtDivShow = input(true, title = 'Show Div. dots', type = input.bool)
+Showvwap = input(false, title = 'Show Fast WT(VWAP)', type = input.bool)
+wtChannelLen = input(9, title = 'WT Channel Length', type = input.integer)
+wtAverageLen = input(12, title = 'WT Average Length', type = input.integer)
+wtMALen = input(3, title = 'WT MA Length', type = input.integer)
+
+// WaveTrend Overbought & Oversold lines
+obLevel = input(53, title = 'WT Overbought Level 1', type = input.integer)
+obLevel2 = input(60, title = 'WT Overbought Level 2', type = input.integer)
+obLevel3 = input(100, title = 'WT Overbought Level 3', type = input.integer)
+osLevel = input(-53, title = 'WT Oversold Level 1', type = input.integer)
+osLevel2 = input(-60, title = 'WT Oversold Level 2', type = input.integer)
+osLevel3 = input(-100, title = 'WT Oversold Level 3', type = input.integer)
+
+// Divergence WT
+wtShowDiv = input(true, title = 'Show WT Regular Divergences', type = input.bool)
+wtShowHiddenDiv = input(false, title = 'Show WT Hidden Divergences', type = input.bool)
+showHiddenDiv_nl = input(true, title = 'Not apply OB/OS Limits on Hidden Divergences', type = input.bool)
+wtDivOBLevel = input(45, title = 'WT Bearish Divergence min', type = input.integer)
+wtDivOSLevel = input(-65, title = 'WT Bullish Divergence min', type = input.integer)
+
+// Divergence extra range
+wtDivOBLevel_addshow = input(true, title = 'Show 2nd WT Regular Divergences', type = input.bool)
+wtDivOBLevel_add = input(15, title = 'WT 2nd Bearish Divergence', type = input.integer)
+wtDivOSLevel_add = input(-40, title = 'WT 2nd Bullish Divergence 15 min', type = input.integer)
+
+// Colors
+colorRed = #ff0000
+colorPurple = #e600e6
+colorGreen = #3fff00
+colorGrey = #9598a1
+colorOrange = #e2a400
+
+colorWT1 = #90caf9
+colorWT2 = #0d47a1
+
+colorWT2_ = #131722
+
+// FUNCTIONS
+// Divergences 
+f_top_fractal(src) => src[4] < src[2] and src[3] < src[2] and src[2] > src[1] and src[2] > src[0]
+f_bot_fractal(src) => src[4] > src[2] and src[3] > src[2] and src[2] < src[1] and src[2] < src[0]
+f_fractalize(src) => f_top_fractal(src) ? 1 : f_bot_fractal(src) ? -1 : 0
+
+f_findDivs(src, topLimit, botLimit, useLimits) =>
+    fractalTop = f_fractalize(src) > 0 and (useLimits ? src[2] >= topLimit : true) ? src[2] : na
+    fractalBot = f_fractalize(src) < 0 and (useLimits ? src[2] <= botLimit : true) ? src[2] : na
+    highPrev = valuewhen(fractalTop, src[2], 0)[2]
+    highPrice = valuewhen(fractalTop, high[2], 0)[2]
+    lowPrev = valuewhen(fractalBot, src[2], 0)[2]
+    lowPrice = valuewhen(fractalBot, low[2], 0)[2]
+    bearSignal = fractalTop and high[2] > highPrice and src[2] < highPrev
+    bullSignal = fractalBot and low[2] < lowPrice and src[2] > lowPrev
+    bearDivHidden = fractalTop and high[2] < highPrice and src[2] > highPrev
+    bullDivHidden = fractalBot and low[2] > lowPrice and src[2] < lowPrev
+    [fractalTop, fractalBot, lowPrev, bearSignal, bullSignal, bearDivHidden, bullDivHidden]
+        
+   
+// WaveTrend
+f_wavetrend(src, chlen, avg, malen, tf) =>
+    tfsrc = security(syminfo.tickerid, tf, src)
+    esa = ema(tfsrc, chlen)
+    de = ema(abs(tfsrc - esa), chlen)
+    ci = (tfsrc - esa) / (0.015 * de)
+    wt1 = security(syminfo.tickerid, tf, ema(ci, avg))
+    wt2 = security(syminfo.tickerid, tf, sma(wt1, malen))
+    wtVwap = wt1 - wt2
+    wtOversold = wt2 <= osLevel
+    wtOverbought = wt2 >= obLevel
+    wtCross = cross(wt1, wt2)
+    wtCrossUp = wt2 - wt1 <= 0
+    wtCrossDown = wt2 - wt1 >= 0
+    wtCrosslast = cross(wt1[2], wt2[2])
+    wtCrossUplast = wt2[2] - wt1[2] <= 0
+    wtCrossDownlast = wt2[2] - wt1[2] >= 0
+    [wt1, wt2, wtOversold, wtOverbought, wtCross, wtCrossUp, wtCrossDown, wtCrosslast, wtCrossUplast, wtCrossDownlast, wtVwap]
+
+
+// CALCULATE INDICATORS
+
+// wolfpack
+[wolfpack, q1, r1] = macd(wtMASource, 3 * anchor, 8 * anchor, 21)
+wolfpackColor = wolfpack > 0 ? #3ee145 : #ff3d2e
+
+// Calculates WaveTrend
+[wt1, wt2, wtOversold, wtOverbought, wtCross, wtCrossUp, wtCrossDown, wtCross_last, wtCrossUp_last, wtCrossDown_last, wtVwap] = f_wavetrend(wtMASource, wtChannelLen, wtAverageLen, wtMALen, timeframe.period)
+
+// macd
+[p, q, r] = macd(wtMASource, 12, 26, 9)
+macdBuy = crossover(p, q) and (filterByWavetrendDirection ? (wt1 < 0 and wt2 < 0) : true )
+macdSell = crossunder(p, q) and (filterByWavetrendDirection ? (wt1 > 0 and wt2 > 0) : true )
+
+// WT Divergences
+[wtFractalTop, wtFractalBot, wtLow_prev, wtBearDiv, wtBullDiv, wtBearDivHidden, wtBullDivHidden] = f_findDivs(wt2, wtDivOBLevel, wtDivOSLevel, true)
+    
+[wtFractalTop_add, wtFractalBot_add, wtLow_prev_add, wtBearDiv_add, wtBullDiv_add, wtBearDivHidden_add, wtBullDivHidden_add] =  f_findDivs(wt2, wtDivOBLevel_add, wtDivOSLevel_add, true)
+[wtFractalTop_nl, wtFractalBot_nl, wtLow_prev_nl, wtBearDiv_nl, wtBullDiv_nl, wtBearDivHidden_nl, wtBullDivHidden_nl] =  f_findDivs(wt2, 0, 0, false)
+
+wtBearDivHidden_ = showHiddenDiv_nl ? wtBearDivHidden_nl : wtBearDivHidden
+wtBullDivHidden_ = showHiddenDiv_nl ? wtBullDivHidden_nl : wtBullDivHidden
+
+wtBearDivColor = (wtShowDiv and wtBearDiv) or (wtShowHiddenDiv and wtBearDivHidden_) ? colorRed : na
+wtBullDivColor = (wtShowDiv and wtBullDiv) or (wtShowHiddenDiv and wtBullDivHidden_) ? colorGreen : na
+
+wtBearDivColor_add = (wtShowDiv and (wtDivOBLevel_addshow and wtBearDiv_add)) or (wtShowHiddenDiv and (wtDivOBLevel_addshow and wtBearDivHidden_add)) ? #9a0202 : na
+wtBullDivColor_add = (wtShowDiv and (wtDivOBLevel_addshow and wtBullDiv_add)) or (wtShowHiddenDiv and (wtDivOBLevel_addshow and wtBullDivHidden_add)) ? #1b5e20 : na
+
+
+
+
+// Small Circles WT Cross
+signalColor = wt2 - wt1 > 0 ? color.red : color.lime
+
+// Buy signal.
+buySignal = wtCross and wtCrossUp and wtOversold
+buySignalDiv = (wtShowDiv and wtBullDiv) or 
+               (wtShowDiv and wtBullDiv_add)
+buySignalDiv_color = wtBullDiv ? colorGreen : 
+                     wtBullDiv_add ? color.new(colorGreen, 60) : na
+
+// Sell signal
+sellSignal = wtCross and wtCrossDown and wtOverbought   
+sellSignalDiv = (wtShowDiv and wtBearDiv) or 
+               (wtShowDiv and wtBearDiv_add)       
+sellSignalDiv_color = wtBearDiv ? colorRed : 
+                     wtBearDiv_add ? color.new(colorRed, 60) : na
+
+
+// DRAW
+zLine = plot(0, color = colorGrey)
+
+//  Wolfpack BAR
+wolfpackBarTopLine = plot(-95, title = 'Wolfpack Bar TOP Line', transp = 100)
+wolfpackBarBottomLine = plot(-99, title = 'Wolfpack Bar BOTTOM Line', transp = 100)
+fill(wolfpackBarTopLine, wolfpackBarBottomLine, title = 'Wolfpack Bar Colors', color = wolfpackColor, transp = 50)
+
+// WT Areas
+plot(wtShow ? wt1 : na, style = plot.style_area, title = 'WT Wave 1', color = colorWT1, transp = 0)
+plot(wtShow ? wt2 : na, style = plot.style_area, title = 'WT Wave 2', color = wolfpack > 0 ? colorWT2 : colorWT2_, transp = 20)
+
+// WT Div
+plot(series = wtFractalTop ? wt2[2] : na, title = 'WT Bearish Divergence', color = wtBearDivColor, linewidth = 2, offset = -2)
+plot(series = wtFractalBot ? wt2[2] : na, title = 'WT Bullish Divergence', color = wtBullDivColor, linewidth = 2, offset = -2)
+
+// WT 2nd Div
+plot(series = wtFractalTop_add ? wt2[2] : na, title = 'WT 2nd Bearish Divergence', color = wtBearDivColor_add, linewidth = 2, offset = -2)
+plot(series = wtFractalBot_add ? wt2[2] : na, title = 'WT 2nd Bullish Divergence', color = wtBullDivColor_add, linewidth = 2, offset = -2)
+
+// Draw Overbought & Oversold lines
+plot(obLevel, title = 'Over Bought Level 1', color = colorGrey, linewidth = 1, style = plot.style_cross, transp = 35)
+plot(obLevel2, title = 'Over Bought Level 2', color = colorGrey, linewidth = 1, style = plot.style_stepline, transp = 35)
+plot(obLevel3, title = 'Over Bought Level 3', color = colorGrey, linewidth = 2, style = plot.style_circles, transp = 35)
+
+plot(osLevel, title = 'Over Sold Level 1', color = colorGrey, linewidth = 1, style = plot.style_cross, transp = 35)
+plot(osLevel2, title = 'Over Sold Level 2', color = colorGrey, linewidth = 1, style = plot.style_stepline, transp = 35)
+
+// diamonds
+plotchar(macdBuy ? -106 : na, title = 'Macd buy circle', char='◆', color = colorPurple, location = location.absolute, size = size.small, offset = 0, size = size.tiny)
+plotchar(macdSell ? 106 : na, title = 'Macd sell circle', char='◆', color = colorOrange, location = location.absolute, size = size.small, offset = 0, size = size.tiny)
+
+// Circles
+plot(wtCross ? wt2 : na, title = 'Buy and sell circle', color = signalColor, style = plot.style_circles, linewidth = 3, transp = 15)
+
+plotchar(wtBuyShow and buySignal ? -107 : na, title = 'Buy circle', char='·', color = colorGreen, location = location.absolute, size = size.small, transp = 50)
+plotchar(wtSellShow and sellSignal ? 105 : na , title = 'Sell circle', char='·', color = colorRed, location = location.absolute, size = size.small, transp = 50)
+
+plotchar(wtDivShow and buySignalDiv ? -106 : na, title = 'Divergence buy circle', char='•', color = buySignalDiv_color, location = location.absolute, size = size.small, offset = -2, transp = 15)
+plotchar(wtDivShow and sellSignalDiv ? 106 : na, title = 'Divergence sell circle', char='•', color = sellSignalDiv_color, location = location.absolute, size = size.small, offset = -2, transp = 15)
+
+
+
+// ALERTS
+alertcondition(cross(wolfpack, 0), 'Wolfpack Signal', 'Wolfpack Signal')
+// BUY
+alertcondition(buySignal, 'Buy (Big green circle)', 'Green circle WaveTrend Oversold')
+alertcondition(buySignalDiv, 'Buy (Big green circle + Div)', 'Buy & WT Bullish Divergence & WT Overbought')
+alertcondition(wtCross and wtCrossUp, 'Buy (Small green dot)', 'Buy small circle')
+
+// SELL
+alertcondition(sellSignal, 'Sell (Big red circle)', 'Red Circle WaveTrend Overbought')
+alertcondition(sellSignalDiv, 'Sell (Big red circle + Div)', 'Buy & WT Bearish Divergence & WT Overbought')
+alertcondition(wtCross and wtCrossDown, 'Sell (Small red dot)', 'Sell small circle')

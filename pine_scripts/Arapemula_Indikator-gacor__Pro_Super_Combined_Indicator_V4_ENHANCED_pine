@@ -1,0 +1,901 @@
+// ULTIMATE PRO V11 - **SINGULARITY ENGINE**
+// RE-ENGINEERED by DeepMind for MAXIMUM POTENTIAL
+// Features: Dynamic Sensitivity, Smart Profit Locking, Adaptive Scoring
+// STATUS: OPERATIONAL - REV 11 (Fast Response Update)
+
+//@version=6
+indicator("💎 ULTIMATE PRO V11 [GOD MODE]", shorttitle="ULTIMATE V11", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500, max_bars_back=4000)
+
+// =============================================================================
+// ⚙️ SETTINGS
+// =============================================================================
+
+// --- Main ---
+grp_main = "🎯 MAIN CONFIGURATION"
+mode = input.string("Sniper (High Precision)", "Trading Mode", options=["Sniper (High Precision)", "Day Trade (Balanced)", "Scalp (Quick Moves)"], group=grp_main)
+showDash = input.bool(true, "Show Dashboard", group=grp_main)
+showZones = input.bool(true, "Show Confluence Zones", group=grp_main)
+
+// --- Visuals (CLEAN LOOK) ---
+grp_vis = "👁 VISUAL SETTINGS"
+showPremium = input.bool(true, "Show PREMIUM Signals Only", group=grp_vis)
+showStandard = input.bool(false, "Show Standard Signals (Riskier)", group=grp_vis)
+showSMC = input.bool(true, "Show BOS/CHoCH Labels", group=grp_vis)
+showLabels = input.bool(true, "Show Text Labels", group=grp_vis)
+showFuture = input.bool(true, "Show Future Trade Projection", group=grp_vis, tooltip="Projects potential entry zones (Purple/Black) for upcoming moves")
+
+// --- Trend & Structure (SMC) ---
+grp_smc = "🏛️ SMART MONEY & TREND"
+useMTF = input.bool(true, "Use Multi-Timeframe Trend", group=grp_smc)
+htf1 = input.timeframe("60", "HTF 1", group=grp_smc)
+htf2 = input.timeframe("240", "HTF 2", group=grp_smc)
+showFVG = input.bool(true, "Show FVG (Fair Value Gaps)", group=grp_smc)
+showOB = input.bool(true, "Show Order Blocks", group=grp_smc)
+showLiq = input.bool(true, "Show Liquidity Sweeps", group=grp_smc)
+
+// --- Momentum & Oscillators ---
+grp_osc = "🌊 MOMENTUM & DIVERGENCE"
+useDiv = input.bool(true, "Detect RSI Divergence", group=grp_osc)
+rsiLen = input.int(14, "RSI Length", group=grp_osc)
+useStoch = input.bool(true, "Use Stochastic Filter", group=grp_osc)
+useMacd = input.bool(true, "Use MACD Confirmation", group=grp_osc)
+
+// --- Filters ---
+grp_flt = "🛡️ FILTERS (NOISE REDUCTION)"
+useChop = input.bool(true, "Use Choppiness Index (Avoid Ranging)", group=grp_flt)
+chopLen = input.int(14, "Chop Index Length", group=grp_flt)
+chopThresh = input.float(61.8, "Chop Threshold (Max)", group=grp_flt)
+useADX = input.bool(true, "Use ADX Trend Filter", group=grp_flt)
+adxLen = input.int(14, "ADX Length", group=grp_flt)
+adxThresh = input.float(15.0, "ADX Minimum (Trending)", group=grp_flt)  // Optimized for Crypto Futures
+useVol = input.bool(true, "Volume Spike Confirmation", group=grp_flt)
+useSession = input.bool(false, "Session Filter (Avoid Low Liquidity)", group=grp_flt) // Default FALSE for Crypto (24/7)
+
+// --- Risk Management ---
+// --- Risk Management (DYNAMIC ENGINE) ---
+grp_risk = "💰 INTELLIGENT RISK ENGINE"
+slMethod = input.string("ATR", "Stop Loss Method", options=["ATR", "Swing High/Low", "Fixed %"], group=grp_risk)
+atrMult = input.float(2.0, "ATR Multiplier (Stop Loss)", step=0.1, group=grp_risk, tooltip="Standard: 1.5 - 2.0")
+tpRisk = input.float(1.5, "Take Profit (R:R Ratio)", step=0.1, group=grp_risk, tooltip="Used when TP Mode is Fixed R:R")
+tpMode = input.string("Fibonacci (Golden)", "TP Mode", options=["Fibonacci (Golden)", "Fixed R:R"], group=grp_risk, tooltip="Fibonacci uses 1.618, 2.618, 4.236 extensions of Risk")
+useTrailing = input.bool(true, "Use Trailing Stop", group=grp_risk)
+trailTrigger = input.float(1.0, "Trailing Trigger (R:R)", step=0.1, group=grp_risk)
+
+// =============================================================================
+// 🧠 CORE LOGIC & CALCULATIONS
+// =============================================================================
+
+// Colors
+c_bull = color.new(#00ffaa, 0)
+c_bear = color.new(#ff0044, 0)
+c_neut = color.gray
+c_bull_dim = color.new(#00ffaa, 70)
+c_bear_dim = color.new(#ff0044, 70)
+c_confluence = color.new(#ffaa00, 85)
+
+// --- 1. ENHANCED TREND ENGINE (Low Latency) ---
+ema_fast = ta.ema(close, 9) // Added for Early detection
+ema1 = ta.ema(close, 20)
+ema2 = ta.ema(close, 50)
+ema3 = ta.ema(close, 200)
+
+// Standard Trend (Stabil)
+trendBull = close > ema1 and ema1 > ema2 and ema2 > ema3
+trendBear = close < ema1 and ema1 < ema2 and ema2 < ema3
+
+// Early Trend (Aggressive - Fixes Delay)
+// We check if price is breaking out even if 200 EMA hasn't caught up yet
+trendBull_Early = close > ema_fast and ema_fast > ema1 and ema1 > ema2
+trendBear_Early = close < ema_fast and ema_fast < ema1 and ema1 < ema2
+
+// MTF Trend with ULTRA-Enhanced Strength Analysis + Volume Confirmation
+// MTF Trend with STABILIZED Logic (Reduced Repainting)
+get_trend_strength(t, src) =>
+    // We use standard security but strictly analyze checks to avoid noise
+    e1 = request.security(syminfo.tickerid, t, ta.ema(src, 20), lookahead=barmerge.lookahead_off)
+    e2 = request.security(syminfo.tickerid, t, ta.ema(src, 50), lookahead=barmerge.lookahead_off)
+    e3 = request.security(syminfo.tickerid, t, ta.ema(src, 200), lookahead=barmerge.lookahead_off)
+    // Use HL2 for cleaner HTF price representation than Close which can be volatile
+    c = request.security(syminfo.tickerid, t, hl2, lookahead=barmerge.lookahead_off) 
+    rsi_htf = request.security(syminfo.tickerid, t, ta.rsi(src, 14), lookahead=barmerge.lookahead_off)
+    
+    // Core Trend Logic (Stable)
+    ema_aligned = e1 > e2 and e2 > e3
+    ema_aligned_bear = e1 < e2 and e2 < e3
+    
+    // Momentum Filter on HTF
+    mom_bull = rsi_htf > 50
+    mom_bear = rsi_htf < 50
+    
+    // Strength Calculation (0-4 Scale)
+    // 4 = Perfect Trend + Momentum
+    strength = 0
+    if ema_aligned and c > e1 and mom_bull
+        strength := 4
+    else if ema_aligned and c > e1
+        strength := 3
+    else if ema_aligned
+        strength := 2
+    else if c > e2
+        strength := 1
+        
+    bear_strength = 0
+    if ema_aligned_bear and c < e1 and mom_bear
+        bear_strength := -4
+    else if ema_aligned_bear and c < e1
+        bear_strength := -3
+    else if ema_aligned_bear
+        bear_strength := -2
+    else if c < e2
+        bear_strength := -1
+        
+    strength + bear_strength
+
+mtf1_trend = useMTF ? get_trend_strength(htf1, close) : 0
+mtf2_trend = useMTF ? get_trend_strength(htf2, close) : 0
+
+// MTF Alignment Bonus (semua timeframe searah)
+mtf_aligned_bull = mtf1_trend > 0 and mtf2_trend > 0 and (trendBull or trendBull_Early)
+mtf_aligned_bear = mtf1_trend < 0 and mtf2_trend < 0 and (trendBear or trendBear_Early)
+
+// --- 2. MARKET STRUCTURE (HH/HL/LL/LH) ---
+ph = ta.pivothigh(high, 5, 5)
+pl = ta.pivotlow(low, 5, 5)
+
+var float last_ph = na
+var float last_pl = na
+var float prev_ph = na
+var float prev_pl = na
+
+if not na(ph)
+    prev_ph := last_ph
+    last_ph := ph
+if not na(pl)
+    prev_pl := last_pl
+    last_pl := pl
+
+// Market Structure
+var string structure = "NEUTRAL"
+if not na(prev_ph) and not na(last_ph) and not na(prev_pl) and not na(last_pl)
+    if last_ph > prev_ph and last_pl > prev_pl
+        structure := "BULLISH" // Higher Highs & Higher Lows
+    else if last_ph < prev_ph and last_pl < prev_pl
+        structure := "BEARISH" // Lower Highs & Lower Lows
+    else
+        structure := "RANGING"
+
+// BOS (Break of Structure) - Enhanced
+bos_bull = close > last_ph and close[1] <= last_ph
+bos_bear = close < last_pl and close[1] >= last_pl
+
+// CHoCH (Change of Character)
+choch_bull = structure == "BEARISH" and close > last_ph
+choch_bear = structure == "BULLISH" and close < last_pl
+
+if showSMC and bos_bull
+    label.new(bar_index, low, "BOS", color=color.new(color.green, 40), style=label.style_none, size=size.tiny, textcolor=color.green)
+if showSMC and bos_bear
+    label.new(bar_index, high, "BOS", color=color.new(color.red, 40), style=label.style_none, size=size.tiny, textcolor=color.red)
+if showSMC and choch_bull
+    label.new(bar_index, low, "CHoCH", color=color.new(color.aqua, 40), style=label.style_none, size=size.tiny, textcolor=color.aqua)
+if showSMC and choch_bear
+    label.new(bar_index, high, "CHoCH", color=color.new(color.orange, 40), style=label.style_none, size=size.tiny, textcolor=color.orange)
+
+// --- 3. LIQUIDITY SWEEPS (Stop Hunts) ---
+lookback = 20
+recent_high = ta.highest(high, lookback)
+recent_low = ta.lowest(low, lookback)
+
+// Sweep terjadi ketika price menembus level tapi langsung reversal
+sweep_bull = low < recent_low[1] and close > open and close > (high + low) / 2 // Sweep low kemudian bullish close
+sweep_bear = high > recent_high[1] and close < open and close < (high + low) / 2 // Sweep high kemudian bearish close
+
+if showLiq and sweep_bull
+    label.new(bar_index, low, "💧", color=color.new(color.green, 50), style=label.style_label_up, size=size.small, textcolor=color.white, tooltip="Liquidity Sweep - Bullish")
+if showLiq and sweep_bear
+    label.new(bar_index, high, "💧", color=color.new(color.red, 50), style=label.style_label_down, size=size.small, textcolor=color.white, tooltip="Liquidity Sweep - Bearish")
+
+// --- 4. ENHANCED FVG (Fair Value Gaps) ---
+// FVG harus memiliki gap yang signifikan
+fvg_threshold = ta.atr(14) * 0.3 // Minimal 30% dari ATR
+fvg_bull = low > high[2] and (low - high[2]) > fvg_threshold
+fvg_bear = high < low[2] and (low[2] - high) > fvg_threshold
+
+if showFVG and fvg_bull
+    box.new(bar_index-2, high[2], bar_index+10, low, bgcolor=color.new(color.green, 90), border_color=color.new(color.green, 50))
+if showFVG and fvg_bear
+    box.new(bar_index-2, low[2], bar_index+10, high, bgcolor=color.new(color.red, 90), border_color=color.new(color.red, 50))
+
+// --- 5. ENHANCED ORDER BLOCKS (with Institutional Volume Profile) ---
+vol_avg = ta.sma(volume, 20)
+vol_std = ta.stdev(volume, 20)
+
+// Institutional Volume Detection (2+ std above average)
+institutional_vol = volume > (vol_avg + vol_std * 2)
+high_vol = volume > vol_avg * 1.5
+vol_increasing = volume > volume[1] and volume[1] > volume[2]
+
+// Volume Profile Analysis
+vol_ratio = volume / vol_avg
+vol_surge = vol_ratio > 2.0 // Volume spike lebih dari 200%
+
+isUpCandle = close > open
+isDownCandle = close < open
+
+// Enhanced OB: Institutional volume + Price action
+ob_bull = isDownCandle[1] and institutional_vol[1] and isUpCandle and close > high[1] and vol_increasing
+ob_bear = isUpCandle[1] and institutional_vol[1] and isDownCandle and close < low[1] and vol_increasing
+
+var float ob_bull_level = na
+var float ob_bear_level = na
+var int ob_bull_bar = 0
+var int ob_bear_bar = 0
+
+if ob_bull
+    ob_bull_level := low[1]
+    ob_bull_bar := bar_index
+if ob_bear
+    ob_bear_level := high[1]
+    ob_bear_bar := bar_index
+
+// Draw OB zones (valid for 50 bars)
+if showOB and not na(ob_bull_level) and (bar_index - ob_bull_bar) < 50
+    box.new(ob_bull_bar, ob_bull_level - ta.atr(14)*0.2, ob_bull_bar+50, ob_bull_level + ta.atr(14)*0.2, 
+         bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 30))
+if showOB and not na(ob_bear_level) and (bar_index - ob_bear_bar) < 50
+    box.new(ob_bear_bar, ob_bear_level - ta.atr(14)*0.2, ob_bear_bar+50, ob_bear_level + ta.atr(14)*0.2, 
+         bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 30))
+
+// --- 6. CONFLUENCE ZONES (Moved here to fix variable order bug) ---
+// Define near_ob variables BEFORE they are used in signal conditions
+near_ob_bull = not na(ob_bull_level) and math.abs(close - ob_bull_level) < ta.atr(14) * 0.7
+near_ob_bear = not na(ob_bear_level) and math.abs(close - ob_bear_level) < ta.atr(14) * 0.7
+near_pivot_high = not na(last_ph) and math.abs(close - last_ph) < ta.atr(14) * 0.7
+near_pivot_low = not na(last_pl) and math.abs(close - last_pl) < ta.atr(14) * 0.7
+
+confluence_bull = near_ob_bull or near_pivot_low
+confluence_bear = near_ob_bear or near_pivot_high
+
+// --- 7. ADX TREND STRENGTH ---
+[diplus, diminus, adx] = ta.dmi(adxLen, adxLen)
+isStrongTrend = useADX ? adx > adxThresh : true
+adxBull = diplus > diminus
+adxBear = diminus > diplus
+
+// --- 8. SESSION FILTER (Avoid Low Liquidity Hours) ---
+// Active during major market sessions (London, NY overlap)
+session_active = useSession ? (hour >= 8 and hour <= 22) : true
+
+// --- 9. ENHANCED MOMENTUM (RSI + MACD + Stoch) ---
+rsi = ta.rsi(close, rsiLen)
+
+// RSI Zones for better confluence
+rsi_bullzone = rsi > 40 and rsi < 70  // Optimal bull zone
+rsi_bearzone = rsi < 60 and rsi > 30  // Optimal bear zone
+rsi_oversold = rsi < 30
+rsi_overbought = rsi > 70
+
+// MACD with histogram momentum
+[macd_line, signal_line, macd_hist] = ta.macd(close, 12, 26, 9)
+macd_bull = useMacd and macd_line > signal_line and macd_hist > 0
+macd_bear = useMacd and macd_line < signal_line and macd_hist < 0
+macd_cross_bull = ta.crossover(macd_line, signal_line)
+macd_cross_bear = ta.crossunder(macd_line, signal_line)
+macd_hist_rising = macd_hist > macd_hist[1]  // Momentum meningkat
+macd_hist_falling = macd_hist < macd_hist[1] // Momentum menurun
+
+// Stochastic - FIXED LOGIC: Buy at oversold, Sell at overbought
+k = ta.sma(ta.stoch(close, high, low, 14), 3)
+d = ta.sma(k, 3)
+stoch_cross_bull = ta.crossover(k, d)
+stoch_cross_bear = ta.crossunder(k, d)
+stoch_bull = useStoch and (k < 30 or stoch_cross_bull) and k > d  // Buy saat oversold atau cross up
+stoch_bear = useStoch and (k > 70 or stoch_cross_bear) and k < d  // Sell saat overbought atau cross down
+
+// --- 8. ENHANCED DIVERGENCE DETECTION ---
+piv_len = 5
+
+// Bullish Divergence (Price LL, RSI HL)
+piv_low_price = ta.pivotlow(low, piv_len, piv_len)
+piv_low_rsi = ta.pivotlow(rsi, piv_len, piv_len)
+
+var float prev_price_low = na
+var float prev_rsi_low = na
+var int prev_low_bar = 0
+
+bull_div = false
+if not na(piv_low_price) and not na(piv_low_rsi)
+    if not na(prev_price_low) and not na(prev_rsi_low)
+        // Price membuat lower low, tapi RSI membuat higher low
+        if low[piv_len] < prev_price_low and rsi[piv_len] > prev_rsi_low
+            bull_div := true
+            if useDiv
+                line.new(prev_low_bar, prev_price_low, bar_index-piv_len, low[piv_len], color=color.green, width=2, style=line.style_dashed)
+                label.new(bar_index-piv_len, low[piv_len], "DIV+", color=color.green, style=label.style_label_up, size=size.tiny)
+    prev_price_low := low[piv_len]
+    prev_rsi_low := rsi[piv_len]
+    prev_low_bar := bar_index - piv_len
+
+// Bearish Divergence (Price HH, RSI LH)
+piv_high_price = ta.pivothigh(high, piv_len, piv_len)
+piv_high_rsi = ta.pivothigh(rsi, piv_len, piv_len)
+
+var float prev_price_high = na
+var float prev_rsi_high = na
+var int prev_high_bar = 0
+
+bear_div = false
+if not na(piv_high_price) and not na(piv_high_rsi)
+    if not na(prev_price_high) and not na(prev_rsi_high)
+        // Price membuat higher high, tapi RSI membuat lower high
+        if high[piv_len] > prev_price_high and rsi[piv_len] < prev_rsi_high
+            bear_div := true
+            if useDiv
+                line.new(prev_high_bar, prev_price_high, bar_index-piv_len, high[piv_len], color=color.red, width=2, style=line.style_dashed)
+                label.new(bar_index-piv_len, high[piv_len], "DIV-", color=color.red, style=label.style_label_down, size=size.tiny)
+    prev_price_high := high[piv_len]
+    prev_rsi_high := rsi[piv_len]
+    prev_high_bar := bar_index - piv_len
+
+// --- 10. FILTERS ---
+// Choppiness Index
+chop_range = ta.atr(1)
+chop_sum = math.sum(chop_range, chopLen)
+chop_diff = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
+chop_idx = 0.0
+if chop_diff > 0
+    chop_idx := 100 * math.log10(chop_sum / chop_diff) / math.log10(chopLen)
+
+isChoppy = useChop and chop_idx > chopThresh
+
+// V8.1 FIX: Add fallback - if EMAs are clearly aligned, consider it trending even with weak ADX
+ema_aligned_fallback = (trendBull and ema1 > ema2 and ema2 > ema3) or (trendBear and ema1 < ema2 and ema2 < ema3)
+isTrending = not isChoppy and (isStrongTrend or ema_aligned_fallback)
+
+// Volume Filter - V8.1 FIX: More lenient for signal generation
+vol_ok = useVol ? volume > vol_avg * 0.7 : true  // V8.1: Reduced from 1.0 to 0.7
+vol_strong = volume > vol_avg * 1.5  // Strong volume for bonus points
+
+// False Breakout Filter (price harus close beyond level, bukan hanya wick)
+false_breakout_bull = high > last_ph and close < last_ph and close < open // Wick + bearish close
+false_breakout_bear = low < last_pl and close > last_pl and close > open  // Wick + bullish close
+
+// Enhanced Price Action Recognition
+candle_body = math.abs(close - open)
+candle_range = high - low
+body_ratio = candle_range > 0 ? candle_body / candle_range : 0
+
+// Strong Candles (body > 60% of range)
+bullish_candle = close > open and body_ratio > 0.6
+bearish_candle = close < open and body_ratio > 0.6
+
+// Engulfing Patterns
+bullish_engulf = close > open and close > high[1] and open < low[1] and candle_body > candle_body[1] * 1.2
+bearish_engulf = close < open and close < low[1] and open > high[1] and candle_body > candle_body[1] * 1.2
+
+// Advanced Patterns
+morning_star = isDownCandle[2] and candle_body[1] < candle_body[2] * 0.3 and isUpCandle and close > ((high[2] + low[2]) / 2)
+evening_star = isUpCandle[2] and candle_body[1] < candle_body[2] * 0.3 and isDownCandle and close < ((high[2] + low[2]) / 2)
+hammer = body_ratio > 0.3 and (low < low[1]) and ((high - close) < candle_body * 0.3) and isUpCandle
+shooting_star = body_ratio > 0.3 and (high > high[1]) and ((close - low) < candle_body * 0.3) and isDownCandle
+
+// Three-Candle Patterns
+three_white_soldiers = isUpCandle and isUpCandle[1] and isUpCandle[2] and close > close[1] and close[1] > close[2] and vol_increasing
+three_black_crows = isDownCandle and isDownCandle[1] and isDownCandle[2] and close < close[1] and close[1] < close[2] and vol_increasing
+
+// =============================================================================
+// ⚖️ OPTIMIZED SCORING SYSTEM V6 (WEIGHTED & DYNAMIC)
+// =============================================================================
+
+// V9 GOD MODE: PROBABILITY SCORING
+// We removed arbitrary integers and replaced them with weighted confluence logic
+// This is statistically more robust than adding random "points"
+
+var float score_long = 0.0
+var float score_short = 0.0
+
+score_long := 0.0
+score_short := 0.0
+
+// --- WEIGHTS ---
+// Trend: 35%
+// Structure/SMC: 30%
+// Momentum: 25%
+// Patterns: 10%
+
+// 1. TREND (Max 35) - UPDATED V11: EARLY TREND SUPPORT
+if trendBull
+    score_long += 15
+else if trendBull_Early // New: Give partial credit for early trend
+    score_long += 8
+
+if mtf1_trend > 0
+    score_long += 10
+if mtf2_trend > 0
+    score_long += 10
+
+if trendBear
+    score_short += 15
+else if trendBear_Early // New: Partial credit
+    score_short += 8
+
+if mtf1_trend < 0
+    score_short += 10
+if mtf2_trend < 0
+    score_short += 10
+
+// 2. STRUCTURE & SMC (Max 30)
+if structure == "BULLISH"
+    score_long += 10
+if fvg_bull or ob_bull
+    score_long += 10
+if sweep_bull
+    score_long += 10
+
+if structure == "BEARISH"
+    score_short += 10
+if fvg_bear or ob_bear
+    score_short += 10
+if sweep_bear
+    score_short += 10
+
+// 3. MOMENTUM (Max 25)
+if rsi > 50 and macd_bull
+    score_long += 10
+if bull_div
+    score_long += 15
+
+if rsi < 50 and macd_bear
+    score_short += 10
+if bear_div
+    score_short += 15
+
+// 4. PATTERNS (Max 10)
+if bullish_engulf or bullish_candle or morning_star
+    score_long += 10
+if bearish_engulf or bearish_candle or evening_star
+    score_short += 10
+
+// 5. FILTERS (Subtract only for fatal flaws, not arbitrary)
+// V11: Stricter Chop Logic - Penalty is Higher
+if isChoppy
+    score_long := score_long * 0.4 // Penalty 60% for chop
+    score_short := score_short * 0.4
+
+if not vol_ok
+    score_long := score_long * 0.8 // Penalty 20% for low vol
+    score_short := score_short * 0.8
+
+// V10 SINGULARITY MODE: Adaptive Sensitivity
+// We adjust the requirement based on market condition (ADX)
+// If Trend is Super Strong (ADX > 30), we lower the barrier slightly to catch entries
+// If Market is Dead (ADX < 20), we raise the barrier to avoid fakeouts
+
+base_req = mode == "Sniper (High Precision)" ? 45 : mode == "Day Trade (Balanced)" ? 35 : 25
+var float dynamic_adj = 0.0
+
+if adx > 30 
+    dynamic_adj := -5.0 // Strong trend environment -> Aggressive Entry
+else if adx < 20
+    dynamic_adj := 10.0 // Chop environment -> Conservative Entry
+else
+    dynamic_adj := 0.0
+
+min_req = base_req + dynamic_adj
+
+// Signal Locks
+// We only trade if: 
+// 1. Score is high enough
+// 2. No opposing strong signal
+// 3. Not entering into extreme overbought/sold (unless Divergence is present)
+// V11: Ambiguity Filter (Don't signal valid if < 30 even if min_req is passed for some reason)
+valid_long = score_long >= min_req and score_long > 30 and score_long > score_short + 10 and (not rsi_overbought or bull_div)
+valid_short = score_short >= min_req and score_short > 30 and score_short > score_long + 10 and (not rsi_oversold or bear_div)
+
+// State Machine
+var string state = "NEUTRAL"
+var float entry_price = na
+var float sl_level = na
+var float tp_level = na
+var float trail_level = na
+var string signal_quality = "NONE"
+
+// Signal Firing (Only on Close to avoid Repaint)
+long_signal = valid_long and state != "LONG"
+short_signal = valid_short and state != "SHORT"
+
+// V11 FIX: SIDEWAYS KILLER
+// If market is really choppy, only allow PREMIUM signals
+if isChoppy
+    if score_long < 70
+        long_signal := false
+    if score_short < 70
+        short_signal := false
+
+// Trade Execution Logic
+atr_val = ta.atr(14)
+
+// 3 Level TP Variables
+var float tp1_level = na
+var float tp2_level = na
+var float tp3_level = na
+
+if long_signal
+    state := "LONG"
+    entry_price := close
+    // Dynamic ATR Stop Loss
+    float sl_dist = atr_val * atrMult
+    // If Swing Low is closer/better, we can use that, but ATR is consistent
+    sl_level := slMethod == "ATR" ? close - sl_dist : (not na(last_pl) ? math.min(last_pl, close - sl_dist) : close - sl_dist)
+    // Dynamic Take Profit based on R:R
+    float risk = close - sl_level
+    
+    // TP Calculation Logic
+    if tpMode == "Fibonacci (Golden)"
+        tp_level := close + (risk * 1.618) // Main TP is Golden Ratio
+        tp1_level := close + (risk * 1.618)
+        tp2_level := close + (risk * 2.618)
+        tp3_level := close + (risk * 4.236)
+    else
+        tp_level := close + (risk * tpRisk) // Main TP for engine
+        tp1_level := close + (risk * 1.0)
+        tp2_level := close + (risk * tpRisk)
+        tp3_level := close + (risk * tpRisk * 2.0)
+    
+    // Initialize Trailing from SL
+    trail_level := sl_level
+
+if short_signal
+    state := "SHORT"
+    entry_price := close
+    float sl_dist = atr_val * atrMult
+    sl_level := slMethod == "ATR" ? close + sl_dist : (not na(last_ph) ? math.max(last_ph, close + sl_dist) : close + sl_dist)
+    float risk = sl_level - close
+    
+    if tpMode == "Fibonacci (Golden)"
+        tp_level := close - (risk * 1.618)
+        tp1_level := close - (risk * 1.618)
+        tp2_level := close - (risk * 2.618)
+        tp3_level := close - (risk * 4.236)
+    else
+        tp_level := close - (risk * tpRisk) // Main TP for engine
+        tp1_level := close - (risk * 1.0)
+        tp2_level := close - (risk * tpRisk)
+        tp3_level := close - (risk * tpRisk * 2.0)
+
+    trail_level := sl_level
+
+// Exit Logic (Live Monitoring)
+exit_long = false
+exit_short = false
+
+// Trailing Stop Logic (SMART PROFIT LOCKING V10)
+if state == "LONG" and useTrailing
+    // 1. Standard ATR Trail
+    float risk = entry_price - sl_level
+    float suggested_trail = close - (atr_val * atrMult)
+    if suggested_trail > trail_level
+        trail_level := suggested_trail
+    
+    // 2. Smart Lock: If we hit TP2 (1.5R or user defined), Lock at least 0.5R or BE
+    // If we hit 2R profit, Lock 1R
+    if close > entry_price + (risk * 2.0)
+        trail_level := math.max(trail_level, entry_price + (risk * 1.0)) // Secure 1R
+    // If we hit 1.5R profit, Ensure Break Even
+    else if close > entry_price + (risk * 1.5)
+        trail_level := math.max(trail_level, entry_price + (atr_val * 0.1)) // Secure slight profit
+
+if state == "SHORT" and useTrailing
+    float risk = sl_level - entry_price
+    float suggested_trail = close + (atr_val * atrMult)
+    if suggested_trail < trail_level
+        trail_level := suggested_trail
+
+    // Smart Lock Short
+    if close < entry_price - (risk * 2.0)
+        trail_level := math.min(trail_level, entry_price - (risk * 1.0))
+    else if close < entry_price - (risk * 1.5)
+        trail_level := math.min(trail_level, entry_price - (atr_val * 0.1))
+
+// Check Exits
+if state == "LONG"
+    if low <= trail_level // Hit Stop/Trail
+        exit_long := true
+    else if high >= tp_level // Hit TP
+        exit_long := true
+    else if valid_short // Reversal Signal
+        exit_long := true
+
+if state == "SHORT"
+    if high >= trail_level
+        exit_short := true
+    else if low <= tp_level
+        exit_short := true
+    else if valid_long
+        exit_short := true
+
+if exit_long or exit_short
+    state := "NEUTRAL"
+    signal_quality := "NONE"
+
+// Signal Quality for Display
+// Premium = Perfect Score (>60)
+signal_quality := (long_signal and score_long > 60) or (short_signal and score_short > 60) ? "PREMIUM" : "STANDARD"
+long_premium = long_signal and score_long > 60
+short_premium = short_signal and score_short > 60
+
+// =============================================================================
+// 🎨 SIGNAL STRENGTH ZONES (Visual Confluence)
+// =============================================================================
+
+// Note: Confluence variables moved earlier to fix variable order bug
+// See section 6 (line ~185) for near_ob_bull, near_ob_bear definitions
+
+// Additional confluence scoring for visual display
+confluence_count_bull = (near_ob_bull ? 1 : 0) + (near_pivot_low ? 1 : 0) + (fvg_bull ? 1 : 0)
+confluence_count_bear = (near_ob_bear ? 1 : 0) + (near_pivot_high ? 1 : 0) + (fvg_bear ? 1 : 0)
+
+// =============================================================================
+// 🖌️ PLOTTING & ALERTS
+// =============================================================================
+
+// Background Tint
+// V10 Visual: Show "Sniper Scope" (Yellow) when setup is building but not confirmed (Score > 30 but < MinReq)
+// V11: Only show yellow if not chop
+isSetupBuilding = not isChoppy and ((score_long > 30 and score_long < min_req) or (score_short > 30 and score_short < min_req))
+
+bgcolor(isChoppy ? color.new(color.gray, 95) : isSetupBuilding ? color.new(color.yellow, 95) : showZones and confluence_bull ? c_confluence : showZones and confluence_bear ? color.new(#ff6600, 85) : na, title="Market Condition")
+
+// Plot Signals with Quality Indicator
+// Plot Signals with CLEAN Appearance
+// Premium Signals (Big, Clear, Important)
+plotshape(long_signal and long_premium and showPremium, title="Global PRIME BUY", text="⚡ BUY", style=shape.labelup, location=location.belowbar, color=color.new(#00ff00, 0), textcolor=color.black, size=size.normal)
+plotshape(short_signal and short_premium and showPremium, title="Global PRIME SELL", text="⚡ SELL", style=shape.labeldown, location=location.abovebar, color=color.new(#ff0000, 0), textcolor=color.white, size=size.normal)
+
+// Standard Signals (Small dots, Less noise)
+plotshape(long_signal and not long_premium and showStandard, title="Std Buy", style=shape.circle, location=location.belowbar, color=c_bull_dim, size=size.tiny)
+plotshape(short_signal and not short_premium and showStandard, title="Std Sell", style=shape.circle, location=location.abovebar, color=c_bear_dim, size=size.tiny)
+
+// Stop Loss & Take Profit Visuals (Cleaned Up)
+atr_val_visual = ta.atr(14)
+swing_h = ta.highest(high, 10)
+swing_l = ta.lowest(low, 10)
+
+// VISUALS: Updated for V9
+// VISUALS: Updated for V9
+in_long = state == "LONG"
+in_short = state == "SHORT"
+plot(in_long ? trail_level : na, "Trailing Stop", color=color.new(color.red, 30), style=plot.style_stepline, linewidth=2)
+
+// Plot 3 TP Levels
+plot(in_long ? tp1_level : na, "TP1", color=color.new(color.lime, 50), style=plot.style_circles, linewidth=1)
+plot(in_long ? tp2_level : na, "TP2 (Main)", color=color.new(color.lime, 30), style=plot.style_circles, linewidth=2)
+plot(in_long ? tp3_level : na, "TP3 (Moon)", color=color.new(color.lime, 10), style=plot.style_circles, linewidth=1)
+
+plot(in_short ? trail_level : na, "Trailing Stop", color=color.new(color.red, 30), style=plot.style_stepline, linewidth=2)
+plot(in_short ? tp1_level : na, "TP1", color=color.new(color.lime, 50), style=plot.style_circles, linewidth=1)
+plot(in_short ? tp2_level : na, "TP2 (Main)", color=color.new(color.lime, 30), style=plot.style_circles, linewidth=2)
+plot(in_short ? tp3_level : na, "TP3 (Moon)", color=color.new(color.lime, 10), style=plot.style_circles, linewidth=1)
+
+// Trend Ribbons
+plot(ema1, "Fast EMA", color=trendBull ? c_bull : trendBear ? c_bear : color.gray, linewidth=1)
+plot(ema2, "Mid EMA", color=trendBull ? c_bull : trendBear ? c_bear : color.gray, linewidth=2)
+plot(ema3, "Slow EMA", color=trendBull ? c_bull_dim : trendBear ? c_bear_dim : color.gray, linewidth=1)
+
+// =============================================================================
+// 📊 ENHANCED DASHBOARD V6
+// =============================================================================
+
+if showDash and barstate.islast
+    var tbl = table.new(position.top_right, 3, 17, bgcolor=color.new(#0a0a0a, 10), border_width=2, border_color=color.new(color.gray, 50))
+    
+    // Header
+    table.cell(tbl, 0, 0, "💎 ULTIMATE V11 SINGULARITY", text_color=color.white, bgcolor=color.new(#1e3a8a, 30), text_size=size.normal)
+    table.merge_cells(tbl, 0, 0, 2, 0)
+    
+    // Status
+    // V11 FIX: Ambiguity
+    string status_txt = state
+    if state == "NEUTRAL" and isChoppy
+        status_txt := "CHOP - WAIT"
+    
+    status_c = state == "LONG" ? c_bull : state == "SHORT" ? c_bear : color.gray
+    status_emoji = state == "LONG" ? "🟢" : state == "SHORT" ? "🔴" : "⚪"
+    table.cell(tbl, 0, 1, "Signal Status", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, status_emoji + " " + status_txt, text_color=status_c, text_size=size.normal)
+    table.merge_cells(tbl, 1, 1, 2, 1)
+    
+    // Confidence Level (Mapped from V9 Score)
+    confidence_long = score_long
+    confidence_short = score_short
+    
+    // Confidence Level dengan Quality - V8.1.1 FIX: Show max confidence even in NEUTRAL
+    active_conf = state == "LONG" ? confidence_long : state == "SHORT" ? confidence_short : math.max(confidence_long, confidence_short)
+    
+    // V11 FIX: Conf Ambiguity - If < 40%, show NOISE
+    string conf_direction = ""
+    string conf_val_display = ""
+    
+    if active_conf < 40
+        conf_direction := "😴"
+        conf_val_display := "WEAK"
+    else
+        conf_direction := state == "NEUTRAL" ? (confidence_long > confidence_short ? "🐂" : confidence_short > confidence_long ? "🐻" : "") : ""
+        conf_val_display := str.tostring(active_conf, "#.0") + "%"
+    
+    // CAPSULE BAR HORIZONTAL
+    // Scale 0-10
+    int bars_fill = int(math.min(10, math.max(0, math.round(active_conf / 10))))
+    string bar_vis = ""
+    for i = 1 to 10
+        if i <= bars_fill
+            bar_vis := bar_vis + "█"
+        else
+            bar_vis := bar_vis + "░"
+            
+    conf_txt = conf_val_display + " " + conf_direction + "\n" + bar_vis
+    
+    // Color Logic: < 30% is RED (DANGER ZONE)
+    conf_c = active_conf >= 60 ? color.lime : active_conf >= 45 ? color.yellow : active_conf >= 30 ? color.orange : color.red
+    if active_conf < 40
+        conf_c := color.gray // Gray out weak signals
+    
+    table.cell(tbl, 0, 2, "Confidence", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, conf_txt, text_color=conf_c, text_size=size.normal)
+    table.merge_cells(tbl, 1, 2, 2, 2)
+    
+    // Market Structure
+    struct_c = structure == "BULLISH" ? color.green : structure == "BEARISH" ? color.red : color.gray
+    table.cell(tbl, 0, 3, "Market Structure", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, structure, text_color=struct_c)
+    table.merge_cells(tbl, 1, 3, 2, 3)
+    
+    // Trend Health
+    trend_txt = isChoppy ? "CHOPPY ⚠️" : trendBull ? "UPTREND 🚀" : trendBear ? "DOWNTREND 📉" : "WEAK"
+    trend_c = isChoppy ? color.orange : trendBull ? color.green : trendBear ? color.red : color.gray
+    table.cell(tbl, 0, 4, "Market Condition", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, trend_txt, text_color=trend_c)
+    table.merge_cells(tbl, 1, 4, 2, 4)
+    
+    // Scores
+    // Scores Mapped to new Probability Scale (0-100)
+    // Max probable score is ~80, so we normalize
+    disp_score_long = math.min(100, score_long)
+    disp_score_short = math.min(100, score_short)
+    
+    table.cell(tbl, 0, 5, "🐂 Bull Power", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, str.tostring(disp_score_long, "#") + "%", text_color=c_bull)
+    table.merge_cells(tbl, 1, 5, 2, 5)
+    
+    table.cell(tbl, 0, 6, "🐻 Bear Power", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, str.tostring(disp_score_short, "#") + "%", text_color=c_bear)
+    table.merge_cells(tbl, 1, 6, 2, 6)
+    
+    // Momentum Indicators
+    rsi_c = rsi > 70 ? color.red : rsi < 30 ? color.lime : color.gray
+    table.cell(tbl, 0, 7, "RSI", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, str.tostring(rsi, "#.#"), text_color=rsi_c)
+    
+    macd_txt = macd_bull ? "BULL ✅" : macd_bear ? "BEAR ❌" : "NEUTRAL"
+    macd_c = macd_bull ? color.green : macd_bear ? color.red : color.gray
+    table.cell(tbl, 0, 8, "MACD", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 8, macd_txt, text_color=macd_c, text_size=size.small)
+    table.merge_cells(tbl, 1, 8, 2, 8)
+    
+    // Divergence Alert
+    div_txt = bull_div ? "BULL DIV ⚡" : bear_div ? "BEAR DIV ⚡" : "None"
+    div_c = bull_div ? color.lime : bear_div ? color.red : color.gray
+    table.cell(tbl, 0, 9, "Divergence", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 9, div_txt, text_color=div_c)
+    table.merge_cells(tbl, 1, 9, 2, 9)
+    
+    // Simplified Dashboard for V9 (Cleaned)
+    // Divergence & Session already handled above or merged.
+    
+    // Session Status
+    sess_c = session_active ? color.lime : color.orange
+    table.cell(tbl, 0, 10, "Session", text_color=color.gray, text_halign=text.align_left)
+    table.cell(tbl, 1, 10, session_active ? "ACTIVE ✅" : "LOW LIQ ⚠️", text_color=sess_c)
+    table.merge_cells(tbl, 1, 10, 2, 10)
+
+    // TP Targets (Smart Prediction)
+    table.cell(tbl, 0, 11, "🎯 TP Targets", text_color=color.white, bgcolor=color.new(color.green, 80), text_halign=text.align_left)
+    table.merge_cells(tbl, 0, 11, 2, 11)
+    
+    tp1_txt = state == "NEUTRAL" ? "-" : str.tostring(tp1_level, format.mintick)
+    tp2_txt = state == "NEUTRAL" ? "-" : str.tostring(tp2_level, format.mintick)
+    tp3_txt = state == "NEUTRAL" ? "-" : str.tostring(tp3_level, format.mintick)
+    
+    string l_tp1 = tpMode == "Fibonacci (Golden)" ? "Golden (1.618)" : "Secure (1:1)"
+    string l_tp2 = tpMode == "Fibonacci (Golden)" ? "Deep (2.618)" : "Standard (1:" + str.tostring(tpRisk) + ")"
+    string l_tp3 = tpMode == "Fibonacci (Golden)" ? "Extended (4.236)" : "Moonbag (1:" + str.tostring(tpRisk * 2) + ")"
+    
+    table.cell(tbl, 0, 12, l_tp1, text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(tbl, 1, 12, tp1_txt, text_color=color.lime, text_size=size.small)
+    table.merge_cells(tbl, 1, 12, 2, 12)
+    
+    table.cell(tbl, 0, 13, l_tp2, text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(tbl, 1, 13, tp2_txt, text_color=color.lime, text_size=size.small)
+    table.merge_cells(tbl, 1, 13, 2, 13)
+    
+    table.cell(tbl, 0, 14, l_tp3, text_color=color.gray, text_halign=text.align_left, text_size=size.small)
+    table.cell(tbl, 1, 14, tp3_txt, text_color=color.lime, text_size=size.small)
+    table.merge_cells(tbl, 1, 14, 2, 14)
+
+// =============================================================================
+// 🔮 QUANTUM FUTURE PREDICTION (PENDING SETUP)
+// =============================================================================
+
+// Logic:
+// We look for a valid Order Block that hasn't been broken.
+// Trend must be strong.
+// We project a "Limit Order" visual into the future.
+
+var box future_risk_box = na
+var box future_reward_box = na
+var line future_entry_line = na
+
+// Clean up old boxes on every bar (re-draw approach for dynamic movement)
+if not barstate.islast
+    // Only show on the very last bar (Live / Realtime)
+    na
+else
+    box.delete(future_risk_box)
+    box.delete(future_reward_box)
+    line.delete(future_entry_line)
+    
+    // 1. Identify Pending Level
+    // Relaxed Logic: We only need EMA structure to be trending, not the price itself (allow pullbacks)
+    bool ema_bull = ema1 > ema2 and ema2 > ema3
+    bool ema_bear = ema1 < ema2 and ema2 < ema3
+    
+    // Valid Long: EMA Bullish, valid OB exists, and price is above the OB (pullback zone)
+    bool potential_long = ema_bull and not na(ob_bull_level) and close > ob_bull_level
+    // Valid Short: EMA Bearish, valid OB exists, and price is below the OB
+    bool potential_short = ema_bear and not na(ob_bear_level) and close < ob_bear_level
+
+    // 2. Calculate Coordinates
+    float p_entry = na
+    float p_sl = na
+    float p_tp = na
+    
+    // We removed 'state == NEUTRAL' so you can see re-entry setups even while in a trade
+    if potential_long and showFuture
+        p_entry := ob_bull_level
+        p_sl := p_entry - (ta.atr(14) * 1.5) // Wide SL for Pending
+        p_tp := p_entry + (ta.atr(14) * 2.0) // 1:2 R:R roughly
+        
+        // Validation: Show if price is within 10 ATR (Visible range)
+        if close < p_entry + (ta.atr(14) * 10)
+            // Draw REWARD Box (Purple - Future)
+            future_reward_box := box.new(bar_index + 3, p_tp, bar_index + 12, p_entry, bgcolor=color.new(#9d00ff, 80), border_color=color.new(#9d00ff, 50), xloc=xloc.bar_index)
+            
+            // Draw RISK Box (Black/Grey - Future)
+            future_risk_box := box.new(bar_index + 3, p_entry, bar_index + 12, p_sl, bgcolor=color.new(#212121, 60), border_color=color.new(#ff0000, 50), xloc=xloc.bar_index)
+            
+            // Entry Line
+            future_entry_line := line.new(bar_index + 3, p_entry, bar_index + 12, p_entry, color=color.white, style=line.style_dashed)
+            
+            // Label
+            // label.new(bar_index + 12, p_entry, "WAIT ENTRY", style=label.style_label_left, color=color.new(#9d00ff, 0), textcolor=color.white, size=size.tiny)
+
+    if potential_short and showFuture
+        p_entry := ob_bear_level
+        p_sl := p_entry + (ta.atr(14) * 1.5)
+        p_tp := p_entry - (ta.atr(14) * 2.0)
+        
+        if close > p_entry - (ta.atr(14) * 10)
+            future_reward_box := box.new(bar_index + 3, p_tp, bar_index + 12, p_entry, bgcolor=color.new(#9d00ff, 80), border_color=color.new(#9d00ff, 50), xloc=xloc.bar_index)
+            future_risk_box := box.new(bar_index + 3, p_entry, bar_index + 12, p_sl, bgcolor=color.new(#212121, 60), border_color=color.new(#ff0000, 50), xloc=xloc.bar_index)
+            future_entry_line := line.new(bar_index + 3, p_entry, bar_index + 12, p_entry, color=color.white, style=line.style_dashed)
+
+// =============================================================================
+// 🔔 ALERTS
+// =============================================================================
+
+alertcondition(long_signal, "🚀 ULTIMATE BUY", "LONG Signal Generated - Confidence: {{plot_0}}")
+alertcondition(short_signal, "💥 ULTIMATE SELL", "SHORT Signal Generated - Confidence: {{plot_0}}")
+alertcondition(bull_div, "⚡ Bullish Divergence", "Bullish Divergence Detected")
+alertcondition(bear_div, "⚡ Bearish Divergence", "Bearish Divergence Detected")
+alertcondition(sweep_bull, "💧 Liquidity Sweep Bull", "Bullish Liquidity Sweep Detected")
+alertcondition(sweep_bear, "💧 Liquidity Sweep Bear", "Bearish Liquidity Sweep Detected")

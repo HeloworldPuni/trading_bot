@@ -1,0 +1,16 @@
+//@version=6
+indicator("Impulse MACD [AC]")
+i1=input(title='Impulse MACD',defval=true)
+MM(_s,_l)=>
+    _a=0.0
+    _a:=na(_a[1])?ta.sma(_s,_l):(_a[1]*(_l-1)+_s)/_l
+hi=MM(high,34)
+lo=MM(low,34)
+mi=ta.ema(hlc3,34)+ta.ema(hlc3,34)-ta.ema(ta.ema(hlc3,34),34)
+md=(mi>hi)?(mi-hi):(mi<lo)?(mi-lo):0
+sb=ta.sma(md,9)
+macd = ta.ema(close, 12) - ta.ema(close, 26)
+sign = ta.ema(macd, 9)
+plot(i1?md:na,color=hlc3>mi?hlc3>hi?#32cd32:#00ff00:hlc3<lo?#ff0000:#ffa500,style=plot.style_histogram,linewidth=2)
+plot(i1?md-ta.sma(md,9):na,color=#7777ff,style=plot.style_histogram,linewidth=2)
+plot(i1?sign:na,color=#800000), plot(i1?macd:na,color=#2962FF)

@@ -1,0 +1,129 @@
+//@version=6
+indicator(title='RAPF v21.0 [Balanced Momentum]', shorttitle='RAPF Bal', overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+grp_price = "Price Engine"
+length = input.int(12, "Price Speed", minval=1, group=grp_price)
+
+grp_filter = "Smart Filters"
+use_pvt    = input.bool(true, "Filter Weak Volume", group=grp_filter, tooltip="Blocks trades if volume is low.")
+// NEW: Allows buying if momentum is strong, even if volume is low
+allow_mom  = input.bool(true, "Allow Momentum Override", group=grp_filter, tooltip="Bypasses Volume filter if RSI/Momentum is strong (Catches Recoveries).")
+
+grp_risk = "Risk (Stop Loss)"
+sl_lookback = input.int(3, "Swing Lookback", minval=1, group=grp_risk)
+
+grp_vis = "Visuals"
+show_labels = input.bool(true, "Show Data Labels", group=grp_vis)
+c_buy = input.color(#00E676, "Buy Color", group=grp_vis)
+c_sell = input.color(#FF5252, "Sell Color", group=grp_vis)
+
+// ==========================================
+// 2. CALCULATIONS
+// ==========================================
+
+// --- A. Price Engine (Zero-Lag HMA) ---
+hma_val = ta.hma(close, length)
+bool price_rising = hma_val > hma_val[1]
+bool price_falling = hma_val < hma_val[1]
+
+// --- B. Volume Filter (PVT) ---
+pvt = ta.cum(ta.change(close) / close[1] * volume)
+pvt_signal = ta.ema(pvt, 21)
+bool vol_ok = pvt > pvt_signal // True if Volume supports price
+
+// --- C. Momentum Filter (The Fix) ---
+// We check if RSI is healthy (recovering) to validate the move
+rsi = ta.rsi(close, 14)
+bool mom_ok = rsi > 40 and rsi > rsi[1] 
+
+// ==========================================
+// 3. STRICT STATE MACHINE
+// ==========================================
+var int state = 0 // 1 = Long, -1 = Short
+var float active_sl = 0.0
+
+// ==========================================
+// 4. SIGNAL LOGIC
+// ==========================================
+
+bool signal_buy = false
+bool signal_sell = false
+
+// --- BUY LOGIC ---
+if state != 1
+    // 1. Base Requirement: Price is going up
+    bool base_cond = close > hma_val and price_rising
+    
+    // 2. Filter Check
+    bool entry_allowed = false
+    
+    if base_cond
+        // Scenario A: Volume agrees (Perfect trade)
+        if use_pvt and vol_ok
+            entry_allowed := true
+        // Scenario B: Volume is weak, BUT Momentum is Strong (Recovery Trade)
+        else if allow_mom and mom_ok
+            entry_allowed := true
+        // Scenario C: Filter is OFF
+        else if not use_pvt
+            entry_allowed := true
+
+    // TRIGGER
+    if entry_allowed
+        signal_buy := true
+        state := 1
+        // Set Tight Stop Loss (Swing Low)
+        active_sl := ta.lowest(low, sl_lookback)
+
+// --- SELL LOGIC ---
+if state == 1
+    // Trailing Stop Logic (Never moves down)
+    float new_sl = ta.lowest(low, sl_lookback)
+    active_sl := math.max(active_sl, new_sl)
+    
+    // Condition 1: Hard Stop Hit
+    bool sl_hit = low <= active_sl
+    
+    // Condition 2: Trend Breakdown
+    bool trend_flip = close < hma_val and price_falling
+    
+    // TRIGGER
+    if sl_hit or trend_flip
+        signal_sell := true
+        state := -1
+
+// ==========================================
+// 5. VISUALIZATION
+// ==========================================
+
+// Plot HMA Line
+// Logic: If Price is Rising, but we are NOT Buying (Filtered), show Gray.
+color line_col = state == 1 ? c_buy : (state == -1 and price_rising ? color.gray : c_sell)
+
+plot(hma_val, "Trend Line", color=line_col, linewidth=2)
+
+// Plot SL
+plot(state == 1 ? active_sl : na, "Active Stop Loss", color=color.white, style=plot.style_cross, linewidth=1)
+
+// Paint Bars
+barcolor(state == 1 ? c_buy : c_sell)
+
+// Labels
+if show_labels
+    if signal_buy
+        string txt = "BUY\nEnt: " + str.tostring(close, format.mintick) + "\nSL: " + str.tostring(active_sl, format.mintick)
+        label.new(bar_index, low, text=txt, style=label.style_label_up, color=c_buy, textcolor=color.white, size=size.small)
+        
+    if signal_sell
+        float exit_p = low <= active_sl ? active_sl : close
+        string txt = "SELL\nExit: " + str.tostring(exit_p, format.mintick)
+        label.new(bar_index, high, text=txt, style=label.style_label_down, color=c_sell, textcolor=color.white, size=size.small)
+
+// ==========================================
+// 6. ALERTS
+// ==========================================
+alertcondition(signal_buy, "BUY Signal", "BUY {{ticker}} Price={{close}} SL={{plot('Active Stop Loss')}}")
+alertcondition(signal_sell, "SELL Signal", "SELL {{ticker}} Price={{close}}")

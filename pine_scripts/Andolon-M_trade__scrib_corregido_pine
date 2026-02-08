@@ -1,0 +1,138 @@
+//@version=6
+indicator("Divergencias RSI/MACD Avanzado", overlay=true)
+
+// === INPUTS ===
+rsiLen = input.int(9, title="RSI Length", minval=1)
+macdFast = input.int(8, title="MACD Fast", minval=1)
+macdSlow = input.int(21, title="MACD Slow", minval=1)
+macdSignal = input.int(5, title="MACD Signal", minval=1)
+obZoneLen = input.int(20, title="Zona OB/OS Length", minval=1)
+rsiOverbought = input.int(90, title="RSI Sobrecompra", minval=50, maxval=100)
+rsiOversold = input.int(10, title="RSI Sobreventa", minval=0, maxval=50)
+
+// === INDICADORES BASE ===
+rsi = ta.rsi(close, rsiLen)
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// === ZONAS OB/OS ===
+highLevel = ta.highest(high, obZoneLen)
+lowLevel = ta.lowest(low, obZoneLen)
+isOverbought = close >= highLevel * 0.998  // 99.8% del máximo - más estricto para ventas
+isOversold = close <= lowLevel * 1.002     // 100.2% del mínimo - más estricto para compras
+
+// === SEÑALES SIMPLES BASADAS EN CRUCES ===
+// Para señales bajistas, verificar si RSI estaba por encima del nivel antes del cruce
+rsiWasAboveOverbought = rsi[1] > rsiOverbought
+rsiOverboughtSignal = ta.crossunder(rsi, rsiOverbought) and rsiWasAboveOverbought
+
+// Para señales alcistas, verificar si RSI estaba por debajo del nivel antes del cruce
+rsiWasBelowOversold = rsi[1] < rsiOversold
+rsiOversoldSignal = ta.crossover(rsi, rsiOversold) and rsiWasBelowOversold
+
+// Mejorar la detección de cruces de MACD
+macdPositiveSlope = macdLine > macdLine[1]  // Pendiente positiva MACD
+macdNegativeSlope = macdLine < macdLine[1]  // Pendiente negativa MACD
+macdCrossOverSignal = ta.crossover(macdLine, signalLine) and macdPositiveSlope
+macdCrossUnderSignal = ta.crossunder(macdLine, signalLine) and macdNegativeSlope
+
+// === PIVOTS PARA DETECTAR DIVERGENCIAS ===
+// Reducir lookback para evitar error de datos históricos
+pivotLookback = 3
+pivHigh = ta.pivothigh(close, pivotLookback, pivotLookback)
+pivLow = ta.pivotlow(close, pivotLookback, pivotLookback)
+rsiHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
+rsiLow = ta.pivotlow(rsi, pivotLookback, pivotLookback)
+macdHigh = ta.pivothigh(macdLine, pivotLookback, pivotLookback)
+macdLow = ta.pivotlow(macdLine, pivotLookback, pivotLookback)
+
+// === DIVERGENCIAS ===
+// Alcista: precio hace low más bajo, RSI o MACD hace low más alto
+// Añadir verificación para evitar índices inválidos
+divRSIBull = false
+divMACDBull = false
+
+if not na(pivLow) and not na(rsiLow)
+    if pivLow < 100 and rsiLow < 100  // Limitar búsqueda atrás
+        // La diferencia debe ser significativa
+        priceDiff = (close[pivLow] - close) / close * 100
+        rsiDiff = rsi[rsiLow] - rsi
+        if priceDiff < -0.5 and rsiDiff > 0.8  // Ajustado para RSI 9 (más sensible)
+            divRSIBull := true
+
+if not na(pivLow) and not na(macdLow)
+    if pivLow < 100 and macdLow < 100
+        // La diferencia debe ser significativa
+        priceDiff = (close[pivLow] - close) / close * 100
+        macdDiff = macdLine[macdLow] - macdLine
+        if priceDiff < -0.5 and macdDiff > 0.001  // Diferencia mínima requerida
+            divMACDBull := true
+
+bullishDiv = divRSIBull or divMACDBull
+
+// Bajista: precio hace high más alto, RSI o MACD hace high más bajo
+divRSIBear = false
+divMACDBear = false
+
+if not na(pivHigh) and not na(rsiHigh)
+    if pivHigh < 100 and rsiHigh < 100
+        // La diferencia debe ser significativa
+        priceDiff = (close - close[pivHigh]) / close[pivHigh] * 100
+        rsiDiff = rsi[rsiHigh] - rsi 
+        if priceDiff > 0.5 and rsiDiff > 0.8  // Ajustado para RSI 9 (más sensible)
+            divRSIBear := true
+
+if not na(pivHigh) and not na(macdHigh)
+    if pivHigh < 100 and macdHigh < 100
+        // La diferencia debe ser significativa
+        priceDiff = (close - close[pivHigh]) / close[pivHigh] * 100
+        macdDiff = macdLine[macdHigh] - macdLine
+        if priceDiff > 0.5 and macdDiff > 0.001  // Diferencia mínima requerida (más estricto para bajista)
+            divMACDBear := true
+
+// Divergencia bajista sólo si se confirman ambas o si una es muy fuerte
+// Ajustado para RSI 9: umbral reducido a 75 (en lugar de 80)
+bearishDiv = (divRSIBear and divMACDBear) or 
+             (divRSIBear and rsi[rsiHigh] > 75) or 
+             (divMACDBear and macdLine[macdHigh] > 0.01)
+
+// === COMBINAR TODAS LAS SEÑALES ===
+// Señal de compra: (RSI cruzando sobre nivel sobreventa o MACD cruzando sobre línea de señal) y en zona sobreventa
+// O divergencia alcista en zona sobreventa
+buyRSISignal = rsiOversoldSignal and isOversold
+buyMACDSignal = macdCrossOverSignal and isOversold
+buyDivergenceSignal = bullishDiv and isOversold
+buySignal = buyRSISignal or buyMACDSignal or buyDivergenceSignal
+
+// Señal de venta: (RSI cruzando bajo nivel sobrecompra o MACD cruzando bajo línea de señal) y en zona sobrecompra
+// O divergencia bajista en zona sobrecompra
+// Añadimos verificaciones de confirmación para evitar falsas señales
+priceDown = close < close[1]  // Confirma que el precio está bajando ahora
+volume_up = volume > ta.sma(volume, 20)  // Volumen por encima del promedio (si está disponible)
+
+sellRSISignal = rsiOverboughtSignal and isOverbought and priceDown
+sellMACDSignal = macdCrossUnderSignal and isOverbought and priceDown
+sellDivergenceSignal = bearishDiv and isOverbought and (priceDown or volume_up)
+sellSignal = sellRSISignal or sellMACDSignal or sellDivergenceSignal
+
+// === VISUALIZACIÓN ===
+// Señales principales
+plotshape(buySignal, title="Señal de Compra", location=location.belowbar, 
+     color=color.green, style=shape.labelup, size=size.normal, text="BUY")
+plotshape(sellSignal, title="Señal de Venta", location=location.abovebar, 
+     color=color.red, style=shape.labeldown, size=size.normal, text="SELL")
+
+// Indicadores de componentes de la señal (opcional para debug)
+plotshape(sellRSISignal and not sellMACDSignal and not sellDivergenceSignal, title="Venta RSI", 
+    location=location.abovebar, color=color.new(color.red, 40), style=shape.circle, size=size.tiny)
+plotshape(sellMACDSignal and not sellRSISignal and not sellDivergenceSignal, title="Venta MACD", 
+    location=location.abovebar, color=color.new(color.red, 40), style=shape.diamond, size=size.tiny)
+plotshape(sellDivergenceSignal and not sellRSISignal and not sellMACDSignal, title="Venta Div", 
+    location=location.abovebar, color=color.new(color.red, 40), style=shape.triangledown, size=size.tiny)
+
+// Indicadores de zonas
+bgcolor(isOverbought ? color.new(color.red, 95) : na, title="Zona Sobrecompra")
+bgcolor(isOversold ? color.new(color.green, 95) : na, title="Zona Sobreventa")
+
+// === ALERTAS ===
+alertcondition(buySignal, title="Alerta de Compra", message="¡Señal de compra detectada!")
+alertcondition(sellSignal, title="Alerta de Venta", message="¡Señal de venta detectada!")

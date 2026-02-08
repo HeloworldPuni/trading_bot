@@ -1,0 +1,55 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © simplewashere
+
+//@version=4
+
+study(title="stc — trend cycle", overlay=false)
+
+length = input(10, "length")
+fastLength = input(23, "fast ma length")
+slowLength = input(50, "slow ma length")
+factor = input(0.5, "factor")  
+
+//// colors
+
+colorBlue = color(#05ffff)
+colorMagenta = color(#fe0a6f)
+colorPink = color(#ff0ae2)
+colorTeal = color(#05ffa6)
+colorPurple = color(#5405ff)
+colorYellow = color(#fbc02d)
+colorGreen = color(#3ddb56)
+    
+_macd(source, fastLength, slowLength) =>
+    fastMA = ema(source, fastLength)
+    slowMA = ema(source, slowLength)
+    macd = fastMA - slowMA
+    macd
+
+stc(length, fastLength, slowLength) => 
+    f1 = 0.0
+    pf = 0.0
+    f2 = 0.0
+    pff = 0.0
+    m = _macd(close, fastLength, slowLength)     
+    v1 = lowest(m, length)
+    v2 = highest(m, length) - v1    
+    f1 := (v2 > 0 ? ((m - v1) / v2) * 100 : nz(f1[1])) 
+    pf := (na(pf[1]) ? f1 : pf[1] + (factor * (f1 - pf[1]))) 
+    v3 = lowest(pf, length) 
+    v4 = highest(pf, length) - v3     
+    f2 := (v4 > 0 ? ((pf - v3) / v4) * 100 : nz(f2[1])) 
+    pff := (na(pff[1]) ? f2 : pff[1] + (factor * (f2 - pff[1])))
+    pff
+
+plot(stc(length, fastLength, slowLength), color=colorPurple, title="schaff tc", linewidth=2)
+
+l0 = hline(0, color=#ffffff00)
+lower = hline(20, title="upper cycle limit", linestyle=hline.style_dotted, color=colorTeal)
+upper = hline(80, title="low cycle limit", linestyle=hline.style_dotted, color=colorMagenta)
+l100 = hline(100, color=#ffffff00)
+
+fill(l0, lower, title="lower cycle band", color=colorTeal, transp=80)
+fill(upper, lower, title="mid-cycle band", color=colorPurple, transp=80)
+fill(upper, l100, title="upper cycle band", color=colorMagenta, transp=80)
+ 

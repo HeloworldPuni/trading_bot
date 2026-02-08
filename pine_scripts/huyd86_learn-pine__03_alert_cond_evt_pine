@@ -1,0 +1,61 @@
+//=== ‘alertcondition()’ events
+
+//====== Using one condition
+
+//@version=4
+study("`alertcondition()` on single condition")
+r = rsi(close, 20)
+
+xUp = crossover( r, 50)
+xDn = crossunder(r, 50)
+
+plot(r, "RSI")
+hline(50)
+plotchar(xUp, "Long",  "▲", location.bottom, color.lime, size = size.tiny)
+plotchar(xDn, "Short", "▼", location.top,    color.red,  size = size.tiny)
+
+alertcondition(xUp, "Long Alert",  "Go long")
+alertcondition(xDn, "Short Alert", "Go short ")
+
+alertcondition(xUp, "Long Alert",  "Go long. RSI is {{plot_0}}")
+alertcondition(xDn, "Short Alert", 'Go short. RSI is {{plot("RSI")}}')
+
+//====== Using compound conditions
+
+//@version=4
+study("`alertcondition()` on multiple conditions")
+i_detectLongs  = input(true, "Detect Longs")
+i_detectShorts = input(true, "Detect Shorts")
+
+r = rsi(close, 20)
+// Detect crosses.
+xUp = crossover( r, 50)
+xDn = crossunder(r, 50)
+// Only generate entries when the trade's direction is allowed in inputs.
+enterLong  = i_detectLongs  and xUp
+enterShort = i_detectShorts and xDn
+
+plot(r)
+plotchar(enterLong,  "Go Long",  "▲", location.bottom, color.lime, size = size.tiny)
+plotchar(enterShort, "Go Short", "▼", location.top,    color.red,  size = size.tiny)
+hline(50)
+// Trigger the alert when one of the conditions is met.
+alertcondition(enterLong or enterShort, "Compound alert", "Entry")
+
+//====== Placeholders
+{{exchange}}
+{{interval}}
+{{open}}, {{high}}, {{low}}, {{close}}, {{volume}}
+{{plot_0}}, {{plot_1}}, […], {{plot_19}}
+{{plot("[plot_title]")}}
+
+//@version=4
+study("")
+r = rsi(close, 14)
+xUp = crossover(r, 50)
+plot(r, "RSI")
+alertcondition(xUp, message = 'RSI is bullish at: {{plot("RSI")}}')
+{{ticker}}
+{{time}}
+{{timenow}}
+

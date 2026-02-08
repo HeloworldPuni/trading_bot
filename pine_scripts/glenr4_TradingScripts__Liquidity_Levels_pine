@@ -1,0 +1,86 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © glenrutherford4
+
+//@version=5
+indicator("Liquidity Levels", overlay = true, max_lines_count = 500)
+
+sideBars = input(1, "Bars either side of pivot point")
+fixedArraySize = input(10, "Number of pivot lines to extend")
+resistanceColour = input.color(#4caf50, title="Liquidity at highs colour")
+supportColour = input.color(#d809fc, title="Liquidity at lows colour")
+
+isBullish = close > open
+isBearish = close < open
+
+pivotHigh = ta.pivothigh(high, sideBars, sideBars)
+pivotLow = ta.pivotlow(low, sideBars, sideBars)
+
+
+//////////////////////////////
+// Extend lines until they are crossed and return the price level of the crossed line.
+adjustHorizontalLineEnd(line[] _arrayOfLines, bool isPivotHigh) =>
+    float removedLevel = na
+
+    int _qtyOfLines = array.size(_arrayOfLines)
+    if _qtyOfLines > 0
+        // Loop backwards as we are removing elements from the array.
+        for _i = _qtyOfLines - 1 to 0
+            line  _currentLine = array.get(_arrayOfLines, _i)
+            
+            // Extend the line to the current bar index.
+            line.set_x2(_currentLine, bar_index)
+
+            float _lineLevel   = line.get_price(_currentLine, bar_index)
+
+            // Define the conditions for a line to be considered "crossed".
+            bool _lineCrossedByUpperWick = isPivotHigh and high > _lineLevel
+            bool _lineCrossedByLowerWick = not isPivotHigh and low < _lineLevel
+            // Ensure the cross is not on the same bar the pivot was formed on.
+            bool _isNewerBar = bar_index != line.get_x1(_currentLine)
+
+            if (_lineCrossedByUpperWick or _lineCrossedByLowerWick) and _isNewerBar
+                // A line has been crossed. Capture its price level.
+                // If multiple lines are crossed, this will save the last one found (which is the oldest pivot).
+                removedLevel := _lineLevel
+                // Remove the line from the array
+                array.remove(_arrayOfLines, _i)
+                // NOTE: No 'break' here. We continue the loop to ensure ALL crossed lines on this bar are removed.
+
+    // Return the price level of the line that was removed on this bar.
+    removedLevel
+////////////////////////////
+// Add to queue and manage the array size.
+addToQueue(line[] _arrayOfLines, int arraySize, line newElement) =>
+    // If the array is already at its maximum size...
+    if array.size(_arrayOfLines) >= arraySize
+        // ...remove the oldest line from the start of the array
+        line lineToRemove = array.shift(_arrayOfLines)
+    // Add the new line to the end of the array.
+    array.push(_arrayOfLines, newElement)
+
+////////////////////////////
+
+var line[] pivotHighs = array.new_line(0)
+var line[] pivotLows = array.new_line(0)
+
+// Add new pivot lines to their respective arrays.
+if(not na(pivotHigh))
+    addToQueue(pivotHighs, fixedArraySize, line.new(x1 = bar_index - sideBars, y1=high[sideBars], x2=bar_index, y2= high[sideBars], style=line.style_dotted, color=resistanceColour, width = 2)) 
+if(not na(pivotLow))
+    addToQueue(pivotLows, fixedArraySize, line.new(x1 = bar_index - sideBars, y1=low[sideBars], x2=bar_index, y2= low[sideBars], style=line.style_dotted, color=supportColour, width = 2)) 
+
+// Adjust line lengths and check for crossed levels.
+removedLevelHigh = adjustHorizontalLineEnd(pivotHighs, true)
+removedLevelLow = adjustHorizontalLineEnd(pivotLows, false)
+
+// --- Wick Reversal ---
+isBearishSignal =  not na(removedLevelHigh) and high > removedLevelHigh and close < removedLevelHigh and isBearish
+isBullishSignal =  not na(removedLevelLow) and low < removedLevelLow and close > removedLevelLow and isBullish
+
+plotshape(isBearishSignal, "Bearish Wick", style=shape.triangledown, location=location.abovebar, color=color.new(color.blue, 20), size=size.tiny)
+plotshape(isBullishSignal, "Bullish Wick", style=shape.triangleup, location=location.belowbar, color=color.new(color.blue, 20), size=size.tiny)
+
+// --- Alerts ---
+alertcondition(isBearishSignal, title="Swept liquidity at highs", message="Swept liquidity at highs")
+alertcondition(isBullishSignal, title="Swept liquidity at lows", message="Swept liquidity at lows")
+

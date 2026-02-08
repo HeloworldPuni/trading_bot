@@ -1,0 +1,133 @@
+//@version=5
+strategy("RSI Strategy w/ Bollinger Bands", overlay=true)
+
+input_rsi = input(14, "Length", group = "RSI")
+input_rsi_overbought = input(70, "Overbought", group = "RSI")
+input_rsi_oversold = input(30, "Oversold", group = "RSI")
+
+input_bb = input(14, "Length", group = "Bollinger Bands")
+input_bb_multi = input(2, "Multi", group = "Bollinger Bands")
+
+//Inputs - Multiplication
+input_consecutive_signal = input(
+  0.5, 
+  "Consecutive limit %", "Cannot create signal with same direction if current position is higher than this limit in negative",
+  group = "Multiplication")
+
+input_order_multiply = input(
+  100, 
+  "Multiplication strength %", 
+  "This value is multiplied by percentage difference between position and current price and then added to order.",
+  group = "Multiplication")
+
+input_order_multiply_trigger = input(
+  0.5, 
+  "Multiplication trigger %", 
+  "Trigger for multiplication of order when percentage of price is below position line",
+  group = "Multiplication")
+
+//Inputs - TP/SL
+input_tp_bb = input(
+  false, 
+  "TP - Use BB",
+  "Use Bollinger Bands strategy to execute TP",
+  group = "TP/SL")
+
+input_sl_bb = input(
+  false,
+  "SL - Use BB",
+  "Use Bollinger Bands strategy to execute SL",
+  group = "TP/SL")
+
+input_stop_loss = input(
+  2.0, 
+  "Stop loss %", 
+  "With given percentage in price difference, close position to prevent further losses",
+  group = "TP/SL")
+
+input_take_profit = input(
+  0.2, 
+  "Take profit %" , 
+  "With given percentage in price difference, close position to take profit",
+  group = "TP/SL")
+
+//Indicator values
+rsi_value = ta.rsi(hlc3, input_rsi)
+[middle_bb, upper_bb, lower_bb] = ta.bb(close, input_bb, input_bb_multi)
+
+rsi_buy = ta.crossover(rsi_value, input_rsi_oversold)
+rsi_sell = ta.crossunder(rsi_value, input_rsi_overbought)
+
+bb_buy = ta.crossover(low, lower_bb)
+bb_sell = ta.crossunder(high, upper_bb)
+
+//Multiplication of order
+is_long = strategy.position_size > 0
+is_short = strategy.position_size < 0
+next_invest = strategy.default_entry_qty(close)
+position_percentage = 0.0
+
+if(not na(strategy.position_size) and is_long) 
+    position_percentage := (close / strategy.position_avg_price) -1
+else 
+    position_percentage := (strategy.position_avg_price / close) -1
+position_percentage *= 100
+
+if(position_percentage < -input_order_multiply_trigger)
+    next_invest := next_invest + next_invest * (input_order_multiply / 100) * math.abs(position_percentage)
+
+//Strategy order control
+not_consecutive = na(position_percentage) or position_percentage < -input_consecutive_signal
+take_profit = position_percentage >= input_take_profit
+stop_loss = position_percentage <= -input_stop_loss
+
+//RSI buy / sell
+if(rsi_buy and 
+  (is_short or not_consecutive))
+    strategy.entry("long", strategy.long, next_invest, comment="RSI - Long")
+    rsi_buy := false
+
+if(rsi_sell and
+  (is_long or not_consecutive))
+    strategy.entry("short", strategy.short, next_invest, comment="RSI - Short")
+    rsi_sell := false
+
+//Momentum protection
+//if(imacd_value > input_imacd_threshold and
+//  (is_short or not_consecutive))
+//    strategy.entry("long", strategy.long, next_invest, comment="Momentum - Up")
+
+//if(imacd_value < -input_imacd_threshold and
+//  (is_long or not_consecutive))
+//    strategy.entry("short", strategy.short, next_invest, comment="Momentum - Down")
+
+//TP/SL
+if(is_short and
+  (not input_tp_bb or bb_buy) and 
+  take_profit)
+    strategy.close_all("Take Profit")
+
+if(is_long and
+  (not input_tp_bb or bb_sell) and 
+  take_profit)
+    strategy.close_all("Take Profit")
+
+if(is_short and
+  (not input_sl_bb or bb_buy) and
+  stop_loss)
+    strategy.close_all("Stop Loss")
+
+if(is_long and
+  (not input_sl_bb or bb_sell) and
+  stop_loss)
+    strategy.close_all("Stop Loss")
+
+//Indicators
+bbplot_upper = plot(upper_bb, "BB Upper", color.blue, 1, display = display.pane)
+bbplot_lower = plot(lower_bb, "BB Lower", color.blue, 1, display = display.pane)
+fill(bbplot_upper, bbplot_lower, color.new(#2195f3, 80), "BB Background")
+
+plot((strategy.position_avg_price * (position_percentage / 100)) * math.abs(strategy.position_size), 
+  "Position", color.green, 1, 
+  display = display.data_window + display.status_line)
+plot(rsi_value, "RSI", color.rgb(255, 100, 0), 1, display = display.data_window + display.status_line)

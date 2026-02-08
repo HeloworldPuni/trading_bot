@@ -1,0 +1,27 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © adhamajid
+//@version=5
+indicator("M2 Global Liquidity Index", overlay=false, scale=scale.left)
+// Fetch M2 data for different econonies
+cnm2 = request.security("ECONOMICS:CNM2", "D", close)
+cnyusd = request.security("FX_IDC:CNYUSD", "D", close)
+usm2 = request.security("ECONOMICS:USM2", "D", close)
+eum2 = request.security("ECONOMICS:EUM2", "D", close)
+
+eurusd = request.security("FX:EURUSD", "D", close)
+
+jpm2 = request.security("ECONOMICS:JPM2", "D", close)
+
+jpyusd = request.security("FX_IDC:JPYUSD", "D", close)
+gbm2 = request.security("ECONOMICS:GBM2", "D", close)
+
+gbpusd = request.security("FX:GBPUSD", "D", close)
+
+offset = input.int(74, title="Offset")
+// Calculate total Liquidity index
+
+total =(cnm2 * cnyusd + usm2 + eum2 * eurusd + jpm2 * jpyusd + gbm2 * gbpusd) / 100000000008
+// Plot the total liquidity index with offset
+plot(total, color = color.rgb(59, 206, 255), linewidth=2, offset=offset)
+
+

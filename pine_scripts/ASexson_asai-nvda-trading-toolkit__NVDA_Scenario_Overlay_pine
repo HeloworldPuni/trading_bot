@@ -1,0 +1,45 @@
+//@version=6
+indicator("NVDA Scenario Projection with Alerts", overlay=true)
+
+// === Key Price Levels ===
+level_138 = 138.0
+level_126 = 126.0
+level_115 = 115.0
+level_109 = 109.0
+level_104 = 104.0
+level_100 = 100.0
+level_95  = 95.0
+level_84  = 84.0
+
+// === Plot Key Support/Resistance ===
+plot(level_138, "Reversal Target 2 ($138)", color=color.green, linewidth=1)
+plot(level_126, "Reversal Target 1 ($126)", color=color.green, linewidth=1)
+plot(level_115, "Bullish Trigger ($115)", color=color.green, linewidth=2, style=plot.style_dashed)
+plot(level_109, "Current Zone ($109)", color=color.gray, linewidth=1)
+plot(level_104, "Support Test ($104)", color=color.orange, linewidth=1)
+plot(level_100, "Critical Support ($100)", color=color.red, linewidth=2, style=plot.style_dashed)
+plot(level_95,  "Bearish Target 1 ($95)", color=color.red, linewidth=1)
+plot(level_84,  "Bearish Target 2 ($84)", color=color.red, linewidth=1)
+
+// === MACD and RSI Calculations ===
+[macdLine, signalLine, histLine] = ta.macd(close, 12, 26, 9)
+rsi = ta.rsi(close, 14)
+
+// === Dynamic Zone Shading ===
+bullish_zone = close >= level_115 and close <= level_138 and macdLine > signalLine
+bearish_zone = close <= level_100 and close >= level_84 and macdLine < signalLine
+neutral_zone = close > level_100 and close < level_115
+
+bgcolor(bullish_zone ? color.new(color.green, 85) : na, title="Bullish Zone")
+bgcolor(bearish_zone ? color.new(color.red, 85) : na, title="Bearish Zone")
+bgcolor(neutral_zone ? color.new(color.gray, 90) : na, title="Neutral Zone")
+bgcolor(rsi < 30 ? color.new(color.red, 80) : na, title="RSI Oversold")
+
+// === Trigger Arrows ===
+plotshape(bearish_zone, title="Bearish Trigger", location=location.belowbar, style=shape.arrowdown, color=color.red, size=size.small)
+plotshape(bullish_zone, title="Bullish Trigger", location=location.abovebar, style=shape.arrowup, color=color.green, size=size.small)
+
+// === ALERT CONDITIONS ===
+alertcondition(bullish_zone, title="Bullish Zone Alert", message="NVDA has entered the Bullish Zone ($115–$138) with MACD confirmation.")
+alertcondition(bearish_zone, title="Bearish Zone Alert", message="NVDA has entered the Bearish Zone ($84–$100) with MACD confirmation.")
+alertcondition(rsi < 30, title="RSI Oversold Alert", message="RSI has dropped below 30 — NVDA may be oversold.")

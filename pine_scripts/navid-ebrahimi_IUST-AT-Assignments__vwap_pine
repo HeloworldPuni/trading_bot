@@ -1,0 +1,37 @@
+//@version=4
+strategy(title="VWAP", shorttitle="VWAP", overlay=true)
+
+FromMonth = input(defval = 1, title = "From Month", minval = 1, maxval = 12)
+FromDay   = input(defval = 1, title = "From Day", minval = 1, maxval = 31)
+FromYear  = input(defval = 2023, title = "From Year", minval = 1900)
+ToMonth   = FromMonth + 1
+ToDay     = FromDay
+ToYear    = input(defval = 2023, title = "To Year", minval = 1900)
+
+FromTime = timestamp(FromYear, FromMonth, FromDay, 00, 00)
+ToTime   = timestamp(ToYear, ToMonth, ToDay, 23, 59)
+
+VWAP = vwap(hlc3)
+
+
+if (time >= FromTime and time <= ToTime)
+    RPT = 0.01
+    positionSize = (strategy.equity * RPT) / atr(14)
+
+    buyCondition = crossover(close, VWAP)
+    sellCondition = crossunder(close, VWAP)
+
+    strategy.entry("Buy", strategy.long, when = buyCondition,qty=positionSize)
+    strategy.entry("Sell", strategy.short, when = sellCondition, qty=positionSize)
+
+    buyProfitLimit = VWAP * 1.10
+    buyLossLimit = VWAP * 0.98
+    sellProfitLimit = VWAP * 0.9
+    sellLossLimit = VWAP * 1.02
+
+    strategy.exit("Exit", "Buy", when = strategy.position_size > 0, stop=buyLossLimit, limit=buyProfitLimit)
+    strategy.exit("Exit", "Sell", when = strategy.position_size < 0, stop=sellLossLimit, limit=sellProfitLimit)
+
+
+
+plot(VWAP, title="VWAP", color=color.blue, linewidth=2)

@@ -1,0 +1,58 @@
+//@version=4
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+study(title="BBI", shorttitle="BBI", overlay=true)
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// bbl = input(title="BB Length", type=input.integer, defval=50,  minval=1,    step=1   )
+// bbs = input(title="BB Stddev", type=input.float,   defval=1.5, minval=0.01, step=0.05)
+
+
+
+// new_per calculates the percentage of a fraction based on the given absolute
+// value.
+//
+//     new_per(500, 5) => 1
+//
+new_per(abs, fra) =>
+    fra * 100 / abs
+
+// new_bbu returns the upper bollinger band based on the length given by bbl and
+// the standard deviation given by bbs. Here bbu means bollinger band upper.
+new_bbu(src, bbl, bbs) =>
+    sma(src, bbl) + bbs * stdev(src, bbl)
+
+new_bbi(src, bbl, bbs) =>
+    ban = new_bbu(src, bbl, bbs)
+
+    cou = 0
+    bac = 8
+
+    for i = 0 to bac
+        cou := high[i] > ban[i] and ban[i] > low[i] ? cou + 1 : cou
+
+    new_per(bac, cou) > 30 and not (high[0] > ban[0] and ban[0] > low[0])
+
+
+
+// -------------------------------------------------------------------------- //
+
+
+
+// plot(new_bbu(close, 100, 1.25), "BBI", color=color.white, transp=50)
+// plot(new_bbu(close, 300, 0.75), "BBI", color=color.blue,  transp=50)
+
+one = new_bbu(close, 100, 1.25)
+two = new_bbu(close, 300, 0.75)
+
+plotshape(cross(one, two) and close > one, text="BBI", location=location.abovebar, style=shape.labeldown, size=size.tiny, color=color.red, textcolor=color.white, transp=0)

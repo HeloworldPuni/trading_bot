@@ -1,0 +1,77 @@
+//@version=4
+strategy("MACD Test", overlay=true, calc_on_every_tick=true, initial_capital=1000, default_qty_value=100, default_qty_type=strategy.cash, currency=currency.USD)
+
+// days to test
+daysBackMax = input(defval=30, title="Max Days Back to Test", minval=0)
+daysBackMin = input(defval=0, title="Min Days Back to Test", minval=0)
+msBackMax = 1000 * 60 * 60 * 24 * daysBackMax
+msBackMin = 1000 * 60 * 60 * 24 * daysBackMin
+isWithinTimeBounds = (msBackMax == 0 or (time > (timenow - msBackMax))) and (msBackMin == 0 or (time < (timenow - msBackMin)))
+
+var isLong = false
+var isShort = false
+
+// MACD
+fast = 12, slow = 26
+fastMA = sma(close, fast)
+slowMA = sma(close, slow)
+macd = fastMA - slowMA
+signal = sma(macd, 4)
+
+getMACD(index) =>
+    thisFastMA = sma(close[index], fast)
+    thisSlowMA = sma(close[index], slow)
+    thisMacd = thisFastMA - thisSlowMA
+
+macd0 = getMACD(0)
+macd1 = getMACD(1)
+macd2 = getMACD(2)
+
+macdDirUp = macd > signal
+macdDirDown = macd < signal
+aboveVwap = open > vwap
+belowVwap = open < vwap
+longClose = isLong and aboveVwap and high >= vwap
+shortClose = isShort and aboveVwap and low <= vwap
+
+// plotshape(macdDesc, title="Mark", text="Mark", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.green, textcolor=color.white, transp=0)
+
+// smaLength = input(defval=3, title="SMA Length", minval=0, step=2)
+
+
+greenCandle = (close > open)
+redCandle = (close < open)
+
+// sma = sma(close, smaLength)
+
+plot(vwap, linewidth=1, color=color.blue)
+// plot(macd, color=color.blue)
+// plot(signal, color=color.orange)
+
+// long = not isLong and open > sma and greenCandle
+// short = not isShort and open < sma and redCandle
+
+long = not isLong and macdDirUp
+short = not isShort and macdDirDown
+
+bgcolor(color=long ? color.green : na)
+bgcolor(color=short ? color.red : na)
+
+if long
+    isLong := true
+    isShort := false
+
+if short
+    isLong := false
+    isShort := true
+
+strategy.entry("long", long=true, when=long and isWithinTimeBounds)
+strategy.close("long", when=short and isWithinTimeBounds)
+strategy.entry("short", long=false, when=short and isWithinTimeBounds)
+strategy.close("short", when=long and isWithinTimeBounds)
+
+// if (strategy.position_size > 0)
+//     strategy.exit(id="stop long", stop=longStopPrice)
+
+// if (strategy.position_size < 0)
+//     strategy.exit(id="stop short", stop=shortStopPrice)

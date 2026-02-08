@@ -1,0 +1,38 @@
+//@version=6
+strategy("Algo Trading Course HW1", overlay=true, 
+    initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// Set time period
+startTime = input.time(defval=1704067200000, title="Start Time")
+threeMonths = 90 * 86400000  // 90 days in ms
+endTime = startTime + threeMonths
+validPeriod = time >= startTime and time <= endTime
+
+// Set Lines
+emaLength = input.int(20, title="EMA Length", minval=1)
+smaLength = input.int(50, title="SMA Length", minval=1)
+fastMA = ta.ema(close, emaLength)
+slowMA = ta.sma(close, smaLength)
+
+// Volume check
+volMA = ta.sma(volume, 20)
+volFilter = volume > 0.8 * volMA
+shortMASlope = fastMA - fastMA[1]
+
+// Signal strength check
+[macdLine, signalLine, macdHistogram] = ta.macd(close, 12, 26, 9)
+macdBullish = macdLine > signalLine
+macdBearish = macdLine < signalLine
+rsi = ta.rsi(close, 14)
+sessionVWAP = ta.vwap(close)
+buyCondition = ta.crossover(fastMA, slowMA)
+entryCondition = buyCondition and shortMASlope > 0 and volFilter and macdBullish and (rsi < 70)
+exitCondition = macdBearish or (rsi > 70) or (close > sessionVWAP * 1.01 and volume < volMA)
+
+// Enter/Exit logic
+if entryCondition and validPeriod
+    if strategy.position_size < 0
+        strategy.close("Short", comment="Close Prev Short Position")
+    strategy.entry("Long", strategy.long)
+if strategy.position_size > 0 and exitCondition and validPeriod
+    strategy.close("Long", comment="Exit Long Position")

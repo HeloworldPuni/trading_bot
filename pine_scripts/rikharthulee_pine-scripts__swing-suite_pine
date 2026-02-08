@@ -1,0 +1,113 @@
+//@version=6
+strategy("Swing Template - HTF Trend, MACD, ATR Stops (v6)",
+     overlay=true, initial_capital=10000, currency=currency.USD,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     calc_on_every_tick=false, calc_on_order_fills=true, pyramiding=0)
+
+// ===== Inputs =====
+htf             = input.timeframe("D",   "Trend timeframe (HTF)")
+emaLenFast      = input.int(50,  "EMA Fast (LTF)", minval=1)
+emaLenSlow      = input.int(200, "EMA Slow (LTF)", minval=1)
+emaHTF          = input.int(200, "EMA Trend (HTF)", minval=50)
+
+macdFast        = input.int(12, "MACD Fast")
+macdSlow        = input.int(26, "MACD Slow")
+macdSignal      = input.int(9,  "MACD Signal")
+
+rsiLen          = input.int(14, "RSI Length")
+rsiConfirm      = input.float(50.0, "RSI Confirm Level", minval=0, maxval=100)
+rsi             = ta.rsi(close, rsiLen)
+
+atrLen          = input.int(14, "ATR Length")
+atrMult         = input.float(2.5, "Stop = ATR *", step=0.1)
+riskReward      = input.float(2.0, "Take-Profit RR", step=0.1)  // TP = entry + RR * risk
+useTrail        = input.bool(true, "Enable ATR Trailing Stop")
+trailMult       = input.float(3.0, "ATR * for Trailing", step=0.1)
+atr             = ta.atr(atrLen)
+
+onlyLong        = input.bool(false, "Longs only")
+onlyShort       = input.bool(false, "Shorts only")
+
+// ===== Core Series =====
+emaFast   = ta.ema(close, emaLenFast)
+emaSlow   = ta.ema(close, emaLenSlow)
+htfEma200 = request.security(syminfo.tickerid, htf, ta.ema(close, emaHTF), barmerge.gaps_off, barmerge.lookahead_off)
+
+// ===== Trend Filters =====
+upTrendHTF   = close > htfEma200
+downTrendHTF = close < htfEma200
+ltUp         = emaFast > emaSlow
+ltDown       = emaFast < emaSlow
+
+// NEW: HTF filter mode
+htfFilterMode = input.string("Strict", "HTF Filter Mode", options=["Strict","Soft","Off"])
+
+// Helper functions for trend OK checks
+trendLong_ok = switch htfFilterMode
+    "Strict" => (upTrendHTF and ltUp)
+    "Soft"   => (upTrendHTF or  ltUp)
+    =>            ltUp
+
+trendShort_ok = switch htfFilterMode
+    "Strict" => (downTrendHTF and ltDown)
+    "Soft"   => (downTrendHTF or  ltDown)
+    =>            ltDown
+
+// ===== MACD Calculation =====
+[macdLine, signalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// ===== Entry Logic =====
+// Long: HTF uptrend + local uptrend + MACD hist crosses above 0 + RSI > confirm
+macdCrossoverUp   = ta.crossover(macdHist, 0)
+macdCrossoverDown = ta.crossunder(macdHist, 0)
+
+longSignal  = trendLong_ok  and macdCrossoverUp   and rsi > rsiConfirm
+shortSignal = trendShort_ok and macdCrossoverDown and rsi < (100 - rsiConfirm)
+
+// Optional: require price to be on the "right side" of emaFast (acts like a pullback confirmation)
+mustBeAboveFastForLong  = input.bool(true, "Require close >= EMA Fast for Long")
+mustBeBelowFastForShort = input.bool(true, "Require close <= EMA Fast for Short")
+longSignal  := longSignal  and (not mustBeAboveFastForLong  or close >= emaFast)
+shortSignal := shortSignal and (not mustBeBelowFastForShort or close <= emaFast)
+
+// ===== Orders & Risk =====
+riskLong  = atrMult * atr
+riskShort = atrMult * atr
+
+// Long orders
+if longSignal and not onlyShort
+    entryPriceL = close
+    stopL = entryPriceL - riskLong
+    tpL   = entryPriceL + riskReward * (entryPriceL - stopL)
+    strategy.entry("LONG", strategy.long, comment="LONG")
+    strategy.exit("L-EXIT", "LONG", stop=stopL, limit=tpL)
+
+// Short orders
+if shortSignal and not onlyLong
+    entryPriceS = close
+    stopS = entryPriceS + riskShort
+    tpS   = entryPriceS - riskReward * (stopS - entryPriceS)
+    strategy.entry("SHORT", strategy.short, comment="SHORT")
+    strategy.exit("S-EXIT", "SHORT", stop=stopS, limit=tpS)
+
+// ===== Trailing Stop (optional, replaces static stop once in trade) =====
+if useTrail
+    // Chandelier-style trail based on ATR
+    // Convert ATR-based offset (price units) into ticks for trail_points
+    points = math.round((trailMult * atr) / syminfo.mintick)
+    if strategy.position_size > 0
+        strategy.exit("L-TRAIL", from_entry="LONG", trail_points=points, trail_offset=points)
+    if strategy.position_size < 0
+        strategy.exit("S-TRAIL", from_entry="SHORT", trail_points=points, trail_offset=points)
+
+// ===== Plots =====
+plot(emaFast,  "EMA Fast",  color=color.new(color.green, 0))
+plot(emaSlow,  "EMA Slow",  color=color.new(color.red,   0))
+plot(htfEma200,"HTF EMA200",color=color.new(color.blue,  0), linewidth=2)
+
+plotshape(longSignal, style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0))
+plotshape(shortSignal, style=shape.triangledown, location=location.abovebar, size=size.tiny, color=color.new(color.red, 0))
+
+// ===== Alerts =====
+alertcondition(longSignal,  "Swing LONG",  "Swing LONG signal")
+alertcondition(shortSignal, "Swing SHORT", "Swing SHORT signal")

@@ -1,0 +1,79 @@
+// This source code is subject to the terms of the MIT License at https://github.com/taichunmin/tradingview-pine/blob/master/LICENSE
+// © taichunmin
+
+//@version=5
+strategy(calc_on_every_tick=true, commission_type=strategy.commission.percent, commission_value=0.05, currency=currency.USD, default_qty_type=strategy.cash, default_qty_value=100, initial_capital=100, max_bars_back=500, max_labels_count=500, max_lines_count=500, overlay=false, precision=3, slippage=0, title="RSI7多空追蹤馬丁策略")
+
+// var
+entryMorePerc = input.float(defval=2.0, title="加倉價差 %", minval=0.2, maxval=15.0, step=0.1)
+entryMoreTrailing = input.float(defval=1.0, title="加倉回撤 %", minval=0.1, maxval=15.0, step=0.1)
+entryMoreTimes = input.int(defval=8, title="加倉次數", minval=1, maxval=15, step=1)
+takeProfitPerc = input.float(defval=2.0, title="止盈 %", minval=0.2, step=0.1)
+takeProfitTrailing = input.float(defval=1.0, title="止盈回撤 %", minval=0.1, step=0.1)
+stopLossPerc = input.float(defval=10.0, title="止損 %", minval=0.1, maxval=99.9, step=0.1)
+qtyRatio = input.float(defval=1.5, title="加倉倍數", minval=1.0, maxval=2.0, step=0.1)
+
+// backtest
+backtestUseTimeRange = input.bool(defval=true, title="回測時間範圍")
+backtestStartYear = input.int(defval=2018, minval=1950, step=1, title="Start Year")
+backtestStartMonth = input.int(defval=1, minval=1, maxval=12, step=1, title="Start Month")
+backtestStartDay = input.int(defval=1, minval=1, maxval=31, step=1, title="Start Day")
+backtestEndYear = input.int(defval=9999, minval=1950, step=1, title="End Year")
+backtestEndMonth = input.int(defval=1, minval=1, maxval=12, step=1, title="End Month")
+backtestEndDay = input.int(defval=1, minval=1, maxval=31, step=1, title="End Day")
+backtestInTimeRange = backtestUseTimeRange ? (time >= timestamp(backtestStartYear, backtestStartMonth, backtestStartDay, 00, 00)) and (time < timestamp(backtestEndYear, backtestEndMonth, backtestEndDay, 23, 59)) : true
+
+// var
+var entryQtys = array.new_float(entryMoreTimes + 1, 1.0) // 進場投資額權重
+for i = 2 to entryMoreTimes
+    array.set(entryQtys, i, array.get(entryQtys, i - 1) * qtyRatio)
+var float entryQtySum = array.sum(entryQtys) // 進場投資額權重總和
+
+// indicator
+prevEntryPrice = strategy.opentrades.entry_price(strategy.opentrades - 1)
+nextQty = strategy.opentrades >= 9 ? 0 : 100.0 * array.get(entryQtys, strategy.opentrades) / entryQtySum // 派網的投資額以 100 USD 為基準
+rsi7 = ta.rsi(close, 7)
+// plot(rsi7, title="RSI7", color=color.blue, linewidth=2)
+
+barsSinceLastEntry = strategy.opentrades > 0 ? bar_index - strategy.opentrades.entry_bar_index(strategy.opentrades - 1) + 1 : 1
+isLong = strategy.position_size > 0
+signLong = isLong ? 1 : -1
+lowestLow = ta.lowest(low, barsSinceLastEntry)
+highestHigh = ta.highest(high, barsSinceLastEntry)
+stopLoss = strategy.position_avg_price * (1 - stopLossPerc * signLong / 100)
+
+takeProfitThreshold = strategy.position_avg_price * (1 + takeProfitPerc * signLong / 100)
+entryThreshold = prevEntryPrice * (1 - entryMorePerc * signLong / 100)
+
+// 做多
+takeProfitPrice = strategy.opentrades > 0 ? (math.max(highestHigh, takeProfitThreshold) - (prevEntryPrice * takeProfitTrailing / 100.0)) : (math.min(lowestLow, takeProfitThreshold) + (prevEntryPrice * takeProfitTrailing / 100.0))
+entryTrailing = strategy.opentrades > 0 ? (math.min(lowestLow, entryThreshold) + (prevEntryPrice * entryMoreTrailing / 100.0)) : (math.max(highestHigh, entryThreshold) - (prevEntryPrice * entryMoreTrailing / 100.0))
+
+// plot(stopLoss, color=color.red, linewidth=2)
+plot(highestHigh, color = strategy.opentrades == 0 ? color.black : color.green)
+plot(takeProfitThreshold, color=strategy.opentrades == 0 ? color.black : color.orange)
+// plot(takeProfitPrice, color=color.yellow)
+plot(entryThreshold, color=strategy.opentrades == 0 ? color.black : color.purple)
+plot(entryTrailing, color=strategy.opentrades == 0 ? color.black : color.blue)
+plot(lowestLow, color=strategy.opentrades == 0 ? color.black : color.red)
+
+// strategy
+if backtestInTimeRange and strategy.opentrades == 0 // 未持倉，判斷進場時機
+    if ta.crossover(rsi7, 30.0)
+        strategy.entry(direction = strategy.long, id = "Long", qty = nextQty, comment="做多進場")
+    else if ta.crossunder(rsi7, 70.0)
+        strategy.entry(direction = strategy.short, id = "Short", qty = nextQty, stop = close * (1 + stopLossPerc / 100), comment="做空進場")
+else if strategy.position_size > 0 // 做多，判斷是否需加倉、止盈或止損
+    if strategy.opentrades == entryMoreTimes + 1 and ta.crossunder(close, stopLoss) // 止損
+        strategy.close_all(comment="做多止損")
+    else if ta.crossunder(close, takeProfitPrice) // 止盈
+        strategy.close_all(comment="做多止盈")
+    else if ta.crossover(close, entryTrailing) // 加倉
+        strategy.entry(direction = strategy.long, id = "Long", qty = nextQty, comment="做多加倉")
+else if strategy.position_size < 0 // 做空，判斷是否需加倉、止盈或止損
+    if strategy.opentrades == entryMoreTimes + 1 and ta.crossover(close, stopLoss) // 止損
+        strategy.close_all(comment="做空止損")
+    else if ta.crossover(close, takeProfitPrice) // 止盈
+        strategy.close_all(comment="做空止盈")
+    else if ta.crossunder(close, entryTrailing) // 加倉
+        strategy.entry(direction = strategy.short, id = "Short", qty = nextQty, comment="做空加倉")

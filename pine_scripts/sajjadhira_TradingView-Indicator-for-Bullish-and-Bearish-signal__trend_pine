@@ -1,0 +1,37 @@
+//@version=5
+indicator("Trend and RSI Detection", overlay=true)
+
+// Input parameters
+lengthEMA = input.int(50, title="EMA Length", minval=1)
+rsiLength = input.int(14, title="RSI Length", minval=1)
+rsiOverbought = input.int(70, title="RSI Overbought Level", minval=1)
+rsiOversold = input.int(30, title="RSI Oversold Level", minval=1)
+
+// Calculate EMA for trend detection
+ema = ta.ema(close, lengthEMA)
+
+// Calculate RSI
+rsi = ta.rsi(close, rsiLength)
+
+// Determine trend
+isUptrend = close > ema
+isDowntrend = close < ema
+
+// Plot EMA
+plot(ema, color=color.blue, linewidth=2, title="EMA")
+
+// Add background color based on trend
+bgcolor(isUptrend ? color.new(color.green, 90) : na, title="Uptrend Highlight")
+bgcolor(isDowntrend ? color.new(color.red, 90) : na, title="Downtrend Highlight")
+
+// Plot RSI on a separate pane
+hline(rsiOverbought, "Overbought Level", color=color.red)
+hline(rsiOversold, "Oversold Level", color=color.green)
+plot(rsi, color=color.orange, title="RSI")
+
+// Highlight RSI conditions
+rsiOverboughtCondition = rsi > rsiOverbought
+rsiOversoldCondition = rsi < rsiOversold
+
+bgcolor(rsiOverboughtCondition ? color.new(color.red, 85) : na, title="RSI Overbought Highlight")
+bgcolor(rsiOversoldCondition ? color.new(color.green, 85) : na, title="RSI Oversold Highlight")

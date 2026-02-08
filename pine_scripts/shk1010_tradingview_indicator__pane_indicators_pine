@@ -1,0 +1,73 @@
+//@version=5
+indicator("패널 지표 (RSI, MACD, 다이버전스)", overlay=false)
+
+// === 표시 옵션 ===
+enable_rsi = input.bool(true, "RSI 표시", group="표시 옵션")
+enable_macd = input.bool(true, "MACD 표시", group="표시 옵션")
+enable_rsi_div = input.bool(true, "RSI 다이버전스 표시", group="표시 옵션")
+
+// === RSI & MACD 입력값 및 계산 ===
+rsi_len = input.int(14, "RSI 기간", group="RSI & MACD")
+rsi_src = input.source(close, "RSI 소스", group="RSI & MACD")
+rsi = ta.rsi(rsi_src, rsi_len)
+
+macd_fast = input.int(12, "MACD Fast", group="RSI & MACD")
+macd_slow = input.int(26, "MACD Slow", group="RSI & MACD")
+macd_signal = input.int(9, "MACD Signal", group="RSI & MACD")
+[macdLine, signalLine, histLine] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// === RSI 패널 표시 ===
+plot(enable_rsi ? rsi : na, color=color.blue, title="RSI", linewidth=2)
+hline(70, "과매수", color=color.red, linestyle=hline.style_dotted)
+hline(30, "과매도", color=color.green, linestyle=hline.style_dotted)
+
+// === MACD 패널 표시 ===
+plot(enable_macd ? macdLine : na, color=color.blue, title="MACD", linewidth=2)
+plot(enable_macd ? signalLine : na, color=color.orange, title="Signal", linewidth=2)
+plot(enable_macd ? histLine : na, color=color.purple, title="Histogram", style=plot.style_columns)
+
+// === RSI 다이버전스 탐지 및 시각화 ===
+len = input.int(20, "다이버전스 탐색 범위", group="Divergence")
+pivot_left = input.int(5, "피벗 좌측", group="Divergence")
+pivot_right = input.int(5, "피벗 우측", group="Divergence")
+
+pivot_low_price = ta.pivotlow(low, pivot_left, pivot_right)
+pivot_low_rsi = ta.pivotlow(rsi, pivot_left, pivot_right)
+pivot_high_price = ta.pivothigh(high, pivot_left, pivot_right)
+pivot_high_rsi = ta.pivothigh(rsi, pivot_left, pivot_right)
+
+var float last_pivot_low_price = na
+var float last_pivot_low_rsi = na
+var int last_pivot_low_bar = na
+
+var float last_pivot_high_price = na
+var float last_pivot_high_rsi = na
+var int last_pivot_high_bar = na
+
+// 상승 다이버전스: 가격은 더 낮은 저점, RSI는 더 높은 저점
+if enable_rsi_div and not na(pivot_low_price) and not na(pivot_low_rsi)
+    if not na(last_pivot_low_price) and not na(last_pivot_low_rsi)
+        price_div = low[pivot_right] < last_pivot_low_price
+        rsi_div = rsi[pivot_right] > last_pivot_low_rsi
+        if price_div and rsi_div
+            // 차트에 신호
+            label.new(bar_index - pivot_right, low[pivot_right], "▲ RSI 상승 다이버전스", color=color.green, style=label.style_label_up, textcolor=color.white, size=size.small)
+            // RSI 패널에 선 그리기
+            line.new(last_pivot_low_bar, last_pivot_low_rsi, bar_index - pivot_right, rsi[pivot_right], color=color.green, width=2)
+    last_pivot_low_price := low[pivot_right]
+    last_pivot_low_rsi := rsi[pivot_right]
+    last_pivot_low_bar := bar_index - pivot_right
+
+// 하락 다이버전스: 가격은 더 높은 고점, RSI는 더 낮은 고점
+if enable_rsi_div and not na(pivot_high_price) and not na(pivot_high_rsi)
+    if not na(last_pivot_high_price) and not na(last_pivot_high_rsi)
+        price_div = high[pivot_right] > last_pivot_high_price
+        rsi_div = rsi[pivot_right] < last_pivot_high_rsi
+        if price_div and rsi_div
+            // 차트에 신호
+            label.new(bar_index - pivot_right, high[pivot_right], "▼ RSI 하락 다이버전스", color=color.red, style=label.style_label_down, textcolor=color.white, size=size.small)
+            // RSI 패널에 선 그리기
+            line.new(last_pivot_high_bar, last_pivot_high_rsi, bar_index - pivot_right, rsi[pivot_right], color=color.red, width=2)
+    last_pivot_high_price := high[pivot_right]
+    last_pivot_high_rsi := rsi[pivot_right]
+    last_pivot_high_bar := bar_index - pivot_right 

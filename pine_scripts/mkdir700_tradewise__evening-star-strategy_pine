@@ -1,0 +1,82 @@
+//@version=5
+strategy("Evening Star with Bollinger Bands Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// 用户可配置的参数
+var float maxLossPercent = input.float(2.0, "最大损失比例", minval=0.1, maxval=10.0, step=0.1, tooltip="每次交易最多损失本金的百分比")
+
+// ATR 参数设置
+var int atrPeriod = input.int(14, "ATR周期", minval=1)
+var float atrMultiplier = input.float(1.0, "ATR倍数", minval=0.1, maxval=5.0, step=0.1)
+atr = ta.atr(atrPeriod)
+
+// 交易时间设置
+var bool useTimeFilter = input.bool(false, "启用交易时间限制", tooltip="开启后只在指定时间段内交易")
+var string sessionTime = input.session("0930-1600", "交易时段", tooltip="仅在启用交易时间限制时生效")
+inTradeTime = useTimeFilter ? (time(timeframe.period, sessionTime) != 0) : true
+
+// 定义时间框架
+timeframe = "5"
+
+// 布林带参数
+length = input.int(20, "布林带周期", minval=1)
+mult = input.float(2.0, "布林带标准差倍数", minval=0.1, maxval=5.0, step=0.1)
+basis = ta.sma(close, length)
+dev = mult * ta.stdev(close, length)
+upper = basis + dev
+lower = basis - dev
+
+// MACD 参数
+fast_length = input.int(12, "MACD快线", minval=1)
+slow_length = input.int(26, "MACD慢线", minval=1)
+signal_length = input.int(9, "MACD信号线", minval=1)
+[macdLine, signalLine, _] = ta.macd(close, fast_length, slow_length, signal_length)
+
+// 判断是否为黄昏之星（通过实体占比判断）
+bodyPercentageThreshold = input.float(30, "K线实体占比阈值", minval=1, maxval=100, step=1)
+bodyPercentage = math.abs(close - open) / math.abs(high - low) * 100
+isSmallBody = bodyPercentage < bodyPercentageThreshold
+
+// 交易信号
+isAboveBollinger = high > upper
+isAboveMacdZero = macdLine > 0
+
+// 做空条件
+shortCondition = isAboveBollinger and isSmallBody and isAboveMacdZero and inTradeTime
+
+// 计算止损价格和仓位大小
+float initialStopLossPrice = na
+float positionSize = na
+
+// 跟踪止损价格计算
+var float trailPrice = na
+if (shortCondition)
+    initialStopLossPrice := high + (atr * atrMultiplier)  // 初始止损位置为当前K线最高点加上一个ATR
+    trailPrice := high + atr  // 初始跟踪止损价格
+    
+    // 计算每次交易的仓位大小，确保最大损失不超过本金的指定比例
+    riskPerTrade = strategy.equity * (maxLossPercent/100)  // 每次交易允许的最大损失金额
+    riskPerUnit = math.abs(initialStopLossPrice - close)  // 每单位的潜在损失
+    positionSize := riskPerTrade / riskPerUnit  // 计算应该开的仓位大小
+
+// 更新跟踪止损价格
+if (strategy.position_size < 0)  // 如果有空仓
+    trailPrice := math.min(trailPrice, high + atr)  // 更新跟踪止损价格，取较小值
+
+// 执行策略
+if (shortCondition)
+    strategy.entry("Short", strategy.short, qty=positionSize)
+
+// 检查是否触发止损
+if (strategy.position_size < 0 and high >= trailPrice)
+    strategy.close("Short")
+
+// 绘制指标
+plot(basis, "BB Middle", color=color.blue)
+plot(upper, "BB Upper", color=color.blue)
+plot(lower, "BB Lower", color=color.blue)
+
+// 在图表上标记交易信号
+plotshape(shortCondition, "Short Signal", shape.triangledown, location.abovebar, color=color.red, size=size.small)
+
+// 绘制跟踪止损线
+plot(strategy.position_size < 0 ? trailPrice : na, "Trailing Stop", color=color.red, style=plot.style_line)

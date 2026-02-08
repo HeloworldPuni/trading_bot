@@ -1,0 +1,234 @@
+// This source code is free to use, copy, and alter in any way you choose.
+// ...but credit is always nice :)
+
+//@version=4
+//@author=JayRogers
+
+study(title = "Example - Future Line Drawing", shorttitle = "Future Lines Example", overlay = true)
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+// ====== ABOUT THIS INDICATOR                                                //
+//                                                                            //
+//  - This is just a basic example of drawing lines using 'line.new()' to     //
+//    extend a line beyond the end of the bars on a chart using offsets,      //
+//    rather than relying on 'extend.right' functionality.                    //
+//                                                                            //
+//  It includes:                                                              //
+//                                                                            //
+//    • a simple function to get an easy time offset which can then be        //
+//      multiplied to get an index forwards off the chart, or backwards.      //
+//    • simple, but 'proper' line creation and management functionality.      //
+//                                                                            //
+// ====== REASON FOR STUDY                                                    //
+//                                                                            //
+//  - Educational Purposes Only                                               //
+//                                                                            //
+//    • I attempt to break down the very basics of positioning lines          //
+//      and other drawing objects using 'time'.                               //
+//                                                                            //
+//    • For more advanced/in-depth time offset stuffs check out this post:             
+//      https://www.tradingview.com/script/5mZ7hV66-Time-Offset-Calculation-Framework-PineCoders-FAQ/
+//                                                                            
+// ====== DISCLAIMER                                                          //
+//                                                                            //
+//    Any trade decisions you make are entirely your own responsibility.      //
+//    I've made an effort to squash all the bugs, but you never know!         //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                            ====== INPUTS ======                            //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// -- our time offset multiplier input
+INP_offsetTime = input(5, "Time Offset", type = input.integer)
+
+// -- fast and slow SMA length inputs for use as the example cases
+INP_fastLength = input(7, "Fast SMA Length", type = input.integer, minval = 1)
+INP_slowLength = input(21, "Slow SMA Length", type = input.integer, minval = 1)
+
+// -- extra fluff input for changing length of vertical lines
+INP_vertLength = input(1, "(extra) Vertical Line Length", type = input.integer)
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                          ====== FUNCTIONS ======                           //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// -- Time Offset Function
+//
+f_offsetTime(_userOffsetInput) =>
+
+    // init our _return variable
+    var int _return = na
+
+    // get current time
+    int _timeNow    = time
+
+    // get difference between current bar time and previous bar time
+    int _timeSeg    = time - time[1]
+
+    // multiply the segment by the user input
+    int _segMult    = _timeSeg * _userOffsetInput
+
+    // return time now + multiplied time segment for offset, giving us our
+    // +1|2|3 etc. OR -1|2|3 location depending on user input.
+    _return := _timeNow + _segMult
+
+// -- compact offset function version
+//
+//      f_offsetTime(_input) => time + ( ( time - time[1] ) * _input )
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                    ====== SERIES and LINES SETUP ======                    //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// -- standard 'fast' and 'slow' sma's which we will be extending
+float _fastMA = sma(close[1], INP_fastLength)
+float _slowMA = sma(close[1], INP_slowLength)
+
+// -- 'proper' instantiation for our lines, which we set up later
+//  * For more information about using the 'var' keyword:
+//    https://www.tradingview.com/pine-script-reference/v4/#op_var
+var line _fastExtention = na
+var line _slowExtention = na
+
+// -- our time offset for forward/backward positioning on our lines
+int _offsetTime = f_offsetTime(INP_offsetTime)
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                     ====== DRAWING and PLOTTING ======                     //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// -- our SMA plots
+plot(_fastMA, color = color.yellow)
+plot(_slowMA, color = color.red)
+
+
+// -- FIRST EXTENSION LINE (for fast SMA)
+//
+if na(_fastExtention)
+    //
+    //  If our variable has 'na' value, then we need to create our line first.
+    //  For it's first horizontal (x1) location, we use the current 'time'
+    //  For the second horizontal (x2) location, we use our '_offsetTime' value.
+    //  For both of the vertical (y1 and y2) locations, we use the '_fastMA' so
+    //  that we get a straight projection out from it's end.
+    //
+    _fastExtention := line.new(time, _fastMA, _offsetTime, _fastMA, xloc.bar_time, extend.none)
+
+// -- POSITION UPDATING:
+//
+//    once the line has been created we can keep updating it's locations to
+//    match the end of the _fastMA using 'line.set_xy1()' and 'line.set_xy2()'
+//
+line.set_xy1(_fastExtention, time, _fastMA)
+line.set_xy2(_fastExtention, _offsetTime, _fastMA)
+// -- adjust some styling options
+line.set_color(_fastExtention, color.yellow)
+line.set_width(_fastExtention, 3)
+
+
+// -- SECOND EXTENSION LINE (for slow SMA)
+//  
+//  We can simply repeat the steps above for the '_fastExtention' line on the 
+//  '_slowExtention', but this time using the '_slowMA' for the vertical
+//  positioning (y1 and y2)
+//
+if na(_slowExtention)
+    _slowExtention := line.new(time, _slowMA, _offsetTime, _slowMA, xloc.bar_time, extend.none)
+line.set_xy1(_slowExtention, time, _slowMA)
+line.set_xy2(_slowExtention, _offsetTime, _slowMA)
+// -- adjust some styling options
+line.set_color(_slowExtention, color.red)
+line.set_width(_slowExtention, 3)
+
+//  NOTES:
+//
+//  1:  [ 0 + 0 = 0 ] ...and what i mean by that is...
+//      Should you find your line to NOT BE SHOWING, it may be that you need to
+//      check your locations. If both your 'x1' and 'x2' are sharing a position,
+//      then your 'y1' and 'y2' must NOT share the same values (similarly the 
+//      opposite way around) else you will be drawing nothing. There MUST be an
+//      offset somewhere for a line to draw.
+//
+//  2:  If you're on a chart with temporal gaps (not open to trade 24/7) then
+//      your lines may not extend for example into the weekend on a currency
+//      pair.
+//
+//  3:  If you want to get rid of a line rather than update it, based on some
+//      condition for example, then rather than updating you can delete it until
+//      another condition calls for it to be drawn and updated again. So it
+//      might end up looking more like this:
+//
+//      if na(_line)
+//          _line := line.new(time, _float, _offsetTime, _float, xloc.bar_time)
+//
+//      if _someConditionTrue
+//          line.delete(_line)
+//      else
+//          line.set_xy1(_line, time, _float)
+//          line.set_xy2(_line, _offsetTime, _float)
+//
+
+////////////////////////////////////////////////////////////////////////////////
+//                                                                            //
+//                          ====== EXTRA FLUFF ======                         //
+//                                                                            //
+//      For the purpose of this example, everything below can happily         //
+//      be ignored as it's just for extra decoration and visualisation,       //
+//      but we do set vertical lines and a label using the time               //
+//      positioning value already defined above.                              //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+// -- vertical lines to depict the starting and finish of extensions
+var line _startLineVertical     = na
+var line _finishLineVertical    = na
+
+// -- a few Y positioning values using the current gap between SMA's
+float _min = min(_fastMA, _slowMA)
+float _max = max(_fastMA, _slowMA)
+float _len = (_max - _min)
+float _top = _max + (_len * INP_vertLength)
+float _bot = _min - (_len * INP_vertLength)
+
+// -- draw our verticals much like the horizontals, but focusing on the y1|y2
+//    positioning while the x1|x2 remain constant
+if na(_startLineVertical)
+    _startLineVertical := line.new(time, _top, time, _bot, xloc.bar_time, extend.none)
+line.set_xy1(_startLineVertical, time, _top)
+line.set_xy2(_startLineVertical, time, _bot)
+
+if na(_finishLineVertical)
+    _finishLineVertical := line.new(_offsetTime, _top, _offsetTime, _bot, xloc.bar_time, extend.none)
+line.set_xy1(_finishLineVertical, _offsetTime, _top)
+line.set_xy2(_finishLineVertical, _offsetTime, _bot)
+
+// -- a label to denote the extension distance and mark endpoint.
+var label   _offsetLabel    = na
+// -- to contain text string for the label
+var string  _labelText      = na
+
+// -- buid our label text
+string _direction = INP_offsetTime > 0 ? " Forward" : INP_offsetTime < 0 ? " Backward" : ""
+_labelText := tostring(INP_offsetTime) + " Bars" + _direction + " Offset"
+
+// -- get it printed and managed
+if na(_offsetLabel)
+    _offsetLabel := label.new(_offsetTime, _top, _labelText, xloc.bar_time)
+label.set_xy(_offsetLabel, _offsetTime, _top)
+
+// -- lets flip the label style if the vertical multiplier is set to negative
+//    value, because why not?
+label.set_style(_offsetLabel, INP_vertLength >= 0 ? label.style_label_down : label.style_label_up)
+
+// -- PEANUT

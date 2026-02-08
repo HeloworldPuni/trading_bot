@@ -1,0 +1,60 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title     = "[Z] SMI Hist Divergence", 
+     shorttitle     = "SMI-Div", 
+     timeframe      = "", 
+     timeframe_gaps = true)
+
+// ##################
+// === Parameters ===
+// ##################
+
+lengthK   = input.int(10, "%K Length",  minval = 1, maxval = 15000)
+lengthD   = input.int(3,  "%D Length",  minval = 1, maxval = 4999)
+lengthEMA = input.int(5,  "EMA Length", minval = 1, maxval = 4999)
+
+// ##################
+// === Indicators ===
+// ##################
+
+emaEma(source, length) => ta.ema(ta.ema(source, length), length)
+
+highestHigh         = ta.highest(lengthK)
+lowestLow           = ta.lowest(lengthK)
+highestLowestRange  = highestHigh - lowestLow
+relativeRange       = close - (highestHigh + lowestLow) / 2
+smi                 = 200 * (emaEma(relativeRange, lengthD) / emaEma(highestLowestRange, lengthD))
+smiEMA              = ta.ema(smi, lengthEMA)
+smiDiff             = smi - smiEMA
+smiDiv              = smiDiff - smiDiff[1]
+
+// ##############
+// === Alerts ===
+// ##############
+
+oversold    = -40
+overbought  = 40
+goldCross = ta.crossover(smi, smiEMA) and smi < oversold
+deadCross = ta.crossunder(smi, smiEMA) and smi > overbought
+
+alertcondition(goldCross, title = "SMI Gold Cross", message = "SMI Gold Cross, seek hiking")
+alertcondition(goldCross, title = "SMI Dead Cross", message = "SMI Dead Cross, seek droping")
+
+// #############
+// === Plots ===
+// #############
+
+smiPlot = plot(smi, "SMI", color = color.blue)
+plot(smiEMA, "SMI-based EMA", color = color.orange)
+plot(smiDiv, title = "smiDiv", style = plot.style_columns, color = (smiDiv >= 0 ? (smiDiv[1] < smiDiv ? #26A69A : #B2DFDB) : (smiDiv[1] < smiDiv ? #FFCDD2 : #FF5252)))
+
+obLine = hline(40, "Overbought Line")
+osLine   = hline(-40, "Oversold Line")
+fill(obLine, osLine, color = color.new(color.blue, 90))
+hline(0, "Middle Line", color = color.new(color.gray, 50))
+
+midLinePlot = plot(0, color = na, editable = false, display = display.none)
+fill(smiPlot, midLinePlot, 120,  40,   top_color = color.new(#4caf4f, 50),    bottom_color = color.new(color.green, 100), title = "Overbought Gradient Fill")
+fill(smiPlot, midLinePlot, -40, -120,  top_color = color.new(color.red, 100), bottom_color = color.new(color.red, 50),    title = "Oversold Gradient Fill")

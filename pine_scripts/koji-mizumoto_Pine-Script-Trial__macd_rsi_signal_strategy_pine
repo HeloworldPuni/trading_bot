@@ -1,0 +1,42 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © kaneda_cocoroto_co
+
+//@version=6
+strategy("MACDとRSI", overlay=true, margin_long=100, margin_short=100)
+
+// input パラメータ設定
+rsi_length = input.int(defval = 14, title = "長期RSI期間", minval = 1)
+rsi_threshold = input.int(defval = 20, title = "RSIの下のしきい値", minval = 1)
+rsi_up_threshold = input.int(defval = 80, title = "RSIの上のしきい値", minval = 1)
+macd_fast_length = input.int(defval = 12, title = "MACD短期期間", minval = 1)
+macd_slow_length = input.int(defval = 26, title = "MACD長期期間", minval = 1)
+macd_signal_length = input.int(defval = 9, title = "MACDのシグナル", minval = 1)
+lookback_period = input.int(defval = 10, title = "RSIを遡る期間", minval = 1)  // 過去x期間を確認
+
+// RSIの計算
+rsi = ta.rsi(close, rsi_length)
+
+// MACDの計算
+[macd_line, signal_line, _] = ta.macd(close, macd_fast_length, macd_slow_length, macd_signal_length)
+
+// MACDゴールデンクロスの検出
+macd_golden_cross = ta.crossover(macd_line, signal_line)
+
+// MACDデッドクロスの検出
+macd_dead_cross = ta.crossunder(macd_line, signal_line)
+
+// 過去x期間のRSIの最小値を確認
+rsi_min_in_lookback = ta.lowest(rsi, lookback_period)
+
+// 条件を満たすシグナルの生成
+// 売買
+entry_signal = macd_golden_cross and rsi_min_in_lookback <= rsi_threshold
+exit_DCsignal = macd_dead_cross or rsi > rsi_up_threshold
+
+longCondition = macd_golden_cross and rsi_min_in_lookback <= rsi_threshold
+if (longCondition)
+    strategy.entry("L-Entry", strategy.long)
+
+shortCondition =  macd_dead_cross or rsi > rsi_up_threshold
+if (shortCondition)
+    strategy.entry("S-Entry", strategy.short)

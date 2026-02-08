@@ -1,0 +1,57 @@
+//@version=5
+indicator(title="Zero Lag MACD with ZLEMA", shorttitle="ZLMACD+ZLEMA+ATR", overlay=false)
+
+// ---------------------- ZL MACD & ZLEMA BEGINS  ----------------------//
+// Input parameters
+fastLength = input.int(9, title="Fast EMA Length")
+slowLength = input.int(21, title="Slow EMA Length")
+signalSmoothing = input.int(9, title="Signal Smoothing")
+
+// Function to calculate ZLEMA
+zlema(source, length) =>
+    ema1 = ta.ema(source, length)
+    ema2 = ta.ema(ema1, length)
+    zlema = ema1 + (ema1 - ema2)
+    zlema
+
+// Calculate MACD using ZLEMA
+fastZLEMA = zlema(close, fastLength)
+slowZLEMA = zlema(close, slowLength)
+macdLine = fastZLEMA - slowZLEMA
+
+// Smoothing the signal line using ZLEMA
+signalLine = zlema(macdLine, signalSmoothing)
+
+// Plotting MACD and signal line
+plot(macdLine, color=color.green, title="MACD Line",  linewidth=2)
+plot(signalLine, color=color.red, title="Signal Line",  linewidth=2)
+
+// Plotting zero line
+hline(0, "Zero Line", color=color.gray)
+
+// Plotting histogram
+histogram = macdLine - signalLine
+plot(histogram, style=plot.style_columns, color=(histogram >= 0 ? color.green : color.red), title="Histogram")
+
+// ----------------------  ZL MACD & ZLEMA ENDS   ----------------------//
+
+// ----------------------        ATR STARTS       ----------------------//
+// Input parameters
+atrLength = input.int(14, title="ATR Length")
+atrMultiplier = input.float(2.0, title="ATR Multiplier for Stop Loss")
+
+// Calculate ATR for stop loss
+atrValue = ta.atr(atrLength)
+
+// Calculate stop loss levels
+longStop = close - atrMultiplier * atrValue
+shortStop = close + atrMultiplier * atrValue
+
+// Plot stop loss levels on main price pane
+// plot(longStop, color=color.red, title="Long Stop Loss", linewidth=2)
+// plot(shortStop, color=color.green, title="Short Stop Loss", linewidth=2)
+
+// Plot ATR in a separate pane
+plot(atrValue, color=color.black, title="ATR", style=plot.style_line, linewidth=2)
+
+// ----------------------        ATR ENDS       ----------------------//

@@ -1,0 +1,641 @@
+//@version=5
+indicator("Option Day Trades", overlay=true)
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                              [1] INPUTS                                       │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── Timeframes ─────────────────────────────
+calcTF         = input.timeframe("5", "Calc TF", group="Timeframes")
+alertTF        = input.timeframe("1", "Alert TF", group="Timeframes")
+
+//───────────────────────────── Trend Settings ─────────────────────────────
+fastEmaLen     = input.int(9, "Fast EMA", group="Trend")
+midEmaLen      = input.int(21, "Mid EMA", group="Trend")
+slowEmaLen     = input.int(50, "Slow EMA", group="Trend")
+pullbackLen    = input.int(5, "Pullback Length", group="Trend")
+
+//───────────────────────────── Filters ─────────────────────────────
+useVWAP        = input.bool(true, "Use VWAP Filter", group="Filters")
+minDailyVol    = input.int(200000, "Min Daily Volume", group="Filters")
+
+//───────────────────────────── Gap Analysis ─────────────────────────────
+useGapFilter   = input.bool(true, "Use Gap Filter", group="Gap Analysis", tooltip="Filter signals based on overnight gap direction")
+gapThreshold   = input.float(0.5, "Gap Threshold %", group="Gap Analysis", minval=0.1, maxval=5.0, tooltip="TSLA/NVDA: 0.5 | MSTR: 1.0")
+gapMode        = input.string("Trend", "Gap Filter Mode", group="Gap Analysis", options=["Trend", "Fade", "Info Only"], tooltip="Trend: Trade with gap | Fade: Trade against gap | Info Only: Just show in alerts")
+
+//───────────────────────────── Opening Range Breakout ─────────────────────────────
+useORB         = input.bool(true, "Use ORB Filter", group="Opening Range", tooltip="Require price to break opening range")
+orbMinutes     = input.int(15, "ORB Period (minutes)", group="Opening Range", minval=5, maxval=60, tooltip="TSLA/NVDA: 15 | MSTR: 30")
+orbMode        = input.string("Breakout", "ORB Mode", group="Opening Range", options=["Breakout", "Info Only"], tooltip="Breakout: Only trade breaks | Info Only: Just show levels")
+
+//───────────────────────────── Previous Day Levels ─────────────────────────────
+usePDLevels    = input.bool(true, "Use Prev Day H/L Filter", group="Prev Day Levels", tooltip="Filter based on previous day high/low")
+pdBuffer       = input.float(0.25, "PD Level Buffer %", group="Prev Day Levels", minval=0.0, maxval=1.0, tooltip="TSLA: 0.3 | NVDA: 0.2")
+
+//───────────────────────────── Market Regime (SPY/QQQ) ─────────────────────────────
+useMarketFilter = input.bool(false, "Use Market Filter", group="Market Regime", tooltip="Filter signals based on market trend (requires data subscription)")
+marketSymbol    = input.symbol("SPY", "Market Index", group="Market Regime", tooltip="TSLA: SPY | NVDA: QQQ")
+
+//───────────────────────────── Time of Day ─────────────────────────────
+useTODFilter    = input.bool(true, "Use Time Filter", group="Time of Day", tooltip="Avoid low-volume lunch period")
+avoidLunchStart = input.int(11, "Avoid Lunch Start Hour", group="Time of Day", minval=10, maxval=13, tooltip="TSLA/NVDA: 11")
+avoidLunchEnd   = input.int(13, "Avoid Lunch End Hour", group="Time of Day", minval=12, maxval=15, tooltip="TSLA/NVDA: 13")
+
+//───────────────────────────── Visual Labels ─────────────────────────────
+showLabels      = input.bool(true, "Show Chart Labels", group="Display", tooltip="Show entry/exit labels on chart for EOD review")
+showEntryLine   = input.bool(true, "Show Entry Line", group="Display", tooltip="Draw horizontal line at entry price")
+showStopLine    = input.bool(true, "Show Stop Line", group="Display", tooltip="Draw horizontal line at stop loss")
+showEarlyAlerts = input.bool(false, "Show EARLY Alerts", group="Display", tooltip="Get heads-up alerts before confirmation")
+
+//───────────────────────────── Targets ─────────────────────────────
+// STOCK PRESETS:
+// TSLA/NVDA (High Vol):    T1=0.5, T2=1.2, T3=2.5, Delta=0.50, ATR=1.0
+// MSTR (Extreme Vol):      T1=1.0, T2=2.5, T3=5.0, Delta=0.50, ATR=1.5
+// PLTR (Moderate Vol):     T1=0.4, T2=0.8, T3=1.5, Delta=0.50, ATR=0.75
+
+t1Pct          = input.float(0.5, "T1 Underlying Move %", group="Targets", tooltip="TSLA/NVDA: 0.5 | MSTR: 1.0 | PLTR: 0.4")
+t2Pct          = input.float(1.2, "T2 Underlying Move %", group="Targets", tooltip="TSLA/NVDA: 1.2 | MSTR: 2.5 | PLTR: 0.8")
+t3Pct          = input.float(2.5, "T3 Underlying Move %", group="Targets", tooltip="TSLA/NVDA: 2.5 | MSTR: 5.0 | PLTR: 1.5")
+optionDelta    = input.float(0.50, "Estimated Option Delta", group="Targets", minval=0.1, maxval=1.0, tooltip="ATM weeklies ≈ 0.50")
+
+//───────────────────────────── Risk Management ─────────────────────────────
+useAtrStop     = input.bool(true, "Use ATR Stop", group="Risk")
+atrMultiplier  = input.float(1.0, "ATR Stop Multiplier", group="Risk", tooltip="TSLA/NVDA: 1.0 | MSTR: 1.5 | PLTR: 0.75")
+tightStops     = input.bool(true, "Tight Stops (0DTE Mode)", group="Risk", tooltip="ON: Cut losses fast | OFF: Avoid noise")
+
+//───────────────────────────── Session & Timing ─────────────────────────────
+avoidOpenMin    = input.int(15, "Avoid First X Minutes", group="Session", tooltip="Skip chaotic open. 0DTE: 15-30 min")
+forceExitHour   = input.int(15, "Force Exit Hour", group="Session", tooltip="0DTE: Consider 15:30 or earlier")
+forceExitMin    = input.int(45, "Force Exit Minute", group="Session", tooltip="Exit before gamma risk spikes")
+confirmDelayMin = input.int(5, "Confirmation Delay (min)", group="Session")
+maxEarlyMin     = input.int(10, "Max Early Window (min)", group="Session")
+reentryDelayBars = input.int(0, "Re-entry Cooldown (bars)", group="Session", minval=0, maxval=10, tooltip="Wait X bars after exit before re-entry. 0=immediate")
+
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                            [2] CONSTANTS                                      │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── State Machine States ─────────────────────────────
+IDLE      = 0
+EARLY     = 1
+IN_TRADE  = 2
+EXITED    = 3
+
+//───────────────────────────── Direction Bias ─────────────────────────────
+BIAS_NONE = 0
+BIAS_CALL = 1
+BIAS_PUT  = 2
+
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                        [3] SESSION & TIME                                     │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── Session Times ─────────────────────────────
+sessionStart   = timestamp("America/New_York", year, month, dayofmonth, 9, 30)
+sessionEnd     = timestamp("America/New_York", year, month, dayofmonth, 16, 0)
+forceExitTime  = timestamp("America/New_York", year, month, dayofmonth, forceExitHour, forceExitMin)
+openBufferTime = sessionStart + avoidOpenMin * 60 * 1000  // FIX: Use ms to avoid minute overflow
+
+//───────────────────────────── Session Flags ─────────────────────────────
+inSession      = time >= sessionStart and time <= sessionEnd
+isNewDay       = ta.change(time("D")) != 0
+pastOpenBuffer = time >= openBufferTime
+allowNewTrades = time < forceExitTime and pastOpenBuffer
+
+//───────────────────────────── Time Calculations ─────────────────────────────
+confirmDelayMs = confirmDelayMin * 60 * 1000
+maxEarlyMs     = maxEarlyMin * 60 * 1000
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                          [4] DATA FEEDS                                       │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── MTF Data (5-min) ─────────────────────────────
+[closeCalc, emaFast, emaMid, emaSlow, vwapVal, sup, res, atrVal, highCalc, lowCalc] = request.security(
+     syminfo.tickerid, calcTF, 
+     [close, ta.ema(close, fastEmaLen), ta.ema(close, midEmaLen), ta.ema(close, slowEmaLen), 
+      ta.vwap(hlc3), ta.lowest(low, pullbackLen), ta.highest(high, pullbackLen), ta.atr(14), high, low], 
+     barmerge.gaps_off, barmerge.lookahead_off)
+
+//───────────────────────────── MTF Data (1-min) ─────────────────────────────
+closeExec = request.security(syminfo.tickerid, alertTF, close, barmerge.gaps_off, barmerge.lookahead_off)
+
+//───────────────────────────── MTF Data (Daily) - Optimized single call ─────────────────────────────
+[dailyVol, dailyVolSma, dailyOpen, prevDayClose, dailyHigh, dailyLow, prevDayHigh, prevDayLow, prevDailyVol] = request.security(syminfo.tickerid, "D", [volume, ta.sma(volume, 20), open, close[1], high, low, high[1], low[1], volume[1]], barmerge.gaps_off, barmerge.lookahead_off)
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                            [5] FILTERS                                        │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── Liquidity ─────────────────────────────
+// FIX: Use previous day's volume for early session (before 10:00 AM) when today's volume is still building
+earlySessionEnd = timestamp("America/New_York", year, month, dayofmonth, 10, 0)
+isEarlySession  = time < earlySessionEnd
+rvol            = dailyVolSma > 0 ? dailyVol / dailyVolSma : 0
+liquidityOK     = isEarlySession ? prevDailyVol >= minDailyVol : (dailyVol >= minDailyVol and rvol >= 1)
+
+//───────────────────────────── Gap Analysis ─────────────────────────────
+// Calculate overnight gap
+gapPoints    = dailyOpen - prevDayClose
+gapPct       = prevDayClose > 0 ? (gapPoints / prevDayClose) * 100 : 0
+gapSize      = math.abs(gapPct)
+
+// Gap classification
+isGapUp      = gapPct >= gapThreshold
+isGapDown    = gapPct <= -gapThreshold
+isNoGap      = gapSize < gapThreshold
+
+// Gap type string for alerts
+gapType      = isGapUp ? "GAP UP +" + str.tostring(gapPct, "#.##") + "%" : isGapDown ? "GAP DOWN " + str.tostring(gapPct, "#.##") + "%" : "NO GAP"
+gapSizeType  = gapSize >= 2.0 ? "LARGE" : gapSize >= 1.0 ? "MEDIUM" : gapSize >= gapThreshold ? "SMALL" : "FLAT"
+
+// Gap fill tracking
+gapFilled = isGapUp ? dailyLow <= prevDayClose : isGapDown ? dailyHigh >= prevDayClose : true
+
+// Gap filter logic
+gapAllowsCall = not useGapFilter or gapMode == "Info Only" or (gapMode == "Trend" and (isGapUp or isNoGap)) or (gapMode == "Fade" and (isGapDown or isNoGap))
+gapAllowsPut  = not useGapFilter or gapMode == "Info Only" or (gapMode == "Trend" and (isGapDown or isNoGap)) or (gapMode == "Fade" and (isGapUp or isNoGap))
+
+//───────────────────────────── Opening Range Breakout ─────────────────────────────
+// Calculate ORB window end time (FIX: use milliseconds to avoid minute overflow bug)
+orbEndTime  = sessionStart + orbMinutes * 60 * 1000
+inORBPeriod = time >= sessionStart and time <= orbEndTime
+
+// Track ORB High/Low (persisted through day)
+var float orbHigh   = na
+var float orbLow    = na
+var bool  orbLocked = false  // FIX: Declare before use
+
+// Build ORB during the opening range period (using 5-min data for consistency)
+if inORBPeriod
+    orbHigh := na(orbHigh) ? highCalc : math.max(orbHigh, highCalc)
+    orbLow  := na(orbLow) ? lowCalc : math.min(orbLow, lowCalc)
+else if not orbLocked and not na(orbHigh) and not na(orbLow)
+    // Lock ORB values once after period ends (cleaner intent, prevents drift)
+    orbLocked := true
+
+// ORB breakout detection (after ORB period)
+orbComplete     = time > orbEndTime and not na(orbHigh) and not na(orbLow)
+orbBreakoutUp   = orbComplete and closeCalc > orbHigh
+orbBreakoutDown = orbComplete and closeCalc < orbLow
+orbRange        = orbComplete ? orbHigh - orbLow : 0
+orbRangePct     = orbComplete and orbLow > 0 ? (orbRange / orbLow) * 100 : 0
+
+// ORB filter logic
+orbAllowsCall = not useORB or orbMode == "Info Only" or (orbComplete and orbBreakoutUp)
+orbAllowsPut  = not useORB or orbMode == "Info Only" or (orbComplete and orbBreakoutDown)
+
+// ORB info for alerts
+orbInfo = orbComplete ? "ORB H:" + str.tostring(orbHigh, "#.##") + " L:" + str.tostring(orbLow, "#.##") + " (" + str.tostring(orbRangePct, "#.#") + "%)" : "ORB Building"
+
+//───────────────────────────── Previous Day High/Low ─────────────────────────────
+// prevDayHigh and prevDayLow already fetched in daily security call above
+
+// Buffer zones around PDH/PDL
+pdBufferPoints = prevDayClose * (pdBuffer / 100)
+pdhZoneHigh    = prevDayHigh + pdBufferPoints
+pdhZoneLow     = prevDayHigh - pdBufferPoints
+pdlZoneHigh    = prevDayLow + pdBufferPoints
+pdlZoneLow     = prevDayLow - pdBufferPoints
+
+// Check if price is near PDH or PDL
+nearPDH = closeCalc >= pdhZoneLow and closeCalc <= pdhZoneHigh
+nearPDL = closeCalc >= pdlZoneLow and closeCalc <= pdlZoneHigh
+abovePDH = closeCalc > pdhZoneHigh
+belowPDL = closeCalc < pdlZoneLow
+
+// PDH/PDL filter logic (CALL above PDL, PUT below PDH)
+pdAllowsCall = not usePDLevels or abovePDH or (not nearPDH and closeCalc > prevDayLow)
+pdAllowsPut  = not usePDLevels or belowPDL or (not nearPDL and closeCalc < prevDayHigh)
+
+// PDH/PDL info for alerts
+pdInfo = "PDH:" + str.tostring(prevDayHigh, "#.##") + " PDL:" + str.tostring(prevDayLow, "#.##")
+
+//───────────────────────────── Market Regime (SPY/QQQ) ─────────────────────────────
+// Get market index data (use current symbol if filter disabled to avoid data subscription requirement)
+mktSymbolToUse = useMarketFilter ? marketSymbol : syminfo.tickerid
+[mktClose, mktVwap, mktEmaFast, mktEmaSlow] = request.security(mktSymbolToUse, calcTF, [close, ta.vwap(hlc3), ta.ema(close, 9), ta.ema(close, 21)], barmerge.gaps_off, barmerge.lookahead_off)
+
+// Market trend determination
+mktBullish = mktClose > mktVwap and mktEmaFast > mktEmaSlow
+mktBearish = mktClose < mktVwap and mktEmaFast < mktEmaSlow
+mktNeutral = not mktBullish and not mktBearish
+
+// Market filter logic
+mktAllowsCall = not useMarketFilter or mktBullish or mktNeutral
+mktAllowsPut  = not useMarketFilter or mktBearish or mktNeutral
+
+// Market info for alerts
+mktTrend = useMarketFilter ? (mktBullish ? "MKT:BULL" : mktBearish ? "MKT:BEAR" : "MKT:NEUTRAL") : "MKT:OFF"
+
+//───────────────────────────── Time of Day Filter ─────────────────────────────
+// Define lunch hour (avoid)
+lunchStart = timestamp("America/New_York", year, month, dayofmonth, avoidLunchStart, 30)
+lunchEnd   = timestamp("America/New_York", year, month, dayofmonth, avoidLunchEnd, 30)
+inLunchHour = time >= lunchStart and time <= lunchEnd
+
+// Power hours (prefer)
+morningPower = time >= openBufferTime and time < lunchStart
+afternoonPower = time > lunchEnd and time < forceExitTime
+
+// Time of Day filter logic
+todAllowsTrade = not useTODFilter or not inLunchHour
+
+// TOD info for alerts
+todInfo = inLunchHour ? "LUNCH" : morningPower ? "AM-POWER" : afternoonPower ? "PM-POWER" : "SESSION"
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                        [6] ENTRY CONDITIONS                                   │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── Trend Conditions ─────────────────────────────
+bullTrend = emaFast > emaMid and emaMid > emaSlow and closeCalc > emaFast
+bearTrend = emaFast < emaMid and emaMid < emaSlow and closeCalc < emaFast
+
+//───────────────────────────── VWAP Filter ─────────────────────────────
+vwapBull = not useVWAP or closeCalc > vwapVal
+vwapBear = not useVWAP or closeCalc < vwapVal
+
+//───────────────────────────── Combined Entry Signal ─────────────────────────────
+callValid = bullTrend and vwapBull and closeCalc > sup and liquidityOK and gapAllowsCall and orbAllowsCall and pdAllowsCall and mktAllowsCall and todAllowsTrade
+putValid  = bearTrend and vwapBear and closeCalc < res and liquidityOK and gapAllowsPut and orbAllowsPut and pdAllowsPut and mktAllowsPut and todAllowsTrade
+
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                        [7] STATE VARIABLES                                    │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+//───────────────────────────── CALL State ─────────────────────────────
+var int   callState       = IDLE
+var int   callEarlyTime   = na
+var float callEntry       = na
+var float callSL          = na
+var bool  callT1Hit       = false
+var bool  callT2Hit       = false
+var bool  callT3Hit       = false
+var bool  callStopHit     = false
+var int   callLastExitBar = na
+var int   callEntryBar    = na  // Track entry bar for same-bar stop protection
+
+//───────────────────────────── PUT State ─────────────────────────────
+var int   putState       = IDLE
+var int   putEarlyTime   = na
+var float putEntry       = na
+var float putSL          = na
+var bool  putT1Hit       = false
+var bool  putT2Hit       = false
+var bool  putT3Hit       = false
+var bool  putStopHit     = false
+var int   putLastExitBar = na
+var int   putEntryBar    = na  // Track entry bar for same-bar stop protection
+
+//───────────────────────────── Shared State ─────────────────────────────
+var int  dayBias        = BIAS_NONE
+var int  lastEarlyCallAlertTime = na  // Prevent EARLY alert fatigue
+var int  lastEarlyPutAlertTime  = na  // Prevent EARLY alert fatigue
+
+//───────────────────────────── Visual Line State ─────────────────────────────
+var line callEntryLine = na
+var line callStopLine  = na
+var line putEntryLine  = na
+var line putStopLine   = na
+
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                          [8] DAILY RESET                                      │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+// FIX: Simplified daily reset (Pine daily boundary is reliable, no intraday reset needed)
+if isNewDay
+    // Reset CALL
+    callState       := IDLE
+    callEarlyTime   := na
+    callEntry       := na
+    callSL          := na
+    callT1Hit       := false
+    callT2Hit       := false
+    callT3Hit       := false
+    callStopHit     := false
+    callLastExitBar := na
+    callEntryBar    := na
+    
+    // Reset PUT
+    putState       := IDLE
+    putEarlyTime   := na
+    putEntry       := na
+    putSL          := na
+    putT1Hit       := false
+    putT2Hit       := false
+    putT3Hit       := false
+    putStopHit     := false
+    putLastExitBar := na
+    putEntryBar    := na
+    
+    // Reset ORB
+    orbHigh   := na
+    orbLow    := na
+    orbLocked := false
+    
+    // Reset EARLY alert cooldowns
+    lastEarlyCallAlertTime := na
+    lastEarlyPutAlertTime  := na
+    
+    // Reset visual lines
+    line.delete(callEntryLine)
+    line.delete(callStopLine)
+    line.delete(putEntryLine)
+    line.delete(putStopLine)
+    callEntryLine := na
+    callStopLine  := na
+    putEntryLine  := na
+    putStopLine   := na
+    
+    // Reset shared
+    dayBias := BIAS_NONE
+
+
+// ┌───────────────────────────────────────────────────────────────────────────────┐
+// │                         [9] STATE MACHINE                                     │
+// └───────────────────────────────────────────────────────────────────────────────┘
+
+if barstate.isconfirmed
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //                          CALL STATE MACHINE                               
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    callAllowed = (dayBias == BIAS_NONE or dayBias == BIAS_CALL) and putState != EARLY  // Prevent simultaneous EARLY
+    earlyCooldownMs = 2 * 60 * 1000  // 2 minutes cooldown for EARLY alerts
+    
+    //───────────────────────────── IDLE → EARLY ─────────────────────────────
+    earlyCallCooldownOK = na(lastEarlyCallAlertTime) or time - lastEarlyCallAlertTime > earlyCooldownMs
+    if callState == IDLE and callValid and inSession and allowNewTrades and callAllowed and earlyCallCooldownOK
+        callState     := EARLY
+        callEarlyTime := time
+        lastEarlyCallAlertTime := time  // Track for cooldown
+        // >>> ALERT: EARLY CALL (heads-up) <<<
+        if showEarlyAlerts
+            alert("[EARLY CALL] " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Watching for confirmation...", alert.freq_once_per_bar)
+    
+    //───────────────────────────── EARLY → IDLE (Invalidation) ─────────────────────────────
+    if callState == EARLY and not callValid
+        callState     := IDLE
+        callEarlyTime := na
+    
+    //───────────────────────────── EARLY → IDLE (Expiration) ─────────────────────────────
+    if callState == EARLY and not na(callEarlyTime) and time - callEarlyTime > maxEarlyMs
+        callState     := IDLE
+        callEarlyTime := na
+    
+    //───────────────────────────── EARLY → IN_TRADE ─────────────────────────────
+    canConfirmCall = not na(callEarlyTime) and time - callEarlyTime >= confirmDelayMs
+    
+    // FIX: Prevent CALL & PUT confirming on same bar
+    if callState == EARLY and canConfirmCall and callValid and inSession and allowNewTrades and putState != IN_TRADE
+        callState    := IN_TRADE
+        callEntry    := closeExec
+        callEntryBar := bar_index  // Track entry bar for same-bar stop protection
+        callT1Hit    := false
+        callT2Hit    := false
+        callT3Hit    := false
+        callStopHit  := false
+        dayBias      := BIAS_CALL
+        
+        // Calculate stop loss
+        rawSL  = sup
+        atrSL  = callEntry - atrVal * atrMultiplier
+        callSL := useAtrStop ? (tightStops ? math.max(rawSL, atrSL) : math.min(rawSL, atrSL)) : rawSL
+        
+        // >>> ALERT: CONFIRMED CALL <<<
+        gapInfoAlert = " | " + gapType + " (" + gapSizeType + ")" + (gapFilled ? " [FILLED]" : " [OPEN]")
+        contextInfo = " | " + orbInfo + " | " + pdInfo + " | " + mktTrend + " | " + todInfo
+        alert("[CONFIRMED CALL] " + syminfo.ticker + " Entry: " + str.tostring(callEntry, "#.##") + " SL: " + str.tostring(callSL, "#.##") + gapInfoAlert + contextInfo, alert.freq_once_per_bar)
+        
+        // >>> LABEL: CONFIRMED CALL <<<
+        if showLabels
+            label.new(bar_index, low, "▲ CALL\n" + str.tostring(callEntry, "#.##") + "\nSL: " + str.tostring(callSL, "#.##"), style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+        // >>> LINES: Entry & Stop <<<
+        if showEntryLine
+            line.delete(callEntryLine)
+            callEntryLine := line.new(bar_index, callEntry, bar_index + 50, callEntry, color=color.green, style=line.style_solid, width=2)
+        if showStopLine
+            line.delete(callStopLine)
+            callStopLine := line.new(bar_index, callSL, bar_index + 50, callSL, color=color.red, style=line.style_dashed, width=1)
+    
+    //───────────────────────────── IN_TRADE: Targets & Stop ─────────────────────────────
+    if callState == IN_TRADE
+        callUnderlyingPnl = ((closeExec - callEntry) / callEntry) * 100
+        callOptionPnl     = callUnderlyingPnl / optionDelta
+        
+        // T1 Hit
+        if not callT1Hit and closeExec >= callEntry * (1 + t1Pct/100)
+            callT1Hit := true
+            // >>> ALERT: T1 HIT <<<
+            alert("[T1 HIT] CALL " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: +" + str.tostring(callUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(callOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T1 <<<
+            if showLabels
+                label.new(bar_index, low, "T1 ✓\n+" + str.tostring(callOptionPnl, "#.#") + "%", style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.tiny)
+        
+        // T2 Hit
+        if callT1Hit and not callT2Hit and closeExec >= callEntry * (1 + t2Pct/100)
+            callT2Hit := true
+            // >>> ALERT: T2 HIT <<<
+            alert("[T2 HIT] CALL " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: +" + str.tostring(callUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(callOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T2 <<<
+            if showLabels
+                label.new(bar_index, low, "T2 ✓\n+" + str.tostring(callOptionPnl, "#.#") + "%", style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.tiny)
+        
+        // T3 Hit
+        if callT2Hit and not callT3Hit and closeExec >= callEntry * (1 + t3Pct/100)
+            callT3Hit := true
+            // >>> ALERT: T3 HIT <<<
+            alert("[T3 HIT] CALL " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: +" + str.tostring(callUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(callOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T3 <<<
+            if showLabels
+                label.new(bar_index, low, "T3 🎯\n+" + str.tostring(callOptionPnl, "#.#") + "%", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.small)
+        
+        // Stop Hit (with same-bar protection)
+        canCheckStop = bar_index > callEntryBar  // FIX: Prevent same-bar stop
+        if canCheckStop and closeExec <= callSL and not callStopHit
+            callStopHit := true
+            // >>> ALERT: STOP EXIT <<<
+            alert("[STOP EXIT] CALL " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: " + str.tostring(callUnderlyingPnl, "#.##") + "% | Est Option: " + str.tostring(callOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: STOP EXIT <<<
+            if showLabels
+                label.new(bar_index, high, "STOP ✗\n" + str.tostring(callOptionPnl, "#.#") + "%", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
+    
+    //───────────────────────────── IN_TRADE → EXITED ─────────────────────────────
+    if callState == IN_TRADE and (callT3Hit or callStopHit)
+        callLastExitBar := bar_index
+        callState       := EXITED
+        callEntry       := na
+        dayBias         := BIAS_NONE  // FIX: Allow directional flip after exit
+    
+    //───────────────────────────── FORCE EXIT ─────────────────────────────
+    // FIX: Guard against double alert if stop/T3 already hit on same bar
+    if callState == IN_TRADE and time >= forceExitTime and not callStopHit and not callT3Hit
+        forceCallPnl    = ((closeExec - callEntry) / callEntry) * 100
+        forceCallOptPnl = forceCallPnl / optionDelta
+        // >>> ALERT: FORCE EXIT <<<
+        alert("[FORCE EXIT] CALL " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: " + str.tostring(forceCallPnl, "#.##") + "% | Est Option: " + str.tostring(forceCallOptPnl, "#.#") + "%", alert.freq_once_per_bar)
+        // >>> LABEL: FORCE EXIT <<<
+        if showLabels
+            label.new(bar_index, high, "FORCE ⏱\n" + str.tostring(forceCallOptPnl, "#.#") + "%", style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.small)
+        callLastExitBar := bar_index
+        callState       := EXITED
+        callEntry       := na
+        dayBias         := BIAS_NONE  // FIX: Allow directional flip after exit
+    
+    //───────────────────────────── EXITED → EARLY (Re-entry) ─────────────────────────────
+    reentryCallAllowed = na(callLastExitBar) or bar_index > callLastExitBar + reentryDelayBars  // FIX: Cooldown support
+    
+    if callState == EXITED and callValid and inSession and allowNewTrades and reentryCallAllowed
+        callState     := EARLY
+        callEarlyTime := time
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //                           PUT STATE MACHINE                               
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    putAllowed = (dayBias == BIAS_NONE or dayBias == BIAS_PUT) and callState != EARLY  // Prevent simultaneous EARLY
+    
+    //───────────────────────────── IDLE → EARLY ─────────────────────────────
+    earlyPutCooldownOK = na(lastEarlyPutAlertTime) or time - lastEarlyPutAlertTime > earlyCooldownMs
+    if putState == IDLE and putValid and inSession and allowNewTrades and putAllowed and earlyPutCooldownOK
+        putState     := EARLY
+        putEarlyTime := time
+        lastEarlyPutAlertTime := time  // Track for cooldown
+        // >>> ALERT: EARLY PUT (heads-up) <<<
+        if showEarlyAlerts
+            alert("[EARLY PUT] " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Watching for confirmation...", alert.freq_once_per_bar)
+    
+    //───────────────────────────── EARLY → IDLE (Invalidation) ─────────────────────────────
+    if putState == EARLY and not putValid
+        putState     := IDLE
+        putEarlyTime := na
+    
+    //───────────────────────────── EARLY → IDLE (Expiration) ─────────────────────────────
+    if putState == EARLY and not na(putEarlyTime) and time - putEarlyTime > maxEarlyMs
+        putState     := IDLE
+        putEarlyTime := na
+    
+    //───────────────────────────── EARLY → IN_TRADE ─────────────────────────────
+    canConfirmPut = not na(putEarlyTime) and time - putEarlyTime >= confirmDelayMs
+    
+    // FIX: Prevent CALL & PUT confirming on same bar
+    if putState == EARLY and canConfirmPut and putValid and inSession and allowNewTrades and callState != IN_TRADE
+        putState    := IN_TRADE
+        putEntry    := closeExec
+        putEntryBar := bar_index  // Track entry bar for same-bar stop protection
+        putT1Hit    := false
+        putT2Hit    := false
+        putT3Hit    := false
+        putStopHit  := false
+        dayBias     := BIAS_PUT
+        
+        // Calculate stop loss
+        rawSL = res
+        atrSL = putEntry + atrVal * atrMultiplier
+        putSL := useAtrStop ? (tightStops ? math.min(rawSL, atrSL) : math.max(rawSL, atrSL)) : rawSL
+        
+        // >>> ALERT: CONFIRMED PUT <<<
+        gapInfoAlertPut = " | " + gapType + " (" + gapSizeType + ")" + (gapFilled ? " [FILLED]" : " [OPEN]")
+        contextInfoPut = " | " + orbInfo + " | " + pdInfo + " | " + mktTrend + " | " + todInfo
+        alert("[CONFIRMED PUT] " + syminfo.ticker + " Entry: " + str.tostring(putEntry, "#.##") + " SL: " + str.tostring(putSL, "#.##") + gapInfoAlertPut + contextInfoPut, alert.freq_once_per_bar)
+        
+        // >>> LABEL: CONFIRMED PUT <<<
+        if showLabels
+            label.new(bar_index, high, "▼ PUT\n" + str.tostring(putEntry, "#.##") + "\nSL: " + str.tostring(putSL, "#.##"), style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+        // >>> LINES: Entry & Stop <<<
+        if showEntryLine
+            line.delete(putEntryLine)
+            putEntryLine := line.new(bar_index, putEntry, bar_index + 50, putEntry, color=color.red, style=line.style_solid, width=2)
+        if showStopLine
+            line.delete(putStopLine)
+            putStopLine := line.new(bar_index, putSL, bar_index + 50, putSL, color=color.green, style=line.style_dashed, width=1)
+    
+    //───────────────────────────── IN_TRADE: Targets & Stop ─────────────────────────────
+    if putState == IN_TRADE
+        putUnderlyingPnl = ((putEntry - closeExec) / putEntry) * 100
+        putOptionPnl     = putUnderlyingPnl / optionDelta
+        
+        // T1 Hit
+        if not putT1Hit and closeExec <= putEntry * (1 - t1Pct/100)
+            putT1Hit := true
+            // >>> ALERT: T1 HIT <<<
+            alert("[T1 HIT] PUT " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: -" + str.tostring(putUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(putOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T1 <<<
+            if showLabels
+                label.new(bar_index, high, "T1 ✓\n+" + str.tostring(putOptionPnl, "#.#") + "%", style=label.style_label_down, color=color.maroon, textcolor=color.white, size=size.tiny)
+        
+        // T2 Hit
+        if putT1Hit and not putT2Hit and closeExec <= putEntry * (1 - t2Pct/100)
+            putT2Hit := true
+            // >>> ALERT: T2 HIT <<<
+            alert("[T2 HIT] PUT " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: -" + str.tostring(putUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(putOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T2 <<<
+            if showLabels
+                label.new(bar_index, high, "T2 ✓\n+" + str.tostring(putOptionPnl, "#.#") + "%", style=label.style_label_down, color=color.fuchsia, textcolor=color.white, size=size.tiny)
+        
+        // T3 Hit
+        if putT2Hit and not putT3Hit and closeExec <= putEntry * (1 - t3Pct/100)
+            putT3Hit := true
+            // >>> ALERT: T3 HIT <<<
+            alert("[T3 HIT] PUT " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: -" + str.tostring(putUnderlyingPnl, "#.##") + "% | Est Option: +" + str.tostring(putOptionPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: T3 <<<
+            if showLabels
+                label.new(bar_index, high, "T3 🎯\n+" + str.tostring(putOptionPnl, "#.#") + "%", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.small)
+        
+        // Stop Hit (with same-bar protection)
+        canCheckStopPut = bar_index > putEntryBar  // FIX: Prevent same-bar stop
+        if canCheckStopPut and closeExec >= putSL and not putStopHit
+            putStopHit     := true
+            putStopPnl     = ((putEntry - closeExec) / putEntry) * 100
+            putStopOptPnl  = putStopPnl / optionDelta
+            // >>> ALERT: STOP EXIT <<<
+            alert("[STOP EXIT] PUT " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: " + str.tostring(putStopPnl, "#.##") + "% | Est Option: " + str.tostring(putStopOptPnl, "#.#") + "%", alert.freq_once_per_bar)
+            // >>> LABEL: STOP EXIT <<<
+            if showLabels
+                label.new(bar_index, low, "STOP ✗\n" + str.tostring(putStopOptPnl, "#.#") + "%", style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.small)
+    
+    //───────────────────────────── IN_TRADE → EXITED ─────────────────────────────
+    if putState == IN_TRADE and (putT3Hit or putStopHit)
+        putLastExitBar := bar_index
+        putState       := EXITED
+        putEntry       := na
+        dayBias        := BIAS_NONE  // FIX: Allow directional flip after exit
+    
+    //───────────────────────────── FORCE EXIT ─────────────────────────────
+    // FIX: Guard against double alert if stop/T3 already hit on same bar
+    if putState == IN_TRADE and time >= forceExitTime and not putStopHit and not putT3Hit
+        forcePutPnl    = ((putEntry - closeExec) / putEntry) * 100
+        forcePutOptPnl = forcePutPnl / optionDelta
+        // >>> ALERT: FORCE EXIT <<<
+        alert("[FORCE EXIT] PUT " + syminfo.ticker + " @ " + str.tostring(closeExec, "#.##") + " | Underlying: " + str.tostring(forcePutPnl, "#.##") + "% | Est Option: " + str.tostring(forcePutOptPnl, "#.#") + "%", alert.freq_once_per_bar)
+        // >>> LABEL: FORCE EXIT <<<
+        if showLabels
+            label.new(bar_index, low, "FORCE ⏱\n" + str.tostring(forcePutOptPnl, "#.#") + "%", style=label.style_label_up, color=color.gray, textcolor=color.white, size=size.small)
+        putLastExitBar := bar_index
+        putState       := EXITED
+        putEntry       := na
+        dayBias        := BIAS_NONE  // FIX: Allow directional flip after exit
+    
+    //───────────────────────────── EXITED → EARLY (Re-entry) ─────────────────────────────
+    reentryPutAllowed = na(putLastExitBar) or bar_index > putLastExitBar + reentryDelayBars  // FIX: Cooldown support
+    
+    if putState == EXITED and putValid and inSession and allowNewTrades and reentryPutAllowed
+        putState     := EARLY
+        putEarlyTime := time
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //                        SESSION END CLEANUP                                
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // FIX: Explicitly clear EXITED to IDLE at session end (cleaner state hygiene)
+    if not inSession
+        if callState == EXITED
+            callState := IDLE
+        if putState == EXITED
+            putState := IDLE

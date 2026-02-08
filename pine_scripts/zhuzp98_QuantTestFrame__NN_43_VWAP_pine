@@ -1,0 +1,82 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © rhapsodyz
+
+//@version=5
+indicator(title     = "[Z] Neural Network Sub 43 - Volume - VWAP", 
+     shorttitle     = "N_VWAP", 
+     overlay        = false, 
+     format         = format.inherit,
+     precision      = 2)
+
+//VWAP//////////////////////////////////////////////////////////////////////////
+computeVWAP(src20, isNewPeriod, stDevMultiplier) =>
+	var float sumSrcVol = na
+	var float sumVol = na
+    var float sumSrcSrcVol = na
+    
+	sumSrcVol := isNewPeriod ? src20 * volume : src20 * volume + sumSrcVol[1]
+	sumVol := isNewPeriod ? volume : volume + sumVol[1]
+	// sumSrcSrcVol calculates the dividend of the equation that is later used to calculate the standard deviation
+	sumSrcSrcVol := isNewPeriod ? volume * math.pow(src20, 2) : volume * math.pow(src20, 2) + sumSrcSrcVol[1]
+	
+	_vwap = sumSrcVol / sumVol
+	variance = sumSrcSrcVol / sumVol - math.pow(_vwap, 2)
+	variance := variance < 0 ? 0 : variance
+	stDev = math.sqrt(variance)
+	
+	lowerBand20 = _vwap - stDev * stDevMultiplier
+	upperBand20 = _vwap + stDev * stDevMultiplier
+	
+	[_vwap, lowerBand20, upperBand20]
+
+hideonDWM = false
+var anchor = "Session"
+src20 = hlc3
+offset20 = 0
+
+showBands = true
+stdevMult = 1.0
+
+timeChange(period) =>
+	ta.change(time(period))
+
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual, barmerge.gaps_on, barmerge.lookahead_on)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross, barmerge.gaps_on, barmerge.lookahead_on)
+new_split = request.splits(syminfo.tickerid, splits.denominator, barmerge.gaps_on, barmerge.lookahead_on)
+
+tcD = timeChange("D")
+tcW = timeChange("W")
+tcM = timeChange("M")
+tc3M = timeChange("3M")
+tc12M = timeChange("12M")
+
+isNewPeriod = anchor == "Earnings" ? new_earnings :
+ anchor == "Dividends" ? new_dividends :
+ anchor == "Splits" ? new_split :
+ na(src20[1]) ? true :
+ anchor == "Session" ? tcD :
+ anchor == "Week" ? tcW :
+ anchor == "Month" ? tcM :
+ anchor == "Quarter" ? tc3M :
+ anchor == "Year" ? tc12M :
+ anchor == "Decade" ? tc12M and year % 10 == 0 :
+ anchor == "Century" ? tc12M and year % 100 == 0 :
+ false
+	
+float vwapValue = na
+float std = na
+float upperBandValue = na
+float lowerBandValue = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, bottom, top] = computeVWAP(src20, isNewPeriod, stdevMult)
+    vwapValue := _vwap
+    upperBandValue := showBands ? top : na
+    lowerBandValue := showBands ? bottom : na
+
+plot(vwapValue, title="VWAP", color=#2962FF, offset=offset)
+
+upperBand20 = plot(upperBandValue, title="Upper Band", color=color.green, offset=offset)
+lowerBand20 = plot(lowerBandValue, title="Lower Band", color=color.green, offset=offset)
+
+fill(upperBand20, lowerBand20, title="Bands Fill", color= showBands ? color.new(color.green, 95) : na)

@@ -1,0 +1,224 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// © CryptoTrading Mid-Long Term Strategy
+
+//@version=5
+strategy("ETH Swing Strategy - EMA200 + RSI + BTC Korelasyon",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     commission_type=strategy.commission.percent,
+     commission_value=0.1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ AYARLAR (INPUTS) ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+grp_trend = "📊 Trend Filtresi"
+ema200_length = input.int(200, "EMA Periyodu", minval=50, maxval=300, group=grp_trend)
+show_ema200 = input.bool(true, "EMA 200 Çizgisini Göster", group=grp_trend)
+
+grp_rsi = "📈 RSI Ayarları"
+rsi_length = input.int(14, "RSI Periyodu", minval=7, maxval=21, group=grp_rsi)
+rsi_trend_entry = input.int(40, "Trend İçi Alım RSI (<=)", minval=30, maxval=50, group=grp_rsi, tooltip="ETH daha volatil - BTC'den 5 puan düşük")
+rsi_dip_entry = input.int(28, "Dip Avcısı RSI (<=)", minval=15, maxval=35, group=grp_rsi, tooltip="ETH için aşırı satım bölgesi")
+rsi_overbought = input.int(75, "Aşırı Alım RSI (>=)", minval=65, maxval=85, group=grp_rsi)
+
+grp_exit = "🚪 Çıkış Stratejisi"
+ema20_length = input.int(20, "Çıkış EMA Periyodu", minval=10, maxval=50, group=grp_exit)
+partial_exit_pct = input.int(50, "İlk Satış Yüzdesi (%)", minval=25, maxval=75, group=grp_exit)
+show_ema20 = input.bool(true, "EMA 20 Çizgisini Göster", group=grp_exit)
+
+grp_btc = "₿ BTC Korelasyon Filtresi"
+enable_btc_filter = input.bool(true, "BTC Korelasyon Filtresini Aktif Et", group=grp_btc, tooltip="BTC EMA50 altındaysa ETH alımı yapma")
+btc_symbol = input.symbol("BINANCE:BTCUSDT", "BTC Sembolü", group=grp_btc)
+btc_ema_length = input.int(50, "BTC EMA Periyodu", minval=20, maxval=100, group=grp_btc)
+
+grp_dip = "🎯 Dip Avcısı Modu"
+enable_dip_hunter = input.bool(true, "Dip Avcısı Modunu Aktif Et", group=grp_dip)
+
+grp_alerts = "🔔 Alarm Ayarları"
+enable_alerts = input.bool(true, "Alarmları Aktif Et", group=grp_alerts)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ HESAPLAMALAR ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ETH Göstergeleri
+ema200 = ta.ema(close, ema200_length)
+ema20 = ta.ema(close, ema20_length)
+rsi = ta.rsi(close, rsi_length)
+
+// BTC Verileri (Korelasyon için)
+btc_close = request.security(btc_symbol, timeframe.period, close)
+btc_ema50 = request.security(btc_symbol, timeframe.period, ta.ema(close, btc_ema_length))
+
+// Trend Durumları
+is_eth_uptrend = close > ema200
+is_eth_downtrend = close < ema200
+is_btc_healthy = btc_close > btc_ema50
+
+// BTC filtresi kontrolü (aktifse BTC sağlıklı olmalı, değilse her zaman geçerli)
+btc_filter_passed = not enable_btc_filter or is_btc_healthy
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ SİNYAL KOŞULLARI ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+// === ALIŞ SİNYALLERİ ===
+
+// 1. Trend İçi Düzeltme Alımı
+// Koşul: ETH > EMA200 VE RSI < 40 VE BTC > EMA50
+trend_buy_signal = is_eth_uptrend and rsi < rsi_trend_entry and rsi[1] >= rsi_trend_entry and btc_filter_passed
+
+// 2. Dip Avcısı Alımı (Riskli)
+// Koşul: RSI < 28 (BTC filtresi opsiyonel)
+dip_buy_signal = enable_dip_hunter and rsi < rsi_dip_entry and rsi[1] >= rsi_dip_entry and is_eth_downtrend
+
+// === SATIŞ SİNYALLERİ ===
+
+// 1. Kısmi Satış: RSI >= 75
+partial_sell_signal = rsi >= rsi_overbought and rsi[1] < rsi_overbought
+
+// 2. Tam Çıkış: Fiyat EMA20 altında kapanış
+full_exit_signal = close < ema20 and close[1] >= ema20
+
+// === UYARI SİNYALLERİ ===
+
+// BTC riskli durumda uyarı (ETH teknik olarak uygun ama BTC zayıf)
+btc_warning = is_eth_uptrend and rsi < rsi_trend_entry and not is_btc_healthy and enable_btc_filter
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ STRATEJİ UYGULAMASI ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+var bool in_position = false
+var bool partial_sold = false
+var string entry_type = ""
+
+// Alış emirleri
+if trend_buy_signal and not in_position
+    strategy.entry("Trend Alım", strategy.long)
+    in_position := true
+    partial_sold := false
+    entry_type := "TREND"
+
+if dip_buy_signal and not in_position
+    strategy.entry("Dip Alım", strategy.long)
+    in_position := true
+    partial_sold := false
+    entry_type := "DIP"
+
+// Kısmi satış
+if partial_sell_signal and in_position and not partial_sold
+    strategy.close("Trend Alım", qty_percent=partial_exit_pct, comment="RSI Kısmi Satış")
+    strategy.close("Dip Alım", qty_percent=partial_exit_pct, comment="RSI Kısmi Satış")
+    partial_sold := true
+
+// Tam çıkış
+if full_exit_signal and in_position
+    strategy.close_all(comment="EMA20 Çıkış")
+    in_position := false
+    partial_sold := false
+    entry_type := ""
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ GÖRSELLEŞTİRME ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+// EMA Çizgileri
+plot(show_ema200 ? ema200 : na, "EMA 200", color=color.purple, linewidth=2)
+plot(show_ema20 ? ema20 : na, "EMA 20", color=color.blue, linewidth=1)
+
+// Trend Arka Plan
+bgcolor(is_eth_uptrend ? color.new(color.green, 95) : color.new(color.red, 95))
+
+// BTC Uyarı Arka Planı (BTC zayıfken)
+bgcolor(btc_warning ? color.new(color.yellow, 85) : na)
+
+// Alım Sinyalleri
+plotshape(trend_buy_signal, "Trend Alım", shape.triangleup, location.belowbar,
+     color=color.green, size=size.normal, text="TREND\nAL")
+plotshape(dip_buy_signal, "Dip Alım", shape.triangleup, location.belowbar,
+     color=color.lime, size=size.normal, text="DİP\nAL")
+
+// BTC Uyarı (teknik uygun ama BTC zayıf)
+plotshape(btc_warning, "BTC Uyarı", shape.xcross, location.abovebar,
+     color=color.yellow, size=size.small, text="BTC\nRİSK")
+
+// Satış Sinyalleri
+plotshape(partial_sell_signal, "Kısmi Satış", shape.triangledown, location.abovebar,
+     color=color.orange, size=size.small, text="%50\nSAT")
+plotshape(full_exit_signal, "Tam Çıkış", shape.triangledown, location.abovebar,
+     color=color.red, size=size.normal, text="ÇIKIŞ")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ BİLGİ PANELİ ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+var table info_panel = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    // ETH Durumu
+    eth_trend_text = is_eth_uptrend ? "🟢 YÜKSELIŞ" : "🔴 DÜŞÜŞ"
+    eth_trend_color = is_eth_uptrend ? color.green : color.red
+
+    // BTC Durumu
+    btc_status_text = is_btc_healthy ? "🟢 SAĞLIKLI" : "🟡 RİSKLİ"
+    btc_status_color = is_btc_healthy ? color.green : color.yellow
+
+    // RSI Rengi
+    rsi_color = rsi < 28 ? color.lime : rsi < 40 ? color.green : rsi > 75 ? color.red : color.gray
+
+    // Panel Başlıkları
+    table.cell(info_panel, 0, 0, "ETH SWING", text_color=color.purple, text_size=size.normal)
+    table.cell(info_panel, 1, 0, "STRATEJİ", text_color=color.purple, text_size=size.normal)
+
+    // ETH Bilgileri
+    table.cell(info_panel, 0, 1, "ETH Trend:", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 1, eth_trend_text, text_color=eth_trend_color, text_size=size.small)
+
+    table.cell(info_panel, 0, 2, "RSI (14):", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 2, str.tostring(rsi, "#.##"), text_color=rsi_color, text_size=size.small)
+
+    table.cell(info_panel, 0, 3, "EMA 200:", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 3, str.tostring(ema200, "#.##"), text_color=color.purple, text_size=size.small)
+
+    // BTC Korelasyon
+    table.cell(info_panel, 0, 4, "━━━━━━", text_color=color.gray, text_size=size.small)
+    table.cell(info_panel, 1, 4, "━━━━━━", text_color=color.gray, text_size=size.small)
+
+    table.cell(info_panel, 0, 5, "BTC Durum:", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 5, btc_status_text, text_color=btc_status_color, text_size=size.small)
+
+    table.cell(info_panel, 0, 6, "BTC/EMA50:", text_color=color.white, text_size=size.small)
+    btc_vs_ema = ((btc_close - btc_ema50) / btc_ema50) * 100
+    table.cell(info_panel, 1, 6, str.tostring(btc_vs_ema, "#.##") + "%", text_color=btc_vs_ema > 0 ? color.green : color.red, text_size=size.small)
+
+    // Sinyal Durumu
+    signal_text = trend_buy_signal ? "📈 TREND ALIM!" : dip_buy_signal ? "🎯 DİP ALIM!" : btc_warning ? "⚠️ BTC RİSKLİ" : partial_sell_signal ? "⚠️ KISMI SAT" : full_exit_signal ? "🚪 ÇIKIŞ" : "⏳ BEKLİYOR"
+    signal_color = trend_buy_signal or dip_buy_signal ? color.green : btc_warning ? color.yellow : partial_sell_signal or full_exit_signal ? color.red : color.gray
+
+    table.cell(info_panel, 0, 7, "Sinyal:", text_color=color.white, text_size=size.small)
+    table.cell(info_panel, 1, 7, signal_text, text_color=signal_color, text_size=size.small)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ███ ALARMLAR ███
+// ══════════════════════════════════════════════════════════════════════════════
+
+// NOT: alertcondition sadece sabit string kabul eder, dinamik RSI değeri kullanılamaz
+// {{close}}, {{ticker}}, {{time}}, {{exchange}} gibi TradingView placeholder'ları kullanılabilir
+
+alertcondition(trend_buy_signal, title="ETH Trend İçi Alım", message="🟢 ETH TREND ALIM SİNYALİ!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nKoşul: RSI < 40 ve Fiyat > EMA200 ve BTC Sağlıklı\n\n✅ Güçlü alım fırsatı!")
+
+alertcondition(dip_buy_signal, title="ETH Dip Avcısı Alım", message="🎯 ETH DİP ALIM SİNYALİ!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nKoşul: RSI < 28 (Aşırı Satım)\n\n⚠️ Volatil piyasa - Kademeli al!")
+
+alertcondition(btc_warning, title="ETH BTC Risk Uyarısı", message="🟡 ETH TEKNİK UYGUN AMA BTC RİSKLİ!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nETH RSI uygun ancak BTC EMA50 altında.\n\n⚠️ Piyasa riskli - Dikkatli ol!")
+
+alertcondition(partial_sell_signal, title="ETH Kısmi Satış", message="🟠 ETH KISMI SATIŞ!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nKoşul: RSI >= 75 (Aşırı Alım)\n\n💰 Pozisyonun %50'sini sat!")
+
+alertcondition(full_exit_signal, title="ETH Tam Çıkış", message="🔴 ETH TAM ÇIKIŞ!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nKoşul: EMA20 altında kapanış\n\n🚪 Tüm pozisyonu kapat!")
+
+// Kombine alarm
+any_signal = trend_buy_signal or dip_buy_signal or partial_sell_signal or full_exit_signal or btc_warning
+alertcondition(any_signal, title="ETH Tüm Sinyaller", message="📊 ETH SİNYAL ALGILANDI!\n\nSembol: {{ticker}}\nFiyat: {{close}}\nZaman: {{time}}\n\nDetaylar için grafiği kontrol et.")

@@ -1,0 +1,82 @@
+//@version=5
+
+indicator(title='UT Bot Buy with STC', overlay=true)
+EEEEEE = input(80, 'Length')
+BBBB = input(27, 'FastLength')
+BBBBB = input(50, 'SlowLength')
+
+AAAA(BBB, BBBB, BBBBB) =>
+    fastMA = ta.ema(BBB, BBBB)
+    slowMA = ta.ema(BBB, BBBBB)
+    AAAA = fastMA - slowMA
+    AAAA
+
+AAAAA(EEEEEE, BBBB, BBBBB) =>
+    AAA = input(0.5)
+    var CCCCC = 0.0
+    var DDD = 0.0
+    var DDDDDD = 0.0
+    var EEEEE = 0.0
+    BBBBBB = AAAA(close, BBBB, BBBBB)
+    CCC = ta.lowest(BBBBBB, EEEEEE)
+    CCCC = ta.highest(BBBBBB, EEEEEE) - CCC
+    CCCCC := CCCC > 0 ? (BBBBBB - CCC) / CCCC * 100 : nz(CCCCC[1])
+    DDD := na(DDD[1]) ? CCCCC : DDD[1] + AAA * (CCCCC - DDD[1])
+    DDDD = ta.lowest(DDD, EEEEEE)
+    DDDDD = ta.highest(DDD, EEEEEE) - DDDD
+    DDDDDD := DDDDD > 0 ? (DDD - DDDD) / DDDDD * 100 : nz(DDDDDD[1])
+    EEEEE := na(EEEEE[1]) ? DDDDDD : EEEEE[1] + AAA * (DDDDDD - EEEEE[1])
+    EEEEE
+
+mAAAAA = AAAAA(EEEEEE, BBBB, BBBBB)
+mColor = mAAAAA > mAAAAA[1] ? color.new(color.green, 20) : color.new(color.red, 20)
+
+
+
+if mAAAAA[3] <= mAAAAA[2] and mAAAAA[2] > mAAAAA[1] and mAAAAA > 75
+    alert("Red", alert.freq_once_per_bar)
+if mAAAAA[3] >= mAAAAA[2] and mAAAAA[2] < mAAAAA[1] and mAAAAA < 25
+    alert("Green", alert.freq_once_per_bar)
+
+
+plot(mAAAAA, color=mColor, title='STC', linewidth=2)
+
+ul = plot(25, color=color.new(color.gray, 70))
+ll = plot(75, color=color.new(color.gray, 70))
+fill(ul, ll, color=color.new(color.gray, 96))
+
+
+
+//@version=5
+
+// indicator(title='UT Bot Buy with STC', overlay=true)
+//CREDITS to HPotter for the orginal code. The guy trying to sell this as his own is a scammer lol. 
+src = close
+
+keyvalue = input.float(2, title='Key Vaule. \'This changes the sensitivity\'', step=.5)
+atrperiod = input(300, title='ATR Period')
+xATR = ta.atr(atrperiod)
+nLoss = keyvalue * xATR
+
+xATRTrailingStop = 0.0
+iff_1 = src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+iff_2 = src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src + nLoss) : iff_1
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src - nLoss) : iff_2
+
+pos = 0
+iff_3 = src[1] > nz(xATRTrailingStop[1], 0) and src < nz(xATRTrailingStop[1], 0) ? -1 : nz(pos[1], 0)
+pos := src[1] < nz(xATRTrailingStop[1], 0) and src > nz(xATRTrailingStop[1], 0) ? 1 : iff_3
+
+xcolor = pos == -1 ? color.red : pos == 1 ? color.green : color.blue
+
+plot(xATRTrailingStop, color=xcolor, title='Trailing Stop')
+buy = ta.crossover(src, xATRTrailingStop)
+sell = ta.crossunder(src, xATRTrailingStop)
+barcolor = src > xATRTrailingStop
+
+plotshape(buy, title='Buy', text='Buy', style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.new(color.white, 0), size=size.tiny)
+plotshape(sell, title='Sell', text='Sell', style=shape.labeldown, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), size=size.tiny)
+
+barcolor(barcolor ? color.green : color.red)
+
+alertcondition(buy and mAAAAA < 25 and mColor == color.green, title='UT BOT Buy', message='UT BOT Buy')

@@ -1,0 +1,215 @@
+//@version=4
+
+study("MJ - Brinks", overlay=true)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== DATE UTILS ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+int MS_PER_MINUTE = 1000 * 60
+int MS_PER_HOUR = MS_PER_MINUTE * 60
+int MS_PER_DAY = MS_PER_HOUR * 24
+
+_getFutureTimeNBarsFromNow(numBars) => time + ( ( time - time[1] ) * numBars )
+
+_getPastTimeNBarsBackFromNow(numBars) => time - ( ( time - time[1] ) * numBars )
+
+_currentBarTime() => time(timeframe.period)
+
+_calcBarsPerHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+
+_calcBarsPerDay() => _calcBarsPerHour() * 24
+
+_timeElapsedTodayInMs() => (MS_PER_HOUR * hour) - (MS_PER_MINUTE * minute) - (1000 * second)
+_timeElapsedThisHourInMs() => (MS_PER_MINUTE * minute) + (1000 * second)
+
+_getTimeAtBeginningOfToday() => timenow - _timeElapsedTodayInMs()
+    
+_getTimeAtStartOfHourNHoursAgo(numHours) => 
+    timeElapsedSinceStartInMs = _timeElapsedThisHourInMs() + (numHours * MS_PER_HOUR)
+    timenow - timeElapsedSinceStartInMs
+
+
+// *** TOOD ***
+// _getBarIndexAtTime() => 
+// _getBarIndexForTimestamp(_timestamp) => 
+
+_getBarsElapsedAndRemainingForCurrentHour() =>
+    int barLengthInMinutes = (time - time[1]) / MS_PER_MINUTE
+    int barsElapsedThisHour = minute / barLengthInMinutes 
+    int barsPerHour = 60 / barLengthInMinutes
+    int barsRemainingThisHour = barsPerHour - barsElapsedThisHour
+    [barsElapsedThisHour, barsRemainingThisHour]
+
+_getStartTimeNDaysBack(numDays) => 
+    // int barsPerDay = _calcBarsPerDay()
+    // int numBarsElapsedToday = 0
+    // int barsElapsedSinceCutoff = numBarsElapsedToday + (barsPerDay * numDays)
+    // _getPastTimeNBarsBackFromNow(barsElapsedSinceCutoff)
+    _getTimeAtBeginningOfToday() - (numDays * MS_PER_DAY)    
+
+_isCurrentDay() => 
+    currentBarTime = time(timeframe.period)
+    currentBarTime > (timenow - MS_PER_DAY)   
+
+_isInSession(timeRange) =>
+    not na(time(timeframe.period, timeRange))
+
+_isFirstOrLastFiveMinOfAnyHour() => 
+    _isInSession('2355-0005') or _isInSession('0055-0105') or _isInSession('0155-0205') or _isInSession('0255-0305') or _isInSession('0355-0405') or _isInSession('0455-0505') or _isInSession('0555-0605') or _isInSession('0655-0705') or _isInSession('0755-0805') or _isInSession('0855-0905') or _isInSession('0955-1005') or _isInSession('1055-1105') or _isInSession('1155-1205') or _isInSession('1255-1305') or _isInSession('1355-1405') or _isInSession('1455-1505') or _isInSession('1555-1605') or _isInSession('1655-1705') or _isInSession('1755-1805') or _isInSession('1855-1905') or _isInSession('1955-2005') or _isInSession('2055-2105') or _isInSession('2155-2205') or _isInSession('2255-2305')    
+
+_monthColorBarForCurrentTimeframeAtResolution(Resolution) =>
+    t = time(Resolution, session.regular) // e.g. "1440" = Daily Resolution
+    not na(t[1]) and na(t) or t[1] < t
+
+_isFirstBarForCurrentTimeframeAtResolution(Resolution) =>
+    // e.g. current timeframe: 1min, resolution: '60' => return true for the first minute of the hour
+    // e.g. current timeframe: 5min, resolution: '60' => return true for the first 5 minutes of the hour
+    t = time(Resolution)
+    previousBar = t[1]
+    currentBar = t
+    not na(currentBar) and ( na(previousBar) or currentBar > previousBar)
+
+//////////////////////////////////////////////////////////////////
+// 
+// ==== BRINKS BOX ==== 
+// 
+//////////////////////////////////////////////////////////////////
+
+// dependencies: dateUtils
+
+groupBrinks = 'Brinks Box'
+
+// ---- toggles ----
+onlyShowBrinksForCurrentDay = input(false, 'Only show Brinks for current day?', group=groupBrinks)
+brinksExtendVertically = input(false, 'Extend Brinks Shading Vertically?', group=groupBrinks)
+dailyLast15MinExtendVertically = input(true, 'Extend Daily Last 15min Shading Vertically?', group=groupBrinks)
+nyBrinksActive = input(true, 'New York Brinks Active', group=groupBrinks)
+londonBrinksActive = input(true, 'London Brinks Active', group=groupBrinks)
+dailyLast15minActive = input(true, 'Last 15min of Day Active', group=groupBrinks)
+brinksPlotJoined = input(false, 'Join Brinks Plot Points?', group=groupBrinks)
+// ---- dropdowns ----
+maxTimeFrameToShowBrinks = input(title='Max timeframe to show Brinks', defval=15, maxval=60, minval=1, group=groupBrinks)
+brinksLineColor = input(color.new(#b2b5be, 100), 'Brinks Line Color', group=groupBrinks)
+brinksBgColor = input(color.new(#b2b5be, 80), 'Brinks BG Color', group=groupBrinks)
+dailyLast15MinLineColor = input(color.new(#f57f17, 100), 'Daily Last 15min Line Color', group=groupBrinks)
+dailyLast15MinBgColor = input(color.new(#f57f17, 90), 'Daily Last 15min BG Color', group=groupBrinks)
+brinksPlotStyle = input(plot.style_linebr, 'Brinks Plot Style', group=groupBrinks, options=[plot.style_circles, plot.style_cross, plot.style_line, plot.style_linebr, plot.style_stepline])
+brinksLineWidth = input(2, 'Brinks Line Width', group=groupBrinks, options=[1,2,3,4])
+// ----- time ranges -----
+nyBrinksTimeRange = input('1300-1401:23456', 'New York Session Time', group=groupBrinks, type=input.session)
+londonBrinksTimeRange = input('0700-0801:23456', 'London Session Time', group=groupBrinks, type=input.session)
+dailyLast15MinTimeRange = input('2345-0001:1234567', 'Last 15min Time', group=groupBrinks, type=input.session)
+
+// ---------------
+// FUNCTIONS
+// ---------------
+
+_isValidBrinksTimeframe() => timeframe.multiplier <= maxTimeFrameToShowBrinks and timeframe.isintraday
+
+_passesBrinksDayRestriction() => onlyShowBrinksForCurrentDay ? _isCurrentDay() : true
+
+_getBrinksBgColorForTimeRange(timeRange, isActive, _color) => 
+    isGoodTimeframe = _isValidBrinksTimeframe()
+    passesDayRestriction = _passesBrinksDayRestriction()
+    isInSession = _isInSession(timeRange)
+    bgColor = isInSession and isActive and isGoodTimeframe and passesDayRestriction ? _color : na
+
+_getBrinksLabel(timeRange, isActive, text) => 
+    isGoodTimeframe = _isValidBrinksTimeframe()
+    isInSession = _isInSession(timeRange)
+    isFirstBar = _isFirstBarForCurrentTimeframeAtResolution('30')
+    labelPosition = time(timeframe.period, timeRange)
+    label.new(labelPosition, high, text, textcolor=color.white, color=color.red, style=label.style_flag, size=size.large, xloc=xloc.bar_time)
+
+_captureSessionHighLow(timeRange, isActive) =>
+    var float _sessionHigh = na
+    var float _sessionLow = na
+    var float _sessionOpen = na
+
+    isInSession = _isInSession(timeRange)
+
+    if isInSession
+        isFirstBarOfSession = isInSession and not isInSession[1]
+        if isFirstBarOfSession
+            _sessionHigh := high
+            _sessionLow  := low
+            _sessionOpen := open
+        else 
+            _sessionHigh := high > _sessionHigh ? high : _sessionHigh
+            _sessionLow  := low  < _sessionLow  ? low  : _sessionLow
+
+            // if extendHLRangeToBeginningOfSession
+            //     if _sessionHigh > _sessionHigh[1]
+            //         _sessionHigh[1] = _sessionHigh
+
+            //     if _sessionLow < _sessionLow[1]
+            //         _sessionLow[1] = _sessionLow
+    
+    else //  not in session or holding, so we can reset.
+        _sessionHigh := na
+        _sessionLow  := na
+        _sessionOpen := na
+
+    // if _inSession //  if we are in session...
+    //     if not _inSession[1] //  if it just started, set the initial values
+    //         _sessionHigh := high
+    //         _sessionLow  := low
+    //         _sessionOpen := open
+    //     else //  otherwise we are checking for higher highs and lower lows to update with and remembering the new levels
+    //         _sessionHigh := high > _sessionHigh ? high : _sessionHigh
+    //         _sessionLow  := low  < _sessionLow  ? low  : _sessionLow
+    
+    // else if _inHolding //  else if we're in holding state... just reference self to maintain the same levels
+    //     _sessionHigh := _sessionHigh
+    //     _sessionLow  := _sessionLow
+    //     _sessionOpen := _sessionOpen
+    
+    // else //  not in session or holding, so we can reset.
+    //     _sessionHigh := na
+    //     _sessionLow  := na
+    //     _sessionOpen := na
+
+    if not isActive or not _passesBrinksDayRestriction() or not _isValidBrinksTimeframe()
+        [na, na, na]
+    else 
+        [_sessionHigh, _sessionLow, _sessionOpen]
+
+
+
+// ---------------
+// PLOTTING
+// --------------
+// londonBrinksLabel = _getBrinksLabel(londonBrinksTimeRange, londonBrinksActive, 'London Brinks Box')
+isValidTF = _isValidBrinksTimeframe()
+_brinksBgColor = isValidTF ? brinksBgColor : na
+_brinksLineColor = isValidTF ? brinksLineColor : na
+
+// London Brinks
+bgcolor(_getBrinksBgColorForTimeRange(londonBrinksTimeRange, londonBrinksActive and brinksExtendVertically, _brinksBgColor))
+[londonBrinksHigh, londonBrinksLow, londonBrinksOpen] = _captureSessionHighLow(londonBrinksTimeRange, londonBrinksActive and not brinksExtendVertically)
+londonBrinksPlotHigh = plot(londonBrinksHigh, 'London Brinks High', _brinksLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+londonBrinksPlotLow = plot(londonBrinksLow, 'London Brinks Low', _brinksLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+fill(londonBrinksPlotHigh, londonBrinksPlotLow, _brinksBgColor)
+
+// New York Brinks
+bgcolor(_getBrinksBgColorForTimeRange(nyBrinksTimeRange, nyBrinksActive and brinksExtendVertically, _brinksBgColor))
+[nyBrinksHigh, nyBrinksLow, nyBrinksOpen] = _captureSessionHighLow(nyBrinksTimeRange, nyBrinksActive and not brinksExtendVertically)
+nyBrinksPlotHigh = plot(nyBrinksHigh, 'Ny Brinks High', _brinksLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+nyBrinksPlotLow = plot(nyBrinksLow, 'Ny Brinks Low', _brinksLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+fill(nyBrinksPlotHigh, nyBrinksPlotLow, _brinksBgColor)
+
+// Daily Last 15min
+bgcolor(_getBrinksBgColorForTimeRange(dailyLast15MinTimeRange, dailyLast15minActive and dailyLast15MinExtendVertically, dailyLast15MinBgColor))
+[last15BrinksHigh, last15BrinksLow, last15BrinksOpen] = _captureSessionHighLow(dailyLast15MinTimeRange, dailyLast15minActive and not dailyLast15MinExtendVertically)
+dailyLast15BrinksPlotHigh = plot(last15BrinksHigh, 'Daily Last 15min High', dailyLast15MinLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+dailyLast15BrinksPlotLow = plot(last15BrinksLow, 'Daily Last 15min Low', dailyLast15MinLineColor, brinksLineWidth, brinksPlotStyle, join=brinksPlotJoined)
+fill(dailyLast15BrinksPlotHigh, dailyLast15BrinksPlotLow, dailyLast15MinBgColor)
+
+// Hourly First/Last 5min
+// bgcolor(_getBgColorForFirstLastFiveMinutesOfEachHour())

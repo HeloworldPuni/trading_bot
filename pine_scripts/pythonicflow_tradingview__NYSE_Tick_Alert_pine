@@ -1,0 +1,37 @@
+//@version=5
+
+indicator(title='NYSE Tick Alert on Chart', overlay=true)
+
+user_input = input.float(minval = 600, step = 50, defval = 600, title='Level', tooltip="Min. Value = 600, step = 50")
+
+string SIZE_LARGE  = "Large"
+string SIZE_NORMAL = "Normal"
+string SIZE_SMALL  = "Small"
+string sizeInput = input.string(SIZE_NORMAL, "Size", options = [SIZE_LARGE, SIZE_NORMAL, SIZE_SMALL])
+var bool plot = na 
+
+getSize(simple string userSize) =>
+    result =
+      switch userSize
+        SIZE_LARGE  => size.large
+        SIZE_NORMAL => size.normal
+        SIZE_SMALL  => size.small
+        => size.auto
+
+neg_input = user_input * -1
+
+[h, l, firstbar_check, lastbar_check] = request.security('USI:TICK', timeframe.period, [high, low, session.isfirstbar, session.islastbar])
+
+plot := firstbar_check ? true : lastbar_check[1] ? false : plot
+if not plot
+    h := na
+    l := na
+
+if h >= user_input
+    label.new(bar_index, na, yloc = yloc.abovebar, color = color.new(#ff8952, 0), style = label.style_triangledown, size = getSize(sizeInput))
+
+if l <= neg_input
+    label.new(bar_index, na, yloc = yloc.belowbar, color = color.new(#52a3ff, 0), style = label.style_triangleup, size = getSize(sizeInput))
+
+alertcondition(h >= user_input == true, "NYSE Tick high!")
+alertcondition(l <= neg_input == true, "NYSE Tick low!")

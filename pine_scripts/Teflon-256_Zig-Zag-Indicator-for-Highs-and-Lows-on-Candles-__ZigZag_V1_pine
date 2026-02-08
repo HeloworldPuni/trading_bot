@@ -1,0 +1,175 @@
+//@version=6
+indicator("Origins and Balances: Highs and Lows Indicator", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ---------------------------------------------------------------------------
+// State variables (no bool is initialized to na)
+// ---------------------------------------------------------------------------
+var int   seq_start_idx = na
+var bool  seq_color_white = false
+var bool  seq_color_white_set = false  // explicit init flag to avoid na assignment
+var int   seq_last_bar = na
+var float seq_last_high = na
+var float seq_last_low  = na
+
+var bool  pending_low = false
+var int   pending_low_idx = na
+var float pending_low_price = na
+
+var bool  pending_high = false
+var int   pending_high_idx = na
+var float pending_high_price = na
+
+// arrays to store finalized pivots and lines so we can draw them
+var int[]    piv_idx   = array.new_int()
+var float[]  piv_price = array.new_float()
+var string[] piv_type  = array.new_string()
+var line[]   piv_lines = array.new_line()
+
+// Utility: add a finalized pivot and draw a line from previous pivot to this one
+f_add_pivot(_idx, _price, _type) =>
+    if not na(_price) and not na(_idx)
+        array.push(piv_idx, _idx)
+        array.push(piv_price, _price)
+        array.push(piv_type, _type)
+        // (Pivot H/L labels removed per request)
+        // draw connecting line to previous pivot if exists
+        if array.size(piv_idx) >= 2
+            prev_idx = array.get(piv_idx, array.size(piv_idx) - 2)
+            prev_price = array.get(piv_price, array.size(piv_price) - 2)
+            ln_color = _price > prev_price ? color.green : color.red
+            ln = line.new(prev_idx, prev_price, _idx, _price, xloc=xloc.bar_index, extend=extend.none, color=ln_color, width=2)
+            array.push(piv_lines, ln)
+
+// Determine candle "color" according to your definitions
+cur_white = close > open
+cur_black = close < open
+is_doji = close == open
+
+// Initialize on the first bar to avoid assigning na to a bool
+if barstate.isfirst
+    seq_color_white := is_doji ? true : cur_white
+    seq_color_white_set := true
+    seq_start_idx := bar_index
+    seq_last_bar := bar_index
+    seq_last_high := high
+    seq_last_low := low
+
+// Process only on confirmed bars
+if barstate.isconfirmed
+    // Finalize pending low if present (we may finalize based on current bar)
+    if pending_low
+        if cur_white
+            // choose the lower low between pending candidate and current white
+            chosen_price = pending_low_price <= low ? pending_low_price : low
+            chosen_idx = pending_low_price <= low ? pending_low_idx : bar_index
+            f_add_pivot(chosen_idx, chosen_price, "low")
+            pending_low := false
+        else
+            // current is black or doji -> finalize pending low as candidate (no white after)
+            f_add_pivot(pending_low_idx, pending_low_price, "low")
+            pending_low := false
+            // continue processing this bar
+
+    // Finalize pending high if present
+    if pending_high
+        if cur_black
+            // choose the higher high between pending candidate and current black
+            chosen_price_h = pending_high_price >= high ? pending_high_price : high
+            chosen_idx_h = pending_high_price >= high ? pending_high_idx : bar_index
+            f_add_pivot(chosen_idx_h, chosen_price_h, "high")
+            pending_high := false
+        else
+            // current is white or doji -> finalize pending high as candidate (no black after)
+            f_add_pivot(pending_high_idx, pending_high_price, "high")
+            pending_high := false
+            // continue processing this bar
+
+    // Ensure sequence initialized (in case isfirst didn't run in some contexts)
+    if not seq_color_white_set
+        seq_color_white := is_doji ? true : cur_white
+        seq_color_white_set := true
+        seq_start_idx := bar_index
+        seq_last_bar := bar_index
+        seq_last_high := high
+        seq_last_low := low
+    else
+        // If current candle matches the ongoing sequence color
+        if (seq_color_white and cur_white) or (not seq_color_white and cur_black)
+            // Continuation of same-color sequence
+            if seq_color_white
+                // For successive whites: require higher highs and higher lows to continue
+                if (high > seq_last_high) and (low > seq_last_low)
+                    seq_last_high := high
+                    seq_last_low := low
+                    seq_last_bar := bar_index
+                else
+                    // Candle x breaks monotonic increase
+                    // Correct High is high of candle before x (seq_last_bar)
+                    f_add_pivot(seq_last_bar, seq_last_high, "high")
+                    // The subsequent low will be the lower of candle x or the white after it; set pending candidate at x
+                    pending_low := true
+                    pending_low_idx := bar_index
+                    pending_low_price := low
+                    // Reset sequence starting at current candle (keep it white)
+                    seq_start_idx := bar_index
+                    seq_last_bar := bar_index
+                    seq_last_high := high
+                    seq_last_low := low
+            else
+                // Black sequence continuation requires strictly lower highs and lower lows
+                if (high < seq_last_high) and (low < seq_last_low)
+                    seq_last_high := high
+                    seq_last_low := low
+                    seq_last_bar := bar_index
+                else
+                    // Candle x breaks monotonic decrease
+                    // Correct Low is low of candle before x (seq_last_bar)
+                    f_add_pivot(seq_last_bar, seq_last_low, "low")
+                    // The subsequent high will be the higher of candle x or the black after it; set pending candidate at x
+                    pending_high := true
+                    pending_high_idx := bar_index
+                    pending_high_price := high
+                    // Reset sequence starting at current candle (black)
+                    seq_start_idx := bar_index
+                    seq_last_bar := bar_index
+                    seq_last_high := high
+                    seq_last_low := low
+
+        else
+            // Color change: finalize pivot by comparing extremes
+            if seq_color_white and cur_black
+                // Choose higher high between last white and current black
+                if high > seq_last_high
+                    f_add_pivot(bar_index, high, "high")
+                else
+                    f_add_pivot(seq_last_bar, seq_last_high, "high")
+                // Start new black sequence with this bar
+                seq_color_white := false
+                seq_start_idx := bar_index
+                seq_last_bar := bar_index
+                seq_last_high := high
+                seq_last_low := low
+
+            else if (not seq_color_white) and cur_white
+                // Choose lower low between last black and current white
+                if low < seq_last_low
+                    f_add_pivot(bar_index, low, "low")
+                else
+                    f_add_pivot(seq_last_bar, seq_last_low, "low")
+                // Start new white sequence with this bar
+                seq_color_white := true
+                seq_start_idx := bar_index
+                seq_last_bar := bar_index
+                seq_last_high := high
+                seq_last_low := low
+
+            else
+                // Handle doji: do not flip the current sequence; update last high/low conservatively
+                if is_doji
+                    seq_last_high := math.max(seq_last_high, high)
+                    seq_last_low := math.min(seq_last_low, low)
+                    seq_last_bar := bar_index
+
+// ----------------------------------------------------------------------------
+// End of main logic
+// ----------------------------------------------------------------------------

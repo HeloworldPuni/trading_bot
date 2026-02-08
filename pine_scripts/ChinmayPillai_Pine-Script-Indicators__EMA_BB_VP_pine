@@ -1,0 +1,152 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ChinmayPillai
+
+//@version=5
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// INDICATOR
+///////////////////////////////////////////////////////////////////////////////////////////////////
+indicator(title = "EMA 20/50/100/200 + Bollinger Bands + Volume Profile", 
+    shorttitle      = "EMA+BB+VP", 
+    overlay         = true, 
+    precision       = 4, 
+    linktoseries    = true, 
+    max_bars_back   = 1000, 
+    max_lines_count = 500)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// EMA
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+shortest = ta.ema(close, 20)
+short = ta.ema(close, 50)
+longer = ta.ema(close, 100)
+longest = ta.ema(close, 200)
+
+plot(shortest, "EMA 20", color = color.fuchsia)
+plot(short, "EMA 50", color = color.olive)
+plot(longer, "EMA 100", color = color.silver)
+plot(longest, "EMA 200", color = color.white)
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// BB
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+show_bb = input.bool(false, "Show Bollinger Band Plots", group = "Bollinger Bands")
+length = input.int(20, "BB Length", minval=1, group = "Bollinger Bands")
+maType = input.string("SMA", "BB Basis MA Type", options = ["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group = "Bollinger Bands")
+src = input(close, title="BB Source", group = "Bollinger Bands")
+mult = input.float(2.0, minval=0.001, maxval=50, title="BB StdDev", group = "Bollinger Bands")
+
+ma(source, length, _type) =>
+   switch _type
+       "SMA" => ta.sma(source, length)
+       "EMA" => ta.ema(source, length)
+       "SMMA (RMA)" => ta.rma(source, length)
+       "WMA" => ta.wma(source, length)
+       "VWMA" => ta.vwma(source, length)
+
+basis = ma(src, length, maType)
+dev = mult * ta.stdev(src, length)
+upper = basis + dev
+lower = basis - dev
+offset = input.int(0, "BB Offset", minval = -500, maxval = 500, display = display.data_window, group = "Bollinger Bands")
+p = plot(basis, "BB Basis", color=show_bb ? #2962FF : na, offset = offset)
+p1 = plot(upper, "BB Upper", color=show_bb ? #089981 : na, offset = offset)
+p2 = plot(lower, "BB Lower", color=show_bb ? #F23645 : na, offset = offset)
+fill(p, p1, title = "BB Upper Bg", color=color.new(color.green, 80))
+fill(p2, p, title = "BB Lower Bg", color=color.new(color.red, 80))
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// INPUTS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+vp_lookback   = input.int(200, "VP Volume Lookback Depth", minval  = 10, maxval  = 1000, group = "Volume Profile")
+vp_max_bars   = input.int(500, "VP Number of Bars", minval=10, maxval=500, group = "Volume Profile")
+vp_bar_mult   = input.int(50, "VP Bar Length Multiplier", minval=10, maxval=100, group = "Volume Profile")
+vp_bar_offset = input.int(100, "VP Bar Horizontal Offset", minval=0, maxval=100, group = "Volume Profile")
+vp_bar_width  = input.int(1, "VP Bar Width", minval=1, maxval=20, group = "Volume Profile")
+
+// As suggested by @NXT2017
+vp_delta_type = input.string("Both", "VP Delta Type", options=['Both', 'Bullish', 'Bearish'], group = "Volume Profile")
+vp_poc_show   = input.bool(true, "VP Show POC Line", group = "Volume Profile")
+vp_bar_color  = input.color(color.new(color.blue, 60), "VP Bar Color", group = "Volume Profile")
+vp_poc_color  = input.color(color.new(color.orange, 10), "VP POC Color", group = "Volume Profile")
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// VP VARIABLES
+///////////////////////////////////////////////////////////////////////////////////////////////////
+float vp_Vmax = 0.0
+int vp_VmaxId = 0
+int vp_N_BARS = vp_max_bars
+
+var int vp_first = time
+
+vp_a_P = array.new_float((vp_N_BARS + 1), 0.0)
+vp_a_V = array.new_float(vp_N_BARS, 0.0)
+vp_a_D = array.new_float(vp_N_BARS, 0.0)
+vp_a_W = array.new_int(vp_N_BARS, 0)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// VP CALCULATIONS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+float vp_HH = ta.highest(high, vp_lookback)
+float vp_LL = ta.lowest(low, vp_lookback)
+
+if barstate.islast
+   float vp_HL = (vp_HH - vp_LL) / vp_N_BARS
+   for j = 1 to (vp_N_BARS + 1)
+       array.set(vp_a_P, (j-1), (vp_LL + vp_HL * j))
+   for i = 0 to (vp_lookback - 1)
+       int Dc = 0
+       array.fill(vp_a_D, 0.0)
+       for j = 0 to (vp_N_BARS - 1)
+           float Pj = array.get(vp_a_P, j)
+           if low[i] < Pj and high[i] > Pj and (vp_delta_type == "Bullish" ? 
+            close[i] >= open[i] : (vp_delta_type == "Bearish" ? close[i] <= open[i] : true))
+               float Dj = array.get(vp_a_D, j)
+               float dDj = Dj + nz(volume[i])
+               array.set(vp_a_D, j, dDj)
+               Dc := Dc + 1
+       for j = 0 to (vp_N_BARS - 1)
+           float Vj = array.get(vp_a_V, j)
+           float Dj = array.get(vp_a_D, j)
+           float dVj = Vj + ((Dc > 0) ? (Dj / Dc) : 0.0)
+           array.set(vp_a_V, j, dVj)
+   vp_Vmax := array.max(vp_a_V)
+   vp_VmaxId := array.indexof(vp_a_V, vp_Vmax)
+   for j = 0 to (vp_N_BARS - 1)
+       float Vj = array.get(vp_a_V, j)
+       int Aj = math.round(vp_bar_mult * Vj / vp_Vmax)
+       array.set(vp_a_W, j, Aj)
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// VP PLOTING
+///////////////////////////////////////////////////////////////////////////////////////////////////
+if barstate.isfirst
+   vp_first := time
+vp_change = ta.change(time)
+vp_x_loc = timenow + math.round(vp_change * vp_bar_offset)
+
+f_setup_bar(n) =>
+   x1 = ((vp_VmaxId == n) and vp_poc_show) ? math.max(time[vp_lookback], vp_first) : 
+        (timenow + math.round(vp_change * (vp_bar_offset - array.get(vp_a_W, n))))
+   ys = array.get(vp_a_P, n)
+   line.new(x1     = x1, 
+            y1     = ys, 
+            x2     = vp_x_loc, 
+            y2     = ys, 
+            xloc   = xloc.bar_time, 
+            extend = extend.none, 
+            color  = (vp_VmaxId == n ? vp_poc_color : vp_bar_color), 
+            style  = line.style_solid, 
+            width  = vp_bar_width)
+
+if barstate.islast
+   for i = 0 to (vp_N_BARS - 1) by 1
+       f_setup_bar(i)
+  
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// END
+///////////////////////////////////////////////////////////////////////////////////////////////////
+

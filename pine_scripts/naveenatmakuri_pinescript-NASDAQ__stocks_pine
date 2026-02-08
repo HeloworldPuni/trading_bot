@@ -1,0 +1,157 @@
+//@version=6
+strategy("Universal NASDAQ Long Strategy - Balanced", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// === INPUTS ===
+chartTF      = input.string("15", title="Chart Timeframe (min)")
+mode         = input.string("Balanced", title="Strategy Mode", options=["Balanced"])
+rsiPeriod    = input.int(14, title="RSI Period")
+emaFastLen   = input.int(9, title="EMA Fast Length")
+emaSlowLen   = input.int(21, title="EMA Slow Length")
+adxPeriod    = input.int(14, title="ADX Period")
+adxSmoothing = input.int(14, title="ADX Smoothing")
+atrPeriod    = input.int(14, title="ATR Period")
+slMult       = input.float(1.2, title="Stop Loss ATR Multiplier")
+tpMult       = input.float(2.0, title="Take Profit ATR Multiplier")
+
+// === INDICATORS ===
+rsi        = ta.rsi(close, rsiPeriod)
+emaFast    = ta.ema(close, emaFastLen)
+emaSlow    = ta.ema(close, emaSlowLen)
+[_, _, adx] = ta.dmi(adxPeriod, adxSmoothing)
+atr        = ta.atr(atrPeriod)
+macdLine   = ta.ema(close, 12) - ta.ema(close, 26)
+macdSignal = ta.ema(macdLine, 9)
+macdHist   = macdLine - macdSignal
+volSMA     = ta.sma(volume, 20)
+volVsAvg   = volume / volSMA
+prevClose  = close[1]
+ema200     = ta.ema(close, 200)
+
+// === TIME FILTER: Ignore first 15 mins after market open (09:30–09:45 EST) ===
+marketOpenTime = timestamp("America/New_York", year, month, dayofmonth, 9, 30)
+barTime = time
+isAfterOpen = barTime >= (marketOpenTime + 15 * 60 * 1000)
+
+
+// === UPGRADE VARIABLES ===
+var int   lastExitBar     = na
+var float lastEntryPrice  = na
+cooldownBars             = 3
+cooldownPassed           = na(lastExitBar) or (bar_index - lastExitBar > cooldownBars)
+
+priceGapPassed           = na(lastEntryPrice) or (math.abs(close - lastEntryPrice) > atr * 0.5)
+
+volSpike                 = volume > 1.5 * volSMA
+trendFilter              = close > ema200
+
+// === TRADE LIMIT RESET ON NEW DAY ===
+var int   tradeCounter   = 0
+var int   lastDay        = na
+currentDay                = dayofmonth(time)
+
+if (na(lastDay) or currentDay != lastDay)
+    tradeCounter := 0
+    lastDay      := currentDay
+
+canTradeToday             = tradeCounter < 3
+
+// === HTF & INDEX TRENDS ===
+emaHTF    = request.security(syminfo.tickerid, "60", ta.ema(close, 50))
+ixicTrend = request.security("NASDAQ:IXIC", "15", ta.ema(close, 50))
+smhTrend  = request.security("NASDAQ:SMH", "15", ta.ema(close, 50))
+indexBias = close > ixicTrend ? "bullish" : "bearish"
+sectorBias= close > smhTrend  ? "bullish" : "bearish"
+htfTrendBias = close > emaHTF  ? "up"      : "down"
+
+// === DIVERGENCE FLAGS ===
+rsiBullDiv  = (close < close[1] and rsi > rsi[1])
+macdBullDiv = (macdHist > macdHist[1] and close < close[1])
+rsiDiv  = rsiBullDiv ? "bullish" : "none"
+macdDiv = macdBullDiv ? "bullish" : "none"
+
+// === RISK METRICS ===
+sl            = math.round((close - atr * slMult) * 100) / 100
+tp            = math.round((close + atr * tpMult) * 100) / 100
+riskPerShare  = math.round((close - sl) * 100) / 100
+rewardPerShare= math.round((tp - close) * 100) / 100
+rrRatio       = rewardPerShare / riskPerShare
+
+// === SL/TP BASED ON ACTUAL ENTRY ===
+slDynamic     = strategy.opentrades > 0 ? math.round((strategy.opentrades.entry_price(0) - atr * slMult) * 100) / 100 : na
+tpDynamic     = strategy.opentrades > 0 ? math.round((strategy.opentrades.entry_price(0) + atr * tpMult) * 100) / 100 : na
+
+// === ENTRY CONDITIONS ===
+longCondition = rsi > 50 and macdHist > 0 and adx > 20 and volSpike and close > emaFast and emaFast > emaSlow and isAfterOpen
+longTrigger   = longCondition and not longCondition[1]
+
+
+// === EXIT CONDITIONS ===
+exitCondition = macdHist < 0 or rsi < 48 or adx < 15 or volVsAvg < 1.0
+exitTrigger   = exitCondition and not exitCondition[1]
+
+// === STRATEGY EXECUTION ===
+if (longTrigger)
+    strategy.entry("Long", strategy.long)
+    lastEntryPrice := close
+    tradeCounter   += 1
+    alert("{\"action\":\"ENTRY_TRIGGER\",\"symbol\":\""+syminfo.ticker+"\",\"timeframe\":\""+chartTF+"\",\"direction\":\"up\",\"mode\":\""+mode+"\",\"reason\":\"All conditions met\",\"price\":"+str.tostring(math.round(close*100)/100)+",\"stop_loss\":"+str.tostring(sl)+",\"take_profit\":"+str.tostring(tp)+",\"risk_per_share\":"+str.tostring(riskPerShare)+",\"reward_per_share\":"+str.tostring(rewardPerShare)+",\"rr_ratio\":"+str.tostring(rrRatio)+",\"RSI\":"+str.tostring(rsi)+",\"MACD_Line\":"+str.tostring(macdLine)+",\"MACD_Signal\":"+str.tostring(macdSignal)+",\"MACD_Hist\":"+str.tostring(macdHist)+",\"EMA_Fast\":"+str.tostring(emaFast)+",\"EMA_Slow\":"+str.tostring(emaSlow)+",\"ADX\":"+str.tostring(adx)+",\"ATR\":"+str.tostring(atr)+",\"Volume\":"+str.tostring(volume)+",\"Vol_SMA\":"+str.tostring(volSMA)+",\"Vol_vs_Avg\":"+str.tostring(volume/volSMA)+",\"Candle\":{\"Open\":"+str.tostring(open)+",\"High\":"+str.tostring(high)+",\"Low\":"+str.tostring(low)+",\"Close\":"+str.tostring(close)+",\"Prev_Close\":"+str.tostring(close[1])+"},\"Divergence\":{\"RSI\":\""+rsiDiv+"\",\"MACD\":\""+macdDiv+"\"}}", alert.freq_once_per_bar_close)
+
+
+// === TRAILING STOP EXIT (Corrected) ===
+trailOffset = atr * 0.8
+strategy.exit("TP/SL + Trail Exit", from_entry="Long", stop=slDynamic, limit=tpDynamic, trail_offset=trailOffset, trail_price=na)
+
+
+
+// === TIME EXIT SETUP ===
+eodCloseTime = timestamp("America/New_York", year, month, dayofmonth, 15, 55)
+isEOD = (time >= eodCloseTime and time < eodCloseTime + 60 * 1000)
+
+alreadyExited = false
+
+if (strategy.opentrades == 0)
+    alreadyExited := false
+    
+// === PROFIT LOCK EXIT ===
+profitNearTP = strategy.opentrades > 0 and close > (tpDynamic - (atr * 0.4)) and macdHist < 0
+if profitNearTP and not alreadyExited
+    strategy.close("Long", comment="Profit Lock Exit")
+    alert("{\"action\":\"EXIT_SIGNAL\",\"symbol\":\""+syminfo.ticker+"\",\"reason\":\"Profit Lock Exit near TP\"}", alert.freq_once_per_bar_close)
+    alreadyExited := true
+
+// === EOD EXIT ===
+if isEOD and strategy.opentrades > 0 and not alreadyExited
+    strategy.close("Long", comment="EOD Exit")
+    alert("{\"action\":\"EXIT_SIGNAL\",\"symbol\":\""+syminfo.ticker+"\",\"reason\":\"EOD Exit\"}", alert.freq_once_per_bar_close)
+    alreadyExited := true
+
+// === INDICATOR EXIT ===
+if exitTrigger and not alreadyExited
+    strategy.close("Long", comment="Indicator Exit")
+    lastExitBar := bar_index
+    alert("{\"action\":\"EXIT_SIGNAL\",\"symbol\":\""+syminfo.ticker+"\",\"reason\":\"Indicator exit triggered\"}", alert.freq_once_per_bar_close)
+
+
+
+if bar_index % 4 == 0
+    alert("{\"action\":\"CONTEXT\",\"symbol\":\""+syminfo.ticker+"\",\"timeframe\":\""+chartTF+"\",\"direction\":\"flat\",\"mode\":\""+mode+"\",\"price\":"+str.tostring(math.round(close*100)/100)+",\"RSI\":"+str.tostring(rsi)+",\"MACD_Line\":"+str.tostring(macdLine)+",\"MACD_Signal\":"+str.tostring(macdSignal)+",\"MACD_Hist\":"+str.tostring(macdHist)+",\"EMA_Fast\":"+str.tostring(emaFast)+",\"EMA_Slow\":"+str.tostring(emaSlow)+",\"ADX\":"+str.tostring(adx)+",\"ATR\":"+str.tostring(atr)+",\"Volume\":"+str.tostring(volume)+",\"Vol_SMA\":"+str.tostring(volSMA)+",\"Vol_vs_Avg\":"+str.tostring(volume/volSMA)+",\"Candle\":{\"Open\":"+str.tostring(open)+",\"High\":"+str.tostring(high)+",\"Low\":"+str.tostring(low)+",\"Close\":"+str.tostring(close)+",\"Prev_Close\":"+str.tostring(close[1])+"},\"Divergence\":{\"RSI\":\""+rsiDiv+"\",\"MACD\":\""+macdDiv+"\"}}", alert.freq_once_per_bar_close)
+
+
+// === ALERT CONDITIONS ===
+alertcondition(longTrigger, title="Entry Alert - All Conditions")
+alertcondition(exitTrigger, title="Exit Alert - Indicator")
+alertcondition(true, title="Context Alert - Every Bar")
+
+// === PLOTS ===
+plot(emaFast, color=color.orange, title="EMA Fast")
+plot(emaSlow, color=color.blue, title="EMA Slow")
+plot(macdHist, title="MACD Histogram", color=macdHist >= 0 ? color.green : color.red, style=plot.style_columns)
+plot(rsi, title="RSI", color=color.purple)
+plot(adx, title="ADX", color=color.teal)
+plot(atr, title="ATR", color=color.gray)
+
+// === SIGNAL MARKERS ===
+plotshape(longTrigger, title="Long Entry", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(exitTrigger, title="Exit Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+plot(strategy.opentrades > 0 ? slDynamic : na, title="Stop Loss", color=color.red, style=plot.style_linebr)
+plot(strategy.opentrades > 0 ? tpDynamic : na, title="Take Profit", color=color.green, style=plot.style_linebr)

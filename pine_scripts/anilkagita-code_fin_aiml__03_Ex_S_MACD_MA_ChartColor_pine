@@ -1,0 +1,24 @@
+//© Sergey Buzz - Mastering TradingView Pine Script v5
+
+//@version=5
+strategy("MACD-MA Strategy", overlay=false, default_qty_type = strategy.percent_of_equity, default_qty_value = 100)
+
+fastPeriod = input.int(12, "MACD Fast Period")
+slowPeriod = input.int(26, "MACD Slow Period")
+signalPeriod = input.int(9, "MACD Signal Period")
+
+smaPeriod = input.int(50, "MA Period", 1, 300, 10)
+
+[macdLine, signalLine, histogram] = ta.macd(close, fastPeriod, slowPeriod, signalPeriod)
+
+sma = ta.sma(close, smaPeriod)
+
+if(macdLine > signalLine and close > sma)
+    strategy.entry("Buy", strategy.long)
+else if(macdLine < signalLine or close < sma)
+    strategy.close("Buy")
+
+hline(0, "Zero Line", color = color.gray)
+plot(macdLine, "MACD", color.blue, 2)
+plot(signalLine, "Signal", color.maroon, 2)
+plot(histogram, "Histogram", style = plot.style_columns, color = histogram > 0 ? (histogram[1] < histogram ? color.lime : color.green) : (histogram[1] < histogram ? color.fuchsia : color.red))
