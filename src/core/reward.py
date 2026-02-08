@@ -56,7 +56,7 @@ class RewardCalculator:
             reward += 0.5
 
         # Penalty for Timeouts (Stagnant capital)
-        if exit_reason == "TIME":
+        if exit_reason in ("TIME", "TIME_EXIT"):
             reward -= 0.1
 
         # Penalty for SL

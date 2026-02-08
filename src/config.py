@@ -39,8 +39,8 @@ class Config:
     MAX_CONCURRENT_POSITIONS = 999  # Unlimited - cooldown is the protection
     LEVERAGE_SCALING = False    # Disable scaling - always use max leverage
     
-    # Phase 2: Multi-Position with Cooldown
-    MAX_POSITIONS_PER_SYMBOL = 3   # Max 3 positions per coin
+    # Phase 2: Single Position Per Symbol (cooldown protects capital)
+    MAX_POSITIONS_PER_SYMBOL = 1   # 1 position per coin (prevents margin overwrite bug)
     ENTRY_COOLDOWN_MINUTES = 30    # Cooldown between entries on same coin
     
     # Phase 5: Scalp vs Swing Mode

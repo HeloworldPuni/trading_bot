@@ -4,6 +4,7 @@ import datetime
 from typing import List, Dict, Any, Optional
 from src.core.definitions import MarketState, MarketRegime, VolatilityLevel, TrendStrength
 from src.exchange.connector import BinanceConnector
+from src.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class DataFeeder:
         if not self.connector:
              return self._create_safe_state(symbol, open_positions)
 
-        ohlcv = self.connector.fetch_ohlcv(symbol, "1h", limit=50)
+        ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=50)
         
         if not ohlcv or len(ohlcv) < 50:
              # Fallback to Safe State if data missing
@@ -53,19 +54,22 @@ class DataFeeder:
         dist_to_high = ((high_50 - last_close) / last_close) * 100
         dist_to_low = ((last_close - low_50) / last_close) * 100
 
-        # Regime Detection
-        regime = MarketRegime.SIDEWAYS_LOW_VOL
-        if last_close > sma_20 > sma_50:
-            regime = MarketRegime.BULL_TREND
-        elif last_close < sma_20 < sma_50:
-            regime = MarketRegime.BEAR_TREND
-        
-        # Volatility (ATR-based categorization)
+        # Volatility (ATR-based categorization) - must come BEFORE regime assignment
         vol_level = VolatilityLevel.NORMAL
         if atr < (last_close * 0.005): # < 0.5% movement
             vol_level = VolatilityLevel.LOW
         elif atr > (last_close * 0.02): # > 2% movement
             vol_level = VolatilityLevel.HIGH
+
+        # Regime Detection - uses volatility to pick correct sideways variant
+        if last_close > sma_20 > sma_50:
+            regime = MarketRegime.BULL_TREND
+        elif last_close < sma_20 < sma_50:
+            regime = MarketRegime.BEAR_TREND
+        elif vol_level == VolatilityLevel.HIGH:
+            regime = MarketRegime.SIDEWAYS_HIGH_VOL
+        else:
+            regime = MarketRegime.SIDEWAYS_LOW_VOL
             
         # Session & Context (UTC)
         dt = datetime.datetime.fromtimestamp(raw_ts / 1000, tz=datetime.timezone.utc)
