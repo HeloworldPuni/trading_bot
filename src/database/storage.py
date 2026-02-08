@@ -132,7 +132,8 @@ class ExperienceDB:
             }
         }
         
-        with open(self.filepath, "a", encoding="utf-8") as f:
+        # Use file lock for safe concurrent writes
+        with self._file_lock(self.filepath, 'a') as f:
             f.write(json.dumps(record) + "\n")
             
         # Update Stats

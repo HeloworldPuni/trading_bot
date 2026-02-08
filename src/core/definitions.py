@@ -117,12 +117,17 @@ class MarketState:
             "bb_mid": self.bb_mid,
             "atr": self.atr,
             "volume_delta": self.volume_delta,
+            "funding_rate": self.funding_rate,  # Added for inference parity
             "funding_extreme": self.funding_extreme,
             "raw_timestamp": self.raw_timestamp,
             "current_risk_state": self.current_risk_state,
             "current_drawdown_percent": self.current_drawdown_percent,
-            "current_open_positions": self.current_open_positions
+            "current_open_positions": self.current_open_positions,
+            "regime_confidence": self.regime_confidence,  # Added for inference parity
+            "regime_stable": self.regime_stable,  # Added for inference parity
+            "momentum_shift_score": self.momentum_shift_score,  # Added for inference parity
         }
+
 
 @dataclass
 class Action:

@@ -4,6 +4,7 @@ import pandas as pd
 import joblib
 import os
 import json
+from typing import Optional
 from src.core.definitions import MarketRegime, VolatilityLevel, TrendStrength, StrategyType, MarketState, Action
 from src.ml.registry import ModelRegistry
 
