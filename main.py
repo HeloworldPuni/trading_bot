@@ -10,6 +10,8 @@ from src.engine.system import TradingEngine
 from src.execution.paper import PaperExecutor
 from src.core.definitions import StrategyType, Action, ActionDirection
 from src.core.reward import RewardCalculator
+from src.core.meta_learner import MetaLearner
+from scripts.learning_scheduler import LearningScheduler
 
 # Setup Logging
 logging.basicConfig(
@@ -202,6 +204,12 @@ def run_live_mode(symbol: str, run_once: bool = False):
         portfolio = Portfolio()
         dashboard = Dashboard()
         
+        # Auto-Learning Systems
+        meta_learner = MetaLearner()
+        learning_scheduler = LearningScheduler(interval_hours=24, min_trades=50)
+        learning_scheduler.start_background()  # Start background retraining
+        logger.info("🧠 Auto-learning systems initialized")
+        
         # Phase 1: Dynamic coin selection - fetch top 15 by volume
         active_symbols = connector.fetch_top_symbols_by_volume(Config.TOP_COINS_COUNT)
         if not active_symbols:
@@ -343,6 +351,20 @@ def run_live_mode(symbol: str, run_once: bool = False):
                             # Log loss category if present
                             if closed_trade.get('loss_category'):
                                 logger.warning(f"📊 LOSS TYPE: {closed_trade['loss_category']}")
+                            
+                            # MetaLearner: Record trade result for adaptive thresholds
+                            pnl_pct = closed_trade.get('realized_pnl_pct', 0.0)
+                            meta_learner.record_trade_result(
+                                won=pnl_pct > 0,
+                                pnl_percent=pnl_pct,
+                                context={
+                                    "symbol": sym,
+                                    "regime": state.market_regime.value,
+                                    "exit_reason": reason,
+                                    "confidence": confidence
+                                }
+                            )
+                            
                             engine.db.finalize_record(
                                 decision_id=pos['decision_id'],
                                 outcome_data={
@@ -355,6 +377,7 @@ def run_live_mode(symbol: str, run_once: bool = False):
                                 },
                                 final_reward=1.0 if reason == "TP" else -1.0
                             )
+
 
                     # Periodically update dashboard even during the squad scan
                     summary = portfolio.get_summary()
