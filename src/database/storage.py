@@ -8,12 +8,22 @@ from src.config import Config
 from src.core.definitions import MarketState, Action
 
 class ExperienceDB:
-    def __init__(self, filename: str = "experience_log.jsonl", log_suffix: Optional[str] = None):
+    def __init__(self, filename: str = "experience_log.jsonl", log_suffix: Optional[str] = None, data_path: Optional[str] = None):
+        """
+        Initialize experience database.
+        
+        Args:
+            filename: Name of the log file
+            log_suffix: Optional suffix to append to filename
+            data_path: Override for Config.DATA_PATH (useful for tests)
+        """
         if log_suffix:
             name, ext = os.path.splitext(filename)
             filename = f"{name}_{log_suffix}{ext}"
-            
-        self.filepath = os.path.join(Config.DATA_PATH, filename)
+        
+        # Allow data_path override for test isolation
+        base_path = data_path if data_path else Config.DATA_PATH
+        self.filepath = os.path.join(base_path, filename)
         self._ensure_dir()
         self.stats = {
             "total": 0,

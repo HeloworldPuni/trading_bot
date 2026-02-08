@@ -15,7 +15,12 @@ class RiskManager:
     @staticmethod
     def validate_action(state: MarketState, action: Action, risk_multiplier: float = 1.0) -> Action:
         """
-        Validates and potentially modifies the action's risk parameters based on state.
+        Validates and modifies the action's risk parameters based on state.
+        
+        WARNING: This method MUTATES the input action object directly.
+        The same action is returned with updated risk fields.
+        Caller should assume action is modified after this call.
+        
         Applies risk_multiplier while ensuring hard caps are enforced.
         """
         if action.strategy == StrategyType.WAIT:

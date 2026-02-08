@@ -1,6 +1,11 @@
 """
 Meta-Learning System - Phase D
 Tracks the bot's own performance patterns and adapts behavior accordingly.
+
+TODO: Integrate into main.py trading loop:
+  - Call meta_learner.record_trade_result() on position close
+  - Use meta_learner.should_trade(confidence) instead of hardcoded threshold
+  - Use meta_learner.get_position_scaling() for dynamic sizing
 """
 import os
 import json

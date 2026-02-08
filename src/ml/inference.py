@@ -3,29 +3,47 @@ import logging
 import pandas as pd
 import joblib
 import os
+import json
 from src.core.definitions import MarketRegime, VolatilityLevel, TrendStrength, StrategyType, MarketState, Action
 from src.ml.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
 class PolicyInference:
+    FEATURE_MAPS_PATH = "models/feature_maps.json"
+    
     def __init__(self, model_path: Optional[str] = None):
         self.registry = ModelRegistry()
         self.model_path = model_path or self.registry.get_active_model_path() or "models/policy_model_v1.pkl"
         self.model = None
         self.ensemble = {}
         
-        # Consistent mappings matching DatasetBuilder
+        # Consistent mappings from enums
         self.regime_map = {e.value: i for i, e in enumerate(MarketRegime)}
         self.vol_map = {e.value: i for i, e in enumerate(VolatilityLevel)}
         self.trend_map = {e.value: i for i, e in enumerate(TrendStrength)}
         self.strategy_map = {e.value: i for i, e in enumerate(StrategyType)}
         
-        # Hardcoded for V1 parity (Ensures alphabetical/sorted order used in Builder)
-        self.session_map = {"ASIA": 0, "LONDON": 1, "NY": 2, "OTHER": 3, "OVERLAP": 4}
-        self.symbol_map = {"BTC/USDT": 0, "ETH/USDT": 1, "SOL/USDT": 2}
+        # Load persistent maps (ensures training/inference consistency)
+        self._load_feature_maps()
         
         self._load_model()
+
+    def _load_feature_maps(self):
+        """Load session and symbol maps from persistent file."""
+        # Defaults
+        self.session_map = {"ASIA": 0, "LONDON": 1, "NY": 2, "OTHER": 3, "OVERLAP": 4}
+        self.symbol_map = {"BTC/USDT": 0, "ETH/USDT": 1, "SOL/USDT": 2, "UNKNOWN": 99}
+        
+        if os.path.exists(self.FEATURE_MAPS_PATH):
+            try:
+                with open(self.FEATURE_MAPS_PATH, "r") as f:
+                    maps = json.load(f)
+                self.session_map = maps.get("session_map", self.session_map)
+                self.symbol_map = maps.get("symbol_map", self.symbol_map)
+                logger.info(f"Loaded feature maps: {len(self.symbol_map)} symbols")
+            except Exception as e:
+                logger.warning(f"Failed to load feature maps: {e}, using defaults")
 
     def _load_model(self):
         # 1. Main Model

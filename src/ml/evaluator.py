@@ -42,11 +42,16 @@ class PolicyEvaluator:
         # Confusion Matrix
         tn, fp, fn, tp = confusion_matrix(y_test, preds).ravel()
 
-        # Feature Importance
-        importance = self.model.get_booster().get_score(importance_type='gain')
-        # Map indices back to names if importance keys are 'f0', 'f1', etc.
-        # But XGBClassifier usually keeps names if trained on DF. 
-        # Let's ensure names are used.
+        # Feature Importance - handle both XGBoost and LightGBM
+        importance = {}
+        if hasattr(self.model, 'get_booster'):
+            # XGBoost
+            importance = self.model.get_booster().get_score(importance_type='gain')
+        elif hasattr(self.model, 'feature_importances_'):
+            # LightGBM, sklearn, or any model with feature_importances_
+            for i, imp in enumerate(self.model.feature_importances_):
+                col_name = self.feature_cols[i] if i < len(self.feature_cols) else f"f{i}"
+                importance[col_name] = float(imp)
         sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
 
         report = {
