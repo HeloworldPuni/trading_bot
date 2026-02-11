@@ -44,6 +44,7 @@ class Config:
 
     # Trading Config
     TRADING_MODE = os.getenv("TRADING_MODE", "paper")
+    STRICT_STARTUP = os.getenv("STRICT_STARTUP", "false").lower() == "true"
     EXCHANGE_ID = os.getenv("EXCHANGE_ID", "binance")
     SYMBOL = "BTC/USDT"
     
@@ -117,6 +118,9 @@ class Config:
     MAX_GAP_PCT = float(os.getenv("MAX_GAP_PCT", "1.0"))
     MAX_BODY_PCT = float(os.getenv("MAX_BODY_PCT", "2.0"))
     NEAR_LEVEL_PCT = float(os.getenv("NEAR_LEVEL_PCT", "1.0"))
+    FUNDING_ARB_THRESHOLD = float(os.getenv("FUNDING_ARB_THRESHOLD", "0.08"))  # funding rate % threshold
+    MM_MAX_SPREAD_PCT = float(os.getenv("MM_MAX_SPREAD_PCT", "0.12"))          # spread cap for market making
+    MM_MAX_BODY_PCT = float(os.getenv("MM_MAX_BODY_PCT", "0.80"))              # body cap for market making
 
     # ATR-based TP/SL (adaptive to volatility)
     ATR_TP_SL_ENABLED = os.getenv("ATR_TP_SL_ENABLED", "true").lower() == "true"

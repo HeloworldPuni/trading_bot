@@ -149,6 +149,7 @@ class LiveFeeder:
             week_phase="MID", 
             time_remaining_days=30.0,
             distance_to_key_levels=dist_to_high, 
+            current_price=last_close,
             rsi=rsi,
             trend_spread=trend_spread,
             dist_to_high=dist_to_high,
@@ -390,3 +391,10 @@ class LiveFeeder:
             current_drawdown_percent=0.0,
             current_open_positions=open_positions
         )
+
+
+class DataFeeder(LiveFeeder):
+    """
+    Backward-compatible alias used by main/replay paths.
+    """
+    pass

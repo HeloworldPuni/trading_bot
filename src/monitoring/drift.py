@@ -1,10 +1,17 @@
+import logging
+from typing import Any, Dict, List
 
 import numpy as np
-import logging
-from typing import Dict, Any, List
-from scipy.stats import ks_2samp
 
 logger = logging.getLogger(__name__)
+
+try:
+    from scipy.stats import ks_2samp
+    HAS_SCIPY = True
+except Exception as exc:  # pragma: no cover - environment dependent
+    ks_2samp = None
+    HAS_SCIPY = False
+    logger.warning("scipy unavailable for KS drift test; using z-score fallback: %s", exc)
 
 class DriftDetector:
     """
@@ -44,16 +51,67 @@ class DriftDetector:
             if len(self.current_data[feature]) > self.current_window:
                 self.current_data[feature].pop(0)
 
-            # Run KS Test if we have enough data
+            # Run drift test if we have enough data
             if len(self.current_data[feature]) >= 30 and len(self.reference_data[feature]) >= 30:
                 try:
-                    stat, p_value = ks_2samp(self.reference_data[feature], self.current_data[feature])
-                    if p_value < self.threshold:
-                        drift_flags[feature] = True
-                        logger.warning(f"Drift detected in {feature} (p={p_value:.4f})")
+                    if HAS_SCIPY and ks_2samp is not None:
+                        _, p_value = ks_2samp(self.reference_data[feature], self.current_data[feature])
+                        if p_value < self.threshold:
+                            drift_flags[feature] = True
+                            logger.warning(f"Drift detected in {feature} (p={p_value:.4f})")
+                        else:
+                            drift_flags[feature] = False
                     else:
-                        drift_flags[feature] = False
+                        ref = np.array(self.reference_data[feature], dtype=float)
+                        cur = np.array(self.current_data[feature], dtype=float)
+                        ref_std = float(np.std(ref))
+                        if ref_std <= 1e-12:
+                            drift_flags[feature] = False
+                        else:
+                            z = abs(float(np.mean(cur) - np.mean(ref)) / ref_std)
+                            drift_flags[feature] = z >= 3.0
+                            if drift_flags[feature]:
+                                logger.warning("Drift detected in %s (fallback z=%.2f)", feature, z)
                 except Exception:
                     pass
                     
         return drift_flags
+
+
+class DriftMonitor:
+    """
+    Backward-compatible real-time drift monitor used by main.py.
+    Uses rolling z-score alerts per numeric feature.
+    """
+    def __init__(self, window: int = 200, alert_z: float = 3.0):
+        self.window = max(20, int(window))
+        self.alert_z = float(alert_z)
+        self.history: Dict[str, List[float]] = {}
+
+    def update(self, feature_vector: Dict[str, Any]) -> List[str]:
+        alerts: List[str] = []
+
+        for feature, value in feature_vector.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+
+            series = self.history.setdefault(feature, [])
+            series.append(float(value))
+            if len(series) > self.window:
+                series.pop(0)
+
+            if len(series) < max(30, self.window // 4):
+                continue
+
+            baseline = np.array(series[:-1], dtype=float)
+            current = float(series[-1])
+            std = float(np.std(baseline))
+            if std <= 1e-12:
+                continue
+
+            mean = float(np.mean(baseline))
+            z = abs((current - mean) / std)
+            if z >= self.alert_z:
+                alerts.append(f"{feature} z={z:.2f}")
+
+        return alerts

@@ -55,3 +55,41 @@ def validate_ohlcv(ohlcv: List[List[Any]], min_len: int = 50) -> Tuple[bool, Lis
             issues.append(f"Row {i}: negative volume")
 
     return len(issues) == 0, issues
+
+
+def validate_orderbook(orderbook_rows: List[List[Any]], min_len: int = 1) -> Tuple[bool, List[str]]:
+    """
+    Basic orderbook snapshot checks.
+    Expects rows like:
+    [timestamp, bid1_p, bid1_v, ask1_p, ask1_v, ...]
+    """
+    issues: List[str] = []
+
+    if not orderbook_rows:
+        return False, ["Empty orderbook data"]
+    if len(orderbook_rows) < min_len:
+        return False, [f"Insufficient orderbook rows: {len(orderbook_rows)} < {min_len}"]
+
+    prev_ts = None
+    for i, row in enumerate(orderbook_rows):
+        if row is None or len(row) < 5:
+            issues.append(f"Row {i}: invalid length")
+            continue
+        try:
+            ts = int(float(row[0]))
+            bid = float(row[1])
+            ask = float(row[3])
+        except (TypeError, ValueError):
+            issues.append(f"Row {i}: invalid numeric values")
+            continue
+
+        if prev_ts is not None and ts < prev_ts:
+            issues.append(f"Row {i}: non-monotonic timestamp")
+        prev_ts = ts
+
+        if bid <= 0 or ask <= 0:
+            issues.append(f"Row {i}: non-positive best price")
+        if bid >= ask:
+            issues.append(f"Row {i}: crossed book (bid >= ask)")
+
+    return len(issues) == 0, issues

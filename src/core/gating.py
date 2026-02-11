@@ -20,13 +20,18 @@ class StrategyGater:
         if state.market_regime == MarketRegime.BULL_TREND:
             allowed.add(StrategyType.MOMENTUM)
             allowed.add(StrategyType.BREAKOUT)
+            allowed.add(StrategyType.ARBITRAGE)
             
         elif state.market_regime == MarketRegime.BEAR_TREND:
             allowed.add(StrategyType.SHORT_MOMENTUM)
+            allowed.add(StrategyType.ARBITRAGE)
             
         elif state.market_regime in [MarketRegime.SIDEWAYS_LOW_VOL, MarketRegime.SIDEWAYS_HIGH_VOL]:
             allowed.add(StrategyType.SCALP)
             allowed.add(StrategyType.MEAN_REVERSION)
+            allowed.add(StrategyType.ARBITRAGE)
+            if state.market_regime == MarketRegime.SIDEWAYS_LOW_VOL:
+                allowed.add(StrategyType.MARKET_MAKING)
             
         # TRANSITION regime usually implies caution; strictly following protocol implies NO strategies allowed
         # unless explicitly stated. Protocol says:

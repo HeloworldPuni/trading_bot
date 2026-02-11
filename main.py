@@ -3,6 +3,7 @@ import time
 import os
 import argparse
 import logging
+import sys
 from typing import List, Dict
 from src.config import Config
 from src.exchange.connector import BinanceConnector
@@ -21,6 +22,21 @@ from src.monitoring.divergence import DivergenceMonitor
 from scripts.learning_scheduler import LearningScheduler
 from scripts.startup_checks import run_startup_checks
 
+
+def _configure_console_encoding() -> None:
+    """
+    Prevent UnicodeEncodeError on Windows consoles.
+    """
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+_configure_console_encoding()
 
 # Setup Logging
 logging.basicConfig(
@@ -671,7 +687,9 @@ if __name__ == "__main__":
     
     # Run startup checks (config validation, model staleness, audit setup)
     if not args.skip_checks:
-        run_startup_checks()
+        if not run_startup_checks():
+            logger.critical("Startup checks failed. Exiting. Use --skip-checks only for controlled debugging.")
+            sys.exit(1)
 
     
     if args.replay:

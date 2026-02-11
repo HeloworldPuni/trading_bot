@@ -96,17 +96,17 @@ class ModelStalenessChecker:
         result = self.check_staleness()
         
         if result["status"] == "OK":
-            print("✅ Model features are current")
+            print("[OK] Model features are current")
             return False
         elif result["status"] == "STALE":
-            print(f"⚠️ MODEL STALE: Missing features: {result['missing_features']}")
+            print(f"[WARN] MODEL STALE: Missing features: {result['missing_features']}")
             print("   Run: python scripts/train_policy.py to retrain")
             return True
         elif result["status"] == "UNKNOWN":
-            print("❓ Model feature status unknown (no feature_maps.json)")
+            print("[WARN] Model feature status unknown (no feature_maps.json)")
             return True
         else:
-            print(f"ℹ️ Model has extra features (still usable): {result['extra_features']}")
+            print(f"[INFO] Model has extra features (still usable): {result['extra_features']}")
             return False
     
     def update_feature_maps(self, feature_columns: List[str], session_map: Dict, symbol_map: Dict):

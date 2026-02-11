@@ -12,6 +12,8 @@ from src.database.storage import ExperienceDB
 from src.ml.inference import PolicyInference
 from src.monitoring.decision_audit import get_auditor, DecisionAudit
 from src.core.meta_learner import MetaLearner
+from src.strategies.arbitrage import ArbitrageStrategy
+from src.strategies.market_making import InventoryStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class TradingEngine:
         self.db = ExperienceDB(log_suffix=log_suffix)
         self.policy = PolicyInference()
         self.meta_learner = MetaLearner() # Phase D: Autonomous behavioral steering
+        self.arbitrage = ArbitrageStrategy(min_profit_pct=0.0005, fee_rate=Config.FEE_RATE)
+        self.market_maker = InventoryStrategy(max_inventory_usd=1000.0, risk_aversion=0.10)
         self.strategy_weights: Dict[StrategyType, float] = {}
         self.blocked_strategies: set[StrategyType] = set()
         self.auditor = get_auditor()
@@ -247,6 +251,37 @@ class TradingEngine:
                     elif state.rsi <= Config.RSI_OVERSOLD and near_low:
                         score = 0.5
                         direction = ActionDirection.LONG
+
+            elif strat == StrategyType.ARBITRAGE:
+                funding_threshold = getattr(Config, "FUNDING_ARB_THRESHOLD", 0.08)
+                funding_opps = self.arbitrage.scan_funding({state.symbol: state.funding_rate / 100.0})
+                if funding_opps and abs(state.funding_rate) >= funding_threshold:
+                    # Positive funding -> crowded longs -> prefer short; inverse for negative funding.
+                    direction = ActionDirection.SHORT if state.funding_rate > 0 else ActionDirection.LONG
+                    score = 0.45 + min(0.25, abs(state.funding_rate) / max(funding_threshold, 1e-9) * 0.1)
+                    if low_vol:
+                        score += 0.05
+
+            elif strat == StrategyType.MARKET_MAKING:
+                mm_max_spread = getattr(Config, "MM_MAX_SPREAD_PCT", 0.12)
+                mm_max_body = getattr(Config, "MM_MAX_BODY_PCT", Config.MAX_BODY_PCT * 0.6)
+                if low_vol and state.spread_pct <= mm_max_spread and state.body_pct <= mm_max_body:
+                    skew = self.market_maker.get_skew(state.current_open_positions * 100.0)
+                    score = 0.35
+                    if near_low:
+                        direction = ActionDirection.LONG
+                        score += 0.10
+                    elif near_high:
+                        direction = ActionDirection.SHORT
+                        score += 0.10
+                    else:
+                        # Inventory-aware fallback direction.
+                        if skew > 0:
+                            direction = ActionDirection.LONG
+                        elif skew < 0:
+                            direction = ActionDirection.SHORT
+                        else:
+                            direction = ActionDirection.LONG if state.momentum_shift_score >= 0 else ActionDirection.SHORT
 
             elif strat == StrategyType.SCALP:
                 if not high_vol and state.body_pct < (Config.MAX_BODY_PCT * 0.75):

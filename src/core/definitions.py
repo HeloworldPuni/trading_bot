@@ -33,6 +33,8 @@ class StrategyType(Enum):
     SHORT_MOMENTUM = "SHORT_MOMENTUM"
     SCALP = "SCALP"
     MEAN_REVERSION = "MEAN_REVERSION"
+    ARBITRAGE = "ARBITRAGE"
+    MARKET_MAKING = "MARKET_MAKING"
     WAIT = "WAIT"
 
 class ActionDirection(Enum):
@@ -62,6 +64,7 @@ class MarketState:
     
     # Technical Context
     distance_to_key_levels: float  # Legacy, will keep for now
+    current_price: float = 0.0
     rsi: float = 50.0
     trend_spread: float = 0.0      # SMA20 - SMA50 %
     dist_to_high: float = 0.0      # % to 50h High
@@ -117,6 +120,7 @@ class MarketState:
             "week_phase": self.week_phase,
             "time_remaining_days": self.time_remaining_days,
             "distance_to_key_levels": self.distance_to_key_levels,
+            "current_price": self.current_price,
             "rsi": self.rsi,
             "trend_spread": self.trend_spread,
             "dist_to_high": self.dist_to_high,
@@ -161,6 +165,7 @@ class Action:
     base_risk: float = 0.0 # Percentage risk (e.g., 1.0 for 1%)
     adjusted_risk: float = 0.0
     risk_multiplier: float = 1.0
+    target_weight: float = 0.0
     tp: float = 0.0
     sl: float = 0.0
     reasoning: str = ""
@@ -173,6 +178,7 @@ class Action:
             "base_risk": self.base_risk,
             "adjusted_risk": self.adjusted_risk,
             "risk_multiplier": self.risk_multiplier,
+            "target_weight": self.target_weight,
             "tp": self.tp,
             "sl": self.sl,
             "reasoning": self.reasoning
