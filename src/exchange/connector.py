@@ -89,6 +89,17 @@ class BinanceConnector:
             # Return stale cache if available
             return self._ohlcv_cache.get(cache_key, [])
 
+    def fetch_ticker_snapshot(self, symbol: str) -> Dict[str, Any]:
+        """
+        Fetches a comprehensive 24h ticker snapshot.
+        Includes VWAP, 24h High/Low, Volume, etc.
+        """
+        try:
+            return self.exchange.fetch_ticker(symbol)
+        except Exception as e:
+            logger.error(f"Error fetching ticker snapshot for {symbol}: {e}")
+            return {}
+
     def fetch_balance(self) -> Dict[str, Any]:
         """Fetches account balance (for live trading)."""
         try:

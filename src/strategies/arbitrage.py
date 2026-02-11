@@ -17,8 +17,9 @@ class ArbitrageStrategy:
     Phase 5 Retrofit: Arbitrage Strategies.
     Combines Triangular and Funding Arbitrage.
     """
-    def __init__(self, min_profit_pct: float = 0.001):
+    def __init__(self, min_profit_pct: float = 0.001, fee_rate: float = 0.001):
         self.min_profit_pct = min_profit_pct # 0.1%
+        self.fee_rate = fee_rate
 
     def scan_triangular(self, prices: Dict[str, float]) -> List[ArbOpportunity]:
         """
