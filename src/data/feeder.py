@@ -10,7 +10,7 @@ from src.config import Config
 
 logger = logging.getLogger(__name__)
 
-class DataFeeder:
+class LiveFeeder:
     def __init__(self, connector: Optional[BinanceConnector]):
         self.connector = connector
 
