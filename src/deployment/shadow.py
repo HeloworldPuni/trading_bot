@@ -54,17 +54,12 @@ class ShadowExecutor:
                 return "REJECTED_FUNDS"
                 
         elif side == 'SELL':
-            # Check inventory
-            current_pos = self.inventory.get(symbol)
-            if current_pos and current_pos.size >= quantity:
-                revenue = cost - fee
-                self.balance += revenue
-                self._update_inventory(symbol, quantity, price, side)
-                self._log_trade(symbol, side, quantity, price, fee)
-                return "FILLED"
-            else:
-                logger.warning(f"Shadow Insufficient Inventory for {symbol}")
-                return "REJECTED_INVENTORY"
+            # Allow Short Selling (Negative Inventory)
+            revenue = cost - fee
+            self.balance += revenue
+            self._update_inventory(symbol, quantity, price, side)
+            self._log_trade(symbol, side, quantity, price, fee)
+            return "FILLED"
                 
         return "REJECTED_UNKNOWN"
 
@@ -82,9 +77,12 @@ class ShadowExecutor:
             pos.size = new_size
             
         elif side == 'SELL':
-            pos.size = max(0.0, pos.size - quantity)
-            if pos.size == 0:
-                del self.inventory[symbol]
+            pos.size = pos.size - quantity
+            # Update entry price for short position if flipping from long or increasing short
+            if pos.size < 0:
+                 # Simplified: Just track size. 
+                 # Real short logic needs separate liability tracking.
+                 pass
 
     def _log_trade(self, symbol, side, qty, price, fee):
         t = {
