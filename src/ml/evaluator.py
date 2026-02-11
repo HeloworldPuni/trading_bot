@@ -13,13 +13,25 @@ class PolicyEvaluator:
     def __init__(self, model_path: str):
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not found: {model_path}")
-        self.model = joblib.load(model_path)
+        data = joblib.load(model_path)
         self.feature_cols = [
             "market_regime", "volatility_level", "trend_strength",
-            "dist_to_high", "dist_to_low", "trading_session",
-            "symbol", "repeats", "current_open_positions",
+            "dist_to_high", "dist_to_low",
+            "macd", "macd_signal", "macd_hist",
+            "bb_upper", "bb_lower", "bb_mid", "atr", "volume_delta",
+            "spread_pct", "body_pct", "gap_pct", "volume_zscore", "liquidity_proxy",
+            "htf_trend_spread", "htf_rsi", "htf_atr",
+            "trading_session", "symbol", "repeats", "current_open_positions",
             "action_taken"
         ]
+        if isinstance(data, dict) and "model" in data:
+            self.model = data["model"]
+            if isinstance(data.get("feature_cols"), list):
+                self.feature_cols = data["feature_cols"]
+        else:
+            self.model = data
+            if hasattr(self.model, "feature_names_in_"):
+                self.feature_cols = list(self.model.feature_names_in_)
         self.target_col = "decision_quality"
 
     def evaluate(self, test_df: pd.DataFrame) -> dict:

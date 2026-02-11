@@ -34,18 +34,18 @@ def main():
 
     builder = DatasetBuilder()
     logger.info("Starting dataset transformation...")
-    rows = builder.build_from_log(master_log, output_csv)
+    count = builder.build_from_log(master_log, output_csv)
     
-    if rows:
-        logger.info("Building time-based splits (70/15/15)...")
-        builder.build_splits(rows, data_dir)
+    if count > 0:
+        logger.info(f"Building time-based splits for {count} rows...")
+        builder.build_splits(count, output_csv, data_dir)
         
         logger.info("Building regime-specific ensemble splits...")
-        builder.build_regime_splits(rows, data_dir)
+        builder.build_regime_splits(output_csv, data_dir)
         
         logger.info("SUCCESS: ML-Ready dataset and splits created at data/")
     else:
-        logger.error("FAILED: Dataset creation failed.")
+        logger.error("FAILED: No valid records found.")
 
 if __name__ == "__main__":
     main()

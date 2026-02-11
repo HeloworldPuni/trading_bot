@@ -1,5 +1,5 @@
 {
-    "active_version": "v2-ensemble",
+    "active_version": "v4-balanced",
     "models": {
         "v1": {
             "path": "models/policy_model_v1.pkl",
@@ -10,31 +10,89 @@
             "trained_at": "2026-02-06T13:27:38.190312",
             "record_count": 73305
         },
-        "v2-ensemble": {
+        "v3-ensemble": {
+            "type": "ensemble",
+            "experts": {
+                "bull": {
+                    "path": "models/policy_bull_v3.pkl",
+                    "metrics": {
+                        "auc": 0.9458
+                    }
+                },
+                "bear": {
+                    "path": "models/policy_bear_v3.pkl",
+                    "metrics": {
+                        "auc": 0.9616
+                    }
+                },
+                "sideways": {
+                    "path": "models/policy_sideways_v3.pkl",
+                    "metrics": {
+                        "auc": 0.9261
+                    }
+                }
+            },
+            "trained_at": "2026-02-09T10:25:00.000000",
+            "record_count": 711683,
+            "notes": "v3 was biased by WAIT actions (0.99 over-optimism bug)"
+        },
+        "v4-balanced": {
             "type": "ensemble",
             "experts": {
                 "bull": {
                     "path": "models/policy_bull.pkl",
                     "metrics": {
-                        "auc": 0.8032
+                        "auc": 0.8882
                     }
                 },
                 "bear": {
                     "path": "models/policy_bear.pkl",
                     "metrics": {
-                        "auc": 0.8863
+                        "auc": 0.8715
                     }
                 },
                 "sideways": {
                     "path": "models/policy_sideways.pkl",
                     "metrics": {
-                        "auc": 0.7934
+                        "auc": 0.9855
                     }
                 }
             },
-            "trained_at": "2026-02-06T14:40:31.359316",
-            "record_count": 73305
+            "trained_at": "2026-02-09T12:25:00",
+            "record_count": 53729,
+            "notes": "Balanced v4: Excludes WAIT actions. Profit bar > 0.2%. Corrected class bias."
+        },
+        "v4": {
+            "type": "ensemble",
+            "experts": {
+                "bull": {
+                    "path": "models\\policy_bull_v4.pkl",
+                    "metrics": {
+                        "train_accuracy": 0.6116210270803307,
+                        "validation_accuracy": 0.5849514563106796,
+                        "validation_roc_auc": 0.6287101757024781
+                    }
+                },
+                "bear": {
+                    "path": "models\\policy_bear_v4.pkl",
+                    "metrics": {
+                        "train_accuracy": 0.6220550924247916,
+                        "validation_accuracy": 0.6078289235230155,
+                        "validation_roc_auc": 0.6466025702248681
+                    }
+                },
+                "sideways": {
+                    "path": "models\\policy_sideways_v4.pkl",
+                    "metrics": {
+                        "train_accuracy": 0.6066666666666667,
+                        "validation_accuracy": 0.5949720670391061,
+                        "validation_roc_auc": 0.6403649879327371
+                    }
+                }
+            },
+            "trained_at": "2026-02-09T07:44:24.904957+00:00",
+            "record_count": 172712
         }
     },
-    "total_records_at_last_train": 73305
+    "total_records_at_last_train": 172712
 }

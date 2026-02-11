@@ -2,7 +2,7 @@
 import logging
 import json
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional
 from src.config import Config
 
@@ -14,13 +14,16 @@ class Portfolio:
     def __init__(self, initial_balance: float = Config.INITIAL_CAPITAL, load_state: bool = True):
         self.initial_capital = initial_balance
         self.state_file = PORTFOLIO_STATE_FILE
+        self._equity_peak = initial_balance
+        self._daily_equity_start = initial_balance
+        self._daily_date = datetime.now(UTC).date()
         
         # Phase 2: Cooldown tracking
         self.last_entry_times: Dict[str, datetime] = {}  # symbol -> last entry time
         
         # Try to load existing state
         if load_state and self._load_state():
-            logger.info(f"💾 Portfolio Restored from disk! Balance: ${self.balance:,.2f}, Active: {len(self.active_positions)} positions")
+            logger.info(f"💾 Portfolio Restored from disk! Balance: ${self.balance:,.2f}, Active: {len(self.get_all_positions())} positions")
         else:
             # Fresh start
             self.balance = initial_balance
@@ -39,6 +42,16 @@ class Portfolio:
         else:
             # Legacy single-position format
             return 1
+
+    def get_all_positions(self) -> List[Dict[str, Any]]:
+        """Flatten all active positions into a single list."""
+        flattened: List[Dict[str, Any]] = []
+        for positions in self.active_positions.values():
+            if isinstance(positions, list):
+                flattened.extend(positions)
+            else:
+                flattened.append(positions)
+        return flattened
     
     def can_open_position(self, symbol: str) -> tuple:
         """
@@ -73,7 +86,14 @@ class Portfolio:
                 state = json.load(f)
             self.balance = state.get("balance", self.initial_capital)
             self.equity = state.get("equity", self.initial_capital)
-            self.active_positions = state.get("active_positions", {})
+            raw_positions = state.get("active_positions", {})
+            normalized: Dict[str, List[Dict[str, Any]]] = {}
+            for sym, pos in raw_positions.items():
+                if isinstance(pos, list):
+                    normalized[sym] = pos
+                else:
+                    normalized[sym] = [pos]
+            self.active_positions = normalized
             self.trade_history = state.get("trade_history", [])
             return True
         except Exception as e:
@@ -113,17 +133,19 @@ class Portfolio:
             logger.warning(f"Insufficient margin! Needed ${margin_used:.2f}, have ${self.balance:.2f}")
             return False
 
-        # CRITICAL: Block if position already exists for this symbol
-        # Opening a new position would overwrite and lose the locked margin
-        if symbol in self.active_positions:
-            logger.warning(f"Cannot open {symbol}: Position already exists! Close it first.")
+        # Enforce per-symbol position limit
+        current_positions = self.active_positions.get(symbol, [])
+        if not isinstance(current_positions, list):
+            current_positions = [current_positions]
+        if len(current_positions) >= Config.MAX_POSITIONS_PER_SYMBOL:
+            logger.warning(f"Cannot open {symbol}: Max {Config.MAX_POSITIONS_PER_SYMBOL} positions reached.")
             return False
 
         # Apply Entry Fee and lock margin
         fee = size_usd * Config.FEE_RATE
         self.balance -= (fee + margin_used)  # Deduct fee AND margin
         
-        self.active_positions[symbol] = {
+        new_pos = {
             "symbol": symbol,
             "direction": direction,
             "entry_price": entry_price,
@@ -133,6 +155,7 @@ class Portfolio:
             "tp": tp,
             "sl": sl,
             "decision_id": decision_id,
+            "strategy": None,
             "entry_fee": fee,
             "unrealized_pnl_usd": 0.0,
             "unrealized_pnl_pct": 0.0,
@@ -140,6 +163,12 @@ class Portfolio:
             "entry_regime": entry_regime,
             "entry_atr": entry_atr,
         }
+        
+        if symbol not in self.active_positions:
+            self.active_positions[symbol] = []
+        if not isinstance(self.active_positions[symbol], list):
+            self.active_positions[symbol] = [self.active_positions[symbol]]
+        self.active_positions[symbol].append(new_pos)
         
         logger.info(f"Position OPEN: {direction} {symbol} @ {entry_price:.2f} | Size: ${size_usd:.2f} | Margin: ${margin_used:.2f} ({leverage}x) | Regime: {entry_regime}")
         
@@ -156,25 +185,32 @@ class Portfolio:
         if symbol not in self.active_positions:
             return
 
-        pos = self.active_positions[symbol]
-        entry = pos["entry_price"]
-        direction = pos["direction"]
-        size = pos["size_usd"]
+        positions = self.active_positions[symbol]
+        if not isinstance(positions, list):
+            positions = [positions]
+            self.active_positions[symbol] = positions
 
-        if direction == "LONG":
-            pnl_pct = (current_price - entry) / entry
-        else:
-            pnl_pct = (entry - current_price) / entry
+        for pos in positions:
+            entry = pos["entry_price"]
+            direction = pos["direction"]
+            size = pos["size_usd"]
 
-        pos["unrealized_pnl_pct"] = pnl_pct * 100
-        pos["unrealized_pnl_usd"] = size * pnl_pct
+            if direction == "LONG":
+                pnl_pct = (current_price - entry) / entry
+            else:
+                pnl_pct = (entry - current_price) / entry
+
+            pos["unrealized_pnl_pct"] = pnl_pct * 100
+            pos["unrealized_pnl_usd"] = size * pnl_pct
+            pos["current_price"] = current_price
         
         # Update Total Equity (Balance + PnL of all positions)
-        total_pnl = sum(p["unrealized_pnl_usd"] for p in self.active_positions.values())
+        total_pnl = sum(p["unrealized_pnl_usd"] for p in self.get_all_positions())
         self.equity = self.balance + total_pnl
 
     def close_position(self, symbol: str, exit_price: float, reason: str = "EXIT",
-                        exit_regime: str = "UNKNOWN", exit_atr: float = 0.0):
+                        exit_regime: str = "UNKNOWN", exit_atr: float = 0.0,
+                        decision_id: Optional[str] = None):
         """
         Closes a position, applies exit fees, and updates history.
         Phase B: Detects loss category based on regime/volatility changes.
@@ -182,7 +218,26 @@ class Portfolio:
         if symbol not in self.active_positions:
             return None
 
-        pos = self.active_positions.pop(symbol)
+        positions = self.active_positions[symbol]
+        if not isinstance(positions, list):
+            positions = [positions]
+
+        pos = None
+        if decision_id:
+            for i, p in enumerate(positions):
+                if p.get("decision_id") == decision_id:
+                    pos = positions.pop(i)
+                    break
+        else:
+            pos = positions.pop(0) if positions else None
+
+        if pos is None:
+            return None
+
+        if not positions:
+            self.active_positions.pop(symbol, None)
+        else:
+            self.active_positions[symbol] = positions
         
         # Apply Exit Fee (on the current value of the position)
         current_value = pos["size_usd"] + pos["unrealized_pnl_usd"]
@@ -213,6 +268,7 @@ class Portfolio:
         
         history_entry = {
             **pos,
+            "strategy": pos.get("strategy"),
             "exit_price": exit_price,
             "exit_reason": reason,
             "exit_fee": exit_fee,
@@ -225,7 +281,9 @@ class Portfolio:
         }
         
         self.trade_history.append(history_entry)
-        self.equity = self.balance # Sync equity after close
+        # Sync equity after close (include remaining unrealized PnL)
+        total_unrealized = sum(p.get("unrealized_pnl_usd", 0.0) for p in self.get_all_positions())
+        self.equity = self.balance + total_unrealized
         
         if loss_category:
             logger.warning(f"📊 LOSS FORENSICS: {symbol} | Category: {loss_category} | Regime: {pos.get('entry_regime')} → {exit_regime}")
@@ -236,11 +294,23 @@ class Portfolio:
 
     def get_summary(self):
         roi = ((self.equity - self.initial_capital) / self.initial_capital) * 100
+        total_positions = sum(self.count_positions_for_symbol(s) for s in self.active_positions)
+        if self.equity > self._equity_peak:
+            self._equity_peak = self.equity
+        today = datetime.now(UTC).date()
+        if today != self._daily_date:
+            self._daily_date = today
+            self._daily_equity_start = self.equity
+        drawdown_pct = (self._equity_peak - self.equity) / max(1e-9, self._equity_peak) * 100
+        daily_loss_pct = (self._daily_equity_start - self.equity) / max(1e-9, self._daily_equity_start) * 100
         return {
+            "initial_capital": self.initial_capital,
             "balance": self.balance,
             "equity": self.equity,
             "total_pnl": self.equity - self.initial_capital,
             "roi_pct": roi,
-            "active_count": len(self.active_positions),
+            "drawdown_pct": drawdown_pct,
+            "daily_loss_pct": daily_loss_pct,
+            "active_count": total_positions,
             "history_count": len(self.trade_history)
         }

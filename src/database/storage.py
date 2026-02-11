@@ -3,10 +3,13 @@ import json
 import os
 import uuid
 import contextlib
-from datetime import datetime
+import logging
+from datetime import datetime, UTC
 from typing import Dict, Any, List, Optional
 from src.config import Config
 from src.core.definitions import MarketState, Action
+
+logger = logging.getLogger(__name__)
 
 # File locking - Windows vs Unix
 try:
@@ -44,12 +47,14 @@ class ExperienceDB:
         }
         self.buffer_mode = False
         self.pending_updates = {} # decision_id -> Dict
+        self.log_buffer = []      # List of new records
         self._load_stats()
 
     def enable_buffer_mode(self):
         self.buffer_mode = True
         self.pending_updates = {}
-        print("ExperienceDB: Buffer Mode Enabled (Replay Optimized).")
+        self.log_buffer = []
+        logger.info("ExperienceDB: Buffer Mode Enabled (Replay Optimized).")
 
     def _ensure_dir(self):
         os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
@@ -79,6 +84,15 @@ class ExperienceDB:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             f.close()
 
+    @contextlib.contextmanager
+    def _global_lock(self):
+        """
+        Serialize access to the experience log using a dedicated lock file.
+        This prevents append/replace races between log_decision and finalize/flush.
+        """
+        with self._file_lock(self.lockpath, 'a'):
+            yield
+
 
     def _load_stats(self):
         if not os.path.exists(self.filepath):
@@ -102,7 +116,7 @@ class ExperienceDB:
                     except json.JSONDecodeError:
                         continue
         except Exception as e:
-            print(f"Stats Load Error: {e}")
+            logger.warning(f"Stats Load Error: {e}")
 
     def get_stats(self) -> Dict[str, Any]:
         return self.stats
@@ -115,7 +129,7 @@ class ExperienceDB:
         decision_id = str(uuid.uuid4())
         record = {
             "id": decision_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "market_state": state.to_dict(),
             "action_taken": action.to_dict(),
             "reward": reward,
@@ -132,19 +146,20 @@ class ExperienceDB:
             }
         }
         
-        # Use file lock for safe concurrent writes
-        with self._file_lock(self.filepath, 'a') as f:
-            f.write(json.dumps(record) + "\n")
+        if self.buffer_mode:
+            self.log_buffer.append(record)
+        else:
+            # Serialize access to avoid races with finalize/flush
+            with self._global_lock():
+                with open(self.filepath, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record) + "\n")
             
-        # Update Stats
+        # Update Stats (in-memory)
         self.stats["total"] += 1
-        
         s_name = action.strategy.value
         self.stats["strategies"][s_name] = self.stats["strategies"].get(s_name, 0) + 1
-        
         r_name = state.market_regime.value
         self.stats["regimes"][r_name] = self.stats["regimes"].get(r_name, 0) + 1
-        
         a_name = action.direction.value
         self.stats["actions"][a_name] = self.stats["actions"].get(a_name, 0) + 1
             
@@ -155,140 +170,138 @@ class ExperienceDB:
         Updates a specific record with outcome and final reward.
         """
         if self.buffer_mode:
+            # If it's in the log_buffer, update it there
+            for rec in self.log_buffer:
+                if rec["id"] == decision_id:
+                    rec["resolved"] = True
+                    rec["reward"] = final_reward
+                    rec["outcome"] = outcome_data
+                    rec["resolution_time"] = datetime.now(UTC).isoformat()
+                    return
+            
+            # Otherwise, add to pending_updates for existing records on disk
             self.pending_updates[decision_id] = {
                 "outcome": outcome_data,
                 "reward": final_reward,
-                "resolution_time": datetime.utcnow().isoformat()
+                "resolution_time": datetime.now(UTC).isoformat()
             }
             return
 
         if not os.path.exists(self.filepath):
             return
 
-        temp_path = self.filepath + ".tmp"
-        updated = False
-        
-        with open(self.filepath, "r", encoding="utf-8") as infile, \
-             open(temp_path, "w", encoding="utf-8") as outfile:
+        with self._global_lock():
+            temp_path = self.filepath + ".tmp"
+            updated = False
             
-            for line in infile:
-                try:
-                    record = json.loads(line)
-                    if record.get("id") == decision_id:
-                        record["resolved"] = True
-                        record["reward"] = final_reward
-                        record["outcome"] = outcome_data
-                        record["resolution_time"] = datetime.utcnow().isoformat()
-                        updated = True
-                    
-                    outfile.write(json.dumps(record) + "\n")
-                except json.JSONDecodeError:
-                    continue # Skip corrupt lines
-        
-        # Atomic replace
-        if updated:
-            os.replace(temp_path, self.filepath)
-        else:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            with open(self.filepath, "r", encoding="utf-8") as infile, \
+                 open(temp_path, "w", encoding="utf-8") as outfile:
+                
+                for line in infile:
+                    try:
+                        record = json.loads(line)
+                        if record.get("id") == decision_id:
+                            record["resolved"] = True
+                            record["reward"] = final_reward
+                            record["outcome"] = outcome_data
+                            record["resolution_time"] = datetime.now(UTC).isoformat()
+                            updated = True
+                        
+                        outfile.write(json.dumps(record) + "\n")
+                    except json.JSONDecodeError:
+                        continue
+            
+            if updated:
+                os.replace(temp_path, self.filepath)
+            else:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
     def flush_records(self):
         """
-        Applies all pending updates in a single file pass.
+        Applies all pending updates and appends new buffered records.
         """
-        if not self.pending_updates or not os.path.exists(self.filepath):
+        if not self.pending_updates and not self.log_buffer:
             return
 
-        temp_path = self.filepath + ".tmp"
-        updated_count = 0
-        
-        with open(self.filepath, "r", encoding="utf-8") as infile, \
-             open(temp_path, "w", encoding="utf-8") as outfile:
+        with self._global_lock():
+            # 1. Append new records (efficient 'a' mode)
+            if self.log_buffer:
+                with open(self.filepath, "a", encoding="utf-8") as f:
+                    for rec in self.log_buffer:
+                        f.write(json.dumps(rec) + "\n")
+                logger.info(f"ExperienceDB: Flushed {len(self.log_buffer)} new records to disk.")
+                self.log_buffer = []
+
+            # 2. Update existing records if needed
+            if not self.pending_updates or not os.path.exists(self.filepath):
+                return
+
+            temp_path = self.filepath + ".tmp"
+            updated_count = 0
             
-            for line in infile:
-                try:
-                    record = json.loads(line)
-                    rec_id = record.get("id")
-                    
-                    if rec_id in self.pending_updates:
-                        update = self.pending_updates[rec_id]
-                        record["resolved"] = True
-                        record["reward"] = update["reward"]
-                        record["outcome"] = update["outcome"]
-                        record["resolution_time"] = update["resolution_time"]
-                        updated_count += 1
-                        # Remove from pending to avoid double-processing (though unlikely with unique IDs)
-                        # Actually better to keep for the loop and clear at end
-                    
-                    outfile.write(json.dumps(record) + "\n")
-                except json.JSONDecodeError:
-                    continue
-        
-        if updated_count > 0:
-            os.replace(temp_path, self.filepath)
-            print(f"ExperienceDB: Flushed {updated_count} updates to disk.")
-        else:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            with open(self.filepath, "r", encoding="utf-8") as infile, \
+                 open(temp_path, "w", encoding="utf-8") as outfile:
                 
-        self.pending_updates = {}
+                for line in infile:
+                    try:
+                        record = json.loads(line)
+                        rec_id = record.get("id")
+                        
+                        if rec_id in self.pending_updates:
+                            update = self.pending_updates[rec_id]
+                            record["resolved"] = True
+                            record["reward"] = update["reward"]
+                            record["outcome"] = update["outcome"]
+                            record["resolution_time"] = update["resolution_time"]
+                            updated_count += 1
+                        
+                        outfile.write(json.dumps(record) + "\n")
+                    except json.JSONDecodeError:
+                        continue
+            
+            if updated_count > 0:
+                os.replace(temp_path, self.filepath)
+                logger.info(f"ExperienceDB: Flushed {updated_count} updates to disk.")
+            else:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
+            self.pending_updates = {}
+
+    def get_recent_records(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Returns the last N records, checking memory buffer first then disk.
+        """
+        records = []
+        
+        # 1. Take from log_buffer (most recent)
+        if hasattr(self, "log_buffer") and self.log_buffer:
+            # log_buffer is appended as we go; most recent are at the end
+            # We want them in chronological order for the calling logic to reverse them correctly if needed
+            records.extend(self.log_buffer[-limit:])
+        
+        # 2. If we need more, check disk
+        if len(records) < limit and os.path.exists(self.filepath):
+            remaining = limit - len(records)
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    # For small limits, reading from end of full file read is okay for backtests
+                    lines = f.readlines()
+                    disk_records = []
+                    for line in lines[-remaining:]:
+                        try:
+                            disk_records.append(json.loads(line))
+                        except:
+                            continue
+                    # Append disk records (older) before buffer records (newer)
+                    records = disk_records + records
+            except Exception as e:
+                logger.warning(f"Failed to read recent records from disk: {e}")
+        
+        return records[-limit:]
 
     def count_records(self) -> int:
         if not os.path.exists(self.filepath):
             return 0
-        with open(self.filepath, "r", encoding="utf-8") as f:
-            return sum(1 for _ in f)
-
-    def get_recent_records(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Get recent records efficiently without loading entire file.
-        Uses reverse file reading to only process needed lines.
-        """
-        if not os.path.exists(self.filepath):
-            return []
-        
-        records = []
-        chunk_size = 8192  # Read 8KB chunks from end
-        
-        with open(self.filepath, "rb") as f:
-            # Go to end
-            f.seek(0, 2)
-            file_size = f.tell()
-            
-            if file_size == 0:
-                return []
-            
-            # Read backwards to find enough lines
-            lines = []
-            remaining = file_size
-            leftover = b""
-            
-            while remaining > 0 and len(lines) <= limit:
-                read_size = min(chunk_size, remaining)
-                remaining -= read_size
-                f.seek(remaining)
-                chunk = f.read(read_size) + leftover
-                
-                # Split into lines
-                chunk_lines = chunk.split(b"\n")
-                
-                # First part may be partial (save for next iteration)
-                leftover = chunk_lines[0]
-                
-                # Add complete lines (reversed order)
-                lines = chunk_lines[1:] + lines
-            
-            # Handle final leftover
-            if leftover:
-                lines = [leftover] + lines
-            
-            # Take last N non-empty lines
-            recent_lines = [l for l in lines if l.strip()][-limit:]
-            
-            for line in recent_lines:
-                try:
-                    records.append(json.loads(line.decode("utf-8")))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-        
-        return records
+        return self.stats["total"]

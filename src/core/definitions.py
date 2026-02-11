@@ -76,6 +76,13 @@ class MarketState:
     bb_mid: float = 0.0
     atr: float = 0.0
     volume_delta: float = 0.0      # Net buying pressure (if available)
+    
+    # Execution-Aware Features
+    spread_pct: float = 0.0         # (high - low) / close * 100
+    body_pct: float = 0.0           # |close - open| / close * 100
+    gap_pct: float = 0.0            # (open - prev_close) / prev_close * 100
+    volume_zscore: float = 0.0      # Z-score of volume over window
+    liquidity_proxy: float = 0.0    # Volume / ATR proxy
 
     # Metadata
     funding_rate: float = 0.0         # Current funding rate % (extreme = potential reversal)
@@ -92,6 +99,11 @@ class MarketState:
     regime_confidence: float = 1.0      # 0-1 score of regime stability
     regime_stable: bool = True          # False if momentum shows potential shift
     momentum_shift_score: float = 0.0   # -1 to 1: negative = bearish momentum, positive = bullish
+    
+    # Higher Timeframe (HTF) Features
+    htf_trend_spread: float = 0.0
+    htf_rsi: float = 50.0
+    htf_atr: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -117,6 +129,11 @@ class MarketState:
             "bb_mid": self.bb_mid,
             "atr": self.atr,
             "volume_delta": self.volume_delta,
+            "spread_pct": self.spread_pct,
+            "body_pct": self.body_pct,
+            "gap_pct": self.gap_pct,
+            "volume_zscore": self.volume_zscore,
+            "liquidity_proxy": self.liquidity_proxy,
             "funding_rate": self.funding_rate,  # Added for inference parity
             "funding_extreme": self.funding_extreme,
             "raw_timestamp": self.raw_timestamp,
@@ -126,6 +143,9 @@ class MarketState:
             "regime_confidence": self.regime_confidence,  # Added for inference parity
             "regime_stable": self.regime_stable,  # Added for inference parity
             "momentum_shift_score": self.momentum_shift_score,  # Added for inference parity
+            "htf_trend_spread": self.htf_trend_spread,
+            "htf_rsi": self.htf_rsi,
+            "htf_atr": self.htf_atr,
         }
 
 

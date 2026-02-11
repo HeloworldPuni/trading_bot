@@ -52,7 +52,7 @@ class AdaptivePipeline:
         return self._execute_update(resolved_count)
 
     def _execute_update(self, total_records: int) -> bool:
-        logger.info("Pipeline: Threshold met. Starting Adaptive Update...")
+        logger.info("Pipeline: Threshold met. Starting Adaptive Ensemble Update...")
         
         # 1. Rebuild Dataset Splits
         data_dir = "data"
@@ -62,41 +62,78 @@ class AdaptivePipeline:
             logger.error("Pipeline: Failed to build dataset.")
             return False
             
-        self.builder.build_splits(rows, data_dir)
+        self.builder.build_splits(rows, full_csv, data_dir)
+        self.builder.build_regime_splits(full_csv, data_dir)
         
-        # 2. Train New Model Version
+        # 2. Retrain Experts
+        regimes = ["bull", "bear", "sideways"]
         next_ver = self.registry.get_next_version()
-        model_filename = f"policy_model_{next_ver}.pkl"
-        model_path = os.path.join(self.models_dir, model_filename)
+        new_experts = {}
+        any_improvement = False
         
-        train_df = pd.read_csv(os.path.join(data_dir, "train.csv"))
-        val_df = pd.read_csv(os.path.join(data_dir, "validation.csv"))
-        test_df = pd.read_csv(os.path.join(data_dir, "test.csv"))
+        active_experts = self.registry.get_active_experts() or {}
         
-        import pandas as pd # Ensure pandas is available locally if needed, but it's likely global
-        
-        trainer = PolicyTrainer()
-        trainer.train(train_df, val_df)
-        trainer.save_model(model_path)
-        
-        # 3. Evaluate New Model
-        evaluator = PolicyEvaluator(model_path)
-        new_report = evaluator.evaluate(test_df)
-        new_auc = new_report["metrics"]["test_roc_auc"]
-        
-        # 4. Promotion Gate
-        active_metrics = self.registry.get_active_metrics()
-        current_auc = active_metrics.get("test_roc_auc", 0.0) if active_metrics else 0.0
-        
-        logger.info(f"Pipeline: New Model ({next_ver}) AUC: {new_auc:.4f} vs Current AUC: {current_auc:.4f}")
-        
-        # Register the new model anyway (for history)
-        self.registry.register_model(next_ver, model_path, new_report["metrics"], total_records)
-        
-        if new_auc > current_auc:
-            logger.info(f"Pipeline: PROMOTION GRANTED. Updating active model to {next_ver}.")
+        for r in regimes:
+            train_path = os.path.join(data_dir, f"train_{r}.csv")
+            val_path = os.path.join(data_dir, f"val_{r}.csv")
+            
+            if not os.path.exists(train_path) or not os.path.exists(val_path):
+                logger.warning(f"Pipeline: Missing data for expert '{r}'. Skipping.")
+                # Copy active expert if it exists
+                if r in active_experts:
+                    new_experts[r] = active_experts[r]
+                continue
+                
+            try:
+                train_df = pd.read_csv(train_path)
+                val_df = pd.read_csv(val_path)
+                
+                if len(train_df) < 20 or len(val_df) < 10:
+                    logger.warning(f"Pipeline: Insufficient data for expert '{r}'.")
+                    if r in active_experts: new_experts[r] = active_experts[r]
+                    continue
+                    
+                trainer = PolicyTrainer()
+                # Run lightweight optimization if data is large enough
+                metrics = trainer.optimize(train_df, val_df, n_trials=10) if len(train_df) > 1000 else trainer.train(train_df, val_df)
+                if len(train_df) > 1000: metrics = trainer.train(train_df, val_df) # Final train with best params
+                
+                model_path = os.path.join(self.models_dir, f"policy_{r}_{next_ver}.pkl")
+                trainer.save_model(model_path)
+                
+                # Check for improvement (handle both 'auc' and 'validation_roc_auc' keys)
+                new_auc = metrics.get("validation_roc_auc", metrics.get("auc", 0.0))
+                active_info = active_experts.get(r, {})
+                active_metrics = active_info.get("metrics", {})
+                current_auc = active_metrics.get("validation_roc_auc", active_metrics.get("auc", 0.0))
+                
+                logger.info(f"Pipeline: Expert '{r}' New AUC: {new_auc:.4f} vs Current AUC: {current_auc:.4f}")
+                
+                if new_auc > current_auc:
+                    logger.info(f"Pipeline: Expert '{r}' improved!")
+                    any_improvement = True
+                    new_experts[r] = {
+                        "path": model_path,
+                        "metrics": metrics
+                    }
+                else:
+                    # Keep old expert in new version to maintain stability
+                    if r in active_experts:
+                        new_experts[r] = active_experts[r]
+                    else:
+                        # If first time, use new one
+                        new_experts[r] = {"path": model_path, "metrics": metrics}
+                        any_improvement = True
+            except Exception as e:
+                logger.error(f"Pipeline: Failed to retrain expert '{r}': {e}")
+                if r in active_experts: new_experts[r] = active_experts[r]
+
+        if any_improvement:
+            logger.info(f"Pipeline: PROMOTION GRANTED for Ensemble {next_ver}.")
+            # Register and Promote
+            self.registry.register_ensemble(next_ver, new_experts, total_records)
             self.registry.promote_model(next_ver, total_records)
             return True
         else:
-            logger.info("Pipeline: PROMOTION REJECTED. New model did not outperform current model.")
+            logger.info("Pipeline: PROMOTION REJECTED. No expert outperformed its benchmark.")
             return False

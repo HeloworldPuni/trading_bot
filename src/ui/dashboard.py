@@ -25,7 +25,8 @@ class Dashboard:
             Layout(name="right", ratio=1)
         )
 
-    def generate_renderable(self, portfolio_summary: dict, active_positions: list, recent_history: list, latest_signal: dict = None):
+    def generate_renderable(self, portfolio_summary: dict, active_positions: list, recent_history: list, 
+                                latest_signal: dict = None, alerts: list = None, meta_learner_summary: dict = None):
         # Calculate used in positions
         used_in_positions = sum(p.get('margin_used', p['size_usd'] / p.get('leverage', 1)) for p in active_positions)
         available_balance = portfolio_summary['balance']
@@ -49,7 +50,9 @@ class Dashboard:
             "  |  ",
             (f"Equity: ${portfolio_summary['equity']:,.2f}", "yellow"),
             "  |  ",
-            (f"Open: {len(active_positions)}", "magenta")
+            (f"Open: {len(active_positions)}", "magenta"),
+            "  |  ",
+            (f"DD: {portfolio_summary.get('drawdown_pct', 0.0):.1f}%", "red")
         )
         
         # 2. Left: Active Positions Table
@@ -57,6 +60,7 @@ class Dashboard:
         pos_table.add_column("Symbol", style="bold")
         pos_table.add_column("Side", justify="center")
         pos_table.add_column("Entry")
+        pos_table.add_column("Price")
         pos_table.add_column("TP", style="green")
         pos_table.add_column("SL", style="red")
         pos_table.add_column("Size", justify="right")
@@ -70,11 +74,13 @@ class Dashboard:
             leverage = pos.get('leverage', 1)
             tp = pos.get('tp', 0)
             sl = pos.get('sl', 0)
+            current_price = pos.get('current_price', pos['entry_price']) # Fallback to entry if not updated yet
             
             pos_table.add_row(
                 pos['symbol'],
                 Text(pos['direction'], style=side_col),
                 f"{pos['entry_price']:.2f}",
+                Text(f"{current_price:.2f}", style="yellow"),
                 f"{tp:.2f}",
                 f"{sl:.2f}",
                 f"${pos['size_usd']:.0f}",
@@ -83,10 +89,20 @@ class Dashboard:
                 Text(f"{pos['unrealized_pnl_pct']:.2f}%", style=pnl_col)
             )
 
-        # 3. Right: Latest Signal / Market Info
+        # 3. Right: Latest Signal / Market Info / MetaLearner
+        meta_info = ""
+        if meta_learner_summary:
+            meta_info = (
+                f"\n\n--- Meta-Learning ---\n"
+                f"Threshold: {meta_learner_summary['confidence_threshold']:.2f}\n"
+                f"Recent WR: {meta_learner_summary['recent_win_rate']:.1%}\n"
+                f"Top Loss: {meta_learner_summary['top_loss_category']}"
+            )
+
         signal_panel = Panel(
             Text(f"Latest Analysis @ {datetime.datetime.now().strftime('%H:%M:%S')}\n\n" + 
-                 (f"Signal: {latest_signal['strategy']}\nSide: {latest_signal['direction']}\nConf: {latest_signal['confidence']:.4f}\nReason: {latest_signal['reasoning']}" if latest_signal else "Waiting for next cycle..."),
+                 (f"Symbol: {latest_signal.get('symbol', 'N/A')}\nSignal: {latest_signal['strategy']}\nSide: {latest_signal['direction']}\nConf: {latest_signal['confidence']:.4f}\nReason: {latest_signal['reasoning'][:100]}..." if latest_signal else "Waiting for next cycle...") +
+                 meta_info,
                  style="italic"),
             title="Registry Feed", border_style="blue"
         )
@@ -97,7 +113,10 @@ class Dashboard:
         realized_roi = (realized_pnl / initial_cap * 100) if initial_cap > 0 else 0
         
         roi_text = f"Realized ROI: {realized_roi:+.2f}%" if recent_history else "No closed trades yet"
-        hist_table = Table(title=f"Trade History (Last 5) | {roi_text}", box=box.SIMPLE, expand=True)
+        alert_text = ""
+        if alerts:
+            alert_text = " | Alerts: " + ", ".join(alerts[:3])
+        hist_table = Table(title=f"Trade History (Last 5) | {roi_text}{alert_text}", box=box.SIMPLE, expand=True)
         hist_table.add_column("Time")
         hist_table.add_column("Symbol")
         hist_table.add_column("Result", justify="right")

@@ -330,6 +330,8 @@ class Config:
 
 ```
 
+Note: `src/config.py` also includes leverage caps, cooldown/position limits, and `STRATEGIC_WAIT_PROB` to control random WAIT injection for data diversity. See the file for the full, current list.
+
 ### File: `src/core/definitions.py`
 
 ```python
@@ -1330,6 +1332,7 @@ Machine learning is an **assistant** to decision-making, not a replacement.
 
 - ML must operate only on **structured state features**.
 - ML output must be **probabilistic**, not deterministic.
+- Session/symbol encodings are persisted in `models/feature_maps.json` and reused in inference to keep training/inference aligned.
 
 **Confidence Discounting:**
 ML confidence must be **discounted** when:
