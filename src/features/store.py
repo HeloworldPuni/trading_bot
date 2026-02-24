@@ -80,7 +80,7 @@ class FeatureStore:
         if df.empty:
             return pd.DataFrame()
 
-        price = pd.to_numeric(df["price"], errors="coerce").fillna(method="ffill")
+        price = pd.to_numeric(df["price"], errors="coerce").ffill()
         vol = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
 
         bars = pd.DataFrame(index=price.resample(rule).last().dropna().index)

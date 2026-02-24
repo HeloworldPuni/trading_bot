@@ -5,6 +5,7 @@ Tracks which systems influenced each trading decision for debugging.
 import json
 import os
 import logging
+import time
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -124,8 +125,16 @@ class DecisionAuditor:
     
     def save(self, audit: DecisionAudit):
         """Persist audit to JSONL file."""
-        with open(self.log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(audit.to_dict()) + "\n")
+        for attempt in range(5):
+            try:
+                with open(self.log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(audit.to_dict()) + "\n")
+                return
+            except (PermissionError, OSError) as exc:
+                if attempt >= 4:
+                    logger.warning("Decision audit write skipped due to file lock: %s", exc)
+                    return
+                time.sleep(0.05 * (attempt + 1))
     
     def get_recent(self, count: int = 20) -> List[Dict[str, Any]]:
         """Get recent audit entries for debugging."""
@@ -154,9 +163,9 @@ class DecisionAuditor:
             f"Decision: {d['decision_id'][:8]}... at {d['timestamp']}",
             f"Symbol: {d['symbol']} | Regime: {d['regime']}",
             f"Action: {d['action']} {d['direction']}",
-            f"ML Confidence: {d['ml_confidence']:.3f} ({'✅' if d['ml_passed'] else '❌'})" if d['ml_confidence'] else "ML: N/A",
-            f"EV: {d['ev_value']:.4f} ({'✅' if d['ev_passed'] else '❌'})" if d['ev_value'] else "EV: N/A",
-            f"Strategy: {d['strategy']} (weight={d['strategy_weight']:.2f}) {'🚫 BLOCKED' if d['strategy_blocked'] else ''}",
+            f"ML Confidence: {d['ml_confidence']:.3f} ({'PASS' if d['ml_passed'] else 'FAIL'})" if d['ml_confidence'] else "ML: N/A",
+            f"EV: {d['ev_value']:.4f} ({'PASS' if d['ev_passed'] else 'FAIL'})" if d['ev_value'] else "EV: N/A",
+            f"Strategy: {d['strategy']} (weight={d['strategy_weight']:.2f}) {'BLOCKED' if d['strategy_blocked'] else ''}",
             f"Risk: {d['risk_state']} | DD: {d['drawdown_pct']:.1f}% | Positions: {d['open_positions']}",
         ]
         

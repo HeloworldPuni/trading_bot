@@ -2,43 +2,105 @@
 import logging
 import datetime
 import math
+import time
 from typing import List, Dict, Any, Optional
 from src.core.definitions import MarketState, MarketRegime, VolatilityLevel, TrendStrength
 from src.exchange.connector import BinanceConnector
 from src.data.quality import validate_ohlcv
 from src.config import Config
+from src.marketdata import validate_market_state
 
 logger = logging.getLogger(__name__)
 
 class LiveFeeder:
     def __init__(self, connector: Optional[BinanceConnector]):
         self.connector = connector
+        self._data_issue_counts: Dict[str, int] = {}
+        self._data_quarantine_until: Dict[str, float] = {}
+        self._data_warn_until: Dict[str, float] = {}
 
-    def get_current_state(self, symbol: str, open_positions: int = 0) -> MarketState:
+    def get_current_state(
+        self,
+        symbol: str,
+        open_positions: int = 0,
+        ohlcv_override: Optional[List[Any]] = None,
+    ) -> MarketState:
         """
         Fetches data and constructs the MarketState.
         """
-        if not self.connector:
-             return self._create_safe_state(symbol, open_positions)
+        now_ts = time.time()
+        if now_ts < self._data_quarantine_until.get(symbol, 0.0) and not ohlcv_override:
+            return self._create_safe_state(symbol, open_positions)
 
-        limit = max(50, Config.LTF_LOOKBACK)
-        ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=limit)
+        ohlcv: List[Any] = []
+        using_override = bool(ohlcv_override)
+        if using_override:
+            ohlcv = list(ohlcv_override or [])
+        else:
+            if not self.connector:
+                return self._create_safe_state(symbol, open_positions)
+            limit = max(50, Config.LTF_LOOKBACK)
+            ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=limit)
         
         if not ohlcv or len(ohlcv) < 50:
-             # Fallback to Safe State if data missing
-             logger.warning(f"Insufficient data for {symbol}, returning SAFE state.")
-             return self._create_safe_state(symbol, open_positions)
+            if using_override and self.connector:
+                limit = max(50, Config.LTF_LOOKBACK)
+                ohlcv = self.connector.fetch_ohlcv(symbol, Config.SCAN_TIMEFRAME, limit=limit)
+            if not ohlcv or len(ohlcv) < 50:
+                # Fallback to Safe State if data missing.
+                self._register_data_issue(symbol, "insufficient_ohlcv")
+                return self._create_safe_state(symbol, open_positions)
         
         ok, issues = validate_ohlcv(ohlcv, min_len=50)
         if not ok:
             issue = issues[0] if issues else "unknown"
-            logger.warning(f"Invalid OHLCV for {symbol}: {issue}. Returning SAFE state.")
+            self._register_data_issue(symbol, f"invalid_ohlcv:{issue}")
             return self._create_safe_state(symbol, open_positions)
 
-        # Fetch funding rate for anticipatory regime detection
-        funding_rate = self.connector.fetch_funding_rate(symbol)
+        self._clear_data_issue(symbol)
+
+        # Fetch funding rate for anticipatory regime detection.
+        funding_rate = 0.0
+        if self.connector:
+            try:
+                funding_rate = self.connector.fetch_funding_rate(symbol)
+            except Exception:
+                funding_rate = 0.0
         
-        return self._calculate_state_from_ohlcv(ohlcv, symbol, open_positions, funding_rate)
+        state = self._calculate_state_from_ohlcv(ohlcv, symbol, open_positions, funding_rate)
+        valid_state, state_issues = validate_market_state(state, expected_symbol=symbol)
+        if not valid_state:
+            issue = state_issues[0] if state_issues else "unknown_state_contract"
+            self._register_data_issue(symbol, f"state_contract:{issue}")
+            return self._create_safe_state(symbol, open_positions)
+        return state
+
+    def _register_data_issue(self, symbol: str, reason: str) -> None:
+        count = self._data_issue_counts.get(symbol, 0) + 1
+        self._data_issue_counts[symbol] = count
+
+        now_ts = time.time()
+        warn_until = self._data_warn_until.get(symbol, 0.0)
+        if now_ts >= warn_until:
+            logger.warning("Data quality issue for %s (%s). Returning SAFE state.", symbol, reason)
+            self._data_warn_until[symbol] = now_ts + max(10, Config.DATA_QUALITY_WARN_COOLDOWN_SEC)
+
+        if count >= max(1, Config.DATA_QUALITY_STRIKE_LIMIT):
+            quarantine_sec = max(60, Config.DATA_QUALITY_QUARANTINE_SEC)
+            self._data_quarantine_until[symbol] = now_ts + quarantine_sec
+            if now_ts >= warn_until:
+                logger.warning(
+                    "Temporarily quarantining %s for %ss after %s data-quality failures.",
+                    symbol,
+                    quarantine_sec,
+                    count,
+                )
+
+    def _clear_data_issue(self, symbol: str) -> None:
+        if symbol in self._data_issue_counts:
+            self._data_issue_counts[symbol] = 0
+        if symbol in self._data_quarantine_until:
+            self._data_quarantine_until.pop(symbol, None)
 
     def _calculate_state_from_ohlcv(self, ohlcv: List[Any], symbol: str = "BTC/USDT", open_positions: int = 0, funding_rate: float = 0.0) -> MarketState:
         # Parse basic data (close prices)

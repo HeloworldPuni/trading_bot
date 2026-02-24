@@ -96,6 +96,11 @@ def cluster_exposure(open_positions: List[Dict[str, Any]], equity: float, cluste
         return totals
     for p in open_positions:
         sym = p.get("symbol")
-        cluster = clusters.get(sym, "OTHER")
+        if sym in clusters:
+            cluster = clusters[sym]
+        else:
+            # Fallback: avoid collapsing all unknown symbols into a single OTHER bucket.
+            base = str(sym).split("/", 1)[0] if sym else "UNKNOWN"
+            cluster = f"SYM_{base}"
         totals[cluster] = totals.get(cluster, 0.0) + p.get("size_usd", 0.0)
     return {k: v / equity for k, v in totals.items()}

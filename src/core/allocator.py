@@ -1,4 +1,6 @@
 import math
+import json
+import os
 from collections import defaultdict, deque
 from typing import Dict, List, Tuple
 
@@ -21,6 +23,10 @@ class StrategyPerformanceTracker:
         avg_pnl = sum(trades) / total
         return total, win_rate, avg_pnl
 
+    def stats(self, key: str) -> Tuple[int, float, float]:
+        """Public stats accessor used by strategy admission gates."""
+        return self._stats(key)
+
     def get_weight(self, key: str, min_samples: int = 20) -> float:
         total, win_rate, avg_pnl = self._stats(key)
         if total < min_samples:
@@ -38,6 +44,41 @@ class StrategyPerformanceTracker:
 
     def get_weights(self, min_samples: int = 20) -> Dict[str, float]:
         return {k: self.get_weight(k, min_samples=min_samples) for k in self.history.keys()}
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "window": int(self.window),
+            "history": {k: list(v) for k, v in self.history.items()},
+        }
+
+    def load_dict(self, data: Dict[str, object]) -> None:
+        if not isinstance(data, dict):
+            return
+        self.window = int(data.get("window", self.window))
+        self.history = defaultdict(lambda: deque(maxlen=self.window))
+        raw_history = data.get("history", {})
+        if isinstance(raw_history, dict):
+            for key, values in raw_history.items():
+                dq = deque(maxlen=self.window)
+                if isinstance(values, list):
+                    for val in values:
+                        try:
+                            dq.append(float(val))
+                        except Exception:
+                            continue
+                self.history[str(key)] = dq
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    def load(self, path: str) -> bool:
+        if not os.path.exists(path):
+            return False
+        with open(path, "r", encoding="utf-8") as f:
+            self.load_dict(json.load(f))
+        return True
 
 
 class BanditAllocator:
@@ -63,3 +104,43 @@ class BanditAllocator:
 
     def get_weights(self, keys: List[str]) -> Dict[str, float]:
         return {k: self.weight(k) for k in keys}
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "counts": dict(self.counts),
+            "values": dict(self.values),
+            "total": int(self.total),
+        }
+
+    def load_dict(self, data: Dict[str, object]) -> None:
+        if not isinstance(data, dict):
+            return
+        raw_counts = data.get("counts", {})
+        raw_values = data.get("values", {})
+        self.counts = defaultdict(int)
+        self.values = defaultdict(float)
+        if isinstance(raw_counts, dict):
+            for key, value in raw_counts.items():
+                try:
+                    self.counts[str(key)] = int(value)
+                except Exception:
+                    continue
+        if isinstance(raw_values, dict):
+            for key, value in raw_values.items():
+                try:
+                    self.values[str(key)] = float(value)
+                except Exception:
+                    continue
+        self.total = int(data.get("total", sum(self.counts.values())))
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    def load(self, path: str) -> bool:
+        if not os.path.exists(path):
+            return False
+        with open(path, "r", encoding="utf-8") as f:
+            self.load_dict(json.load(f))
+        return True

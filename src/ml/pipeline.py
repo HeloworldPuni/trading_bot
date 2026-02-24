@@ -4,6 +4,8 @@ import json
 import pandas as pd
 import joblib
 from typing import Optional, Dict, Any
+from src.config import Config
+from src.database.storage import load_resolution_updates
 from src.ml.registry import ModelRegistry
 from src.ml.dataset_builder import DatasetBuilder
 from src.ml.trainer import PolicyTrainer
@@ -14,13 +16,22 @@ logger = logging.getLogger(__name__)
 class AdaptivePipeline:
     def __init__(self, 
                  threshold: int = 100,  # Phase A: Lowered from 2000 for faster learning
-                 data_log_path: str = "data/experience_log.jsonl",
+                 data_log_path: Optional[str] = None,
                  models_dir: str = "models"):
         self.threshold = threshold
-        self.data_log_path = data_log_path
+        self.data_log_path = data_log_path or Config.EXPERIENCE_LOG_FILE
         self.models_dir = models_dir
         self.registry = ModelRegistry()
         self.builder = DatasetBuilder()
+
+    def _resolve_data_log_path(self) -> str:
+        """Prefer configured experience log, fallback to legacy default if needed."""
+        if os.path.exists(self.data_log_path):
+            return self.data_log_path
+        legacy = os.path.join("data", "experience_log.jsonl")
+        if self.data_log_path != legacy and os.path.exists(legacy):
+            return legacy
+        return self.data_log_path
 
     def run_check(self) -> bool:
         """
@@ -28,36 +39,58 @@ class AdaptivePipeline:
         Returns True if update was attempted.
         """
         logger.info("Pipeline: Checking for new experience data...")
+        data_log_path = self._resolve_data_log_path()
         
-        # 1. Count resolved records in log
-        resolved_count = 0
-        if os.path.exists(self.data_log_path):
-            with open(self.data_log_path, "r", encoding="utf-8") as f:
+        # 1. Count resolved records in log (main log + resolution sidecar)
+        resolved_ids = set()
+        if os.path.exists(data_log_path):
+            with open(data_log_path, "r", encoding="utf-8") as f:
                 for line in f:
                     try:
-                        if json.loads(line).get("resolved") is True:
-                            resolved_count += 1
+                        rec = json.loads(line)
+                        if rec.get("resolved") is True and rec.get("id"):
+                            resolved_ids.add(rec["id"])
                     except:
                         continue
+        # Sidecar captures append-only resolved updates for performance.
+        for decision_id in load_resolution_updates(data_log_path).keys():
+            resolved_ids.add(decision_id)
+        resolved_count = len(resolved_ids)
         
-        last_count = self.registry.get_last_trained_count()
+        last_count = self.registry.get_last_trained_count(log_key=data_log_path)
         new_records = resolved_count - last_count
-        
+
+        if new_records < 0:
+            logger.warning(
+                "Pipeline: Resolved record counter moved backward (last=%s, current=%s) for log %s. "
+                "Resetting learning baseline for this log.",
+                last_count,
+                resolved_count,
+                data_log_path,
+            )
+            self.registry.set_last_trained_count(
+                resolved_count,
+                log_key=data_log_path,
+                update_global=False,
+            )
+            new_records = 0
+
         logger.info(f"Pipeline: Detected {new_records} new resolved records (Total: {resolved_count}).")
         
         if new_records < self.threshold:
             logger.info(f"Pipeline: Below threshold ({self.threshold}). Skipping update.")
             return False
             
-        return self._execute_update(resolved_count)
+        return self._execute_update(resolved_count, data_log_path=data_log_path)
 
-    def _execute_update(self, total_records: int) -> bool:
+    def _execute_update(self, total_records: int, data_log_path: Optional[str] = None) -> bool:
         logger.info("Pipeline: Threshold met. Starting Adaptive Ensemble Update...")
+        data_log_path = data_log_path or self._resolve_data_log_path()
         
         # 1. Rebuild Dataset Splits
         data_dir = "data"
         full_csv = os.path.join(data_dir, "ml_dataset.csv")
-        rows = self.builder.build_from_log(self.data_log_path, full_csv)
+        rows = self.builder.build_from_log(data_log_path, full_csv)
         if not rows:
             logger.error("Pipeline: Failed to build dataset.")
             return False
@@ -132,7 +165,7 @@ class AdaptivePipeline:
             logger.info(f"Pipeline: PROMOTION GRANTED for Ensemble {next_ver}.")
             # Register and Promote
             self.registry.register_ensemble(next_ver, new_experts, total_records)
-            self.registry.promote_model(next_ver, total_records)
+            self.registry.promote_model(next_ver, total_records, log_key=data_log_path)
             return True
         else:
             logger.info("Pipeline: PROMOTION REJECTED. No expert outperformed its benchmark.")

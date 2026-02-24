@@ -104,7 +104,7 @@ class MicrostructureFeatures:
             denom = (buy + sell).replace(0, np.nan)
             tfi = ((buy - sell) / denom).fillna(0.0)
         else:
-            close = pd.to_numeric(df.get("close"), errors="coerce").fillna(method="ffill").fillna(0.0)
+            close = pd.to_numeric(df.get("close"), errors="coerce").ffill().fillna(0.0)
             open_ = pd.to_numeric(df.get("open"), errors="coerce").fillna(close)
             vol = pd.to_numeric(df.get("volume"), errors="coerce").fillna(0.0)
             sign = np.sign(close - open_)

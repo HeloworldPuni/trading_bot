@@ -14,7 +14,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.ml.pipeline import AdaptivePipeline
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("LearningScheduler")
 
 class LearningScheduler:
@@ -23,32 +22,36 @@ class LearningScheduler:
     at configurable intervals to ensure continuous learning.
     """
     
-    def __init__(self, interval_hours: int = 24, min_trades: int = 50):
+    def __init__(self, interval_hours: int = 24, min_trades: int = 50, data_log_path: str = None):
         self.interval_hours = interval_hours
         self.min_trades = min_trades
-        self.pipeline = AdaptivePipeline(threshold=min_trades)
+        self.pipeline = AdaptivePipeline(threshold=min_trades, data_log_path=data_log_path)
         self.last_run = None
         self.running = False
         self._thread = None
         
     def _check_and_retrain(self):
         """Execute a single retraining check."""
-        logger.info(f"🔄 Learning Check triggered at {datetime.now().isoformat()}")
+        logger.info("Learning check triggered at %s", datetime.now().isoformat())
         
         try:
             result = self.pipeline.run_check()
             if result:
-                logger.info("✅ Model updated successfully!")
+                logger.info("Model updated successfully.")
             else:
-                logger.info("ℹ️ No update needed (threshold not met or new model didn't outperform)")
+                logger.info("No update needed (threshold not met or new model did not outperform).")
             
             self.last_run = datetime.now()
         except Exception as e:
-            logger.error(f"❌ Retraining failed: {e}")
+            logger.error("Retraining failed: %s", e)
     
     def _scheduler_loop(self):
         """Background loop that runs retraining at intervals."""
-        logger.info(f"🚀 Learning Scheduler started. Interval: {self.interval_hours}h, Min trades: {self.min_trades}")
+        logger.info(
+            "Learning scheduler started. Interval: %sh, Min trades: %s",
+            self.interval_hours,
+            self.min_trades,
+        )
         
         while self.running:
             # Check if it's time to retrain
@@ -67,14 +70,14 @@ class LearningScheduler:
         self.running = True
         self._thread = threading.Thread(target=self._scheduler_loop, daemon=True)
         self._thread.start()
-        logger.info("🧠 Background learning scheduler activated")
+        logger.info("Background learning scheduler activated.")
         
     def stop(self):
         """Stop the scheduler."""
         self.running = False
         if self._thread:
             self._thread.join(timeout=5)
-        logger.info("⏹️ Learning scheduler stopped")
+        logger.info("Learning scheduler stopped.")
         
     def run_now(self):
         """Manually trigger a retraining check."""
@@ -84,15 +87,23 @@ class LearningScheduler:
 def main():
     """Standalone execution for manual or cron-triggered runs."""
     import argparse
+
+    # Configure logging only for standalone script execution.
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
     parser = argparse.ArgumentParser(description="Autonomous Learning Scheduler")
     parser.add_argument("--once", action="store_true", help="Run once and exit")
     parser.add_argument("--interval", type=int, default=24, help="Hours between retraining checks")
     parser.add_argument("--min-trades", type=int, default=50, help="Minimum new trades before retraining")
+    parser.add_argument("--log-path", type=str, default=None, help="Experience log path override")
     
     args = parser.parse_args()
     
-    scheduler = LearningScheduler(interval_hours=args.interval, min_trades=args.min_trades)
+    scheduler = LearningScheduler(
+        interval_hours=args.interval,
+        min_trades=args.min_trades,
+        data_log_path=args.log_path,
+    )
     
     if args.once:
         scheduler.run_now()

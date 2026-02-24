@@ -58,11 +58,15 @@ class CanaryLauncher:
             self.current_stage_idx += 1
             self.stage_start_time = time.time()
             new_stage = self.STAGES[self.current_stage_idx]
-            logger.info(f"🚀 PROMOTED to Stage {self.current_stage_idx} ({new_stage['name']})")
+            logger.info(
+                "Promoted to Stage %s (%s)",
+                self.current_stage_idx,
+                new_stage["name"],
+            )
             return "PROMOTED"
         
         return "MAX_STAGE"
 
     def _halt_deployment(self, reason: str):
         self.is_halted = True
-        logger.critical(f"🛑 CANARY DEPLOYMENT HALTED: {reason}")
+        logger.critical("Canary deployment halted: %s", reason)

@@ -1,6 +1,7 @@
-
 import logging
-from typing import Optional, List, Tuple, Dict
+import time
+from collections import defaultdict, deque
+from typing import Optional, List, Tuple, Dict, Any
 
 from src.core.definitions import MarketState, Action, StrategyType, ActionDirection, RiskLevel, MarketRegime
 from src.core.validation import StateValidator, ValidationException
@@ -27,11 +28,100 @@ class TradingEngine:
         self.strategy_weights: Dict[StrategyType, float] = {}
         self.blocked_strategies: set[StrategyType] = set()
         self.auditor = get_auditor()
+        self.last_policy_adjustment = self._policy_baseline()
+        self.runtime_policy: Dict[str, Any] = {}
+        self.cross_section_scores: Dict[str, float] = {}
+        self.vol_breakout_bbw_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=120))
+
+    @staticmethod
+    def _policy_baseline() -> Dict[str, Any]:
+        return {
+            "score_multiplier": 1.0,
+            "confidence_buffer": 0.0,
+            "size_multiplier": 1.0,
+            "dominant_loss_category": "NONE",
+            "sample_size": 0,
+            "applied": False,
+        }
 
     def set_strategy_overrides(self, strategy_weights: Optional[Dict[StrategyType, float]] = None,
                                 blocked_strategies: Optional[set] = None) -> None:
         self.strategy_weights = strategy_weights or {}
         self.blocked_strategies = blocked_strategies or set()
+
+    def set_runtime_policy(self, policy: Optional[Dict[str, Any]] = None) -> None:
+        self.runtime_policy = dict(policy or {})
+
+    def update_cross_section_snapshot(self, symbol: str, state: MarketState) -> None:
+        """
+        Maintains a rolling universe-relative momentum score used by
+        CROSS_SECTIONAL_MOMENTUM selection.
+        """
+        trend = max(-3.0, min(3.0, float(state.trend_spread)))
+        htf_trend = max(-3.0, min(3.0, float(state.htf_trend_spread)))
+        volume = max(-3.0, min(3.0, float(state.volume_zscore)))
+        shift = max(-1.0, min(1.0, float(state.momentum_shift_score)))
+
+        score = (0.50 * trend) + (0.35 * htf_trend) + (0.10 * volume) + (0.05 * shift)
+        self.cross_section_scores[str(symbol)] = score
+        # Keep memory bounded in case symbol universe rotates heavily.
+        if len(self.cross_section_scores) > 120:
+            stale_keys = list(self.cross_section_scores.keys())[:-120]
+            for key in stale_keys:
+                self.cross_section_scores.pop(key, None)
+
+    def update_volatility_snapshot(self, symbol: str, state: MarketState) -> None:
+        """
+        Stores rolling Bollinger bandwidth history per symbol for squeeze/expansion logic.
+        """
+        bb_mid = float(state.bb_mid or 0.0)
+        if bb_mid <= 0:
+            return
+        bbw_pct = ((float(state.bb_upper) - float(state.bb_lower)) / max(bb_mid, 1e-9)) * 100.0
+        history = self.vol_breakout_bbw_history[str(symbol)]
+        history.append(max(0.0, bbw_pct))
+
+    def _vol_breakout_snapshot(self, symbol: str, state: MarketState) -> Dict[str, float]:
+        symbol = str(symbol)
+        history = list(self.vol_breakout_bbw_history.get(symbol, []))
+
+        bb_mid = float(state.bb_mid or 0.0)
+        current_bbw = 0.0
+        if bb_mid > 0:
+            current_bbw = ((float(state.bb_upper) - float(state.bb_lower)) / max(bb_mid, 1e-9)) * 100.0
+
+        if history and abs(history[-1] - current_bbw) < 1e-9:
+            prev_series = history[:-1]
+        else:
+            prev_series = history
+
+        window = max(5, int(Config.VOL_BREAKOUT_BASELINE_WINDOW))
+        baseline_slice = prev_series[-window:]
+        baseline_bbw = sum(baseline_slice) / len(baseline_slice) if baseline_slice else current_bbw
+        prev_bbw = prev_series[-1] if prev_series else baseline_bbw
+        expansion_ratio = current_bbw / max(prev_bbw, 1e-9)
+        baseline_ratio = current_bbw / max(baseline_bbw, 1e-9)
+
+        return {
+            "current_bbw": max(0.0, current_bbw),
+            "prev_bbw": max(0.0, prev_bbw),
+            "baseline_bbw": max(0.0, baseline_bbw),
+            "expansion_ratio": max(0.0, expansion_ratio),
+            "baseline_ratio": max(0.0, baseline_ratio),
+            "sample_size": float(len(prev_series)),
+        }
+
+    def _cross_section_percentile(self, symbol: str) -> float:
+        if symbol not in self.cross_section_scores:
+            return 0.5
+        values = list(self.cross_section_scores.values())
+        if len(values) < 2:
+            return 0.5
+        values.sort()
+        target = self.cross_section_scores[symbol]
+        rank = sum(1 for value in values if value <= target)
+        return rank / len(values)
+        
         
     def run_analysis(self, state: MarketState, data_source: str = "live", market_period_id: str = None) -> Tuple[Action, str, int]:
         """
@@ -39,34 +129,52 @@ class TradingEngine:
         Returns: (Action, decision_id, repetition_count)
         """
         try:
+            t0 = time.time()
             # 1. Validation
             StateValidator.validate_state(state)
+            t1 = time.time()
             
             # 2. Gating
             allowed_strategies = StrategyGater.get_allowed_strategies(state)
             
             # 3. Decision (Cold Start Rule Logic)
             raw_action, repeats = self._basic_selector(state, allowed_strategies)
+            selected_policy = self.last_policy_adjustment if raw_action.strategy != StrategyType.WAIT else self._policy_baseline()
+            t2 = time.time()
             
             # 4. Confidence Prediction (Now before RiskManager to allow Scaling)
             confidence = self.policy.predict_confidence(state, raw_action, repeats=repeats)
             self.last_confidence = confidence
+            t3 = time.time()
             
             # 5. Risk Scaling Bands (Weighted by MetaLearner)
             # Adjust trade risk dynamically based on ML confidence
             risk_multiplier = 1.0
             original_action_record = None
+            applied_meta_threshold = self.meta_learner.confidence_threshold
             
             if raw_action.strategy != StrategyType.WAIT:
                 # Use MetaLearner's adaptive threshold instead of hardcoded config
-                if not self.meta_learner.should_trade(confidence, state.regime_stable):
-                    threshold = self.meta_learner.confidence_threshold
-                    logger.info(f"META BLOCK: Confidence {confidence:.4f} < {threshold:.2f}. Blocking trade.")
+                policy_threshold_buffer = float(selected_policy.get("confidence_buffer", 0.0))
+                runtime_threshold_buffer = float(self.runtime_policy.get("confidence_buffer", 0.0))
+                
+                # Enforce Config Minimum
+                base_threshold = max(self.meta_learner.confidence_threshold, Config.ML_CONFIDENCE_MIN)
+                
+                applied_meta_threshold = base_threshold + policy_threshold_buffer + runtime_threshold_buffer
+                if not state.regime_stable:
+                    applied_meta_threshold += 0.1
+
+                if confidence < applied_meta_threshold:
+                    logger.info(f"META BLOCK: Confidence {confidence:.4f} < {applied_meta_threshold:.2f}. Blocking trade.")
                     original_action_record = raw_action.to_dict()
-                    raw_action = Action.wait(reason=f"Blocked by MetaLearner Threshold ({confidence:.4f} < {threshold:.2f})")
+                    raw_action = Action.wait(reason=f"Blocked by MetaLearner Threshold ({confidence:.4f} < {applied_meta_threshold:.2f})")
                 else:
                     # Use MetaLearner for position scaling
                     risk_multiplier = self.meta_learner.get_position_scaling(confidence)
+                    risk_multiplier *= float(selected_policy.get("size_multiplier", 1.0))
+                    risk_multiplier *= float(self.runtime_policy.get("size_multiplier", 1.0))
+                    risk_multiplier = max(0.5, min(1.5, risk_multiplier))
 
             # 5.5 Expected Value gating (probability-calibrated)
             if Config.EV_GATING and raw_action.strategy != StrategyType.WAIT:
@@ -79,10 +187,13 @@ class TradingEngine:
                     logger.info(f"EV BLOCK: {trade_mode} EV {ev:.3f} < {Config.EV_THRESHOLD:.3f}. Blocking trade.")
                     original_action_record = raw_action.to_dict()
                     raw_action = Action.wait(reason=f"Blocked by EV ({ev:.3f} < {Config.EV_THRESHOLD:.3f})")
+            
+            t4 = time.time()
 
             # 6. Risk Management (Validation & Scaling)
             # Pass the multiplier to RiskManager to apply it to base risk
             final_action = RiskManager.validate_action(state, raw_action, risk_multiplier=risk_multiplier)
+            t5 = time.time()
             
             # 7. Logging (Pending Reward)
             # Store repeats, ML scores, and risks in metadata
@@ -96,15 +207,17 @@ class TradingEngine:
                 ml_confidence=confidence,
                 original_action=original_action_record
             )
+            t6 = time.time()
             
             # 8. Decision Audit (for debugging)
             try:
                 audit = self.auditor.create_audit(decision_id, state.symbol)
-                self.auditor.log_ml_result(audit, confidence, Config.ML_CONFIDENCE_MIN)
+                self.auditor.log_ml_result(audit, confidence, applied_meta_threshold)
                 if Config.EV_GATING:
                     trade_mode, tp_pct, sl_pct = get_trade_mode(state.market_regime.value, state.trend_strength.value)
                     ev_val = expected_value(confidence, tp_pct, sl_pct)
                     self.auditor.log_ev_result(audit, ev_val, Config.EV_THRESHOLD)
+                
                 strat_weight = self.strategy_weights.get(raw_action.strategy, 1.0) if raw_action.strategy != StrategyType.WAIT else 1.0
                 strat_blocked = raw_action.strategy in self.blocked_strategies
                 self.auditor.log_strategy_filter(audit, raw_action.strategy.name if hasattr(raw_action.strategy, 'name') else str(raw_action.strategy), strat_weight, strat_blocked)
@@ -115,8 +228,11 @@ class TradingEngine:
             except Exception as audit_err:
                 logger.debug(f"Audit logging failed: {audit_err}")
             
+            t7 = time.time()
+            if t7 - t0 > 1.0:
+                logger.warning(f"SLOW ENGINE ({state.symbol}): Total {t7-t0:.2f}s | Val {t1-t0:.2f}s | Sel {t2-t1:.2f}s | Conf {t3-t2:.2f}s | Logic {t4-t3:.2f}s | Risk {t5-t4:.2f}s | DB {t6-t5:.2f}s | Audit {t7-t6:.2f}s")
+            
             return final_action, decision_id, repeats
-
 
         except ValidationException as e:
             logger.error(f"State Validation Failed: {e}")
@@ -135,10 +251,20 @@ class TradingEngine:
         Rule-based signal selector with multi-timeframe + execution-aware filters.
         Returns (Action, repetition_count).
         """
+        self.last_policy_adjustment = self._policy_baseline()
         if not allowed:
             return Action.wait(reason="No strategies allowed by Gating Protocol"), 0
-        if self.blocked_strategies:
-            allowed = [s for s in allowed if s not in self.blocked_strategies]
+        runtime_blocked = {
+            str(name).upper() for name in self.runtime_policy.get("blocked_strategies", [])
+        }
+        merged_blocked = set(self.blocked_strategies)
+        if runtime_blocked:
+            for strat in list(allowed):
+                if strat.name.upper() in runtime_blocked:
+                    merged_blocked.add(strat)
+
+        if merged_blocked:
+            allowed = [s for s in allowed if s not in merged_blocked]
             if not allowed:
                 return Action.wait(reason="All strategies blocked by performance filter."), 0
 
@@ -149,6 +275,18 @@ class TradingEngine:
         import random
         if Config.STRATEGIC_WAIT_PROB > 0 and random.random() < Config.STRATEGIC_WAIT_PROB:
             return Action.wait(reason="Strategic WAIT injection to gather inaction data."), 0
+
+        # Runtime regime gates (auto-rollout policy controls)
+        if bool(self.runtime_policy.get("require_regime_stable", False)) and not state.regime_stable:
+            return Action.wait(reason="Blocked by runtime policy: unstable regime"), 0
+        min_regime_conf = min(
+            float(self.runtime_policy.get("min_regime_confidence", 0.0)),
+            0.20,  # Cap: auto-rollout can't demand regime confidence above 20%
+        )
+        if min_regime_conf > 0 and state.regime_confidence < min_regime_conf:
+            return Action.wait(
+                reason=f"Blocked by runtime policy: regime_confidence {state.regime_confidence:.2f} < {min_regime_conf:.2f}"
+            ), 0
 
         # 3. Execution risk filters
         if state.spread_pct > Config.MAX_SPREAD_PCT:
@@ -189,6 +327,7 @@ class TradingEngine:
 
         scores: Dict[StrategyType, float] = {}
         directions: Dict[StrategyType, ActionDirection] = {}
+        policy_adjustments: Dict[StrategyType, Dict[str, Any]] = {}
 
         for strat in allowed:
             score = 0.0
@@ -208,6 +347,33 @@ class TradingEngine:
                     if near_high:
                         score += 0.1
                     direction = ActionDirection.LONG
+
+            elif strat == StrategyType.CROSS_SECTIONAL_MOMENTUM:
+                if not Config.CROSS_SECTIONAL_MOMENTUM_ENABLED:
+                    score = 0.0
+                elif len(self.cross_section_scores) < max(2, Config.CROSS_SECTIONAL_MIN_UNIVERSE):
+                    score = 0.0
+                else:
+                    percentile = self._cross_section_percentile(state.symbol)
+                    top_cut = 1.0 - max(0.01, min(0.49, Config.CROSS_SECTIONAL_TOP_PCT))
+                    bottom_cut = max(0.01, min(0.49, Config.CROSS_SECTIONAL_BOTTOM_PCT))
+                    abs_spread = max(abs(state.trend_spread), abs(state.htf_trend_spread))
+                    spread_ok = abs_spread >= max(0.0, Config.CROSS_SECTIONAL_MIN_ABS_SPREAD)
+
+                    if percentile >= top_cut and (trend_up or momentum_up) and spread_ok:
+                        edge = (percentile - top_cut) / max(0.01, (1.0 - top_cut))
+                        score = 0.42 + min(0.25, edge * 0.25)
+                        direction = ActionDirection.LONG
+                        if volume_spike:
+                            score += 0.05
+                    elif percentile <= bottom_cut and (trend_down or momentum_down) and spread_ok:
+                        edge = (bottom_cut - percentile) / max(0.01, bottom_cut)
+                        score = 0.42 + min(0.25, edge * 0.25)
+                        direction = ActionDirection.SHORT
+                        if volume_spike:
+                            score += 0.05
+                    else:
+                        score = 0.0
 
             elif strat == StrategyType.SHORT_MOMENTUM:
                 if not (trend_down or momentum_down):
@@ -240,6 +406,44 @@ class TradingEngine:
                             score += 0.15
                         if trend_down_htf:
                             score += 0.1
+                else:
+                    score = 0.0
+
+            elif strat == StrategyType.VOLATILITY_BREAKOUT:
+                snap = self._vol_breakout_snapshot(state.symbol, state)
+                current_bbw = snap["current_bbw"]
+                prev_bbw = snap["prev_bbw"]
+                baseline_bbw = snap["baseline_bbw"]
+                expansion_ratio = snap["expansion_ratio"]
+                baseline_ratio = snap["baseline_ratio"]
+                sample_size = int(snap["sample_size"])
+
+                squeeze_ok = (
+                    sample_size >= max(5, Config.VOL_BREAKOUT_BASELINE_WINDOW // 2)
+                    and prev_bbw <= Config.VOL_BREAKOUT_BBW_SQUEEZE_MAX
+                    and baseline_bbw <= (Config.VOL_BREAKOUT_BBW_SQUEEZE_MAX * 1.15)
+                )
+                expansion_ok = (
+                    expansion_ratio >= Config.VOL_BREAKOUT_EXPANSION_RATIO_MIN
+                    and baseline_ratio >= Config.VOL_BREAKOUT_EXPANSION_RATIO_MIN
+                )
+                atr_pct = (state.atr / max(state.current_price, 1e-9)) * 100.0 if state.current_price > 0 else 0.0
+                volatility_ok = atr_pct >= Config.VOL_BREAKOUT_MIN_ATR_PCT
+                volume_ok = state.volume_zscore >= Config.VOL_BREAKOUT_MIN_VOLUME_ZSCORE
+
+                if squeeze_ok and expansion_ok and volatility_ok and volume_ok:
+                    expansion_edge = max(0.0, baseline_ratio - Config.VOL_BREAKOUT_EXPANSION_RATIO_MIN)
+                    score = 0.48 + min(0.22, expansion_edge * 0.20)
+                    if trend_up or momentum_up or state.macd_hist > 0:
+                        direction = ActionDirection.LONG
+                        if near_high:
+                            score += 0.05
+                    elif trend_down or momentum_down or state.macd_hist < 0:
+                        direction = ActionDirection.SHORT
+                        if near_low:
+                            score += 0.05
+                    else:
+                        score = 0.0
                 else:
                     score = 0.0
 
@@ -301,9 +505,17 @@ class TradingEngine:
                     score *= 0.9
 
             if direction != ActionDirection.FLAT:
+                policy_adj = self.meta_learner.get_policy_adjustments(
+                    strategy=strat.name,
+                    regime=state.market_regime.value,
+                    regime_stable=state.regime_stable,
+                )
+                score *= float(policy_adj.get("score_multiplier", 1.0))
                 weight = self.strategy_weights.get(strat, 1.0)
-                scores[strat] = score * max(0.0, weight)
+                runtime_weight = float(self.runtime_policy.get("strategy_weights", {}).get(strat.name.upper(), 1.0))
+                scores[strat] = score * max(0.0, weight) * max(0.0, runtime_weight)
                 directions[strat] = direction
+                policy_adjustments[strat] = policy_adj
 
         if not scores:
             return Action.wait(reason="No strategy met signal criteria."), 0
@@ -311,7 +523,11 @@ class TradingEngine:
         # 5. Select best strategy
         proposed_strategy = max(scores, key=scores.get)
         best_score = scores[proposed_strategy]
-        if best_score < Config.MIN_SIGNAL_SCORE:
+        min_signal_score = max(
+            float(self.runtime_policy.get("min_signal_score", Config.MIN_SIGNAL_SCORE)),
+            Config.MIN_SIGNAL_SCORE,  # Floor: never below .env-configured minimum
+        )
+        if best_score < min_signal_score:
             return Action.wait(reason=f"Signal score {best_score:.2f} below threshold"), 0
 
         # 6. Repetition check
@@ -329,7 +545,7 @@ class TradingEngine:
                 break
 
         if repeats >= 3:
-            alternatives = [s for s in scores.keys() if s != proposed_strategy and scores[s] >= Config.MIN_SIGNAL_SCORE]
+            alternatives = [s for s in scores.keys() if s != proposed_strategy and scores[s] >= min_signal_score]
             if alternatives:
                 proposed_strategy = alternatives[0]
                 repeats = 0
@@ -337,9 +553,17 @@ class TradingEngine:
                 return Action.wait(reason="Max consecutive repetitions reached."), 0
 
         direction = directions.get(proposed_strategy, ActionDirection.FLAT)
+        selected_policy = policy_adjustments.get(proposed_strategy, self._policy_baseline())
+        self.last_policy_adjustment = selected_policy
+        policy_note = ""
+        if selected_policy.get("applied"):
+            policy_note = (
+                f" | policy={selected_policy.get('dominant_loss_category')} "
+                f"(x{selected_policy.get('score_multiplier', 1.0):.2f})"
+            )
         return Action(
             strategy=proposed_strategy,
             direction=direction,
             risk_level=RiskLevel.LOW,
-            reasoning=f"Signal {proposed_strategy.name} score={best_score:.2f}"
+            reasoning=f"Signal {proposed_strategy.name} score={best_score:.2f}{policy_note}"
         ), repeats

@@ -28,7 +28,18 @@ class PolicyInference:
     
     def __init__(self, model_path: Optional[str] = None):
         self.registry = ModelRegistry()
-        self.model_path = model_path or self.registry.get_active_model_path() or "models/policy_model_v1.pkl"
+        active_experts = self.registry.get_active_experts()
+        active_single_path = self.registry.get_active_model_path()
+
+        # If an ensemble is active, skip loading legacy fallback single model by default.
+        if model_path:
+            self.model_path = model_path
+        elif active_experts:
+            self.model_path = None
+        else:
+            self.model_path = active_single_path or "models/policy_model_v1.pkl"
+
+        self.model = None
         self.ensemble = {}
         self.calibrator = None
         self.ensemble_calibrators = {}

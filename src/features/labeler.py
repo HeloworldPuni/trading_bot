@@ -73,7 +73,7 @@ class TripleBarrierLabeler:
 
         if target is None or target.empty:
             target = close.pct_change().rolling(20, min_periods=5).std().abs()
-        target = target.reindex(close.index).fillna(method="ffill").fillna(method="bfill").fillna(0.0)
+        target = target.reindex(close.index).ffill().bfill().fillna(0.0)
 
         if vertical_barrier_times is None:
             # Fallback vertical barrier: 10 bars ahead.

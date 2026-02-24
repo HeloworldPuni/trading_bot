@@ -46,7 +46,7 @@ class SafetyLock:
         for path, original_hash in self.hashes.items():
             current_hash = self._get_hash(path)
             if current_hash != original_hash:
-                logger.critical(f"🔥 INTEGRITY BREACH: {path} modified during runtime!")
+                logger.critical("INTEGRITY BREACH: %s modified during runtime.", path)
                 all_safe = False
         
         return all_safe

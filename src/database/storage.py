@@ -4,12 +4,52 @@ import os
 import uuid
 import contextlib
 import logging
+import time
 from datetime import datetime, UTC
+from collections import deque
 from typing import Dict, Any, List, Optional
 from src.config import Config
 from src.core.definitions import MarketState, Action
 
 logger = logging.getLogger(__name__)
+
+
+def get_resolution_log_path(base_log_path: str) -> str:
+    """
+    Sidecar log for append-only resolution updates.
+    """
+    return f"{base_log_path}.resolved.jsonl"
+
+
+def load_resolution_updates(base_log_path: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Load latest resolution update per decision id from sidecar.
+    """
+    sidecar = get_resolution_log_path(base_log_path)
+    updates: Dict[str, Dict[str, Any]] = {}
+    if not os.path.exists(sidecar):
+        return updates
+
+    try:
+        with open(sidecar, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                decision_id = rec.get("id")
+                if not decision_id:
+                    continue
+                updates[decision_id] = {
+                    "resolved": True,
+                    "reward": rec.get("reward"),
+                    "outcome": rec.get("outcome"),
+                    "resolution_time": rec.get("resolution_time"),
+                }
+    except Exception as e:
+        logger.warning("Failed to load resolution sidecar %s: %s", sidecar, e)
+
+    return updates
 
 # File locking - Windows vs Unix
 try:
@@ -29,14 +69,43 @@ class ExperienceDB:
             log_suffix: Optional suffix to append to filename
             data_path: Override for Config.DATA_PATH (useful for tests)
         """
+        default_filename = "experience_log.jsonl"
+        configured_path = getattr(Config, "EXPERIENCE_LOG_FILE", "")
+        base_filepath = configured_path if (filename == default_filename and configured_path) else filename
+
         if log_suffix:
-            name, ext = os.path.splitext(filename)
-            filename = f"{name}_{log_suffix}{ext}"
-        
-        # Allow data_path override for test isolation
-        base_path = data_path if data_path else Config.DATA_PATH
-        self.filepath = os.path.join(base_path, filename)
+            base_dir, base_name = os.path.split(base_filepath)
+            name, ext = os.path.splitext(base_name)
+            ext = ext or ".jsonl"
+            base_name = f"{name}_{log_suffix}{ext}"
+            base_filepath = os.path.join(base_dir, base_name) if base_dir else base_name
+
+        if data_path:
+            self.filepath = os.path.join(data_path, os.path.basename(base_filepath))
+        else:
+            # If caller passed a path with directories, honor it as-is.
+            if os.path.isabs(base_filepath) or os.path.dirname(base_filepath):
+                self.filepath = base_filepath
+            else:
+                self.filepath = os.path.join(Config.DATA_PATH, base_filepath)
+
+        # Backward compatibility for historical default profile.
+        legacy = os.path.join("data", default_filename)
+        if (
+            filename == default_filename
+            and not log_suffix
+            and not data_path
+            and self.filepath != legacy
+            and not os.path.exists(self.filepath)
+            and Config.EXCHANGE_ID == "binance"
+            and Config.QUOTE_CURRENCY == "USDT"
+            and Config.TRADING_MODE == "paper"
+            and os.path.exists(legacy)
+        ):
+            self.filepath = legacy
+
         self.lockpath = self.filepath + ".lock"
+        self.resolution_path = get_resolution_log_path(self.filepath)
         self._ensure_dir()
 
         self.stats = {
@@ -57,28 +126,65 @@ class ExperienceDB:
         logger.info("ExperienceDB: Buffer Mode Enabled (Replay Optimized).")
 
     def _ensure_dir(self):
-        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-    
+        directory = os.path.dirname(self.filepath)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+
+    def _append_resolution_update(self, decision_id: str, outcome_data: Dict[str, Any], final_reward: float):
+        update = {
+            "id": decision_id,
+            "resolved": True,
+            "reward": final_reward,
+            "outcome": outcome_data,
+            "resolution_time": datetime.now(UTC).isoformat(),
+            "record_type": "resolution_update",
+        }
+        with self._global_lock():
+            with open(self.resolution_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(update) + "\n")
+
     @contextlib.contextmanager
     def _file_lock(self, filepath: str, mode: str = 'a'):
         """
         Cross-platform file locking context manager.
         Ensures safe writes even in multi-process scenarios.
         """
-        f = open(filepath, mode, encoding='utf-8')
+        lock_retries = 8
+        backoff_sec = 0.08
+        f = None
+        acquired = False
+        last_error = None
+        for attempt in range(lock_retries):
+            try:
+                f = open(filepath, mode, encoding='utf-8')
+                if WINDOWS:
+                    # Use blocking lock on Windows to reduce transient PermissionError races.
+                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    # Unix: use flock
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                acquired = True
+                break
+            except (PermissionError, OSError) as exc:
+                last_error = exc
+                if f is not None:
+                    try:
+                        f.close()
+                    except Exception:
+                        pass
+                    f = None
+                if attempt >= lock_retries - 1:
+                    break
+                time.sleep(backoff_sec * (attempt + 1))
+        if not acquired:
+            raise last_error if last_error is not None else PermissionError(f"Unable to lock {filepath}")
         try:
-            if WINDOWS:
-                # Windows: lock the file
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                # Unix: use flock
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             yield f
         finally:
             if WINDOWS:
                 try:
                     msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-                except:
+                except Exception:
                     pass
             else:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -186,36 +292,8 @@ class ExperienceDB:
                 "resolution_time": datetime.now(UTC).isoformat()
             }
             return
-
-        if not os.path.exists(self.filepath):
-            return
-
-        with self._global_lock():
-            temp_path = self.filepath + ".tmp"
-            updated = False
-            
-            with open(self.filepath, "r", encoding="utf-8") as infile, \
-                 open(temp_path, "w", encoding="utf-8") as outfile:
-                
-                for line in infile:
-                    try:
-                        record = json.loads(line)
-                        if record.get("id") == decision_id:
-                            record["resolved"] = True
-                            record["reward"] = final_reward
-                            record["outcome"] = outcome_data
-                            record["resolution_time"] = datetime.now(UTC).isoformat()
-                            updated = True
-                        
-                        outfile.write(json.dumps(record) + "\n")
-                    except json.JSONDecodeError:
-                        continue
-            
-            if updated:
-                os.replace(temp_path, self.filepath)
-            else:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+        # Append-only resolution update (O(1)); avoids full-file rewrites on every close.
+        self._append_resolution_update(decision_id, outcome_data, final_reward)
 
     def flush_records(self):
         """
@@ -234,39 +312,22 @@ class ExperienceDB:
                 self.log_buffer = []
 
             # 2. Update existing records if needed
-            if not self.pending_updates or not os.path.exists(self.filepath):
+            if not self.pending_updates:
                 return
 
-            temp_path = self.filepath + ".tmp"
-            updated_count = 0
-            
-            with open(self.filepath, "r", encoding="utf-8") as infile, \
-                 open(temp_path, "w", encoding="utf-8") as outfile:
-                
-                for line in infile:
-                    try:
-                        record = json.loads(line)
-                        rec_id = record.get("id")
-                        
-                        if rec_id in self.pending_updates:
-                            update = self.pending_updates[rec_id]
-                            record["resolved"] = True
-                            record["reward"] = update["reward"]
-                            record["outcome"] = update["outcome"]
-                            record["resolution_time"] = update["resolution_time"]
-                            updated_count += 1
-                        
-                        outfile.write(json.dumps(record) + "\n")
-                    except json.JSONDecodeError:
-                        continue
-            
-            if updated_count > 0:
-                os.replace(temp_path, self.filepath)
-                logger.info(f"ExperienceDB: Flushed {updated_count} updates to disk.")
-            else:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    
+            updates = list(self.pending_updates.items())
+            with open(self.resolution_path, "a", encoding="utf-8") as f:
+                for decision_id, update in updates:
+                    payload = {
+                        "id": decision_id,
+                        "resolved": True,
+                        "reward": update.get("reward"),
+                        "outcome": update.get("outcome"),
+                        "resolution_time": update.get("resolution_time"),
+                        "record_type": "resolution_update",
+                    }
+                    f.write(json.dumps(payload) + "\n")
+            logger.info(f"ExperienceDB: Flushed {len(updates)} updates to sidecar.")
             self.pending_updates = {}
 
     def get_recent_records(self, limit: int = 5) -> List[Dict[str, Any]]:
@@ -286,10 +347,10 @@ class ExperienceDB:
             remaining = limit - len(records)
             try:
                 with open(self.filepath, "r", encoding="utf-8") as f:
-                    # For small limits, reading from end of full file read is okay for backtests
-                    lines = f.readlines()
+                    # Stream tail into fixed-size deque to avoid loading whole file in memory.
+                    lines = deque(f, maxlen=remaining)
                     disk_records = []
-                    for line in lines[-remaining:]:
+                    for line in lines:
                         try:
                             disk_records.append(json.loads(line))
                         except:

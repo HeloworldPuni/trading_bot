@@ -19,14 +19,24 @@ class ModelRegistry:
         self.data = {
             "active_version": None,
             "models": {},
-            "total_records_at_last_train": 0
+            "total_records_at_last_train": 0,
+            "last_trained_counts_by_log": {}
         }
         self._load()
+
+    @staticmethod
+    def _normalize_log_key(log_key: Optional[str]) -> Optional[str]:
+        if not log_key:
+            return None
+        return os.path.normcase(os.path.abspath(str(log_key)))
 
     def _load(self):
         if os.path.exists(self.registry_path):
             with open(self.registry_path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
+            if "last_trained_counts_by_log" not in self.data or not isinstance(self.data.get("last_trained_counts_by_log"), dict):
+                self.data["last_trained_counts_by_log"] = {}
+                self._save()
             logger.info(f"Registry: Loaded from {self.registry_path}")
         else:
             logger.warning(f"Registry: File not found at {self.registry_path}. Initializing new.")
@@ -62,10 +72,10 @@ class ModelRegistry:
         self._save()
         logger.info(f"Registry: Registered ensemble version {version} with {len(specialized_models)} experts.")
 
-    def promote_model(self, version: str, total_records: int):
+    def promote_model(self, version: str, total_records: int, log_key: Optional[str] = None):
         if version in self.data["models"]:
             self.data["active_version"] = version
-            self.data["total_records_at_last_train"] = total_records
+            self.set_last_trained_count(total_records, log_key=log_key, save=False)
             self._save()
             logger.info(f"Registry: Promoted model {version} to ACTIVE.")
         else:
@@ -113,8 +123,31 @@ class ModelRegistry:
         self._save()
         logger.info(f"Registry: Updated expert '{regime_key}' in ensemble {ensemble_version}")
 
-    def get_last_trained_count(self) -> int:
-        return self.data.get("total_records_at_last_train", 0)
+    def get_last_trained_count(self, log_key: Optional[str] = None) -> int:
+        normalized = self._normalize_log_key(log_key)
+        if normalized:
+            counts = self.data.get("last_trained_counts_by_log", {})
+            if normalized in counts:
+                return int(counts.get(normalized, 0))
+        return int(self.data.get("total_records_at_last_train", 0))
+
+    def set_last_trained_count(
+        self,
+        total_records: int,
+        log_key: Optional[str] = None,
+        save: bool = True,
+        update_global: bool = True,
+    ):
+        total_records = max(0, int(total_records))
+        if update_global:
+            self.data["total_records_at_last_train"] = total_records
+        normalized = self._normalize_log_key(log_key)
+        if normalized:
+            if "last_trained_counts_by_log" not in self.data or not isinstance(self.data.get("last_trained_counts_by_log"), dict):
+                self.data["last_trained_counts_by_log"] = {}
+            self.data["last_trained_counts_by_log"][normalized] = total_records
+        if save:
+            self._save()
 
     def get_next_version(self) -> str:
         count = len(self.data["models"]) + 1

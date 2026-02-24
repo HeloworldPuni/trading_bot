@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "task-assignment.payload.schema.json",
+  "title": "Task Assignment Payload",
+  "type": "object",
+  "required": [
+    "task_id",
+    "goal",
+    "constraints",
+    "expected_output"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 10
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "deadline_utc",
+        "risk_limits",
+        "allowed_action_space"
+      ],
+      "properties": {
+        "deadline_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "risk_limits": {
+          "type": "object",
+          "required": [
+            "max_drawdown_pct",
+            "max_exposure_pct"
+          ],
+          "properties": {
+            "max_drawdown_pct": {
+              "type": "number"
+            },
+            "max_exposure_pct": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": true
+        },
+        "allowed_action_space": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "thresholds",
+              "strategy_weights",
+              "regime_gates",
+              "symbol_filters",
+              "position_caps"
+            ]
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_output": {
+      "type": "object",
+      "required": [
+        "schema_id",
+        "required_fields"
+      ],
+      "properties": {
+        "schema_id": {
+          "type": "string"
+        },
+        "required_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

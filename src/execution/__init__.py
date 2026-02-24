@@ -5,3 +5,4 @@ from .paper import PaperExecutor, PaperExchange
 from .router import SmartRouter, OrderType, ExecutionStatus
 from .algo import ExecutionAlgo
 from .pov import POVOrder
+from .hyperliquid_live import HyperliquidLiveExecutor

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision-packet.payload.schema.json",
+  "title": "Final Decision Packet Payload",
+  "type": "object",
+  "required": [
+    "trace_id",
+    "agent_inputs_summary",
+    "agreements",
+    "disagreements",
+    "final_reasoning",
+    "confidence",
+    "data_gaps",
+    "final_action",
+    "risk_veto"
+  ],
+  "properties": {
+    "trace_id": {
+      "type": "string"
+    },
+    "agent_inputs_summary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "agreements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "disagreements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "final_reasoning": {
+      "type": "string",
+      "minLength": 20
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "data_gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "final_action": {
+      "type": "string",
+      "enum": [
+        "EXECUTE",
+        "EXECUTE_REDUCED",
+        "WAIT",
+        "INSUFFICIENT_DATA"
+      ]
+    },
+    "risk_veto": {
+      "type": "object",
+      "required": [
+        "vetoed",
+        "reason"
+      ],
+      "properties": {
+        "vetoed": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

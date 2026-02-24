@@ -5,6 +5,7 @@ import os
 import logging
 from typing import List, Dict, Any, Optional
 from src.core.definitions import MarketRegime, VolatilityLevel, TrendStrength, StrategyType
+from src.database.storage import load_resolution_updates
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class DatasetBuilder:
         logger.info("Scanning log for metadata...")
         self._scan_for_metadata(input_path)
         self._persist_feature_maps()
+        resolution_updates = load_resolution_updates(input_path)
 
         logger.info("Transforming records to CSV...")
         count = 0
@@ -36,11 +38,17 @@ class DatasetBuilder:
             for line in f_in:
                 try:
                     rec = json.loads(line)
-                    if rec.get("resolved") is True:
-                        row = self._transform_record(rec)
-                        if row:
-                            writer.writerow(row)
-                            count += 1
+                    decision_id = rec.get("id")
+                    if rec.get("resolved") is not True:
+                        update = resolution_updates.get(decision_id) if decision_id else None
+                        if update:
+                            rec = {**rec, **update}
+                    if rec.get("resolved") is not True:
+                        continue
+                    row = self._transform_record(rec)
+                    if row:
+                        writer.writerow(row)
+                        count += 1
                 except:
                     continue
                     
@@ -158,9 +166,11 @@ class DatasetBuilder:
         self.symbol_map = {s: i for i, s in enumerate(sorted(list(symbols)))}
 
     def _persist_feature_maps(self):
+        feature_columns = [c for c in self._get_header() if c != "decision_quality"]
         os.makedirs(os.path.dirname(self.FEATURE_MAPS_PATH), exist_ok=True)
         payload = {
             "version": "v4",
+            "feature_columns": feature_columns,
             "session_map": self.session_map,
             "symbol_map": self.symbol_map,
             "notes": "v4 brain: Stricter fee-aware labeling + Streaming I/O."

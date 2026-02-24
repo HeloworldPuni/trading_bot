@@ -3,6 +3,26 @@ import pandas as pd
 
 
 class RiskManager:
+    def volatility_scaler(self, price_series: pd.Series | None) -> float:
+        """
+        Volatility targeting scaler based on annualized realized volatility.
+        """
+        if price_series is None:
+            return 1.0
+        try:
+            prices = pd.to_numeric(price_series, errors="coerce").dropna()
+            if len(prices) < 10:
+                return 1.0
+            returns = prices.pct_change().dropna()
+            if returns.empty:
+                return 1.0
+            realized_vol = float(returns.std() * np.sqrt(252))
+            if realized_vol <= 1e-12:
+                return 1.0
+            return float(np.clip(self.target_volatility / realized_vol, 0.25, 2.0))
+        except Exception:
+            return 1.0
+
     def cap_positions(self, weights: dict[str, float]) -> dict[str, float]:
         if self.kill_switch_active:
             return {k: 0.0 for k in weights}

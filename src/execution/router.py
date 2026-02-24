@@ -51,7 +51,13 @@ class SmartRouter:
         direction = getattr(action, "direction", ActionDirection.FLAT)
         action_id = getattr(action, "reasoning", "") or f"route_{id(action)}"
 
-        high_urgency = action.strategy in {StrategyType.MOMENTUM, StrategyType.SHORT_MOMENTUM, StrategyType.BREAKOUT}
+        high_urgency = action.strategy in {
+            StrategyType.MOMENTUM,
+            StrategyType.CROSS_SECTIONAL_MOMENTUM,
+            StrategyType.SHORT_MOMENTUM,
+            StrategyType.BREAKOUT,
+            StrategyType.VOLATILITY_BREAKOUT,
+        }
         if abs(target_weight) >= self.large_order_threshold:
             return OrderRequest(action_id, direction, OrderType.TWAP, quantity=abs(target_weight), twap_minutes=60)
 

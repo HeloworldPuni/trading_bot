@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "task-result.payload.schema.json",
+  "title": "Specialist Task Result Payload",
+  "type": "object",
+  "required": [
+    "task_id",
+    "status",
+    "claims",
+    "evidence",
+    "confidence",
+    "data_gaps"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "OK",
+        "PARTIAL",
+        "INSUFFICIENT_DATA",
+        "FAILED"
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 5
+      },
+      "minItems": 1
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "evidence_id",
+          "source",
+          "metric",
+          "value",
+          "window"
+        ],
+        "properties": {
+          "evidence_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "number",
+              "string",
+              "boolean"
+            ]
+          },
+          "window": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "confidence": {
+      "type": "object",
+      "required": [
+        "score",
+        "calibration"
+      ],
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "calibration": {
+          "type": "string",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposed_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "action_type",
+          "params"
+        ],
+        "properties": {
+          "action_type": {
+            "type": "string",
+            "enum": [
+              "set_threshold",
+              "set_strategy_weight",
+              "set_regime_gate",
+              "set_symbol_filter",
+              "set_position_cap"
+            ]
+          },
+          "params": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "data_gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

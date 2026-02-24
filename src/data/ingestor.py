@@ -20,6 +20,7 @@ class DataIngestor:
         self.exchange = exchange_connector
         self.data_path = data_path or Config.DATA_PATH
         self.orderbook_depth = max(1, int(orderbook_depth))
+        self._trades_supported = True  # Auto-disables if exchange doesn't support public trades
 
     def _ccxt(self):
         if self.exchange is None:
@@ -57,9 +58,14 @@ class DataIngestor:
         Returns DataFrame:
         trade_id, timestamp, price, amount, side
         """
+        if not self._trades_supported:
+            return pd.DataFrame(columns=["trade_id", "timestamp", "price", "amount", "side"])
         try:
+            exchange_symbol = symbol
+            if hasattr(self.exchange, "to_exchange_symbol"):
+                exchange_symbol = self.exchange.to_exchange_symbol(symbol)
             ccxt_ex = self._ccxt()
-            raw = ccxt_ex.fetch_trades(symbol, limit=limit) if ccxt_ex else []
+            raw = ccxt_ex.fetch_trades(exchange_symbol, limit=limit) if ccxt_ex else []
             if not raw:
                 return pd.DataFrame(columns=["trade_id", "timestamp", "price", "amount", "side"])
 
@@ -76,7 +82,13 @@ class DataIngestor:
                 )
             return pd.DataFrame(rows)
         except Exception as e:
-            logger.error("Trade ingestion failed for %s: %s", symbol, e)
+            err_msg = str(e).lower()
+            if "user" in err_msg or "requires" in err_msg or "parameter" in err_msg:
+                # Hyperliquid requires wallet address for trade history — disable for this session
+                self._trades_supported = False
+                logger.info("Trade ingestion disabled (exchange requires auth for public trades).")
+            else:
+                logger.debug("Trade ingestion skipped for %s: %s", symbol, e)
             return pd.DataFrame(columns=["trade_id", "timestamp", "price", "amount", "side"])
 
     def fetch_orderbook(self, symbol: str, depth: Optional[int] = None) -> pd.DataFrame:
@@ -85,9 +97,12 @@ class DataIngestor:
         timestamp, bid1_p, bid1_v, ask1_p, ask1_v, ...
         """
         try:
+            exchange_symbol = symbol
+            if hasattr(self.exchange, "to_exchange_symbol"):
+                exchange_symbol = self.exchange.to_exchange_symbol(symbol)
             ccxt_ex = self._ccxt()
             depth = int(depth or self.orderbook_depth)
-            ob = ccxt_ex.fetch_order_book(symbol, limit=depth) if ccxt_ex else {}
+            ob = ccxt_ex.fetch_order_book(exchange_symbol, limit=depth) if ccxt_ex else {}
             ts = int(ob.get("timestamp") or datetime.now(UTC).timestamp() * 1000)
             bids = ob.get("bids") or []
             asks = ob.get("asks") or []
@@ -102,7 +117,7 @@ class DataIngestor:
                 row[f"ask{i+1}_v"] = a[1]
             return pd.DataFrame([row])
         except Exception as e:
-            logger.error("Orderbook ingestion failed for %s: %s", symbol, e)
+            logger.debug("Orderbook ingestion skipped for %s: %s", symbol, e)
             return pd.DataFrame()
 
     def fetch_open_interest(self, symbol: str) -> pd.DataFrame:
@@ -110,11 +125,14 @@ class DataIngestor:
         Returns one-row open interest snapshot if exchange supports it.
         """
         try:
+            exchange_symbol = symbol
+            if hasattr(self.exchange, "to_exchange_symbol"):
+                exchange_symbol = self.exchange.to_exchange_symbol(symbol)
             ccxt_ex = self._ccxt()
             if not ccxt_ex or not hasattr(ccxt_ex, "fetch_open_interest"):
                 return pd.DataFrame()
 
-            oi = ccxt_ex.fetch_open_interest(symbol)
+            oi = ccxt_ex.fetch_open_interest(exchange_symbol)
             if not oi:
                 return pd.DataFrame()
 
